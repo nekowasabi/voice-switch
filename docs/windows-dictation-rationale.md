@@ -20,7 +20,7 @@ Fix Root Causes changed the stop handling. A standalone stop trims the source au
 
 Boundary Discipline changed the adapters. WinMM, PowerShell JSON, WAV writing, registry dispatch, and manifest recovery validate at the boundary. The session reducer stays pure.
 
-Make Operations Idempotent changed handoff cleanup. A submitted handoff is retained as an owned lease until `--complete-handoff <id>` acknowledges completion or cancellation. An UNSENT body is retained as `DeferredUnsent` until the operator manually copies or discards the WAV and then acknowledges the ID. Startup sees owned manifests and refuses capture.
+Make Operations Idempotent changed handoff cleanup. A submitted handoff is retained as an owned lease until `--complete-handoff <id>` acknowledges completion or cancellation. An UNSENT body is retained as `DeferredUnsent` until the operator manually copies or discards the WAV and then acknowledges the ID. Startup refuses capture while owned manifests, orphan WAVs, temporary manifests, unsafe owned paths, or a busy synchronization gate remain. After the first external submission (or any failed handoff), the runtime stops and releases capture; an operator must recover/complete pending work before restarting. Record-only and dry-run sessions may continue.
 
 Prove It Works changed verification. Tests drive the production runtime with synthetic PCM, a delayed fake recognizer, and a recording handoff. The native SAPI path has a Windows-only synthetic probe that calls the production dictation recognizer and checks request identity, lexical ranges, and recognized text.
 
@@ -32,7 +32,7 @@ The PowerShell script no longer calls `Recognize()` in a loop. It compiles a sma
 
 ## External limitation
 
-Superwhisper's registered Windows file route is verified only for the raw `superwhisper://file//` argument shape used by the registry. Receiver decoding for whitespace, reserved URI characters, and non-ASCII paths is HOLD. The implementation therefore reports `SubmittedUnconfirmed` only after launch, reports `DeferredUnsent` when a body is retained without launch, and does not claim transcription or auto-paste succeeded.
+The registered Windows file route uses the raw `superwhisper://file//` argument shape. Tests verify construction and a mocked process launch; actual Superwhisper intake, transcription, and paste are not verified. Receiver decoding for whitespace, reserved URI characters, and non-ASCII paths is HOLD. The implementation therefore reports `SubmittedUnconfirmed` only after launch, reports `DeferredUnsent` when a body is retained without launch, and does not claim transcription or auto-paste succeeded.
 
 The external file is not deleted by a timer or process exit. Manual completion is explicit:
 

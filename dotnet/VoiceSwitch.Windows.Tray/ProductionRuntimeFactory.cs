@@ -12,11 +12,7 @@ public sealed class ProductionRuntimeFactory : ITrayRuntimeFactory
 
         if (source.RecordOnlyDir is null)
         {
-            var admission = RegisteredSuperwhisperHandoff.CheckAdmission(WindowsPaths.DefaultHandoffPath());
-            if (!admission.CanCapture)
-            {
-                throw new InvalidOperationException("dictation handoff requires recovery before capture starts: " + admission.Message);
-            }
+            RegisteredSuperwhisperHandoff.EnsureCaptureAllowed(WindowsPaths.DefaultHandoffPath());
         }
 
         IPcmCapture capture = source.WavPath is null
