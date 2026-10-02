@@ -10,7 +10,13 @@
 // usage: VoiceSwitch.app                     menu-bar app (config: $VOICE_SWITCH_CONFIG or
 //                                            ~/.config/voice-switch/config.json)
 //        voice-switch --check a.wav b.wav    feed files through VAD + transcriber, print verdicts
+//        voice-switch --dictate-file a.wav   cut the leading wake word from a.wav and hand the rest to superwhisper
+//
+// One-breath dictation ("音声入力、明日の会議は…"): an utterance that starts with a wake word and goes on
+// is recorded until silence, the wake word is cut from the audio, and superwhisper transcribes the file
+// and auto-pastes the result into the frontmost app.
 import AppKit
+import os
 import AVFoundation
 import Foundation
 import ServiceManagement
@@ -34,6 +40,15 @@ struct Config: Decodable {
     var vadMinRMS: Float?
     /// Bundle IDs whose microphone use blocks firing (e.g. superwhisper already recording, a meeting app).
     var skipWhileMicInUseBy: [String]?
+    /// Absent turns one-breath dictation off.
+    var dictation: DictationConfig?
+}
+
+struct DictationConfig: Decodable {
+    var recordingsDir: String?
+    var endSilenceMs: Int?
+    var maxSeconds: Double?
+    var excludeBundleIDs: [String]?
 }
 
 final class ConfigFile {
@@ -85,6 +100,13 @@ struct Segmenter {
     private var utt: [[Float]] = []
     private var silent = 0
     private var skipping = false
+    private(set) var lastWasSpeech = false
+
+    enum Event {
+        case utterance([Float])
+        /// The start of an utterance too long to be a wake word; may be a one-breath dictation.
+        case head([Float])
+    }
 
     init(cfg: Config) { self.cfg = cfg }
 
@@ -96,13 +118,13 @@ struct Segmenter {
         return speech
     }
 
-    /// Returns a finished short utterance, or nil.
-    mutating func push(_ f: [Float]) -> [Float]? {
+    mutating func push(_ f: [Float]) -> Event? {
         let preroll = frames(ms: cfg.prerollMs ?? 300)
         let hangover = frames(ms: cfg.hangoverMs ?? 300)
         let minFrames = frames(ms: cfg.minSpeechMs ?? 300)
         let maxFrames = Int((cfg.maxSeconds ?? 2.5) * rate) / frameLen
         let speech = isSpeech(f)
+        lastWasSpeech = speech
         if utt.isEmpty {
             ring.append(f)
             if ring.count > preroll { ring.removeFirst() }
@@ -112,11 +134,18 @@ struct Segmenter {
         silent = speech ? 0 : silent + 1
         // Too long to be a wake word (dictation or steady noise): stop buffering and
         // wait for silence so a tail fragment of the dictation is never judged alone.
-        if utt.count <= maxFrames + hangover { utt.append(f) } else { skipping = true }
-        guard silent >= hangover else { return nil }
-        let done = !skipping && utt.count - hangover >= minFrames ? Array(utt.joined()) : nil
+        var head: Event?
+        if utt.count <= maxFrames + hangover {
+            utt.append(f)
+        } else if !skipping {
+            skipping = true
+            // Everything buffered so far, not just maxSeconds, so a dictation continuing from here has no gap.
+            head = .head(Array((utt + [f]).joined()))
+        }
+        guard silent >= hangover else { return head }
+        let done = !skipping && utt.count - hangover >= minFrames ? Event.utterance(Array(utt.joined())) : nil
         utt = []; ring = []; skipping = false
-        return done
+        return done ?? head
     }
 }
 
@@ -146,13 +175,48 @@ func convert(_ input: AVAudioPCMBuffer, with conv: AVAudioConverter, flush: Bool
     return out
 }
 
+let punctuation = Set("、。,.!?！？「」")
+
 func normalize(_ s: String) -> String {
-    let drop = Set("、。,.!?！？「」")
-    return String(s.filter { !$0.isWhitespace && !drop.contains($0) })
+    String(s.filter { !$0.isWhitespace && !punctuation.contains($0) })
 }
 
-func transcribe(_ samples: [Float], locale: Locale) async throws -> String {
-    let tr = SpeechTranscriber(locale: locale, preset: .transcription)
+struct Transcript {
+    /// Runs of recognized text (about one character each for ja_JP) with seconds from the start of the audio.
+    var runs: [(text: String, start: Double?, end: Double?)]
+    var text: String { normalize(runs.map(\.text).joined()) }
+}
+
+/// Where to cut the audio so it starts after any leading wake words, plus the normalized text heard after them.
+/// nil if the transcript does not start with a wake word or has nothing after it.
+func dictationStart(_ t: Transcript, wakeWords: [String]) -> (cutAt: Double, rest: String)? {
+    let targets = Set(wakeWords.map(normalize))
+    let longest = targets.map(\.count).max() ?? 0
+    var next = 0 // first run not yet consumed by a wake word
+    var wakeEnd: Double?
+    while true {
+        var acc = ""
+        var matched: Int?
+        var i = next
+        while i < t.runs.count, acc.count <= longest {
+            acc += normalize(t.runs[i].text)
+            i += 1
+            if targets.contains(acc) { matched = i }
+        }
+        guard let matched else { break }
+        wakeEnd = t.runs[matched - 1].end ?? wakeEnd
+        next = matched
+    }
+    guard next > 0 else { return nil }
+    let rest = normalize(t.runs[next...].map(\.text).joined())
+    guard !rest.isEmpty else { return nil }
+    // The run right after the wake word is often the pause ("、"), so cutting at its start keeps the first syllable whole.
+    guard let cutAt = t.runs[next].start ?? wakeEnd.map({ $0 + 0.05 }) else { return nil }
+    return (cutAt, rest)
+}
+
+func transcribe(_ samples: [Float], locale: Locale) async throws -> Transcript {
+    let tr = SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [], attributeOptions: [.audioTimeRange])
     let an = SpeechAnalyzer(modules: [tr])
     var input = pcmBuffer(samples)
     if let fmt = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [tr]), fmt != work,
@@ -162,17 +226,22 @@ func transcribe(_ samples: [Float], locale: Locale) async throws -> String {
     let (stream, cont) = AsyncStream<AnalyzerInput>.makeStream()
     cont.yield(AnalyzerInput(buffer: input))
     cont.finish()
-    let collect = Task { () throws -> String in
-        var s = ""
-        for try await r in tr.results { s += String(r.text.characters) }
-        return s
+    let collect = Task { () throws -> Transcript in
+        var t = Transcript(runs: [])
+        for try await r in tr.results {
+            for run in r.text.runs {
+                let range = run.audioTimeRange
+                t.runs.append((String(r.text[run.range].characters), range?.start.seconds, range?.end.seconds))
+            }
+        }
+        return t
     }
     if let end = try await an.analyzeSequence(stream) {
         try await an.finalizeAndFinish(through: end)
     } else {
         await an.cancelAndFinishNow()
     }
-    return normalize(try await collect.value)
+    return try await collect.value
 }
 
 func ensureModel(_ locale: Locale) async throws {
@@ -190,23 +259,89 @@ func check(_ paths: [String], cfg: Config) async throws {
     try await ensureModel(locale)
     let targets = Set(cfg.wakeWords.map(normalize))
     for path in paths {
-        let file = try AVAudioFile(forReading: URL(fileURLWithPath: path))
-        let raw = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length))!
-        try file.read(into: raw)
-        let buf = convert(raw, with: AVAudioConverter(from: raw.format, to: work)!, flush: true)!
-        var samples = Array(UnsafeBufferPointer(start: buf.floatChannelData![0], count: Int(buf.frameLength)))
-        samples += [Float](repeating: 0, count: Int(rate)) // trailing silence ends the utterance
+        let samples = try loadSamples(path) + [Float](repeating: 0, count: Int(rate)) // trailing silence ends the utterance
         var seg = Segmenter(cfg: cfg)
-        var fired = 0
-        var heard: [String] = []
+        var verdicts: [String] = []
         for i in stride(from: 0, to: samples.count - frameLen + 1, by: frameLen) {
-            guard let u = seg.push(Array(samples[i ..< i + frameLen])) else { continue }
-            let t = try await transcribe(u, locale: locale)
-            heard.append(t)
-            if targets.contains(t) { fired += 1 }
+            guard let event = seg.push(Array(samples[i ..< i + frameLen])) else { continue }
+            let (u, isHead) = switch event { case let .utterance(u): (u, false); case let .head(u): (u, true) }
+            let tr = try await transcribe(u, locale: locale)
+            if !isHead, targets.contains(tr.text) {
+                verdicts.append("wake")
+            } else if let start = dictationStart(tr, wakeWords: cfg.wakeWords) {
+                verdicts.append("dictate:\(start.rest)")
+            } else {
+                verdicts.append(tr.text)
+            }
         }
-        print("\(path)\theard=\(heard)\tfired=\(fired)")
+        print("\(path)\t\(verdicts)")
     }
+}
+
+/// Any audio file as 16 kHz mono float samples.
+func loadSamples(_ path: String) throws -> [Float] {
+    let file = try AVAudioFile(forReading: URL(fileURLWithPath: path))
+    let raw = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length))!
+    try file.read(into: raw)
+    let buf = convert(raw, with: AVAudioConverter(from: raw.format, to: work)!, flush: true)!
+    return Array(UnsafeBufferPointer(start: buf.floatChannelData![0], count: Int(buf.frameLength)))
+}
+
+// MARK: dictation handoff
+
+/// One file at a time, so a result in the recordings folder is never attributed to the wrong handoff.
+let handoffBusy = OSAllocatedUnfairLock(initialState: false)
+
+/// superwhisper transcribes the file and auto-pastes into the frontmost app; we only wait to clean up and log.
+func handoff(_ samples: [Float], cfg: DictationConfig) async {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("voice-switch")
+    let wav = dir.appendingPathComponent("\(UUID().uuidString).wav")
+    defer { try? FileManager.default.removeItem(at: wav) }
+    let submitted = Date()
+    do {
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try writeWAV(samples, to: wav)
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        p.arguments = ["-g", "-a", "superwhisper", wav.path]
+        try p.run()
+    } catch {
+        log("dictation: handing off to superwhisper failed: \(error)"); return
+    }
+    let recordings = NSString(string: cfg.recordingsDir ?? "~/Documents/superwhisper/recordings").expandingTildeInPath
+    guard let result = await awaitResult(in: recordings, since: Int(submitted.timeIntervalSince1970) - 2) else {
+        log("dictation: no superwhisper result within 30 s"); return
+    }
+    log("dictation: \(result.count) chars in \(Int(Date().timeIntervalSince(submitted) * 1000)) ms")
+}
+
+/// Polls superwhisper's recordings folder for the run that started at or after `since` (unix seconds).
+func awaitResult(in dir: String, since: Int) async -> String? {
+    for _ in 0 ..< 300 {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []
+        for name in names.sorted().reversed() {
+            guard let t = Int(name), t >= since,
+                  let data = FileManager.default.contents(atPath: "\(dir)/\(name)/meta.json"),
+                  let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+            for key in ["llmResult", "result"] {
+                if let s = meta[key] as? String, !s.isEmpty { return s }
+            }
+        }
+        try? await Task.sleep(for: .milliseconds(100))
+    }
+    return nil
+}
+
+func writeWAV(_ samples: [Float], to url: URL) throws {
+    let settings: [String: Any] = [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: rate, AVNumberOfChannelsKey: 1,
+                                   AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false]
+    let file = try AVAudioFile(forWriting: url, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
+    try file.write(from: pcmBuffer(samples))
+}
+
+/// The samples from `cutAt` seconds on.
+func trimmed(_ samples: [Float], cutAt: Double) -> [Float] {
+    Array(samples.dropFirst(min(samples.count, Int(cutAt * rate))))
 }
 
 func audioDeviceID(uid: String) -> AudioDeviceID? {
@@ -296,30 +431,70 @@ final class Listener {
         log("paused")
     }
 
+    struct Dictation {
+        var samples: [Float]
+        var silentFrames: Int
+    }
+
     private func consume(_ stream: AsyncStream<[Float]>) async {
         var seg = Segmenter(cfg: config.cfg)
+        var dictation: Dictation?
         for await f in stream {
-            if f.isEmpty { seg = Segmenter(cfg: config.cfg); continue }
-            guard let u = seg.push(f) else { continue }
+            if f.isEmpty { seg = Segmenter(cfg: config.cfg); dictation = nil; continue }
+            let event = seg.push(f) // keeps the VAD floor current; events are ignored while dictating
+            if var d = dictation {
+                let dc = config.cfg.dictation ?? DictationConfig()
+                d.samples += f
+                d.silentFrames = seg.lastWasSpeech ? 0 : d.silentFrames + 1
+                dictation = d
+                guard d.silentFrames * frameLen * 1000 / Int(rate) >= dc.endSilenceMs ?? 1200
+                    || d.samples.count > Int((dc.maxSeconds ?? 60) * rate) else { continue }
+                d.samples.removeLast(d.silentFrames * frameLen)
+                dictation = nil
+                submit(d, cfg: dc)
+                continue
+            }
+            guard let event else { continue }
+            let (u, isHead) = switch event { case let .utterance(u): (u, false); case let .head(u): (u, true) }
             config.reloadIfChanged()
             seg.cfg = config.cfg
-            let t: String
+            let transcript: Transcript
             let began = Date()
-            do { t = try await transcribe(u, locale: Locale(identifier: config.cfg.locale ?? "ja_JP")) } catch {
+            do { transcript = try await transcribe(u, locale: Locale(identifier: config.cfg.locale ?? "ja_JP")) } catch {
                 log("transcribe failed: \(error)"); continue
             }
+            let t = transcript.text
             // Logged too, so misses that transcribe to nothing are visible when tuning.
             guard !t.isEmpty else { log("heard: (empty, \(u.count * 1000 / Int(rate)) ms)"); continue }
-            let hit = config.cfg.wakeWords.map(normalize).contains(t)
+            let hit = !isHead && config.cfg.wakeWords.map(normalize).contains(t)
             // Utterance length shows whether the VAD holds on past the word; stt is recognizer time.
             log("heard: \(t)\(hit ? "  -> wake" : "")  [utt \(u.count * 1000 / Int(rate)) ms, stt \(Int(Date().timeIntervalSince(began) * 1000)) ms]")
-            guard hit else { continue }
+            let start = hit || config.cfg.dictation == nil ? nil : dictationStart(transcript, wakeWords: config.cfg.wakeWords)
+            guard hit || start != nil else { continue }
             if let busy = micInUse(by: config.cfg.skipWhileMicInUseBy ?? []) {
-                // superwhisper://record toggles, so firing while it records would stop it.
-                log("skipped: \(busy) is using the microphone")
-            } else {
-                runCommand(config.cfg.command)
+                // superwhisper://record toggles, so firing while it records would stop it; a dictation
+                // started then would be the user's speech already being recorded by superwhisper.
+                log("skipped: \(busy) is using the microphone"); continue
             }
+            guard let start else { runCommand(config.cfg.command); continue }
+            if let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+               config.cfg.dictation?.excludeBundleIDs?.contains(id) == true {
+                log("dictation skipped: \(id) is excluded"); continue
+            }
+            dictation = Dictation(samples: trimmed(u, cutAt: start.cutAt), silentFrames: 0)
+            log("dictation started (cut at \(Int(start.cutAt * 1000)) ms)")
+        }
+    }
+
+    private func submit(_ d: Dictation, cfg: DictationConfig) {
+        let claimed = handoffBusy.withLock { busy in
+            defer { busy = true }
+            return !busy
+        }
+        guard claimed else { log("dictation dropped: previous one still in flight"); return }
+        Task {
+            await handoff(d.samples, cfg: cfg)
+            handoffBusy.withLock { $0 = false }
         }
     }
 }
@@ -481,14 +656,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
 let logURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/voice-switch.log")
 var args = Array(CommandLine.arguments.dropFirst())
-let checkMode = args.first == "--check"
-if checkMode { args.removeFirst() }
+let mode = args.first.flatMap { ["--check", "--dictate-file"].contains($0) ? $0 : nil }
+if mode != nil { args.removeFirst() }
 let configPath = ProcessInfo.processInfo.environment["VOICE_SWITCH_CONFIG"]
     ?? NSString(string: "~/.config/voice-switch/config.json").expandingTildeInPath
 
-if checkMode {
+if mode == "--check" {
     Task {
         do { try await check(args, cfg: ConfigFile(path: configPath).cfg); exit(0) } catch { log("fatal: \(error)"); exit(1) }
+    }
+    dispatchMain()
+} else if mode == "--dictate-file" {
+    Task {
+        do {
+            let cfg = try ConfigFile(path: configPath).cfg
+            let locale = Locale(identifier: cfg.locale ?? "ja_JP")
+            try await ensureModel(locale)
+            let samples = try loadSamples(args[0])
+            guard let start = dictationStart(try await transcribe(samples, locale: locale), wakeWords: cfg.wakeWords) else {
+                log("no wake word followed by speech at the start of \(args[0])"); exit(1)
+            }
+            log("cut at \(Int(start.cutAt * 1000)) ms, Apple heard after it: \(start.rest)")
+            await handoff(trimmed(samples, cutAt: start.cutAt), cfg: cfg.dictation ?? DictationConfig())
+            exit(0)
+        } catch { log("fatal: \(error)"); exit(1) }
     }
     dispatchMain()
 } else {
