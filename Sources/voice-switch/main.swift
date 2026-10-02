@@ -40,6 +40,10 @@ struct Config: Decodable {
     var vadMinRMS: Float?
     /// Bundle IDs whose microphone use blocks firing (e.g. superwhisper already recording, a meeting app).
     var skipWhileMicInUseBy: [String]?
+    /// Said on their own, these end the current input: our dictation, or a recording by a skipWhileMicInUseBy app.
+    var stopWords: [String]?
+    /// Runs when a stop word is heard while a skipWhileMicInUseBy app is recording.
+    var stopCommand: String?
     /// Absent turns one-breath dictation off.
     var dictation: DictationConfig?
 }
@@ -295,7 +299,7 @@ func loadSamples(_ path: String) throws -> [Float] {
 let handoffBusy = OSAllocatedUnfairLock(initialState: false)
 
 /// superwhisper transcribes the file and auto-pastes into the frontmost app; we only wait to clean up and log.
-func handoff(_ samples: [Float], cfg: DictationConfig) async {
+func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplication?) async {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("voice-switch")
     let wav = dir.appendingPathComponent("\(UUID().uuidString).wav")
     defer { try? FileManager.default.removeItem(at: wav) }
@@ -309,6 +313,14 @@ func handoff(_ samples: [Float], cfg: DictationConfig) async {
         try p.run()
     } catch {
         log("dictation: handing off to superwhisper failed: \(error)"); return
+    }
+    // Opening a file brings superwhisper to the front despite -g, and it skips auto-paste when it is
+    // still frontmost at the end, so hand focus back to where the user was dictating.
+    for _ in 0 ..< 20 {
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.superduper.superwhisper" {
+            await MainActor.run { _ = target?.activate() }
+        }
     }
     let recordings = NSString(string: cfg.recordingsDir ?? "~/Documents/superwhisper/recordings").expandingTildeInPath
     guard let result = await awaitResult(in: recordings, since: Int(submitted.timeIntervalSince1970) - 2) else {
@@ -533,6 +545,8 @@ final class Listener {
         var silentFrames: Int
         /// False while waiting for the text after a lone wake word; silence then means "nothing came", not "done".
         var heardSpeech: Bool
+        /// Frontmost app when the wake word was heard; superwhisper pastes into whatever is frontmost.
+        var target = NSWorkspace.shared.frontmostApplication
     }
 
     private func consume(_ stream: AsyncStream<[Float]>) async {
@@ -550,6 +564,14 @@ final class Listener {
                 }
                 d.samples += f
                 d.silentFrames = seg.lastWasSpeech ? 0 : d.silentFrames + 1
+                if case let .utterance(u)? = event, await isStopWord(u) {
+                    // The stop word arrived as its own utterance; its audio is the tail of the buffer.
+                    d.samples.removeLast(min(u.count, d.samples.count))
+                    dictation = nil; Hotkeys.end()
+                    log("dictation finished by stop word")
+                    if d.heardSpeech, !d.samples.isEmpty { submit(d, cfg: dc) }
+                    continue
+                }
                 if !d.heardSpeech && seg.lastWasSpeech {
                     // Drop the wait before the text, keeping a preroll so the first syllable is whole.
                     d.samples = Array(d.samples.suffix(frames(ms: config.cfg.prerollMs ?? 300) * frameLen + frameLen))
@@ -583,6 +605,16 @@ final class Listener {
             let t = transcript.text
             // Logged too, so misses that transcribe to nothing are visible when tuning.
             guard !t.isEmpty else { log("heard: (empty, \(u.count * 1000 / Int(rate)) ms)"); continue }
+            if !isHead, (config.cfg.stopWords ?? []).map(normalize).contains(t) {
+                if let busy = micInUse(by: config.cfg.skipWhileMicInUseBy ?? []) {
+                    // Only while it records: superwhisper://record toggles, so this cannot start a recording.
+                    log("heard: \(t)  -> stop \(busy)")
+                    runCommand(config.cfg.stopCommand ?? "open -g superwhisper://record")
+                } else {
+                    log("heard: \(t)  (stop word, nothing is recording)")
+                }
+                continue
+            }
             let hit = !isHead && config.cfg.wakeWords.map(normalize).contains(t)
             // Utterance length shows whether the VAD holds on past the word; stt is recognizer time.
             log("heard: \(t)\(hit ? "  -> wake" : "")  [utt \(u.count * 1000 / Int(rate)) ms, stt \(Int(Date().timeIntervalSince(began) * 1000)) ms]")
@@ -611,6 +643,12 @@ final class Listener {
         }
     }
 
+    private func isStopWord(_ u: [Float]) async -> Bool {
+        let words = (config.cfg.stopWords ?? []).map(normalize)
+        guard !words.isEmpty, let t = try? await transcribe(u, locale: Locale(identifier: config.cfg.locale ?? "ja_JP")).text else { return false }
+        return words.contains(t)
+    }
+
     private func submit(_ d: Dictation, cfg: DictationConfig) {
         let claimed = handoffBusy.withLock { busy in
             defer { busy = true }
@@ -618,7 +656,7 @@ final class Listener {
         }
         guard claimed else { log("dictation dropped: previous one still in flight"); return }
         Task {
-            await handoff(d.samples, cfg: cfg)
+            await handoff(d.samples, cfg: cfg, target: d.target)
             handoffBusy.withLock { $0 = false }
         }
     }
