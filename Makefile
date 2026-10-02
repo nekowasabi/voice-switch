@@ -16,7 +16,9 @@ app: build
 	install -d $(BUILT)/Contents/MacOS
 	install .build/release/voice-switch $(BUILT)/Contents/MacOS/voice-switch
 	cp Info.plist $(BUILT)/Contents/Info.plist
-	codesign --force --sign - --identifier $(ID) $(BUILT)
+	# Ad-hoc signatures default to a cdhash requirement, so every rebuild looked like a new app to TCC and
+	# lost the microphone/Accessibility grants. Pin the requirement to the bundle identifier instead.
+	codesign --force --sign - --identifier $(ID) -r='designated => identifier "$(ID)"' $(BUILT)
 
 install: app
 	-launchctl bootout gui/$$(id -u)/$(ID) 2>/dev/null
