@@ -46,6 +46,11 @@ try
         Console.WriteLine($"lexeme: {lexeme.Text} {lexeme.Range.Start}..{lexeme.Range.End}");
     }
 
+    var leadingWake = DictationBoundaries.LeadingWake(result, config.WakeWords);
+    var standaloneStop = DictationBoundaries.StandaloneStopRange(result, config.StopWords ?? []);
+    Console.WriteLine($"leadingWake: {(leadingWake is null ? "-" : $"{leadingWake.WakeEnd}..{leadingWake.BodyStart}")}");
+    Console.WriteLine($"standaloneStop: {(standaloneStop is null ? "-" : $"{standaloneStop.Value.Start}..{standaloneStop.Value.End}")}");
+
     if (result.Id != request.Id || result.Source != request.Range)
     {
         Console.Error.WriteLine("native dictation probe: recognizer returned the wrong request identity or range");
@@ -62,6 +67,18 @@ try
     {
         Console.Error.WriteLine("native dictation probe: lexical timings are missing or outside the source PCM range");
         return 4;
+    }
+
+    if (HasFlag(args, "--expect-leading-wake") && leadingWake is null)
+    {
+        Console.Error.WriteLine("native dictation probe: expected production LeadingWake to accept the returned lexemes");
+        return 5;
+    }
+
+    if (HasFlag(args, "--expect-standalone-stop") && standaloneStop is null)
+    {
+        Console.Error.WriteLine("native dictation probe: expected production StandaloneStopRange to accept the returned lexemes");
+        return 6;
     }
 
     return 0;

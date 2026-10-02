@@ -32,6 +32,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("recognition key changes only for recognizer inputs", () => Check(ComparesRecognitionKey())),
     ("reports unsupported Windows config options", () => Check(ReportsUnsupportedOptions())),
     ("dictation wake prefix trims exact body start", () => Check(DictationWakePrefixTrimsExactBodyStart())),
+    ("dictation wake and stop boundaries are explicit", () => Check(DictationWakeAndStopBoundariesAreExplicit())),
     ("dictation lone wake waits for body", () => Check(DictationLoneWakeWaitsForBody())),
     ("dictation lone wake body then stop submits body", () => Check(DictationLoneWakeBodyThenStopSubmitsBody())),
     ("dictation repeated wake prefix keeps body", () => Check(DictationRepeatedWakePrefixKeepsBody())),
@@ -80,11 +81,14 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("noise processor conservative gain is bounded", () => Check(NoiseProcessorConservativeGainIsBounded())),
     ("dictation noise analysis never replaces handoff source", () => Check(DictationNoiseAnalysisNeverReplacesHandoffSource())),
     ("dictation noise-on local recording is byte exact", () => Check(DictationNoiseOnLocalRecordingIsByteExact())),
-    ("dictation handoff launches registered URI as one argument", () => Check(DictationHandoffLaunchesOneRegisteredUriArgument())),
+    ("dictation handoff launches ordinary registered URI as one argument", () => Check(DictationHandoffLaunchesOrdinaryRegisteredUriArgument())),
+    ("dictation handoff defers unsupported registered URI path", () => Check(DictationHandoffDefersUnsupportedRegisteredUriPath())),
     ("dictation handoff prelaunch failure cleans owned files", () => Check(DictationHandoffPrelaunchFailureCleansOwnedFiles())),
     ("dictation handoff retains file when postlaunch state write fails", () => Check(DictationHandoffRetainsFileWhenPostlaunchStateWriteFails())),
     ("dictation handoff busy and manual cleanup are explicit", () => Check(DictationHandoffBusyAndManualCleanup())),
     ("dictation handoff handles concurrency cleanup and recovery", () => Check(DictationHandoffConcurrencyCleanupAndRecovery())),
+    ("dictation registered handoff defers second body without relaunch", DictationRegisteredHandoffDefersSecondBodyWithoutRelaunch),
+    ("dictation handoff accepts trusted ancestor junction only", DictationHandoffAcceptsTrustedAncestorJunctionOnly),
     ("dictation dry-run keeps audio in memory", () => Check(DictationDryRunKeepsAudioInMemory())),
     ("production script parses configured words distinctly on Windows PowerShell", ProductionScriptParsesWordsOnWindowsPowerShell),
     ("resident fails on clean child exit before ready", () => Check(ResidentFailsOnCleanEarlyExit())),
@@ -93,6 +97,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("resident repeated start stop", () => Check(ResidentRepeatedStartStop())),
     ("resident reload restarts only valid recognition changes", ResidentReloadRestartRules),
     ("resident normal mode dispatches wake and stop commands", () => Check(ResidentNormalDispatchesCommands())),
+    ("resident command mode suppresses idle stop but dispatches wake", ResidentCommandModeSuppressesIdleStopButDispatchesWake),
     ("resident dry-run observes wake and stop without commands", () => Check(ResidentDryRunSuppressesCommands())),
     ("resident cancellation stops child", () => Check(ResidentCancellationStopsChild())),
     ("dictation recognizer retains ownership until confirmed exit", () => Check(DictationRecognizerRetainsOwnershipUntilConfirmedExit())),
@@ -330,6 +335,26 @@ static bool DictationWakePrefixTrimsExactBodyStart()
     return session.IsActive
         && session.PendingBody == new SampleRange(13300, 24000)
         && session.Events.Single().Range == new SampleRange(13300, 24000);
+}
+
+static bool DictationWakeAndStopBoundariesAreExplicit()
+{
+    var splitWake = Recognized(1, RecognitionExtent.PrefixHead, 0, 8000, "音声入力本文", false,
+        Run("音声", 0, 2000), Run("入力", 2000, 4000), Run("本文", 5000, 8000));
+    var fusedWake = Recognized(2, RecognitionExtent.PrefixHead, 0, 8000, "音声入力本文", false,
+        Run("音声入力本文", 0, 8000));
+    var standaloneStop = Recognized(3, RecognitionExtent.ClosedUtterance, 10000, 14000, "入力ストップ", false,
+        Run("入力", 10500, 12000), Run("ストップ", 12000, 13500));
+    var embeddedStop = Recognized(4, RecognitionExtent.ClosedUtterance, 15000, 22000, "今日は入力ストップです", false,
+        Run("今日は", 15000, 17000), Run("入力", 17000, 18500), Run("ストップ", 18500, 20000), Run("です", 20000, 22000));
+    var prefixStop = Recognized(5, RecognitionExtent.PrefixHead, 23000, 27000, "入力ストップ", false,
+        Run("入力", 23000, 24500), Run("ストップ", 24500, 26000));
+
+    return DictationBoundaries.LeadingWake(splitWake, ["音声入力"]) == new WakePrefix(4000, 5000)
+        && DictationBoundaries.LeadingWake(fusedWake, ["音声入力"]) is null
+        && DictationBoundaries.StandaloneStopRange(standaloneStop, ["入力ストップ"]) == new SampleRange(10500, 13500)
+        && DictationBoundaries.StandaloneStopRange(embeddedStop, ["入力ストップ"]) is null
+        && DictationBoundaries.StandaloneStopRange(prefixStop, ["入力ストップ"]) is null;
 }
 
 static bool DictationLoneWakeWaitsForBody()
@@ -1822,11 +1847,11 @@ static bool DictationSyntheticCaptureCancellationDisposesSource()
     return code == 0 && capture.DisposedForTest;
 }
 
-static bool DictationHandoffLaunchesOneRegisteredUriArgument()
+static bool DictationHandoffLaunchesOrdinaryRegisteredUriArgument()
 {
     using var temp = RuntimeTemp();
     ProcessStartInfo? seen = null;
-    var root = Path.Combine(temp.Dir, "sp ace#%日本語");
+    var root = Path.Combine(temp.Dir, "handoff");
     var handoff = new RegisteredSuperwhisperHandoff(root, psi =>
     {
         seen = psi;
@@ -1838,8 +1863,28 @@ static bool DictationHandoffLaunchesOneRegisteredUriArgument()
         && seen is not null
         && seen.ArgumentList.Count == 1
         && seen.ArgumentList[0].StartsWith("superwhisper://file//", StringComparison.Ordinal)
-        && seen.ArgumentList[0].Contains("sp ace#%日本語", StringComparison.Ordinal)
         && seen.ArgumentList[0].Contains(audio.SessionId.ToString("N"), StringComparison.Ordinal);
+}
+
+static bool DictationHandoffDefersUnsupportedRegisteredUriPath()
+{
+    using var temp = RuntimeTemp();
+    var launches = 0;
+    var root = Path.Combine(temp.Dir, "sp ace#%日本語");
+    var audio = new DictationAudio(Guid.NewGuid(), new SampleRange(0, 3), ImmutableArray.Create<short>(1, 2, 3));
+    var handoff = new RegisteredSuperwhisperHandoff(root, _ =>
+    {
+        launches++;
+        return Process.GetCurrentProcess();
+    });
+    var result = handoff.SubmitAsync(audio, CancellationToken.None).GetAwaiter().GetResult();
+    var wavs = Directory.Exists(root) ? Directory.EnumerateFiles(root, "*.wav").ToArray() : [];
+    var retained = wavs.Any(path => Pcm16Wav.DecodeStrict(new FileInfo(path), 60 * 16000).SequenceEqual(audio.Samples));
+
+    return result.Status.ToString() == "DeferredUnsent"
+        && launches == 0
+        && retained
+        && result.Message.Contains("unsupported path encoding", StringComparison.OrdinalIgnoreCase);
 }
 
 static bool DictationHandoffPrelaunchFailureCleansOwnedFiles()
@@ -1890,7 +1935,7 @@ static bool DictationHandoffBusyAndManualCleanup()
     var complete = RegisteredSuperwhisperHandoff.CompleteManual(root, firstId);
     var again = RegisteredSuperwhisperHandoff.CompleteManual(root, firstId);
     return first.Status == HandoffStatus.SubmittedUnconfirmed
-        && second.Status == HandoffStatus.Busy
+        && second.Status.ToString() == "DeferredUnsent"
         && complete.Status == HandoffStatus.CompletedManually
         && again.Status == HandoffStatus.NotFound;
 }
@@ -1958,6 +2003,142 @@ static bool DictationHandoffConcurrencyCleanupAndRecovery()
     }
 
     return ok;
+}
+
+static TestOutcome DictationRegisteredHandoffDefersSecondBodyWithoutRelaunch()
+{
+    using var temp = RuntimeTemp();
+    var root = Path.Combine(temp.Dir, "handoff");
+    var launches = 0;
+    var handoff = new RegisteredSuperwhisperHandoff(root, _ =>
+    {
+        launches++;
+        return Process.GetCurrentProcess();
+    });
+    var first = new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(5000, 5001));
+    var second = new DictationAudio(Guid.NewGuid(), new SampleRange(10, 13), ImmutableArray.Create<short>(9000, 9001, 9002));
+    var firstResult = handoff.SubmitAsync(first, CancellationToken.None).GetAwaiter().GetResult();
+    var secondResult = handoff.SubmitAsync(second, CancellationToken.None).GetAwaiter().GetResult();
+    var wavs = Directory.Exists(root) ? Directory.EnumerateFiles(root, "*.wav").ToArray() : [];
+    var bodies = wavs.Select(path => Pcm16Wav.DecodeStrict(new FileInfo(path), 60 * 16000).ToArray()).ToArray();
+    var firstRetained = bodies.Any(samples => samples.Contains((short)5000));
+    var secondRetained = bodies.Any(samples => samples.Contains((short)9000));
+
+    return firstResult.Status == HandoffStatus.SubmittedUnconfirmed
+        && secondResult.Status.ToString() == "DeferredUnsent"
+        && launches == 1
+        && wavs.Length == 2
+        && firstRetained
+        && secondRetained
+        ? TestOutcome.Pass()
+        : TestOutcome.Fail($"first={firstResult.Status} second={secondResult.Status} launches={launches} wavs={wavs.Length} firstRetained={firstRetained} secondRetained={secondRetained}");
+}
+
+static TestOutcome DictationHandoffAcceptsTrustedAncestorJunctionOnly()
+{
+    if (!OperatingSystem.IsWindows())
+    {
+        return TestOutcome.Skip("requires native Windows junctions");
+    }
+
+    using var temp = RuntimeTemp();
+    var target = Path.Combine(temp.Dir, "target");
+    var junction = Path.Combine(temp.Dir, "junction");
+    var rootJunction = Path.Combine(temp.Dir, "root-junction");
+    var childRoot = Path.Combine(temp.Dir, "child-root");
+    var childJunction = "";
+    Directory.CreateDirectory(target);
+    try
+    {
+        if (!CreateJunction(junction, target))
+        {
+            return TestOutcome.Skip("mklink /J is unavailable in this environment");
+        }
+
+        var launches = 0;
+        var body = ImmutableArray.Create<short>(321, 654);
+        var handoff = new RegisteredSuperwhisperHandoff(Path.Combine(junction, "handoff"), _ =>
+        {
+            launches++;
+            return Process.GetCurrentProcess();
+        });
+        var audio = new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), body);
+        var result = SubmitWithoutThrow(handoff, audio);
+        var wavPath = Path.Combine(target, "handoff", $"{audio.SessionId:N}.wav");
+        var retained = File.Exists(wavPath)
+            && Pcm16Wav.DecodeStrict(new FileInfo(wavPath), 60 * 16000).SequenceEqual(body);
+
+        var outside = Path.Combine(temp.Dir, "outside");
+        Directory.CreateDirectory(outside);
+        var rootResult = CreateJunction(rootJunction, outside)
+            ? SubmitWithoutThrow(new RegisteredSuperwhisperHandoff(rootJunction, _ => Process.GetCurrentProcess()), new DictationAudio(Guid.NewGuid(), new SampleRange(0, 1), ImmutableArray.Create<short>(7)))
+            : new HandoffResult(HandoffStatus.NotFound, Guid.Empty, null, "root junction not created");
+
+        Directory.CreateDirectory(childRoot);
+        var childAudio = new DictationAudio(Guid.NewGuid(), new SampleRange(0, 1), ImmutableArray.Create<short>(8));
+        childJunction = Path.Combine(childRoot, $"{childAudio.SessionId:N}.wav");
+        var childResult = CreateJunction(childJunction, outside)
+            ? SubmitWithoutThrow(new RegisteredSuperwhisperHandoff(childRoot, _ => Process.GetCurrentProcess()), childAudio)
+            : new HandoffResult(HandoffStatus.NotFound, Guid.Empty, null, "child junction not created");
+
+        return result.Status == HandoffStatus.SubmittedUnconfirmed
+            && launches == 1
+            && retained
+            && rootResult.Status == HandoffStatus.FailedBeforeDispatch
+            && childResult.Status == HandoffStatus.FailedBeforeDispatch
+            && Directory.Exists(outside)
+            ? TestOutcome.Pass()
+            : TestOutcome.Fail($"ancestor={result.Status} launches={launches} retained={retained} root={rootResult.Status}/{rootResult.Message} child={childResult.Status}/{childResult.Message}");
+    }
+    finally
+    {
+        DeleteJunctionIfOwned(junction, temp.Dir);
+        DeleteJunctionIfOwned(rootJunction, temp.Dir);
+        if (!string.IsNullOrEmpty(childJunction))
+        {
+            DeleteJunctionIfOwned(childJunction, temp.Dir);
+        }
+    }
+}
+
+static bool CreateJunction(string junction, string target)
+{
+    using var process = Process.Start(new ProcessStartInfo("cmd.exe", $"/c mklink /J \"{junction}\" \"{target}\"")
+    {
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        UseShellExecute = false,
+        CreateNoWindow = true
+    }) ?? throw new InvalidOperationException("failed to start mklink");
+    return process.WaitForExit(5000) && process.ExitCode == 0;
+}
+
+static void DeleteJunctionIfOwned(string junction, string ownerRoot)
+{
+    var fullOwner = Path.GetFullPath(ownerRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+    var fullJunction = Path.GetFullPath(junction);
+    if (!fullJunction.StartsWith(fullOwner, StringComparison.OrdinalIgnoreCase) || !Directory.Exists(junction))
+    {
+        return;
+    }
+
+    var attributes = File.GetAttributes(junction);
+    if ((attributes & FileAttributes.ReparsePoint) != 0)
+    {
+        Directory.Delete(junction, recursive: false);
+    }
+}
+
+static HandoffResult SubmitWithoutThrow(IDictationHandoff handoff, DictationAudio audio)
+{
+    try
+    {
+        return handoff.SubmitAsync(audio, CancellationToken.None).GetAwaiter().GetResult();
+    }
+    catch (Exception ex)
+    {
+        return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, $"threw {ex.GetType().Name}: {ex.Message}");
+    }
 }
 
 static bool DictationDryRunKeepsAudioInMemory()
@@ -2037,11 +2218,16 @@ static IReadOnlyList<PcmFrame> ThreeUtteranceFrames()
 
 static void AddFrames(List<PcmFrame> frames, int count, bool loud)
 {
+    AddFramesWithSample(frames, count, loud ? (short)8000 : (short)1);
+}
+
+static void AddFramesWithSample(List<PcmFrame> frames, int count, short sample)
+{
     for (var i = 0; i < count; i++)
     {
         var start = frames.Count * Segmenter.FrameLength;
         var samples = Enumerable.Range(0, Segmenter.FrameLength)
-            .Select(offset => loud ? (short)8000 : (short)1)
+            .Select(_ => sample)
             .ToImmutableArray();
         frames.Add(new PcmFrame(start, samples));
     }
@@ -2347,6 +2533,63 @@ static bool ResidentNormalDispatchesCommands()
     return runtime.Run() == 0
         && commands.SequenceEqual(["wake", "stop"])
         && decisions.Select(decision => decision.Reason).SequenceEqual(["wake", "stop"]);
+}
+
+static TestOutcome ResidentCommandModeSuppressesIdleStopButDispatchesWake()
+{
+    using var missingStopTemp = RuntimeTemp();
+    WriteCommandConfig(missingStopTemp.ConfigPath, stopCommand: null);
+    var missingStopCommands = new List<string>();
+    var missingStopDecisions = new List<RuntimeDecision>();
+    var missingStopRuntime = CreateRuntime(
+        missingStopTemp,
+        1,
+        _ => StartChild("ready-recognize-stop"),
+        missingStopCommands.Add,
+        missingStopDecisions.Add);
+    var missingStopCode = missingStopRuntime.Run();
+
+    using var legacyToggleTemp = RuntimeTemp();
+    WriteCommandConfig(legacyToggleTemp.ConfigPath, PlatformDefaults.SuperwhisperToggle);
+    var legacyToggleCommands = new List<string>();
+    var legacyToggleDecisions = new List<RuntimeDecision>();
+    var legacyToggleRuntime = CreateRuntime(
+        legacyToggleTemp,
+        1,
+        _ => StartChild("ready-recognize-stop"),
+        legacyToggleCommands.Add,
+        legacyToggleDecisions.Add);
+    var legacyToggleCode = legacyToggleRuntime.Run();
+
+    using var wakeTemp = RuntimeTemp();
+    WriteCommandConfig(wakeTemp.ConfigPath, stopCommand: null);
+    var wakeCommands = new List<string>();
+    var wakeDecisions = new List<RuntimeDecision>();
+    var wakeRuntime = CreateRuntime(
+        wakeTemp,
+        1,
+        _ => StartChild("ready-recognize-wake"),
+        wakeCommands.Add,
+        wakeDecisions.Add);
+    var wakeCode = wakeRuntime.Run();
+
+    var missingConfig = missingStopTemp.Load();
+    var legacyConfig = legacyToggleTemp.Load();
+    var pureWake = TextMatching.Decide("音声入力", missingConfig);
+    var pureMissingStop = TextMatching.Decide("入力ストップ", missingConfig);
+    var pureLegacyStop = TextMatching.Decide("入力ストップ", legacyConfig);
+    var ok = missingStopCode == 0
+        && legacyToggleCode == 0
+        && wakeCode == 0
+        && pureWake is { Kind: "run-command", Reason: "wake" }
+        && pureMissingStop.Kind == "ignore"
+        && pureLegacyStop.Kind == "ignore"
+        && missingStopCommands.Count == 0
+        && legacyToggleCommands.Count == 0
+        && wakeCommands.SequenceEqual(["wake"]);
+    return ok
+        ? TestOutcome.Pass()
+        : TestOutcome.Fail($"pureWake={pureWake.Kind}/{pureWake.Reason} missingPure={pureMissingStop.Kind}/{pureMissingStop.Reason} legacyPure={pureLegacyStop.Kind}/{pureLegacyStop.Reason} missingCode={missingStopCode} legacyCode={legacyToggleCode} missingCommands=[{string.Join(',', missingStopCommands)}] legacyCommands=[{string.Join(',', legacyToggleCommands)}] missingDecisions=[{string.Join(',', missingStopDecisions.Select(decision => decision.Reason))}] legacyDecisions=[{string.Join(',', legacyToggleDecisions.Select(decision => decision.Reason))}] wakeCode={wakeCode} wakeCommands=[{string.Join(',', wakeCommands)}]");
 }
 
 static bool ResidentCancellationStopsChild()
@@ -2915,6 +3158,23 @@ static void WriteConfigWithNewTimestamp(string path, string json)
     }
 }
 
+static void WriteCommandConfig(string path, string? stopCommand)
+{
+    var properties = new Dictionary<string, object?>
+    {
+        ["wakeWords"] = new[] { "音声入力" },
+        ["locale"] = "ja_JP",
+        ["command"] = "wake",
+        ["stopWords"] = new[] { "入力ストップ" }
+    };
+    if (stopCommand is not null)
+    {
+        properties["stopCommand"] = stopCommand;
+    }
+
+    File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(properties));
+}
+
 static TestSpeechProcess StartChild(string mode, Action<string>? observeLine = null)
 {
     var dll = Assembly.GetEntryAssembly()?.Location ?? throw new InvalidOperationException("test assembly path not found");
@@ -2942,6 +3202,8 @@ static int Child(string mode)
         "stderr-error" => ChildStderrError(),
         "ready-wait" => ChildReadyWait(),
         "ready-recognize-wake-stop" => ChildReadyRecognizeWakeStop(),
+        "ready-recognize-stop" => ChildReadyRecognize("入力ストップ", 0.88),
+        "ready-recognize-wake" => ChildReadyRecognize("音声入力", 0.99),
         _ => 2,
     };
 }
@@ -2967,6 +3229,16 @@ static int ChildReadyRecognizeWakeStop()
     Console.WriteLine("{\"type\":\"diagnostic\",\"message\":\"recognizer ready: ja-JP fixture\"}");
     Console.WriteLine("{\"type\":\"recognized\",\"text\":\"音声入力\",\"confidence\":0.99}");
     Console.WriteLine("{\"type\":\"recognized\",\"text\":\"入力ストップ\",\"confidence\":0.88}");
+    Console.Out.Flush();
+    Thread.Sleep(1500);
+    return 0;
+}
+
+static int ChildReadyRecognize(string text, double confidence)
+{
+    Console.OutputEncoding = System.Text.Encoding.UTF8;
+    Console.WriteLine("{\"type\":\"diagnostic\",\"message\":\"recognizer ready: ja-JP fixture\"}");
+    Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new { type = "recognized", text, confidence }));
     Console.Out.Flush();
     Thread.Sleep(1500);
     return 0;
