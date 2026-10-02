@@ -11,7 +11,7 @@
   "vadMinRMS": 0.005,
   "dictation": {
     "recordingsDir": "~/Documents/superwhisper/recordings",
-    "endSilenceMs": 1200,
+    "endSilenceMs": 1200, "startTimeoutMs": 3000,
     "maxSeconds": 60,
     "excludeBundleIDs": []
   }

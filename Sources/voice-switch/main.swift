@@ -10,7 +10,7 @@
 // usage: VoiceSwitch.app                     menu-bar app (config: $VOICE_SWITCH_CONFIG or
 //                                            ~/.config/voice-switch/config.json)
 //        voice-switch --check a.wav b.wav    feed files through VAD + transcriber, print verdicts
-//        voice-switch --dictate-file a.wav   cut the leading wake word from a.wav and hand the rest to superwhisper
+//        voice-switch --simulate a.wav       feed a.wav through the live consumer instead of the mic
 //
 // One-breath dictation ("音声入力、明日の会議は…"): an utterance that starts with a wake word and goes on
 // is recorded until silence, the wake word is cut from the audio, and superwhisper transcribes the file
@@ -49,6 +49,8 @@ struct DictationConfig: Decodable {
     var endSilenceMs: Int?
     var maxSeconds: Double?
     var excludeBundleIDs: [String]?
+    /// How long a lone wake word waits for the text before giving up.
+    var startTimeoutMs: Int?
 }
 
 final class ConfigFile {
@@ -514,6 +516,10 @@ final class Listener {
         log("listening on \(deviceName) at \(fmt.sampleRate) Hz for \(config.cfg.wakeWords)")
     }
 
+    func feed(_ samples: [Float]) {
+        for i in stride(from: 0, to: samples.count - frameLen + 1, by: frameLen) { cont.yield(Array(samples[i ..< i + frameLen])) }
+    }
+
     func stop() {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
@@ -525,6 +531,8 @@ final class Listener {
     struct Dictation {
         var samples: [Float]
         var silentFrames: Int
+        /// False while waiting for the text after a lone wake word; silence then means "nothing came", not "done".
+        var heardSpeech: Bool
     }
 
     private func consume(_ stream: AsyncStream<[Float]>) async {
@@ -542,7 +550,19 @@ final class Listener {
                 }
                 d.samples += f
                 d.silentFrames = seg.lastWasSpeech ? 0 : d.silentFrames + 1
+                if !d.heardSpeech && seg.lastWasSpeech {
+                    // Drop the wait before the text, keeping a preroll so the first syllable is whole.
+                    d.samples = Array(d.samples.suffix(frames(ms: config.cfg.prerollMs ?? 300) * frameLen + frameLen))
+                    d.heardSpeech = true
+                }
                 dictation = d
+                if !d.heardSpeech {
+                    if d.silentFrames * frameLen * 1000 / Int(rate) >= dc.startTimeoutMs ?? 3000 {
+                        dictation = nil; Hotkeys.end()
+                        log("dictation cancelled: nothing said after the wake word")
+                    }
+                    continue
+                }
                 guard key == .finish || d.silentFrames * frameLen * 1000 / Int(rate) >= dc.endSilenceMs ?? 1200
                     || d.samples.count > Int((dc.maxSeconds ?? 60) * rate) else { continue }
                 d.samples.removeLast(d.silentFrames * frameLen)
@@ -573,14 +593,21 @@ final class Listener {
                 // started then would be the user's speech already being recorded by superwhisper.
                 log("skipped: \(busy) is using the microphone"); continue
             }
-            guard let start else { runCommand(config.cfg.command); continue }
+            // People pause after the wake word ("音声入力、…"), which ends the utterance at the wake word alone.
+            // With dictation on, a lone wake word therefore opens a dictation that waits for the text.
+            guard start != nil || config.cfg.dictation != nil else { runCommand(config.cfg.command); continue }
             if let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
                config.cfg.dictation?.excludeBundleIDs?.contains(id) == true {
                 log("dictation skipped: \(id) is excluded"); continue
             }
-            dictation = Dictation(samples: trimmed(u, cutAt: start.cutAt), silentFrames: 0)
+            if let start {
+                dictation = Dictation(samples: trimmed(u, cutAt: start.cutAt), silentFrames: 0, heardSpeech: true)
+                log("dictation started (cut at \(Int(start.cutAt * 1000)) ms)")
+            } else {
+                dictation = Dictation(samples: [], silentFrames: 0, heardSpeech: false)
+                log("dictation started (waiting for text)")
+            }
             Hotkeys.begin()
-            log("dictation started (cut at \(Int(start.cutAt * 1000)) ms)")
         }
     }
 
@@ -754,7 +781,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
 let logURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/voice-switch.log")
 var args = Array(CommandLine.arguments.dropFirst())
-let mode = args.first.flatMap { ["--check", "--dictate-file", "--hotkey-test"].contains($0) ? $0 : nil }
+let mode = args.first.flatMap { ["--check", "--simulate", "--hotkey-test"].contains($0) ? $0 : nil }
 if mode != nil { args.removeFirst() }
 let configPath = ProcessInfo.processInfo.environment["VOICE_SWITCH_CONFIG"]
     ?? NSString(string: "~/.config/voice-switch/config.json").expandingTildeInPath
@@ -776,22 +803,17 @@ if mode == "--check" {
     log("hotkey-test: tap idle, keys pass through")
     RunLoop.main.run(until: Date() + 8)
     exit(0)
-} else if mode == "--dictate-file" {
+} else if mode == "--simulate" {
+    // Feeds a wav through the live consumer (VAD, wake word, dictation, handoff) instead of the mic.
+    let listener = Listener(config: try ConfigFile(path: configPath))
     Task {
         do {
-            let cfg = try ConfigFile(path: configPath).cfg
-            let locale = Locale(identifier: cfg.locale ?? "ja_JP")
-            try await ensureModel(locale)
-            let samples = try loadSamples(args[0])
-            guard let start = dictationStart(try await transcribe(samples, locale: locale), wakeWords: cfg.wakeWords) else {
-                log("no wake word followed by speech at the start of \(args[0])"); exit(1)
-            }
-            log("cut at \(Int(start.cutAt * 1000)) ms, Apple heard after it: \(start.rest)")
-            await handoff(trimmed(samples, cutAt: start.cutAt), cfg: cfg.dictation ?? DictationConfig())
-            exit(0)
+            try await ensureModel(Locale(identifier: listener.config.cfg.locale ?? "ja_JP"))
+            listener.feed(try loadSamples(args[0]) + [Float](repeating: 0, count: Int(rate) * 5))
         } catch { log("fatal: \(error)"); exit(1) }
     }
-    dispatchMain()
+    RunLoop.main.run(until: Date() + 25)
+    exit(0)
 } else {
     // Launched from Finder/login there is no terminal, so send output to the log file.
     if isatty(STDOUT_FILENO) == 0 {
