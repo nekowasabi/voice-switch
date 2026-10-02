@@ -344,6 +344,97 @@ func trimmed(_ samples: [Float], cutAt: Double) -> [Float] {
     Array(samples.dropFirst(min(samples.count, Int(cutAt * rate))))
 }
 
+// MARK: dictation hotkeys
+
+/// superwhisper's own record/cancel shortcuts, borrowed while a dictation records. Outside that window the
+/// tap passes every event through, so superwhisper's shortcuts behave as if voice-switch were not there.
+/// The consumer owns the dictation; the tap only leaves a command here for it to pick up on the next frame.
+enum Hotkeys {
+    enum Command { case finish, cancel }
+    struct Shortcut: Equatable { var keyCode: Int64; var flags: CGEventFlags.RawValue }
+    struct State {
+        var active = false
+        var shortcuts: [(Shortcut, Command)] = []
+        var pending: Command?
+        var swallowUp: Set<Int64> = [] // keyUps of swallowed presses, so superwhisper never sees half a press
+        var loggedMissing: Set<String> = []
+    }
+
+    static let state = OSAllocatedUnfairLock(initialState: State())
+    static let relevantFlags: CGEventFlags = [.maskCommand, .maskShift, .maskAlternate, .maskControl]
+    nonisolated(unsafe) static var tap: CFMachPort?
+    nonisolated(unsafe) static var triedTap = false
+
+    /// Called when a dictation starts: re-read the shortcuts (the user may have changed them) and arm the tap.
+    static func begin() {
+        let defaults = UserDefaults(suiteName: "com.superduper.superwhisper")
+        let read = [("KeyboardShortcuts_toggleRecording", Command.finish), ("KeyboardShortcuts_cancelRecording", .cancel)].map {
+            (key: $0.0, command: $0.1, shortcut: defaults?.string(forKey: $0.0).flatMap(parseShortcut))
+        }
+        let shortcuts = read.compactMap { r in r.shortcut.map { ($0, r.command) } }
+        let missing = read.filter { $0.shortcut == nil }.map(\.key)
+        let newlyMissing = state.withLock { st in
+            st.shortcuts = shortcuts; st.pending = nil; st.active = true
+            defer { st.loggedMissing.formUnion(missing) }
+            return missing.filter { !st.loggedMissing.contains($0) }
+        }
+        for key in newlyMissing { log("hotkey: superwhisper shortcut \(key) missing or unreadable, that key is off") }
+        DispatchQueue.main.async(execute: installTap)
+    }
+
+    static func end() { state.withLock { $0.active = false; $0.pending = nil } }
+
+    static func take() -> Command? { state.withLock { st in defer { st.pending = nil }; return st.pending } }
+
+    /// {"carbonModifiers":2560,"carbonKeyCode":38}: Carbon key codes equal CGKeyCodes; modifiers need mapping.
+    static func parseShortcut(_ json: String) -> Shortcut? {
+        guard let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+              let code = obj["carbonKeyCode"] as? Int, let mods = obj["carbonModifiers"] as? Int else { return nil }
+        var flags: CGEventFlags = []
+        if mods & 256 != 0 { flags.insert(.maskCommand) }
+        if mods & 512 != 0 { flags.insert(.maskShift) }
+        if mods & 2048 != 0 { flags.insert(.maskAlternate) }
+        if mods & 4096 != 0 { flags.insert(.maskControl) }
+        return Shortcut(keyCode: Int64(code), flags: flags.rawValue)
+    }
+
+    static func installTap() {
+        guard !triedTap else { return }
+        triedTap = true
+        if !AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary) {
+            log("hotkey: Accessibility not granted yet")
+        }
+        let mask = CGEventMask(1 << CGEventType.keyDown.rawValue) | CGEventMask(1 << CGEventType.keyUp.rawValue)
+        guard let port = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
+                                           eventsOfInterest: mask, callback: { _, type, event, _ in Hotkeys.handle(type, event) },
+                                           userInfo: nil) else {
+            // Retried at the next dictation, in case Accessibility was granted in between.
+            triedTap = false
+            log("hotkey finish unavailable: grant Accessibility"); return
+        }
+        tap = port
+        CFRunLoopAddSource(CFRunLoopGetMain(), CFMachPortCreateRunLoopSource(nil, port, 0), .commonModes)
+        log("hotkey: tap installed")
+    }
+
+    static func handle(_ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+            return Unmanaged.passUnretained(event)
+        }
+        let code = event.getIntegerValueField(.keyboardEventKeycode)
+        let pressed = Shortcut(keyCode: code, flags: event.flags.intersection(relevantFlags).rawValue)
+        let swallow = state.withLock { st -> Bool in
+            if type == .keyUp { return st.swallowUp.remove(code) != nil }
+            guard st.active, type == .keyDown, let (_, command) = st.shortcuts.first(where: { $0.0 == pressed }) else { return false }
+            st.pending = command
+            st.swallowUp.insert(code)
+            return true
+        }
+        return swallow ? nil : Unmanaged.passUnretained(event)
+    }
+}
+
 func audioDeviceID(uid: String) -> AudioDeviceID? {
     var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyTranslateUIDToDevice,
                                           mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
@@ -440,17 +531,23 @@ final class Listener {
         var seg = Segmenter(cfg: config.cfg)
         var dictation: Dictation?
         for await f in stream {
-            if f.isEmpty { seg = Segmenter(cfg: config.cfg); dictation = nil; continue }
+            if f.isEmpty { seg = Segmenter(cfg: config.cfg); dictation = nil; Hotkeys.end(); continue }
             let event = seg.push(f) // keeps the VAD floor current; events are ignored while dictating
             if var d = dictation {
                 let dc = config.cfg.dictation ?? DictationConfig()
+                let key = Hotkeys.take()
+                if key == .cancel {
+                    dictation = nil; Hotkeys.end()
+                    log("dictation cancelled"); continue
+                }
                 d.samples += f
                 d.silentFrames = seg.lastWasSpeech ? 0 : d.silentFrames + 1
                 dictation = d
-                guard d.silentFrames * frameLen * 1000 / Int(rate) >= dc.endSilenceMs ?? 1200
+                guard key == .finish || d.silentFrames * frameLen * 1000 / Int(rate) >= dc.endSilenceMs ?? 1200
                     || d.samples.count > Int((dc.maxSeconds ?? 60) * rate) else { continue }
                 d.samples.removeLast(d.silentFrames * frameLen)
-                dictation = nil
+                dictation = nil; Hotkeys.end()
+                if key == .finish { log("dictation finished by hotkey") }
                 submit(d, cfg: dc)
                 continue
             }
@@ -482,6 +579,7 @@ final class Listener {
                 log("dictation skipped: \(id) is excluded"); continue
             }
             dictation = Dictation(samples: trimmed(u, cutAt: start.cutAt), silentFrames: 0)
+            Hotkeys.begin()
             log("dictation started (cut at \(Int(start.cutAt * 1000)) ms)")
         }
     }
@@ -656,7 +754,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
 let logURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/voice-switch.log")
 var args = Array(CommandLine.arguments.dropFirst())
-let mode = args.first.flatMap { ["--check", "--dictate-file"].contains($0) ? $0 : nil }
+let mode = args.first.flatMap { ["--check", "--dictate-file", "--hotkey-test"].contains($0) ? $0 : nil }
 if mode != nil { args.removeFirst() }
 let configPath = ProcessInfo.processInfo.environment["VOICE_SWITCH_CONFIG"]
     ?? NSString(string: "~/.config/voice-switch/config.json").expandingTildeInPath
@@ -666,6 +764,18 @@ if mode == "--check" {
         do { try await check(args, cfg: ConfigFile(path: configPath).cfg); exit(0) } catch { log("fatal: \(error)"); exit(1) }
     }
     dispatchMain()
+} else if mode == "--hotkey-test" {
+    // Hidden: 8 s of pretend dictation with the tap armed, then 8 s with it idle, to test key routing.
+    Hotkeys.begin()
+    let armedUntil = Date() + 8
+    while Date() < armedUntil {
+        RunLoop.main.run(until: Date() + 0.03)
+        if let c = Hotkeys.take() { log("hotkey-test: dictation \(c == .finish ? "finished" : "cancelled") by hotkey"); break }
+    }
+    Hotkeys.end()
+    log("hotkey-test: tap idle, keys pass through")
+    RunLoop.main.run(until: Date() + 8)
+    exit(0)
 } else if mode == "--dictate-file" {
     Task {
         do {
