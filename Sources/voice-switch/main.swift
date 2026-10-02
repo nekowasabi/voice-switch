@@ -107,6 +107,9 @@ struct Segmenter {
     private var silent = 0
     private var skipping = false
     private(set) var lastWasSpeech = false
+    /// Off while dictating: quiet syllables classed as non-speech would otherwise pull the floor up toward
+    /// the voice itself, so after ~2-3 s of talking the threshold passes the speech and it reads as silence.
+    var adaptFloor = true
 
     enum Event {
         case utterance([Float])
@@ -120,7 +123,7 @@ struct Segmenter {
         let rms = (f.reduce(0) { $0 + $1 * $1 } / Float(f.count)).squareRoot()
         let speech = rms > max(floor * (cfg.vadRatio ?? 3), cfg.vadMinRMS ?? 0.005)
         // Track the noise floor only while quiet, so speech does not raise it.
-        if !speech { floor = floor * 0.95 + rms * 0.05 }
+        if !speech && adaptFloor { floor = floor * 0.95 + rms * 0.05 }
         return speech
     }
 
@@ -412,12 +415,16 @@ enum Hotkeys {
         return Shortcut(keyCode: Int64(code), flags: flags.rawValue)
     }
 
+    private static var prompted = false
+
     static func installTap() {
         guard !triedTap else { return }
         triedTap = true
-        if !AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary) {
+        // The system prompt is modal and steals focus mid-dictation, so show it at most once per launch.
+        if !AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue(): !prompted] as CFDictionary) {
             log("hotkey: Accessibility not granted yet")
         }
+        prompted = true
         let mask = CGEventMask(1 << CGEventType.keyDown.rawValue) | CGEventMask(1 << CGEventType.keyUp.rawValue)
         guard let port = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
                                            eventsOfInterest: mask, callback: { _, type, event, _ in Hotkeys.handle(type, event) },
@@ -528,8 +535,12 @@ final class Listener {
         log("listening on \(deviceName) at \(fmt.sampleRate) Hz for \(config.cfg.wakeWords)")
     }
 
-    func feed(_ samples: [Float]) {
-        for i in stride(from: 0, to: samples.count - frameLen + 1, by: frameLen) { cont.yield(Array(samples[i ..< i + frameLen])) }
+    /// realtime paces frames like the mic does, which matters when the consumer awaits mid-stream.
+    func feed(_ samples: [Float], realtime: Bool = false) async {
+        for i in stride(from: 0, to: samples.count - frameLen + 1, by: frameLen) {
+            cont.yield(Array(samples[i ..< i + frameLen]))
+            if realtime { try? await Task.sleep(nanoseconds: 30_000_000) }
+        }
     }
 
     func stop() {
@@ -554,7 +565,8 @@ final class Listener {
         var dictation: Dictation?
         for await f in stream {
             if f.isEmpty { seg = Segmenter(cfg: config.cfg); dictation = nil; Hotkeys.end(); continue }
-            let event = seg.push(f) // keeps the VAD floor current; events are ignored while dictating
+            seg.adaptFloor = dictation == nil
+            let event = seg.push(f)
             if var d = dictation {
                 let dc = config.cfg.dictation ?? DictationConfig()
                 let key = Hotkeys.take()
@@ -587,9 +599,11 @@ final class Listener {
                 }
                 guard key == .finish || d.silentFrames * frameLen * 1000 / Int(rate) >= dc.endSilenceMs ?? 1200
                     || d.samples.count > Int((dc.maxSeconds ?? 60) * rate) else { continue }
+                let reason = key == .finish ? "hotkey" : d.samples.count > Int((dc.maxSeconds ?? 60) * rate) ? "maxSeconds"
+                    : "\(d.silentFrames * frameLen * 1000 / Int(rate)) ms silence"
                 d.samples.removeLast(d.silentFrames * frameLen)
                 dictation = nil; Hotkeys.end()
-                if key == .finish { log("dictation finished by hotkey") }
+                log("dictation ended by \(reason) after \(d.samples.count * 1000 / Int(rate)) ms of audio")
                 submit(d, cfg: dc)
                 continue
             }
@@ -646,6 +660,7 @@ final class Listener {
     private func isStopWord(_ u: [Float]) async -> Bool {
         let words = (config.cfg.stopWords ?? []).map(normalize)
         guard !words.isEmpty, let t = try? await transcribe(u, locale: Locale(identifier: config.cfg.locale ?? "ja_JP")).text else { return false }
+        log("dictating: \(t)  [utt \(u.count * 1000 / Int(rate)) ms]")
         return words.contains(t)
     }
 
@@ -847,10 +862,11 @@ if mode == "--check" {
     Task {
         do {
             try await ensureModel(Locale(identifier: listener.config.cfg.locale ?? "ja_JP"))
-            listener.feed(try loadSamples(args[0]) + [Float](repeating: 0, count: Int(rate) * 5))
+            await listener.feed(try loadSamples(args[0]) + [Float](repeating: 0, count: Int(rate) * 5),
+                              realtime: ProcessInfo.processInfo.environment["SIMULATE_REALTIME"] != nil)
         } catch { log("fatal: \(error)"); exit(1) }
     }
-    RunLoop.main.run(until: Date() + 25)
+    RunLoop.main.run(until: Date() + 40)
     exit(0)
 } else {
     // Launched from Finder/login there is no terminal, so send output to the log file.
