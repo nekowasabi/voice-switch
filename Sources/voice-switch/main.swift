@@ -46,6 +46,8 @@ struct Config: Decodable {
     var stopCommand: String?
     /// Absent turns one-breath dictation off.
     var dictation: DictationConfig?
+    /// Absent disables macrowhisper CLI hooks.
+    var macrowhisper: MacrowhisperConfig?
 }
 
 struct DictationConfig: Decodable {
@@ -55,6 +57,24 @@ struct DictationConfig: Decodable {
     var excludeBundleIDs: [String]?
     /// How long a lone wake word waits for the text before giving up.
     var startTimeoutMs: Int?
+}
+
+/// Optional hooks into the macrowhisper CLI (https://github.com/ognistik/macrowhisper).
+/// Same surface the Alfred workflow uses: schedule / auto-return / set-active, then Superwhisper.
+/// scheduleAction and autoReturn are mutually exclusive in macrowhisper (scheduling cancels auto-return and vice versa).
+struct MacrowhisperConfig: Decodable {
+    /// Absolute path or bare name on PATH. Default: "macrowhisper".
+    var bin: String?
+    /// `macrowhisper --schedule-action <name>` before starting Superwhisper (one-shot for the next recording).
+    var scheduleAction: String?
+    /// `macrowhisper --auto-return true` before starting Superwhisper (one-shot Return after insert).
+    var autoReturn: Bool?
+    /// `macrowhisper --action <name>` — set the persistent fallback active action (not one-shot).
+    var activeAction: String?
+    /// Optional `superwhisper://mode?key=` before/with record (Alfred's dictateMode).
+    var modeKey: String?
+    /// Also run the same prepare step before one-breath dictation handoff to Superwhisper. Default true when any hook is set.
+    var onDictationHandoff: Bool?
 }
 
 final class ConfigFile {
@@ -302,7 +322,7 @@ func loadSamples(_ path: String) throws -> [Float] {
 let handoffBusy = OSAllocatedUnfairLock(initialState: false)
 
 /// superwhisper transcribes the file and auto-pastes into the frontmost app; we only wait to clean up and log.
-func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplication?) async {
+func handoff(_ samples: [Float], cfg: DictationConfig, macrowhisper: MacrowhisperConfig?, target: NSRunningApplication?) async {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("voice-switch")
     let wav = dir.appendingPathComponent("\(UUID().uuidString).wav")
     defer { try? FileManager.default.removeItem(at: wav) }
@@ -310,6 +330,9 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     do {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try writeWAV(samples, to: wav)
+        if Macrowhisper.shouldPrepareHandoff(macrowhisper) {
+            Macrowhisper.prepare(macrowhisper)
+        }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         p.arguments = ["-g", "-a", "superwhisper", wav.path]
@@ -641,7 +664,11 @@ final class Listener {
             }
             // People pause after the wake word ("音声入力、…"), which ends the utterance at the wake word alone.
             // With dictation on, a lone wake word therefore opens a dictation that waits for the text.
-            guard start != nil || config.cfg.dictation != nil else { runCommand(config.cfg.command); continue }
+            guard start != nil || config.cfg.dictation != nil else {
+                Macrowhisper.prepare(config.cfg.macrowhisper)
+                runCommand(config.cfg.command)
+                continue
+            }
             if let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
                config.cfg.dictation?.excludeBundleIDs?.contains(id) == true {
                 log("dictation skipped: \(id) is excluded"); continue
@@ -671,7 +698,7 @@ final class Listener {
         }
         guard claimed else { log("dictation dropped: previous one still in flight"); return }
         Task {
-            await handoff(d.samples, cfg: cfg, target: d.target)
+            await handoff(d.samples, cfg: cfg, macrowhisper: config.cfg.macrowhisper, target: d.target)
             handoffBusy.withLock { $0 = false }
         }
     }
@@ -712,6 +739,90 @@ func runCommand(_ command: String) {
     p.arguments = ["-c", command]
     p.terminationHandler = { if $0.terminationStatus != 0 { log("command exited \($0.terminationStatus): \(command)") } }
     do { try p.run() } catch { log("command failed to start: \(error)") }
+}
+
+
+// MARK: macrowhisper CLI
+
+/// Thin wrapper around the public macrowhisper CLI
+/// (https://github.com/ognistik/macrowhisper — same commands as the Alfred workflow).
+enum Macrowhisper {
+    /// Resolve `bin` to an absolute path when possible (`which`), else return as-is.
+    static func resolveBin(_ bin: String) -> String {
+        if bin.contains("/") { return bin }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+        p.arguments = [bin]
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = Pipe()
+        do {
+            try p.run()
+            p.waitUntilExit()
+            if p.terminationStatus == 0,
+               let s = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty {
+                return s
+            }
+        } catch {}
+        return bin
+    }
+
+    @discardableResult
+    static func run(bin: String, arguments: [String]) -> Int32 {
+        let path = resolveBin(bin)
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: path)
+        p.arguments = arguments
+        p.standardOutput = Pipe()
+        p.standardError = Pipe()
+        do {
+            try p.run()
+            p.waitUntilExit()
+            if p.terminationStatus != 0 {
+                log("macrowhisper exited \(p.terminationStatus): \(path) \(arguments.joined(separator: " "))")
+            }
+            return p.terminationStatus
+        } catch {
+            log("macrowhisper failed to start (\(path)): \(error)")
+            return -1
+        }
+    }
+
+    /// Prepare macrowhisper for the Superwhisper session that is about to start.
+    /// Priority matches documented mutual exclusion: scheduleAction > autoReturn > activeAction.
+    static func prepare(_ cfg: MacrowhisperConfig?) {
+        guard let cfg else { return }
+        let bin = cfg.bin ?? "macrowhisper"
+        if let name = cfg.scheduleAction?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+            if cfg.autoReturn == true {
+                log("macrowhisper: scheduleAction set; ignoring autoReturn (CLI treats them as mutually exclusive)")
+            }
+            _ = run(bin: bin, arguments: ["--schedule-action", name])
+            log("macrowhisper: scheduled action \(name)")
+        } else if cfg.autoReturn == true {
+            _ = run(bin: bin, arguments: ["--auto-return", "true"])
+            log("macrowhisper: auto-return armed")
+        } else if let name = cfg.activeAction?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+            _ = run(bin: bin, arguments: ["--action", name])
+            log("macrowhisper: active action \(name)")
+        }
+        if let key = cfg.modeKey?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            p.arguments = ["-g", "superwhisper://mode?key=\(key)"]
+            try? p.run()
+        }
+    }
+
+    static func shouldPrepareHandoff(_ cfg: MacrowhisperConfig?) -> Bool {
+        guard let cfg else { return false }
+        let hasHook = (cfg.scheduleAction?.isEmpty == false)
+            || cfg.autoReturn == true
+            || (cfg.activeAction?.isEmpty == false)
+        guard hasHook else { return false }
+        return cfg.onDictationHandoff ?? true
+    }
 }
 
 // MARK: menu bar app
