@@ -1,0 +1,778 @@
+using System.Diagnostics;
+using System.Text;
+using System.Text.Json;
+using VoiceSwitch.Windows.Core;
+
+namespace VoiceSwitch.Windows;
+
+public static class Program
+{
+    public static int Main(string[] args)
+    {
+        Console.OutputEncoding = System.Text.Encoding.UTF8;
+        try
+        {
+            var options = CliOptions.Parse(args);
+
+            if (options.Help)
+            {
+                PrintHelp();
+                return 0;
+            }
+
+            if (options.SelfTest)
+            {
+                return SelfTest.Run();
+            }
+
+            var configPath = options.ConfigPath
+                ?? Environment.GetEnvironmentVariable("VOICE_SWITCH_CONFIG")
+                ?? WindowsPaths.DefaultConfigPath();
+
+            if (options.Recognizers)
+            {
+                return SpeechPowerShell.RunRecognizerDiagnostics();
+            }
+
+            if (options.CheckDevice)
+            {
+                return SpeechPowerShell.RunDeviceDiagnostic(configPath);
+            }
+
+            if (options.CompleteHandoff is Guid handoffId)
+            {
+                var result = RegisteredSuperwhisperHandoff.CompleteManual(WindowsPaths.DefaultHandoffPath(), handoffId);
+                Log.Info($"dictation handoff completion: {result.Status} {result.Id} wav={result.Path ?? "-"} {result.Message}");
+                return HandoffCompletionExitCode(result);
+            }
+
+            var config = ConfigLoader.Load(configPath);
+            if (options.InputWavPath is not null && config.Dictation is null)
+            {
+                throw new ArgumentException("--input-wav requires a config with dictation.");
+            }
+
+            if (options.Fire)
+            {
+                CommandRunner.Run(config.Command);
+                return 0;
+            }
+
+            if (config.Dictation is not null)
+            {
+                using var interrupt = new CancellationTokenSource();
+                if (options.ListenSeconds is int seconds)
+                {
+                    interrupt.CancelAfter(TimeSpan.FromSeconds(seconds));
+                }
+
+                ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
+                {
+                    eventArgs.Cancel = true;
+                    interrupt.Cancel();
+                };
+                Console.CancelKeyPress += cancelHandler;
+                try
+                {
+                    var syntheticDryRun = SyntheticInputSuppressesExternalDispatch(options);
+                    var effectiveDryRun = options.DryRun || syntheticDryRun;
+                    IDictationHandoff handoff;
+                    if (options.OutputDir is not null)
+                    {
+                        handoff = new LocalRecordingHandoff(options.OutputDir, options.InputWavPath);
+                        Log.Info($"dictation synthetic output: recording WAV handoffs under {options.OutputDir}");
+                    }
+                    else
+                    {
+                        Log.Info(RegisteredSuperwhisperHandoff.PendingSummary(WindowsPaths.DefaultHandoffPath(), DateTimeOffset.UtcNow));
+                        handoff = new RegisteredSuperwhisperHandoff(WindowsPaths.DefaultHandoffPath(), dryRun: effectiveDryRun);
+                    }
+
+                    IPcmCapture capture;
+                    if (options.InputWavPath is not null)
+                    {
+                        capture = new WavPcmCapture(options.InputWavPath, paced: !options.InputWavFast);
+                        Log.Info(options.InputWavFast
+                            ? $"dictation synthetic input: {options.InputWavPath} fast structural mode"
+                            : $"dictation synthetic input: {options.InputWavPath} paced 480 samples / 30 ms");
+                        if (syntheticDryRun)
+                        {
+                            Log.Info("dictation synthetic input: no --output-dir was supplied, so external dispatch is suppressed");
+                        }
+                    }
+                    else
+                    {
+                        capture = WinMmCapture.Open();
+                    }
+
+                    return new WindowsDictationRuntime(
+                            config,
+                            capture,
+                            new SpeechPowerShellDictationRecognizer(config),
+                            handoff,
+                            effectiveDryRun)
+                        .RunAsync(interrupt.Token)
+                        .GetAwaiter()
+                        .GetResult();
+                }
+                finally
+                {
+                    Console.CancelKeyPress -= cancelHandler;
+                }
+            }
+
+            var runtime = options.DryRun
+                ? new ResidentRuntime(configPath, config, options.ListenSeconds, SpeechPowerShell.Start, CommandRunner.Run, _ => { }, true, CancellationToken.None)
+                : new ResidentRuntime(configPath, config, options.ListenSeconds);
+            return runtime.Run();
+        }
+        catch (Exception ex)
+        {
+            Log.Fatal(ex.Message);
+            Log.Info($"hint: copy config.example.windows.json to {WindowsPaths.DefaultConfigPath()}");
+            return 1;
+        }
+    }
+
+    private static void PrintHelp()
+    {
+        Console.WriteLine($"""
+        voice-switch (Windows)
+
+          voice-switch.exe                       stay resident and listen for configured wake words
+          voice-switch.exe --listen-seconds 5    bounded listener run for diagnostics
+          voice-switch.exe --dry-run             listen and report decisions without running commands
+          voice-switch.exe --recognizers         list installed Windows speech recognizers
+          voice-switch.exe --check-device        open the default speech input once and report errors
+          voice-switch.exe --complete-handoff ID acknowledge a submitted dictation handoff and clean owned files
+          voice-switch.exe --input-wav PATH      run dictation from PCM16 mono 16 kHz WAV, no microphone fallback
+          voice-switch.exe --input-wav-fast      read --input-wav structurally without 30 ms pacing
+          voice-switch.exe --output-dir PATH     record synthetic dictation WAV handoffs locally, no external launch
+          voice-switch.exe --fire                run config command once
+          voice-switch.exe --self-test           pure behavior tests, no mic and no command
+          voice-switch.exe --help                this text
+
+        Config: {WindowsPaths.DefaultConfigPath()}
+        Default command: {PlatformDefaults.SuperwhisperToggle}
+        Dictation handoff: {RegisteredSuperwhisperHandoff.PendingSummary(WindowsPaths.DefaultHandoffPath(), DateTimeOffset.UtcNow)}
+
+        Incompatible flags: --dry-run cannot be combined with --fire or --complete-handoff.
+        Synthetic input: --input-wav without --output-dir is a dry-run and never launches an external app.
+        Handoff completion exits 0 only for CompletedManually; Busy, NotFound, and cleanup failures exit 1.
+        """);
+    }
+
+    public static int HandoffCompletionExitCode(HandoffResult result) =>
+        result.Status == HandoffStatus.CompletedManually ? 0 : 1;
+
+    public static bool SyntheticInputSuppressesExternalDispatch(CliOptions options) =>
+        options.InputWavPath is not null && options.OutputDir is null;
+}
+
+public sealed class ResidentRuntime
+{
+    private readonly string configPath;
+    private VoiceSwitchConfig config;
+    private readonly int? listenSeconds;
+    private readonly Func<VoiceSwitchConfig, ISpeechProcess> startRecognizer;
+    private readonly Action<string> runCommand;
+    private readonly Action<RuntimeDecision> observeDecision;
+    private readonly bool dryRun;
+    private readonly CancellationToken cancellation;
+    private DateTime lastConfigWrite;
+
+    public ResidentRuntime(string configPath, VoiceSwitchConfig config, int? listenSeconds)
+        : this(configPath, config, listenSeconds, SpeechPowerShell.Start, CommandRunner.Run, _ => { }, false, CancellationToken.None)
+    {
+    }
+
+    public ResidentRuntime(
+        string configPath,
+        VoiceSwitchConfig config,
+        int? listenSeconds,
+        Func<VoiceSwitchConfig, ISpeechProcess> startRecognizer,
+        Action<string> runCommand,
+        Action<RuntimeDecision> observeDecision,
+        bool dryRun,
+        CancellationToken cancellation)
+    {
+        this.configPath = configPath;
+        this.config = config;
+        this.listenSeconds = listenSeconds;
+        this.startRecognizer = startRecognizer;
+        this.runCommand = runCommand;
+        this.observeDecision = observeDecision;
+        this.dryRun = dryRun;
+        this.cancellation = cancellation;
+        lastConfigWrite = File.GetLastWriteTimeUtc(configPath);
+    }
+
+    public int Run()
+    {
+        Log.Info($"voice-switch Windows: config {configPath}");
+        Log.Info($"wake words: {string.Join(", ", config.WakeWords)}");
+        Log.Info($"locale: {config.EffectiveLocale}");
+        Log.Info($"command: {config.Command}");
+        if (dryRun)
+        {
+            Log.Info("dry-run: commands are suppressed");
+        }
+        LogUnsupportedOptions();
+
+        var recognizer = startRecognizer(config);
+        var deadline = listenSeconds is null ? DateTime.MaxValue : DateTime.UtcNow.AddSeconds(listenSeconds.Value);
+        using var interrupt = new CancellationTokenSource();
+        ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
+        {
+            eventArgs.Cancel = true;
+            interrupt.Cancel();
+        };
+        Console.CancelKeyPress += cancelHandler;
+        try
+        {
+            if (!WaitUntilReady(recognizer, interrupt.Token))
+            {
+                return IsCancelled(interrupt.Token) ? 130 : 1;
+            }
+
+            while (!IsCancelled(interrupt.Token) && DateTime.UtcNow <= deadline)
+            {
+                var reloaded = ReloadIfChanged();
+                if (reloaded == ConfigReload.RecognitionChanged)
+                {
+                    recognizer.Dispose();
+                    recognizer = startRecognizer(config);
+                    if (!WaitUntilReady(recognizer, interrupt.Token))
+                    {
+                        return IsCancelled(interrupt.Token) ? 130 : 1;
+                    }
+                }
+
+                var line = recognizer.ReadLine(TimeSpan.FromMilliseconds(500));
+                if (line is null)
+                {
+                    if (recognizer.HasExited)
+                    {
+                        Log.Info($"speech recognizer exited unexpectedly with code {recognizer.ExitCode}");
+                        return 1;
+                    }
+
+                    continue;
+                }
+
+                if (!HandleRecognizerLine(line))
+                {
+                    return 1;
+                }
+
+                if (recognizer.HasExited)
+                {
+                    Log.Info($"speech recognizer exited unexpectedly with code {recognizer.ExitCode}");
+                    return 1;
+                }
+            }
+        }
+        finally
+        {
+            Console.CancelKeyPress -= cancelHandler;
+            recognizer.Dispose();
+        }
+
+        if (IsCancelled(interrupt.Token))
+        {
+            Log.Info("stopped by Ctrl+C");
+            return 130;
+        }
+
+        Log.Info($"listener stopped after {listenSeconds} seconds");
+        return 0;
+    }
+
+    private bool WaitUntilReady(ISpeechProcess recognizer, CancellationToken interrupt)
+    {
+        var until = DateTime.UtcNow.AddSeconds(10);
+        while (!IsCancelled(interrupt) && DateTime.UtcNow < until)
+        {
+            var line = recognizer.ReadLine(TimeSpan.FromMilliseconds(250));
+            if (line is null)
+            {
+                if (recognizer.HasExited)
+                {
+                    Log.Info($"speech recognizer exited before ready with code {recognizer.ExitCode}");
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (!RecognizerMessage.TryParse(line, out var message))
+            {
+                Log.Info(line);
+                continue;
+            }
+
+            if (message.Type == "error")
+            {
+                Log.Info($"speech error: {message.Message}");
+                return false;
+            }
+
+            if (message.Type == "diagnostic")
+            {
+                Log.Info(message.Message ?? "");
+                if ((message.Message ?? "").StartsWith("recognizer ready:", StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+        }
+
+        Log.Info("speech recognizer did not report ready within 10 seconds");
+        return false;
+    }
+
+    private bool IsCancelled(CancellationToken interrupt) =>
+        interrupt.IsCancellationRequested || cancellation.IsCancellationRequested;
+
+    private ConfigReload ReloadIfChanged()
+    {
+        var write = File.GetLastWriteTimeUtc(configPath);
+        if (write == lastConfigWrite)
+        {
+            return ConfigReload.Unchanged;
+        }
+
+        lastConfigWrite = write;
+        try
+        {
+            var previousRecognition = config.RecognitionKey();
+            var next = ConfigLoader.Load(configPath);
+            var recognitionChanged = previousRecognition != next.RecognitionKey();
+            config = next;
+            Log.Info($"config reloaded: {string.Join(", ", config.WakeWords)}");
+            LogUnsupportedOptions();
+            return recognitionChanged ? ConfigReload.RecognitionChanged : ConfigReload.Reloaded;
+        }
+        catch (Exception ex)
+        {
+            Log.Info($"config reload failed, keeping previous: {ex.Message}");
+            return ConfigReload.Unchanged;
+        }
+    }
+
+    private void LogUnsupportedOptions()
+    {
+        foreach (var warning in config.UnsupportedWarnings())
+        {
+            Log.Info($"windows config warning: {warning}");
+        }
+    }
+
+    private bool HandleRecognizerLine(string line)
+    {
+        if (!RecognizerMessage.TryParse(line, out var message))
+        {
+            Log.Info(line);
+            return true;
+        }
+
+        if (message.Type == "error")
+        {
+            Log.Info($"speech error: {message.Message}");
+            return false;
+        }
+
+        if (message.Type == "diagnostic")
+        {
+            Log.Info(message.Message ?? "");
+            return true;
+        }
+
+        if (message.Type != "recognized" || string.IsNullOrEmpty(message.Text))
+        {
+            return true;
+        }
+
+        var decision = TextMatching.Decide(message.Text, config);
+        observeDecision(decision);
+        if (decision.Kind == "run-command" && decision.Command is not null)
+        {
+            Log.Info($"heard: {decision.Text} -> {decision.Reason}");
+            if (dryRun)
+            {
+                Log.Info($"dry-run: decision {decision.Kind} reason={decision.Reason}; command suppressed");
+            }
+            else
+            {
+                runCommand(decision.Command);
+            }
+        }
+        else
+        {
+            Log.Info($"heard: {decision.Text}");
+        }
+
+        return true;
+    }
+}
+
+public enum ConfigReload
+{
+    Unchanged,
+    Reloaded,
+    RecognitionChanged
+}
+
+public sealed record RecognizerMessage(string Type, string? Text, string? Message)
+{
+    public static bool TryParse(string line, out RecognizerMessage message)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(line);
+            var root = doc.RootElement;
+            message = new RecognizerMessage(
+                root.GetProperty("type").GetString() ?? "",
+                root.TryGetProperty("text", out var text) ? text.GetString() : null,
+                root.TryGetProperty("message", out var msg) ? msg.GetString() : null);
+            return true;
+        }
+        catch
+        {
+            message = new RecognizerMessage("raw", null, line);
+            return false;
+        }
+    }
+}
+
+public static class SpeechPowerShell
+{
+    public static SpeechProcess Start(VoiceSwitchConfig config)
+    {
+        var psi = CreatePowerShell();
+        psi.Environment["VOICE_SWITCH_LOCALE"] = config.EffectiveLocale;
+        psi.Environment["VOICE_SWITCH_WAKE_WORDS"] = ConfigLoader.ToJsonArray(config.WakeWords.Concat(config.StopWords ?? []));
+        var process = Process.Start(psi) ?? throw new InvalidOperationException("failed to start powershell.exe");
+        return new SpeechProcess(process);
+    }
+
+    public static int RunRecognizerDiagnostics()
+    {
+        using var proc = StartDiagnostic("recognizers");
+        var lines = proc.DrainToConsole();
+        if (lines.Count == 0)
+        {
+            Console.Error.WriteLine("speech diagnostic failed: child exited without recognizer output");
+            return 1;
+        }
+
+        return proc.ExitCode;
+    }
+
+    public static int RunDeviceDiagnostic(string configPath)
+    {
+        var config = ConfigLoader.Load(configPath);
+        using var proc = StartDiagnostic("device", config);
+        var lines = proc.DrainToConsole();
+        if (lines.Count == 0)
+        {
+            Console.Error.WriteLine("speech diagnostic failed: child exited before ready");
+            return 1;
+        }
+
+        if (!lines.Any(line => line.Contains("recognizer ready:", StringComparison.Ordinal)))
+        {
+            Console.Error.WriteLine("speech diagnostic failed: recognizer did not report ready");
+            return 1;
+        }
+
+        return proc.ExitCode;
+    }
+
+    private static SpeechProcess StartDiagnostic(string mode, VoiceSwitchConfig? config = null)
+    {
+        var psi = CreatePowerShell();
+        psi.Environment["VOICE_SWITCH_MODE"] = mode;
+        psi.Environment["VOICE_SWITCH_LOCALE"] = config?.EffectiveLocale ?? "ja-JP";
+        psi.Environment["VOICE_SWITCH_WAKE_WORDS"] = ConfigLoader.ToJsonArray(config?.WakeWords ?? []);
+        var process = Process.Start(psi) ?? throw new InvalidOperationException("failed to start powershell.exe");
+        return new SpeechProcess(process);
+    }
+
+    private static ProcessStartInfo CreatePowerShell()
+    {
+        // Why: Use Windows PowerShell System.Speech instead of a NuGet package so WSL builds stay offline.
+        var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(Script));
+        return new ProcessStartInfo("powershell.exe", $"-NoProfile -NonInteractive -OutputFormat Text -EncodedCommand {encoded}")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+    }
+
+    private const string Script = """
+$ProgressPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+Add-Type -AssemblyName System.Speech
+function Send-Json($obj) {
+  $obj | ConvertTo-Json -Compress
+}
+$mode = $env:VOICE_SWITCH_MODE
+$locale = $env:VOICE_SWITCH_LOCALE
+$words = @()
+if ($env:VOICE_SWITCH_WAKE_WORDS) {
+  $parsedWords = $env:VOICE_SWITCH_WAKE_WORDS | ConvertFrom-Json
+  $words = @($parsedWords | ForEach-Object { [string]$_ })
+}
+$infos = [System.Speech.Recognition.SpeechRecognitionEngine]::InstalledRecognizers()
+if ($mode -eq 'recognizers') {
+  if ($infos.Count -eq 0) {
+    Send-Json @{ type='error'; message='No installed Windows speech recognizers were reported by System.Speech.' }
+    exit 2
+  }
+  foreach ($info in $infos) {
+    Send-Json @{ type='diagnostic'; message=($info.Culture.Name + ' ' + $info.Description) }
+  }
+  exit 0
+}
+$info = $infos | Where-Object { $_.Culture.Name -eq $locale } | Select-Object -First 1
+if ($null -eq $info) {
+  $installed = ($infos | ForEach-Object { $_.Culture.Name }) -join ', '
+  Send-Json @{ type='error'; message=("No installed Windows speech recognizer for " + $locale + ". Installed: " + $installed) }
+  exit 2
+}
+$engine = [System.Speech.Recognition.SpeechRecognitionEngine]::new($info)
+try {
+  if ($words.Count -gt 0) {
+    $choices = [System.Speech.Recognition.Choices]::new()
+    foreach ($word in $words) { [void]$choices.Add([string]$word) }
+    $builder = [System.Speech.Recognition.GrammarBuilder]::new()
+    $builder.Culture = $info.Culture
+    $builder.Append($choices)
+    $grammar = [System.Speech.Recognition.Grammar]::new($builder)
+    $engine.LoadGrammar($grammar)
+  }
+  $engine.SetInputToDefaultAudioDevice()
+  Send-Json @{ type='diagnostic'; message=("recognizer ready: " + $info.Culture.Name + ' ' + $info.Description) }
+  if ($mode -eq 'device') { exit 0 }
+  while ($true) {
+    $result = $engine.Recognize([TimeSpan]::FromSeconds(1))
+    if ($null -ne $result) {
+      Send-Json @{ type='recognized'; text=$result.Text; confidence=$result.Confidence }
+    }
+  }
+} catch {
+  Send-Json @{ type='error'; message=$_.Exception.Message }
+  exit 3
+} finally {
+  if ($null -ne $engine) { $engine.Dispose() }
+}
+""";
+}
+
+public interface ISpeechProcess : IDisposable
+{
+    bool HasExited { get; }
+    int ExitCode { get; }
+    string? ReadLine(TimeSpan timeout);
+}
+
+public sealed class SpeechProcess : ISpeechProcess
+{
+    private readonly Process process;
+    private readonly CancellationTokenSource cancel = new();
+    private readonly Queue<string> lines = new();
+    private readonly object gate = new();
+    private readonly Task outputPump;
+    private readonly Task errorPump;
+
+    public SpeechProcess(Process process)
+    {
+        this.process = process;
+        outputPump = Task.Run(() => Pump(process.StandardOutput, false, cancel.Token));
+        errorPump = Task.Run(() => Pump(process.StandardError, true, cancel.Token));
+    }
+
+    public bool HasExited => process.HasExited;
+    public int ExitCode => process.HasExited ? process.ExitCode : 0;
+
+    public string? ReadLine(TimeSpan timeout)
+    {
+        lock (gate)
+        {
+            if (lines.Count > 0)
+            {
+                return lines.Dequeue();
+            }
+        }
+
+        var until = DateTime.UtcNow.Add(timeout);
+        while (DateTime.UtcNow < until)
+        {
+            lock (gate)
+            {
+                if (lines.Count > 0)
+                {
+                    return lines.Dequeue();
+                }
+            }
+
+            Thread.Sleep(20);
+        }
+
+        return null;
+    }
+
+    public List<string> DrainToConsole()
+    {
+        var lines = new List<string>();
+        while (!process.HasExited || HasQueuedLines())
+        {
+            var line = ReadLine(TimeSpan.FromMilliseconds(100));
+            if (line is not null)
+            {
+                Console.WriteLine(line);
+                lines.Add(line);
+            }
+        }
+
+        process.WaitForExit();
+        return lines;
+    }
+
+    public void Dispose()
+    {
+        cancel.Cancel();
+        if (!process.HasExited)
+        {
+            try { process.Kill(entireProcessTree: true); }
+            catch { }
+        }
+
+        process.Dispose();
+        try { Task.WaitAll([outputPump, errorPump], TimeSpan.FromSeconds(1)); }
+        catch { }
+        cancel.Dispose();
+    }
+
+    private bool HasQueuedLines()
+    {
+        lock (gate)
+        {
+            return lines.Count > 0;
+        }
+    }
+
+    private void Pump(StreamReader reader, bool isError, CancellationToken token)
+    {
+        while (!token.IsCancellationRequested)
+        {
+            var line = reader.ReadLine();
+            if (line is null)
+            {
+                return;
+            }
+
+            lock (gate)
+            {
+                lines.Enqueue(isError ? JsonSerializer.Serialize(new { type = "error", message = line }) : line);
+            }
+        }
+    }
+}
+
+public static class CommandRunner
+{
+    public static void Run(string command)
+    {
+        var psi = new ProcessStartInfo(Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe", "/c " + command)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        Process.Start(psi);
+    }
+}
+
+public static class Log
+{
+    public static void Info(string message) =>
+        Console.WriteLine($"{DateTimeOffset.Now:O} {message}");
+
+    public static void Fatal(string message) =>
+        Console.Error.WriteLine($"{DateTimeOffset.Now:O} fatal: {message}");
+}
+
+public static class SelfTest
+{
+    public static int Run()
+    {
+        var config = new VoiceSwitchConfig(["音声入力"], "ja_JP", "echo wake", StopWords: ["入力ストップ"], StopCommand: "echo stop");
+        var wake = TextMatching.Decide("音声 入力。", config);
+        var stop = TextMatching.Decide("入力ストップ", config);
+        var miss = TextMatching.Decide("違います", config);
+        if (wake is not { Kind: "run-command", Command: "echo wake" })
+        {
+            Console.Error.WriteLine("self-test: wake decision failed");
+            return 1;
+        }
+
+        if (stop is not { Kind: "run-command", Command: "echo stop" })
+        {
+            Console.Error.WriteLine("self-test: stop decision failed");
+            return 1;
+        }
+
+        if (miss.Kind != "ignore")
+        {
+            Console.Error.WriteLine("self-test: miss decision failed");
+            return 1;
+        }
+
+        if (!VerifySegmenter())
+        {
+            Console.Error.WriteLine("self-test: segmenter decision failed");
+            return 1;
+        }
+
+        Console.WriteLine("self-test: ok");
+        return 0;
+    }
+
+    private static bool VerifySegmenter()
+    {
+        var config = new VoiceSwitchConfig(["test"], null, "true", MaxSeconds: 2.5, HangoverMs: 300, PrerollMs: 300, MinSpeechMs: 300, VadRatio: 3, VadMinRMS: 0.005f);
+        var segmenter = new Segmenter(config);
+        var quiet = Enumerable.Repeat(0.0001f, Segmenter.FrameLength).ToArray();
+        var loud = Enumerable.Range(0, Segmenter.FrameLength)
+            .Select(i => (float)(0.2 * Math.Sin(i * 0.5)))
+            .ToArray();
+
+        for (var i = 0; i < 7; i++)
+        {
+            segmenter.Push(quiet);
+        }
+
+        for (var i = 0; i < 17; i++)
+        {
+            segmenter.Push(loud);
+        }
+
+        for (var i = 0; i < 20; i++)
+        {
+            var ev = segmenter.Push(quiet);
+            if (ev is { Kind: "utterance" })
+            {
+                return ev.Samples.Length > Segmenter.FrameLength;
+            }
+        }
+
+        return false;
+    }
+}

@@ -9,5 +9,14 @@
   "prerollMs": 300,
   "minSpeechMs": 300,
   "vadRatio": 3.0,
-  "vadMinRMS": 0.005
+  "vadMinRMS": 0.005,
+  "dictation": {
+    "endSilenceMs": 1200,
+    "maxSeconds": 60,
+    "startTimeoutMs": 3000
+  },
+  "noiseReduction": {
+    "mode": "Off",
+    "maxAttenuationDb": 6
+  }
 }

@@ -4,9 +4,9 @@
 // (Apple Speech on macOS) -> whole-utterance match against config wake words.
 //
 // usage (macOS): VoiceSwitch.app / voice-switch [--check|--simulate|--fire|--vad-selftest]
-// usage (Windows): voice-switch.exe [--fire|--vad-selftest|--help]
+// usage (Windows Swift legacy stub): voice-switch.exe [--fire|--vad-selftest|--help]
 //
-// Build: default `make` → macOS app; `PC=wsl make` → Windows (Swift for Windows).
+// Build: default `make` → macOS app; `PC=wsl make` → Windows (.NET runtime).
 import Foundation
 
 #if os(macOS)

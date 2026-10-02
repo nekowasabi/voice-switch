@@ -1,11 +1,10 @@
 # voice-switch build targets
 #
-# Default `make` follows $PC (see ~/.dotfiles zsh env):
-#   PC=wsl | PC=WSL  → Windows voice-switch.exe (Swift for Windows)
+# Default `make` follows $PC:
+#   PC=wsl | PC=WSL  → Windows voice-switch.exe (.NET)
 #   otherwise        → macOS VoiceSwitch.app (existing flow)
 #
-# Swift for Windows does not cross-compile from Linux/macOS in this repo;
-# on WSL, invoke the Windows toolchain as swift.exe (see BUILD.md).
+# Windows follows the WSL -> .NET Windows-targeting path.
 
 APP     := VoiceSwitch.app
 BUILT   := .build/$(APP)
@@ -23,18 +22,18 @@ else
 .DEFAULT_GOAL := app
 endif
 
-# Why: prefer Windows-hosted swift.exe when building the Windows target from WSL.
-ifeq ($(PC_NORM),wsl)
-SWIFT ?= $(shell command -v swift.exe 2>/dev/null || command -v swift 2>/dev/null || echo swift)
-else
 SWIFT ?= swift
-endif
 
-WIN_CONFIG ?= release
-# Why: Run from local disk, not \\wsl.localhost — AV heuristics flag UNC-launched exes.
-RELEASE_DIR ?= /mnt/c/takeda/tools/voice-switch
+WIN_CONFIG ?= Release
+DOTNET ?= $(shell command -v dotnet 2>/dev/null || printf '%s' "$(HOME)/.local/share/mise/shims/dotnet")
+WIN_RID ?= win-x64
+WIN_APP := dotnet/VoiceSwitch.Windows/VoiceSwitch.Windows.csproj
+WIN_TRAY := dotnet/VoiceSwitch.Windows.Tray/VoiceSwitch.Windows.Tray.csproj
+WIN_TESTS := dotnet/VoiceSwitch.Windows.Tests/VoiceSwitch.Windows.Tests.csproj
+DOTNET_RESTORE_FLAGS ?= --ignore-failed-sources --disable-parallel
+RELEASE_DIR ?= $(CURDIR)/artifacts/windows
 
-.PHONY: build app install uninstall logs win win-build win-verify help
+.PHONY: build app install uninstall logs win win-restore win-build win-test parity-test win-publish win-tray-publish win-verify help
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -73,35 +72,61 @@ uninstall: ## macOS: remove installed app
 logs: ## macOS: tail the log file
 	tail -f $(HOME)/Library/Logs/voice-switch.log
 
-win: win-build ## Windows: build (PC=wsl default)
+win: win-publish ## Windows: build, test, and publish voice-switch.exe (PC=wsl default)
 
-win-build: ## Windows: swift build → RELEASE_DIR/voice-switch.exe
-	@command -v "$(SWIFT)" >/dev/null 2>&1 || { \
-		echo "error: Swift toolchain not found ($(SWIFT))." >&2; \
-		echo "Install Swift for Windows: https://www.swift.org/install/windows/" >&2; \
-		echo "From WSL, ensure swift.exe is on PATH, then: PC=wsl make" >&2; \
-		echo "Layout-only check (no SDK): make win-verify" >&2; \
-		exit 1; \
-	}
-	$(SWIFT) build -c $(WIN_CONFIG)
+win-restore: ## Windows: restore .NET projects
+	$(DOTNET) restore $(WIN_APP) -r $(WIN_RID) $(DOTNET_RESTORE_FLAGS)
+	$(DOTNET) restore $(WIN_TRAY) -r $(WIN_RID) $(DOTNET_RESTORE_FLAGS)
+	$(DOTNET) restore $(WIN_TESTS) $(DOTNET_RESTORE_FLAGS)
+
+win-build: win-restore win-test ## Windows: build .NET app and behavior tests
+	$(DOTNET) build $(WIN_APP) -c $(WIN_CONFIG) -r $(WIN_RID) --no-restore
+	$(DOTNET) build $(WIN_TRAY) -c $(WIN_CONFIG) -r $(WIN_RID) --no-restore
+
+win-test: win-restore ## Windows: run package-free behavior tests
+	$(DOTNET) run --project $(WIN_TESTS) -c $(WIN_CONFIG) --no-restore
+	$(MAKE) parity-test
+
+parity-test: ## Run macOS/Windows parity contract checks
+	python3 tests/parity/run_parity.py
+
+win-publish: win-build ## Windows: publish voice-switch.exe to RELEASE_DIR
 	mkdir -p "$(RELEASE_DIR)"
-	# Why: running exe may lock the binary on Windows.
-	-taskkill.exe /IM voice-switch.exe /F >/dev/null 2>&1
-	bin=$$($(SWIFT) build -c $(WIN_CONFIG) --show-bin-path)/voice-switch.exe; \
-	  if [ ! -f "$$bin" ]; then bin=$$($(SWIFT) build -c $(WIN_CONFIG) --show-bin-path)/voice-switch; fi; \
-	  cp -f "$$bin" "$(RELEASE_DIR)/voice-switch.exe" 2>/dev/null || cp -f "$$bin" "$(RELEASE_DIR)/voice-switch"
+	$(DOTNET) publish $(WIN_APP) -c $(WIN_CONFIG) -r $(WIN_RID) --self-contained false \
+		-p:PublishSingleFile=false \
+		-p:DebugType=None \
+		-p:CopyOutputSymbolsToPublishDirectory=false \
+		-o "$(RELEASE_DIR)"
+	$(MAKE) win-tray-publish
 	test -f "$(RELEASE_DIR)/config.json" || cp config.example.windows.json "$(RELEASE_DIR)/config.json"
 	@echo "Windows build → $(RELEASE_DIR)"
-	@echo "Try: $(RELEASE_DIR)/voice-switch.exe --vad-selftest"
-	@echo "     $(RELEASE_DIR)/voice-switch.exe --fire"
+	@echo "Try: $(RELEASE_DIR)/voice-switch.exe --self-test"
+	@echo "     $(RELEASE_DIR)/voice-switch.exe --recognizers"
+	@echo "     $(RELEASE_DIR)/voice-switch.exe --check-device"
+	@echo "     $(RELEASE_DIR)/voice-switch-tray.exe --config $(RELEASE_DIR)/config.json"
+
+win-tray-publish: win-restore ## Windows: publish voice-switch-tray.exe to RELEASE_DIR
+	mkdir -p "$(RELEASE_DIR)"
+	$(DOTNET) publish $(WIN_TRAY) -c $(WIN_CONFIG) -r $(WIN_RID) --self-contained false \
+		-p:PublishSingleFile=false \
+		-p:DebugType=None \
+		-p:CopyOutputSymbolsToPublishDirectory=false \
+		-o "$(RELEASE_DIR)"
 
 win-verify: ## Verify Windows path layout / Makefile routing (no Swift SDK required)
 	@test -f Sources/voice-switch/Platform.swift
 	@test -f Sources/voice-switch/WindowsApp.swift
 	@test -f Sources/voice-switch/Segmenter.swift
+	@test -f dotnet/VoiceSwitch.Windows/VoiceSwitch.Windows.csproj
+	@test -f dotnet/VoiceSwitch.Windows.Tray/VoiceSwitch.Windows.Tray.csproj
+	@test -f dotnet/VoiceSwitch.Windows.Core/VoiceSwitchConfig.cs
+	@test -f dotnet/VoiceSwitch.Windows/SyntheticIngress.cs
+	@test -f scripts/windows-say.ps1
+	@test -f tests/windows/SyntheticDictationRuntimeHarness/SyntheticDictationRuntimeHarness.csproj
+	@test -f tests/windows/run-tray-host.ps1
 	@test -f config.example.windows.json
 	@test -f BUILD.md
 	@grep -q 'os(Windows)' Sources/voice-switch/Platform.swift
 	@grep -q 'defaultSuperwhisperToggle' Sources/voice-switch/Platform.swift
-	@grep -q 'vadSelftest' Sources/voice-switch/Segmenter.swift
+	@grep -q 'SpeechPowerShell' dotnet/VoiceSwitch.Windows/Program.cs
 	@echo "win-verify: ok (PC=$(PC) PC_NORM=$(PC_NORM) default-goal=$(.DEFAULT_GOAL))"

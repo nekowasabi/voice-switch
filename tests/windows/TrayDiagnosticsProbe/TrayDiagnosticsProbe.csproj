@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\..\dotnet\VoiceSwitch.Windows\DictationRuntime.cs" Link="VoiceSwitch.Windows.DictationRuntime.cs" />
+    <Compile Include="..\..\..\dotnet\VoiceSwitch.Windows\NoiseReduction.cs" Link="VoiceSwitch.Windows.NoiseReduction.cs" />
+    <Compile Include="..\..\..\dotnet\VoiceSwitch.Windows.Tray\TrayContracts.cs" Link="VoiceSwitch.Windows.Tray.Contracts.cs" />
+    <Compile Include="..\..\..\dotnet\VoiceSwitch.Windows.Tray\TrayIpc.cs" Link="VoiceSwitch.Windows.Tray.Ipc.cs" />
+    <Compile Include="..\..\..\dotnet\VoiceSwitch.Windows.Tray\TrayRuntimeSupervisor.cs" Link="VoiceSwitch.Windows.Tray.Supervisor.cs" />
+    <Compile Include="..\..\..\dotnet\VoiceSwitch.Windows.Tray\VoiceSwitchTrayContext.cs" Link="VoiceSwitch.Windows.Tray.Context.cs" />
+    <Compile Include="..\SyntheticDictationRuntimeHarness\Log.cs" Link="Log.cs" />
+    <ProjectReference Include="..\..\..\dotnet\VoiceSwitch.Windows.Core\VoiceSwitch.Windows.Core.csproj" />
+  </ItemGroup>
+</Project>

@@ -7,14 +7,14 @@ enum WindowsApp {
         print("""
         voice-switch (Windows)
 
-          voice-switch                 stay resident; load config and wait (mic/STT backend TBD)
+          voice-switch                 legacy Swift stub; use dotnet/VoiceSwitch.Windows for the functional runtime
           voice-switch --fire          run config `command` once (tests superwhisper:// hook)
           voice-switch --vad-selftest  pure-Swift VAD/segmenter self-test (no mic/STT)
           voice-switch --help          this text
 
         Config: \(configPath)
         Default command: \(Platform.defaultSuperwhisperToggle)
-        Install Swift for Windows, then: PC=wsl make
+        Windows runtime build: PC=wsl make win-build
         """)
     }
 
@@ -63,7 +63,7 @@ enum WindowsApp {
                 log("voice-switch Windows: config \(configPath)")
                 log("wake words: \(config.cfg.wakeWords)")
                 log("command: \(config.cfg.command)")
-                log("mic/STT backend not wired on Windows yet; use --fire to test the Superwhisper hook, --vad-selftest for VAD")
+                log("Swift Windows entry is a legacy stub; use dotnet/VoiceSwitch.Windows for microphone/STT runtime")
                 while true {
                     config.reloadIfChanged()
                     Thread.sleep(forTimeInterval: 2)

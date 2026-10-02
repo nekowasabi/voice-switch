@@ -21,12 +21,15 @@ struct Config: Decodable {
     var stopCommand: String?
     /// Absent turns one-breath dictation off.
     var dictation: DictationConfig?
+    /// Parsed for cross-platform config compatibility; macOS does not process this lane.
+    var noiseReduction: NoiseReductionOptions?
 
     init(wakeWords: [String], locale: String? = nil, command: String,
          maxSeconds: Double? = nil, hangoverMs: Int? = nil, prerollMs: Int? = nil,
          minSpeechMs: Int? = nil, vadRatio: Float? = nil, vadMinRMS: Float? = nil,
          skipWhileMicInUseBy: [String]? = nil, stopWords: [String]? = nil,
-         stopCommand: String? = nil, dictation: DictationConfig? = nil) {
+         stopCommand: String? = nil, dictation: DictationConfig? = nil,
+         noiseReduction: NoiseReductionOptions? = nil) {
         self.wakeWords = wakeWords
         self.locale = locale
         self.command = command
@@ -40,6 +43,17 @@ struct Config: Decodable {
         self.stopWords = stopWords
         self.stopCommand = stopCommand
         self.dictation = dictation
+        self.noiseReduction = noiseReduction
+    }
+}
+
+struct NoiseReductionOptions: Decodable {
+    var mode: String?
+    var maxAttenuationDb: Double?
+
+    init(mode: String? = nil, maxAttenuationDb: Double? = nil) {
+        self.mode = mode
+        self.maxAttenuationDb = maxAttenuationDb
     }
 }
 

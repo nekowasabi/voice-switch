@@ -1,0 +1,15 @@
+{
+  "selftest": {
+    "quietFramesBefore": 7,
+    "loudFrames": 17,
+    "quietFramesAfter": 20,
+    "expectedKind": "utterance",
+    "minSamples": 481
+  },
+  "head": {
+    "quietFramesBefore": 7,
+    "loudFrames": 110,
+    "expectedKind": "head",
+    "minSamples": 40000
+  }
+}

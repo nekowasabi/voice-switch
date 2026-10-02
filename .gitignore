@@ -1,3 +1,11 @@
 .build/
 .swiftpm/
 release/
+artifacts/
+dotnet/**/bin/
+dotnet/**/obj/
+tests/**/bin/
+tests/**/obj/
+.serena/
+.audit/
+.tgrep/
