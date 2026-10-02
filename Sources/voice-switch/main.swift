@@ -32,6 +32,8 @@ struct Config: Decodable {
     var minSpeechMs: Int?
     var vadRatio: Float?
     var vadMinRMS: Float?
+    /// Bundle IDs whose microphone use blocks firing (e.g. superwhisper already recording, a meeting app).
+    var skipWhileMicInUseBy: [String]?
 }
 
 final class ConfigFile {
@@ -311,9 +313,43 @@ final class Listener {
             let hit = config.cfg.wakeWords.map(normalize).contains(t)
             // Utterance length shows whether the VAD holds on past the word; stt is recognizer time.
             log("heard: \(t)\(hit ? "  -> wake" : "")  [utt \(u.count * 1000 / Int(rate)) ms, stt \(Int(Date().timeIntervalSince(began) * 1000)) ms]")
-            if hit { runCommand(config.cfg.command) }
+            guard hit else { continue }
+            if let busy = micInUse(by: config.cfg.skipWhileMicInUseBy ?? []) {
+                // superwhisper://record toggles, so firing while it records would stop it.
+                log("skipped: \(busy) is using the microphone")
+            } else {
+                runCommand(config.cfg.command)
+            }
         }
     }
+}
+
+/// First bundle ID in the list whose process currently has audio input running, via CoreAudio's
+/// per-process objects. superwhisper keeps input closed while idle and opens it only while recording.
+func micInUse(by bundleIDs: [String]) -> String? {
+    guard !bundleIDs.isEmpty else { return nil }
+    func address(_ sel: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(mSelector: sel, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    }
+    let system = AudioObjectID(kAudioObjectSystemObject)
+    var addr = address(kAudioHardwarePropertyProcessObjectList)
+    var size: UInt32 = 0
+    guard AudioObjectGetPropertyDataSize(system, &addr, 0, nil, &size) == noErr else { return nil }
+    var procs = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+    guard AudioObjectGetPropertyData(system, &addr, 0, nil, &size, &procs) == noErr else { return nil }
+    for proc in procs {
+        var running: UInt32 = 0
+        var runningSize = UInt32(MemoryLayout<UInt32>.size)
+        var runAddr = address(kAudioProcessPropertyIsRunningInput)
+        guard AudioObjectGetPropertyData(proc, &runAddr, 0, nil, &runningSize, &running) == noErr, running != 0 else { continue }
+        var bundle: Unmanaged<CFString>?
+        var bundleSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        var bundleAddr = address(kAudioProcessPropertyBundleID)
+        guard AudioObjectGetPropertyData(proc, &bundleAddr, 0, nil, &bundleSize, &bundle) == noErr,
+              let id = bundle?.takeRetainedValue() as String? else { continue }
+        if bundleIDs.contains(id) { return id }
+    }
+    return nil
 }
 
 /// Runs the configured action through the shell so users can put any command line in config.
