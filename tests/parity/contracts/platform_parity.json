@@ -142,7 +142,7 @@
       },
       "windows": {
         "file": "dotnet/VoiceSwitch.Windows.Core/TextMatching.cs",
-        "markers": ["config.StopWords ?? []", "config.StopCommand ?? PlatformDefaults.SuperwhisperToggle", "\"stop\""]
+        "markers": ["config.StopWords ?? []", "PlatformDefaults.SuperwhisperToggle", "RuntimeDecision.RunCommand(text, config.StopCommand, \"stop\")"]
       },
       "fixture": "decisions"
     },
@@ -232,7 +232,7 @@
       },
       "windows": {
         "file": "dotnet/VoiceSwitch.Windows/DictationRuntime.cs",
-        "markers": ["SubmittedUnconfirmed", "CompleteManual", "superwhisper://file//", "HandoffManifest"]
+        "markers": ["SubmittedUnconfirmed", "DeferredUnsent", "CompleteManual", "superwhisper://file//", "HandoffManifest"]
       }
     }
   ],

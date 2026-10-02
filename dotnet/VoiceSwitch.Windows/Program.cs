@@ -84,8 +84,15 @@ public static class Program
                     }
                     else
                     {
-                        Log.Info(RegisteredSuperwhisperHandoff.PendingSummary(WindowsPaths.DefaultHandoffPath(), DateTimeOffset.UtcNow));
-                        handoff = new RegisteredSuperwhisperHandoff(WindowsPaths.DefaultHandoffPath(), dryRun: effectiveDryRun);
+                        var root = WindowsPaths.DefaultHandoffPath();
+                        var admission = RegisteredSuperwhisperHandoff.CheckAdmission(root);
+                        Log.Info(admission.Message);
+                        if (!effectiveDryRun && !admission.CanCapture)
+                        {
+                            throw new InvalidOperationException("dictation handoff requires recovery before capture starts: " + admission.Message);
+                        }
+
+                        handoff = new RegisteredSuperwhisperHandoff(root, dryRun: effectiveDryRun);
                     }
 
                     IPcmCapture capture;

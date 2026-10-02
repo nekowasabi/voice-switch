@@ -754,12 +754,20 @@ def cs_string(value: str) -> str:
 def check_mutation_gate(result: Result, repo: SourceTree, contract: dict) -> None:
     target = "dotnet/VoiceSwitch.Windows.Core/TextMatching.cs"
     original = repo.read(target)
-    mutated = re.sub(
-        r"\n\s*if \(\(config\.StopWords \?\? \[\]\)\.Select\(Normalize\)\.Contains\(text\)\)\s*\{\s*return RuntimeDecision\.RunCommand\(text, config\.StopCommand \?\? PlatformDefaults\.SuperwhisperToggle, \"stop\"\);\s*\}",
-        "",
-        original,
-        flags=re.DOTALL,
-    )
+    stop_block = """\
+        if ((config.StopWords ?? []).Select(Normalize).Contains(text))
+        {
+            if (string.IsNullOrWhiteSpace(config.StopCommand)
+                || string.Equals(config.StopCommand.Trim(), PlatformDefaults.SuperwhisperToggle, StringComparison.OrdinalIgnoreCase))
+            {
+                return RuntimeDecision.Ignore(text, "stop command disabled");
+            }
+
+            return RuntimeDecision.RunCommand(text, config.StopCommand, "stop");
+        }
+
+"""
+    mutated = original.replace(stop_block, "", 1)
     if mutated == original:
         result.fail("mutation setup failed: could not remove Windows stop-word handler in memory")
         return
@@ -856,8 +864,8 @@ def check_commented_implementation_mutation(result: Result, repo: SourceTree, co
     target = "dotnet/VoiceSwitch.Windows.Core/TextMatching.cs"
     original = repo.read(target)
     mutated = original.replace(
-        'return RuntimeDecision.RunCommand(text, config.StopCommand ?? PlatformDefaults.SuperwhisperToggle, "stop");',
-        '// return RuntimeDecision.RunCommand(text, config.StopCommand ?? PlatformDefaults.SuperwhisperToggle, "stop");',
+        'return RuntimeDecision.RunCommand(text, config.StopCommand, "stop");',
+        '// return RuntimeDecision.RunCommand(text, config.StopCommand, "stop");',
         1,
     )
     if mutated == original:

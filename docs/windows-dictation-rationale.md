@@ -10,7 +10,7 @@ The implementation follows the parent arena synthesis. Candidate B is the base. 
 - `WindowsDictationRuntime` separates capture, finite recognition, and handoff with bounded channels.
 - `DictationSession` is the pure session state machine.
 - `SpeechPowerShellDictationRecognizer` keeps the existing Windows PowerShell 5 `System.Speech` bridge and uses finite in-memory PCM jobs sent over bounded standard input.
-- `RegisteredSuperwhisperHandoff` writes one owned UUID WAV and dispatches the registered Superwhisper file URI once.
+- `RegisteredSuperwhisperHandoff` writes one owned UUID WAV. It dispatches the registered Superwhisper file URI once only when the raw path contract is supported and no owned handoff is pending.
 
 ## Decisions
 
@@ -20,7 +20,7 @@ Fix Root Causes changed the stop handling. A standalone stop trims the source au
 
 Boundary Discipline changed the adapters. WinMM, PowerShell JSON, WAV writing, registry dispatch, and manifest recovery validate at the boundary. The session reducer stays pure.
 
-Make Operations Idempotent changed handoff cleanup. A submitted handoff is retained as an owned lease until `--complete-handoff <id>` acknowledges completion or cancellation. Startup sees the owned manifest and refuses a second handoff.
+Make Operations Idempotent changed handoff cleanup. A submitted handoff is retained as an owned lease until `--complete-handoff <id>` acknowledges completion or cancellation. An UNSENT body is retained as `DeferredUnsent` until the operator manually copies or discards the WAV and then acknowledges the ID. Startup sees owned manifests and refuses capture.
 
 Prove It Works changed verification. Tests drive the production runtime with synthetic PCM, a delayed fake recognizer, and a recording handoff. The native SAPI path has a Windows-only synthetic probe that calls the production dictation recognizer and checks request identity, lexical ranges, and recognized text.
 
@@ -32,7 +32,7 @@ The PowerShell script no longer calls `Recognize()` in a loop. It compiles a sma
 
 ## External limitation
 
-Superwhisper's registered Windows file intake is verified. Automatic completion correlation is not. The implementation therefore reports `SubmittedUnconfirmed` and does not claim transcription or auto-paste succeeded.
+Superwhisper's registered Windows file route is verified only for the raw `superwhisper://file//` argument shape used by the registry. Receiver decoding for whitespace, reserved URI characters, and non-ASCII paths is HOLD. The implementation therefore reports `SubmittedUnconfirmed` only after launch, reports `DeferredUnsent` when a body is retained without launch, and does not claim transcription or auto-paste succeeded.
 
 The external file is not deleted by a timer or process exit. Manual completion is explicit:
 
@@ -40,6 +40,6 @@ The external file is not deleted by a timer or process exit. Manual completion i
 voice-switch.exe --complete-handoff <id>
 ```
 
-The default owned handoff directory is `%LOCALAPPDATA%\voice-switch\dictation-handoffs`. It stores only a UUID WAV, a minimal manifest, and a permanent empty synchronization file. It does not store transcript text.
+The default owned handoff directory is `%LOCALAPPDATA%\voice-switch\dictation-handoffs`. It stores only UUID WAV files, minimal manifests, and a permanent empty synchronization file. It does not store transcript text.
 
 Windows foreground restoration, global finish/cancel shortcuts, and automatic completion are narrow remaining OS-integration gaps. They are not treated as a core dictation gap.

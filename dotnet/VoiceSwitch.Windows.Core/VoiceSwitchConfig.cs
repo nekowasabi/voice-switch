@@ -53,6 +53,17 @@ public sealed record VoiceSwitchConfig(
         {
             yield return "skipWhileMicInUseBy is parsed for config compatibility but is not implemented on Windows.";
         }
+
+        if ((StopWords ?? []).Length > 0 && string.IsNullOrWhiteSpace(StopCommand))
+        {
+            yield return "stopCommand is empty; Windows command-mode stop words are disabled. Configure a custom idempotent stop command only if it is safe to run while idle.";
+        }
+
+        if (!string.IsNullOrWhiteSpace(StopCommand)
+            && string.Equals(StopCommand.Trim(), PlatformDefaults.SuperwhisperToggle, StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "stopCommand uses the Superwhisper record toggle from older Windows samples; Windows suppresses it because it can start recording while idle. Use a custom idempotent stop command instead.";
+        }
     }
 
     private static string Signature(IEnumerable<string> words) =>

@@ -215,13 +215,15 @@ public sealed class TrayRuntimeSupervisor : IAsyncDisposable
     private async Task ObserveCompletionAsync(ITrayRuntimeRun observedRun, long observedGeneration)
     {
         int code;
+        string? error = null;
         try
         {
             code = await observedRun.Completion.ConfigureAwait(false);
         }
-        catch
+        catch (Exception ex)
         {
             code = 1;
+            error = Sanitize(ex);
         }
 
         await gate.WaitAsync().ConfigureAwait(false);
@@ -233,7 +235,7 @@ public sealed class TrayRuntimeSupervisor : IAsyncDisposable
             }
 
             await StopCurrentRunAsync(CancellationToken.None).ConfigureAwait(false);
-            SetSnapshot(code == 0 ? TrayState.Finished : TrayState.Error, code == 0 ? null : $"runtime exited {code}", code);
+            SetSnapshot(code == 0 ? TrayState.Finished : TrayState.Error, code == 0 ? null : error ?? $"runtime exited {code}", code);
         }
         finally
         {

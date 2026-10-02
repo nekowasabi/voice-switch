@@ -37,6 +37,19 @@ public interface IDictationRuntimeObserver
     void NoiseProcessorCompleted(NoiseProcessorStatus status);
 }
 
+public sealed class HandoffAdmissionBlockedException : InvalidOperationException
+{
+    public HandoffAdmissionBlockedException(HandoffResult result)
+        : base($"{result.Status}: {result.Id}; {result.Message}")
+    {
+        Result = result;
+    }
+
+    public HandoffResult Result { get; }
+}
+
+public sealed record HandoffAdmission(bool CanCapture, string Message);
+
 public sealed class WindowsDictationRuntime
 {
     private const int MaxPendingRecognition = 8;
@@ -502,6 +515,10 @@ public sealed class WindowsDictationRuntime
             var result = await handoff.SubmitAsync(audio, cancellation);
             observer?.HandoffSubmitted(audio, result);
             Log.Info($"dictation handoff: {result.Status} {result.Id} wav={result.Path ?? "-"} reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End} {result.Message}");
+            if (result.Status is HandoffStatus.SubmittedUnconfirmed or HandoffStatus.DeferredUnsent)
+            {
+                throw new HandoffAdmissionBlockedException(result);
+            }
         }
         finally
         {
@@ -1331,9 +1348,6 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
             return new HandoffResult(HandoffStatus.DryRunSuppressed, audio.SessionId, null, "dry-run kept audio in memory only");
         }
 
-        Directory.CreateDirectory(root);
-        ValidateOwnedDirectory(root);
-
         var wavPath = Path.Combine(root, $"{audio.SessionId:N}.wav");
         var manifestPath = Path.Combine(root, $"{audio.SessionId:N}.json");
         var manifest = new HandoffManifest(audio.SessionId, wavPath, Pcm16Wav.Sha256Hex(audio.Samples.AsSpan()), "DispatchingUnconfirmed", DateTimeOffset.UtcNow);
@@ -1341,31 +1355,52 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         FileStream gate;
         try
         {
+            Directory.CreateDirectory(root);
+            ValidateOwnedDirectory(root);
             gate = OpenSynchronizationFile(root);
         }
         catch (IOException ex)
         {
-            return new HandoffResult(HandoffStatus.Busy, audio.SessionId, null, ex.Message);
+            return new HandoffResult(HandoffStatus.Busy, audio.SessionId, null, $"handoff synchronization is busy; current audio was not durably retained: {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, ex.Message);
         }
 
         try
         {
             using var ownedGate = gate;
             TryDelete(ObsoleteLockPath(root));
-            if (HasPending(root))
+            if (File.Exists(wavPath) || File.Exists(manifestPath))
             {
-                return new HandoffResult(HandoffStatus.Busy, audio.SessionId, null, "an unconfirmed owned Superwhisper handoff already exists");
+                return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, "owned handoff id collision; no files were overwritten");
             }
 
-            await WriteManifestAtomicAsync(manifestPath, manifest, writeText, cancellation);
+            if (HasDeferredUnsent(root))
+            {
+                return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, "one UNSENT dictation body is already retained; current audio was not durably retained");
+            }
+
+            if (HasSubmittedUnconfirmed(root))
+            {
+                return await PreserveDeferredAsync(audio, wavPath, manifestPath, manifest, "an unconfirmed submitted handoff already exists", cancellation);
+            }
+
+            if (BuildFileIntakeArgument(wavPath) is not { } argument)
+            {
+                return await PreserveDeferredAsync(audio, wavPath, manifestPath, manifest, "unsupported path encoding for registered Superwhisper file intake", cancellation);
+            }
+
             await writeBytes(wavPath, Pcm16Wav.Encode(audio.Samples.AsSpan()), cancellation);
+            await WriteManifestAtomicAsync(manifestPath, manifest, writeText, cancellation);
             var exe = ResolveSuperwhisperExecutable();
             var psi = new ProcessStartInfo(exe)
             {
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
-            psi.ArgumentList.Add("superwhisper://file//" + wavPath);
+            psi.ArgumentList.Add(argument);
             _ = startProcess(psi) ?? throw new InvalidOperationException("Process.Start returned null");
             dispatched = true;
             await WriteManifestAtomicAsync(manifestPath, manifest with { DispatchState = "SubmittedUnconfirmed" }, writeText, CancellationToken.None);
@@ -1377,14 +1412,34 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         }
         catch (Exception ex)
         {
-            var wavDeleted = deleteFile(wavPath);
-            if (wavDeleted)
-            {
-                deleteFile(manifestPath + ".tmp");
-                deleteFile(manifestPath);
-            }
+            deleteFile(wavPath);
+            deleteFile(manifestPath + ".tmp");
+            deleteFile(manifestPath);
 
             return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, ex.Message);
+        }
+    }
+
+    private async Task<HandoffResult> PreserveDeferredAsync(
+        DictationAudio audio,
+        string wavPath,
+        string manifestPath,
+        HandoffManifest manifest,
+        string reason,
+        CancellationToken cancellation)
+    {
+        try
+        {
+            await writeBytes(wavPath, Pcm16Wav.Encode(audio.Samples.AsSpan()), cancellation);
+            await WriteManifestAtomicAsync(manifestPath, manifest with { DispatchState = "DeferredUnsent" }, writeText, cancellation);
+            return new HandoffResult(HandoffStatus.DeferredUnsent, audio.SessionId, wavPath, $"UNSENT dictation body retained; copy this WAV before --complete-handoff if you need manual recovery: {reason}");
+        }
+        catch (Exception ex)
+        {
+            deleteFile(wavPath);
+            deleteFile(manifestPath + ".tmp");
+            deleteFile(manifestPath);
+            return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, $"could not retain UNSENT dictation body: {ex.Message}");
         }
     }
 
@@ -1462,7 +1517,11 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
             return new HandoffResult(HandoffStatus.CleanupFailed, id, wavPath, "manual completion acknowledged, but owned state cleanup failed");
         }
 
-        return new HandoffResult(HandoffStatus.CompletedManually, id, wavPath, "manual completion acknowledged; owned source file cleanup attempted");
+        var state = manifest?.DispatchState;
+        var message = string.Equals(state, "DeferredUnsent", StringComparison.Ordinal)
+            ? "UNSENT dictation body acknowledged as manually recovered or discarded; owned source file cleanup attempted"
+            : "manual completion acknowledged; owned source file cleanup attempted";
+        return new HandoffResult(HandoffStatus.CompletedManually, id, wavPath, message);
     }
 
     private static string ResolveSuperwhisperExecutable()
@@ -1522,20 +1581,19 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
     private static void ValidateOwnedDirectory(string root)
     {
         var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        for (var current = fullRoot; !string.IsNullOrEmpty(current); current = Path.GetDirectoryName(current) ?? "")
+        if ((File.Exists(fullRoot) || Directory.Exists(fullRoot))
+            && (File.GetAttributes(fullRoot) & FileAttributes.ReparsePoint) != 0)
         {
-            if ((File.Exists(current) || Directory.Exists(current))
-                && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
-            {
-                throw new InvalidDataException("handoff owned directory path crosses a reparse point");
-            }
-
-            var parent = Path.GetDirectoryName(current);
-            if (string.IsNullOrEmpty(parent) || string.Equals(parent, current, StringComparison.OrdinalIgnoreCase))
-            {
-                break;
-            }
+            throw new InvalidDataException("handoff owned directory root is a reparse point");
         }
+    }
+
+    public static HandoffAdmission CheckAdmission(string root)
+    {
+        var summary = PendingSummary(root, DateTimeOffset.UtcNow);
+        return summary.StartsWith("no pending", StringComparison.Ordinal)
+            ? new HandoffAdmission(true, summary)
+            : new HandoffAdmission(false, summary);
     }
 
     public static string PendingSummary(string root, DateTimeOffset now)
@@ -1552,10 +1610,15 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
             return "no pending dictation handoff";
         }
 
-        var manifestPath = manifests.OrderBy(path => File.GetCreationTimeUtc(path)).First();
+        return string.Join(Environment.NewLine, manifests.OrderBy(path => File.GetCreationTimeUtc(path)).Select(path => PendingManifestSummary(root, path, now)));
+    }
+
+    private static string PendingManifestSummary(string root, string manifestPath, DateTimeOffset now)
+    {
         var id = Path.GetFileNameWithoutExtension(manifestPath);
         var wavPath = Path.Combine(root, $"{id}.wav");
         var created = new DateTimeOffset(File.GetCreationTimeUtc(manifestPath), TimeSpan.Zero);
+        var state = "Malformed";
         try
         {
             var manifest = JsonSerializer.Deserialize<HandoffManifest>(File.ReadAllText(manifestPath));
@@ -1564,6 +1627,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
                 id = manifest.Id.ToString("D");
                 wavPath = manifest.WavPath;
                 created = manifest.CreatedAt;
+                state = manifest.DispatchState;
             }
         }
         catch (JsonException)
@@ -1571,12 +1635,38 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         }
 
         var age = now - created;
-        var warning = age >= TimeSpan.FromHours(24) ? " overdue; run --complete-handoff after confirming Superwhisper is done" : "";
-        return $"pending dictation handoff: id {id}; wav {wavPath}; manifest {manifestPath}; age {age:g}; complete with --complete-handoff {id};{warning}";
+        var warning = age >= TimeSpan.FromHours(24) ? " overdue; run --complete-handoff after confirming submitted work or manually recovering UNSENT audio" : "";
+        return $"pending dictation handoff: state {state}; id {id}; wav {wavPath}; manifest {manifestPath}; age {age:g}; complete with --complete-handoff {id};{warning}";
     }
 
-    private static bool HasPending(string root) =>
-        Directory.EnumerateFiles(root, "*.json").Any();
+    private static bool HasSubmittedUnconfirmed(string root) =>
+        Directory.EnumerateFiles(root, "*.json").Any(path => !string.Equals(ReadDispatchState(path), "DeferredUnsent", StringComparison.Ordinal));
+
+    private static bool HasDeferredUnsent(string root) =>
+        Directory.EnumerateFiles(root, "*.json").Any(path => string.Equals(ReadDispatchState(path), "DeferredUnsent", StringComparison.Ordinal));
+
+    private static string? ReadDispatchState(string manifestPath)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<HandoffManifest>(File.ReadAllText(manifestPath))?.DispatchState;
+        }
+        catch
+        {
+            return "Malformed";
+        }
+    }
+
+    private static string? BuildFileIntakeArgument(string wavPath)
+    {
+        var fullPath = Path.GetFullPath(wavPath);
+        if (fullPath.Any(c => char.IsWhiteSpace(c) || c is '#' or '%' or '?' || c > 0x7f))
+        {
+            return null;
+        }
+
+        return "superwhisper://file//" + fullPath;
+    }
 
     private static FileStream OpenSynchronizationFile(string root) =>
         new FileStream(SynchronizationPath(root), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);

@@ -47,6 +47,7 @@ public enum FinishReason
 public enum HandoffStatus
 {
     SubmittedUnconfirmed,
+    DeferredUnsent,
     Busy,
     FailedBeforeDispatch,
     DryRunSuppressed,
