@@ -23,6 +23,7 @@ public sealed class Segmenter
     public bool LastWasSpeech { get; private set; }
     public bool AdaptFloor { get; set; } = true;
     public bool HasOpenUtterance => utterance.Count > 0;
+    public bool IsSkipping => skipping;
 
     public void Reset()
     {

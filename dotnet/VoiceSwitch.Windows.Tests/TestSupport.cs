@@ -422,3 +422,13 @@ sealed record TestOutcome(TestStatus Status, string Message = "")
     public static TestOutcome Fail(string message = "") => new(TestStatus.Fail, message);
     public static TestOutcome Skip(string message) => new(TestStatus.Skip, message);
 }
+
+sealed class FixedResultHandoff(HandoffStatus status) : IDictationHandoff
+{
+    public int Count { get; private set; }
+    public Task<HandoffResult> SubmitAsync(DictationAudio audio, CancellationToken cancellation)
+    {
+        Count++;
+        return Task.FromResult(new HandoffResult(status, audio.SessionId, null, "fixture"));
+    }
+}

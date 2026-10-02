@@ -2,7 +2,7 @@
 
 This document summarizes the repository-visible Windows parity review for the current branch. It cites committed source, tests, and contracts rather than uncommitted execution notes.
 
-Required dictation experience means one spoken wake prefix plus body, removal of only the wake prefix and a standalone terminal stop, automatic transcription and paste into the original target, and safe continuation. The current Windows implementation does not yet establish that complete experience. A passing parity gate accepts 28 declared differences. It does not prove full user-experience parity.
+Required dictation experience means one spoken wake prefix plus body, removal of only the wake prefix and a standalone terminal stop, automatic transcription and paste into the original target, and safe continuation. The current Windows implementation does not yet establish that complete experience. A passing parity gate accepts 29 declared differences. It does not prove full user-experience parity.
 
 Evidence terms:
 
@@ -80,15 +80,16 @@ The inventory source is `tests/parity/contracts/platform_parity.json`. "Allowed"
 | 26 | capability `dictation_automatic_completion` missing from Windows | Real missing automatic correlation/cleanup. Manual pending blocks consecutive external sessions. |
 | 27 | capability `menu_bar_device_and_login_items` missing from Windows | Broad name bundles implemented tray with absent device picker/login. Tray existence does not close picker/login gaps. |
 | 28 | capability `windows_speech_diagnostics` missing from macOS | Intentional System.Speech-specific diagnostics. Overlaps 10 and 11. |
+| 29 | sample `stopCommand` missing from Windows default sample | Intentional safety difference: Windows cannot observe external recording state and suppresses known recording toggles. Operators may provide an idempotent custom stop. |
 
 Entry totals, with each numbered row counted once:
 
 - 4 sample-only rows: 1, 3, 4, 6.
 - 13 diagnostic or configuration-entry rows: 8 through 11, 13 through 20, and 28.
-- 10 rows exposing required user-experience gaps or changed behavior: 2, 5, 7, 12, 21 through 26.
+- 11 rows exposing required user-experience gaps or changed behavior: 2, 5, 7, 12, 21 through 26, and 29.
 - 1 mixed tray/device/login grouping: 27.
 
-Total: 28. These are entry totals, not unique missing features. Rows 7 and 22 overlap. Rows 21 and 25 overlap. Rows 2, 12, and 26 concern the same completion boundary.
+Total: 29. These are entry totals, not unique missing features. Rows 7 and 22 overlap. Rows 21 and 25 overlap. Rows 2, 12, and 26 concern the same completion boundary.
 
 ## What the gates prove
 

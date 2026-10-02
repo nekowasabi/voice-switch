@@ -2,6 +2,11 @@
   "shared_cli_flags": ["--fire", "--vad-selftest"],
   "allowed_sample_config_gaps": [
     {
+      "key": "stopCommand",
+      "platform": "windows",
+      "reason": "Windows cannot observe external recording state, so the default sample omits the unsafe recording toggle as a stop command."
+    },
+    {
       "key": "dictation",
       "platform": "windows",
       "reason": "The default Windows sample stays in command mode; config.example.windows-dictation.json is the explicit dictation sample."

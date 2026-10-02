@@ -89,6 +89,10 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation handoff handles concurrency cleanup and recovery", () => Check(DictationHandoffConcurrencyCleanupAndRecovery())),
     ("dictation registered handoff defers second body without relaunch", DictationRegisteredHandoffDefersSecondBodyWithoutRelaunch),
     ("dictation handoff accepts trusted ancestor junction only", DictationHandoffAcceptsTrustedAncestorJunctionOnly),
+    ("handoff failed WAV cleanup preserves recovery state", () => Check(HandoffFailedCleanupPreservesState())),
+    ("handoff admission rejects pending orphan and busy storage", () => Check(HandoffAdmissionRejectsStorage())),
+    ("handoff owned links never touch outside sentinel", HandoffOwnedLinksRejectSafely),
+    ("runtime stops and disposes capture after external handoff result", () => Check(RuntimeStopsAfterExternalHandoff())),
     ("dictation dry-run keeps audio in memory", () => Check(DictationDryRunKeepsAudioInMemory())),
     ("production script parses configured words distinctly on Windows PowerShell", ProductionScriptParsesWordsOnWindowsPowerShell),
     ("resident fails on clean child exit before ready", () => Check(ResidentFailsOnCleanEarlyExit())),
@@ -103,6 +107,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation recognizer retains ownership until confirmed exit", () => Check(DictationRecognizerRetainsOwnershipUntilConfirmedExit())),
     ("tray options reject synthetic input without record-only", () => Check(TrayOptionsRejectSyntheticWithoutRecordOnly())),
     ("tray options reject numeric command", () => Check(TrayOptionsRejectNumericCommand())),
+    ("production tray rejects pending handoff before opening capture", () => Check(ProductionTrayRejectsPendingBeforeCapture())),
     ("production tray factory rejects unsafe synthetic source", () => Check(ProductionTrayFactoryRejectsUnsafeSyntheticSource())),
     ("tray supervisor starts paused and start is idempotent", () => Check(TraySupervisorStartsPausedAndStartIsIdempotent())),
     ("tray supervisor invalid reload keeps running generation", () => Check(TraySupervisorInvalidReloadKeepsRunningGeneration())),
@@ -757,9 +762,9 @@ static bool DictationRuntimeRecoversAfterLongNonwakeAudio()
     AddFrames(frames, 12, loud: false);
     AddFrames(frames, 12, loud: true);
     AddFrames(frames, 12, loud: false);
-    var recognizer = new ScriptedDictationRecognizer(request => Task.FromResult(request.Id == 1
+    var recognizer = new ScriptedDictationRecognizer(request => Task.FromResult(request.Range.End <= 94 * Segmenter.FrameLength
         ? new RecognizedUtterance(request.Id, request.Extent, request.Range, "雑談", ImmutableArray.Create(Run("雑談", request.Range.Start, request.Range.End)))
-        : request.Id == 2
+        : request.Range.End <= 118 * Segmenter.FrameLength
             ? new RecognizedUtterance(
                 request.Id,
                 request.Extent,
@@ -779,7 +784,9 @@ static bool DictationRuntimeRecoversAfterLongNonwakeAudio()
     var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(frames), recognizer, handoff, dryRun: true);
     return RunWithTimeout(runtime, TimeSpan.FromSeconds(5)) == 0
         && handoff.Submissions.Count == 1
-        && recognizer.Requests.Count >= 3;
+        && recognizer.Requests.Count >= 3
+        && handoff.Submissions[0].Range.Start >= 94 * Segmenter.FrameLength
+        && handoff.Submissions[0].Range.End <= 118 * Segmenter.FrameLength;
 }
 
 static bool DictationRuntimeWaitsForOpenStopUtteranceBeforeSilence()
@@ -1881,7 +1888,7 @@ static bool DictationHandoffDefersUnsupportedRegisteredUriPath()
     var wavs = Directory.Exists(root) ? Directory.EnumerateFiles(root, "*.wav").ToArray() : [];
     var retained = wavs.Any(path => Pcm16Wav.DecodeStrict(new FileInfo(path), 60 * 16000).SequenceEqual(audio.Samples));
 
-    return result.Status.ToString() == "DeferredUnsent"
+    return result.Status == HandoffStatus.DeferredUnsent
         && launches == 0
         && retained
         && result.Message.Contains("unsupported path encoding", StringComparison.OrdinalIgnoreCase);
@@ -1911,6 +1918,7 @@ static bool DictationHandoffRetainsFileWhenPostlaunchStateWriteFails()
             writes++;
             if (writes == 2)
             {
+                File.WriteAllText(path, "partial update");
                 throw new OperationCanceledException(cancellation);
             }
 
@@ -1921,7 +1929,10 @@ static bool DictationHandoffRetainsFileWhenPostlaunchStateWriteFails()
     var entries = Directory.EnumerateFileSystemEntries(root).ToArray();
     return result.Status == HandoffStatus.SubmittedUnconfirmed
         && entries.Any(path => path.EndsWith(".wav", StringComparison.Ordinal))
-        && entries.Any(path => path.EndsWith(".json", StringComparison.Ordinal));
+        && entries.Any(path => path.EndsWith(".json", StringComparison.Ordinal))
+        && entries.Any(path => path.EndsWith(".tmp", StringComparison.Ordinal))
+        && RegisteredSuperwhisperHandoff.CompleteManual(root, audio.SessionId).Status == HandoffStatus.CompletedManually
+        && RegisteredSuperwhisperHandoff.CheckAdmission(root).CanCapture;
 }
 
 static bool DictationHandoffBusyAndManualCleanup()
@@ -1935,7 +1946,7 @@ static bool DictationHandoffBusyAndManualCleanup()
     var complete = RegisteredSuperwhisperHandoff.CompleteManual(root, firstId);
     var again = RegisteredSuperwhisperHandoff.CompleteManual(root, firstId);
     return first.Status == HandoffStatus.SubmittedUnconfirmed
-        && second.Status.ToString() == "DeferredUnsent"
+        && second.Status == HandoffStatus.DeferredUnsent
         && complete.Status == HandoffStatus.CompletedManually
         && again.Status == HandoffStatus.NotFound;
 }
@@ -2021,11 +2032,11 @@ static TestOutcome DictationRegisteredHandoffDefersSecondBodyWithoutRelaunch()
     var secondResult = handoff.SubmitAsync(second, CancellationToken.None).GetAwaiter().GetResult();
     var wavs = Directory.Exists(root) ? Directory.EnumerateFiles(root, "*.wav").ToArray() : [];
     var bodies = wavs.Select(path => Pcm16Wav.DecodeStrict(new FileInfo(path), 60 * 16000).ToArray()).ToArray();
-    var firstRetained = bodies.Any(samples => samples.Contains((short)5000));
-    var secondRetained = bodies.Any(samples => samples.Contains((short)9000));
+    var firstRetained = bodies.Any(samples => samples.SequenceEqual(first.Samples));
+    var secondRetained = bodies.Any(samples => samples.SequenceEqual(second.Samples));
 
     return firstResult.Status == HandoffStatus.SubmittedUnconfirmed
-        && secondResult.Status.ToString() == "DeferredUnsent"
+        && secondResult.Status == HandoffStatus.DeferredUnsent
         && launches == 1
         && wavs.Length == 2
         && firstRetained
@@ -2063,22 +2074,25 @@ static TestOutcome DictationHandoffAcceptsTrustedAncestorJunctionOnly()
             return Process.GetCurrentProcess();
         });
         var audio = new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), body);
-        var result = SubmitWithoutThrow(handoff, audio);
+        var result = SubmitHandoff(handoff, audio);
         var wavPath = Path.Combine(target, "handoff", $"{audio.SessionId:N}.wav");
         var retained = File.Exists(wavPath)
             && Pcm16Wav.DecodeStrict(new FileInfo(wavPath), 60 * 16000).SequenceEqual(body);
 
         var outside = Path.Combine(temp.Dir, "outside");
         Directory.CreateDirectory(outside);
+        var sentinel = Path.Combine(outside, "sentinel");
+        File.WriteAllText(sentinel, "unchanged");
+        var rejectedLaunches = 0;
         var rootResult = CreateJunction(rootJunction, outside)
-            ? SubmitWithoutThrow(new RegisteredSuperwhisperHandoff(rootJunction, _ => Process.GetCurrentProcess()), new DictationAudio(Guid.NewGuid(), new SampleRange(0, 1), ImmutableArray.Create<short>(7)))
+            ? SubmitHandoff(new RegisteredSuperwhisperHandoff(rootJunction, _ => { rejectedLaunches++; return Process.GetCurrentProcess(); }), new DictationAudio(Guid.NewGuid(), new SampleRange(0, 1), ImmutableArray.Create<short>(7)))
             : new HandoffResult(HandoffStatus.NotFound, Guid.Empty, null, "root junction not created");
 
         Directory.CreateDirectory(childRoot);
         var childAudio = new DictationAudio(Guid.NewGuid(), new SampleRange(0, 1), ImmutableArray.Create<short>(8));
         childJunction = Path.Combine(childRoot, $"{childAudio.SessionId:N}.wav");
         var childResult = CreateJunction(childJunction, outside)
-            ? SubmitWithoutThrow(new RegisteredSuperwhisperHandoff(childRoot, _ => Process.GetCurrentProcess()), childAudio)
+            ? SubmitHandoff(new RegisteredSuperwhisperHandoff(childRoot, _ => { rejectedLaunches++; return Process.GetCurrentProcess(); }), childAudio)
             : new HandoffResult(HandoffStatus.NotFound, Guid.Empty, null, "child junction not created");
 
         return result.Status == HandoffStatus.SubmittedUnconfirmed
@@ -2086,7 +2100,9 @@ static TestOutcome DictationHandoffAcceptsTrustedAncestorJunctionOnly()
             && retained
             && rootResult.Status == HandoffStatus.FailedBeforeDispatch
             && childResult.Status == HandoffStatus.FailedBeforeDispatch
-            && Directory.Exists(outside)
+            && rejectedLaunches == 0
+            && File.ReadAllText(sentinel) == "unchanged"
+            && Directory.GetFileSystemEntries(outside).Length == 1
             ? TestOutcome.Pass()
             : TestOutcome.Fail($"ancestor={result.Status} launches={launches} retained={retained} root={rootResult.Status}/{rootResult.Message} child={childResult.Status}/{childResult.Message}");
     }
@@ -2129,16 +2145,124 @@ static void DeleteJunctionIfOwned(string junction, string ownerRoot)
     }
 }
 
-static HandoffResult SubmitWithoutThrow(IDictationHandoff handoff, DictationAudio audio)
+static HandoffResult SubmitHandoff(IDictationHandoff handoff, DictationAudio audio) =>
+    handoff.SubmitAsync(audio, CancellationToken.None).GetAwaiter().GetResult();
+
+static bool HandoffFailedCleanupPreservesState()
 {
-    try
+    using var temp = RuntimeTemp();
+    foreach (var deferred in new[] { false, true })
     {
-        return handoff.SubmitAsync(audio, CancellationToken.None).GetAwaiter().GetResult();
+        var root = Path.Combine(temp.Dir, deferred ? "unsupported space" : "ordinary");
+        var audio = new DictationAudio(Guid.NewGuid(), new SampleRange(0, 3), ImmutableArray.Create<short>(3, -7, 12));
+        var launches = 0;
+        var handoff = new RegisteredSuperwhisperHandoff(root, _ =>
+        {
+            launches++;
+            throw new InvalidOperationException("fixture launch failure");
+        }, writeBytes: (path, bytes, _) =>
+        {
+            File.WriteAllBytes(path, bytes);
+            if (deferred) throw new IOException("fixture failure after WAV write");
+            return Task.CompletedTask;
+        }, deleteFile: path => !path.EndsWith(".wav", StringComparison.Ordinal));
+        var result = SubmitHandoff(handoff, audio);
+        var wav = Path.Combine(root, $"{audio.SessionId:N}.wav");
+        if (result.Status != HandoffStatus.FailedBeforeDispatch
+            || launches != (deferred ? 0 : 1)
+            || !File.Exists(Path.Combine(root, $"{audio.SessionId:N}.json"))
+            || !Pcm16Wav.DecodeStrict(new FileInfo(wav), 100).SequenceEqual(audio.Samples)
+            || RegisteredSuperwhisperHandoff.CheckAdmission(root).CanCapture) return false;
     }
-    catch (Exception ex)
+    return true;
+}
+
+static bool HandoffAdmissionRejectsStorage()
+{
+    using var temp = RuntimeTemp();
+    var root = Path.Combine(temp.Dir, "handoff");
+    if (!RegisteredSuperwhisperHandoff.CheckAdmission(root).CanCapture) return false;
+    using (var gate = new FileStream(Path.Combine(root, "pending.sync"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
     {
-        return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, $"threw {ex.GetType().Name}: {ex.Message}");
+        if (RegisteredSuperwhisperHandoff.CheckAdmission(root).CanCapture) return false;
     }
+    foreach (var suffix in new[] { ".json", ".wav", ".json.tmp" })
+    {
+        var path = Path.Combine(root, Guid.NewGuid().ToString("N") + suffix);
+        File.WriteAllText(path, "fixture retained state");
+        var opened = false;
+        try
+        {
+            RegisteredSuperwhisperHandoff.EnsureCaptureAllowed(root);
+            opened = true; // stands at the same boundary immediately before capture creation
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("before capture starts")) { }
+        if (opened) return false;
+        RegisteredSuperwhisperHandoff.EnsureCaptureAllowed(root, dryRun: true);
+        File.Delete(path);
+    }
+    return RegisteredSuperwhisperHandoff.CheckAdmission(root).CanCapture;
+}
+
+static TestOutcome HandoffOwnedLinksRejectSafely()
+{
+    if (OperatingSystem.IsWindows()) return TestOutcome.Skip("portable symlink test; native junction test covers Windows");
+    using var temp = RuntimeTemp();
+    var sentinel = Path.Combine(temp.Dir, "sentinel");
+    const string contents = "outside must remain unchanged";
+    File.WriteAllText(sentinel, contents);
+    var launches = 0;
+    var audio = new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(6, 8));
+    foreach (var name in new[] { "pending.sync", "pending.lock", $"{audio.SessionId:N}.wav", $"{audio.SessionId:N}.json", $"{audio.SessionId:N}.json.tmp" })
+    {
+        var root = Path.Combine(temp.Dir, Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        File.CreateSymbolicLink(Path.Combine(root, name), sentinel);
+        var result = SubmitHandoff(new RegisteredSuperwhisperHandoff(root, _ => { launches++; return Process.GetCurrentProcess(); }), audio);
+        if (result.Status != HandoffStatus.FailedBeforeDispatch || RegisteredSuperwhisperHandoff.CheckAdmission(root).CanCapture
+            || File.ReadAllText(sentinel) != contents || launches != 0) return TestOutcome.Fail(name);
+    }
+    var outside = Path.Combine(temp.Dir, "outside");
+    Directory.CreateDirectory(outside);
+    var rootLink = Path.Combine(temp.Dir, "root-link");
+    Directory.CreateSymbolicLink(rootLink, outside);
+    var rejected = SubmitHandoff(new RegisteredSuperwhisperHandoff(rootLink, _ => { launches++; return Process.GetCurrentProcess(); }), audio);
+    var ancestorRoot = Path.Combine(rootLink, "owned");
+    var accepted = SubmitHandoff(new RegisteredSuperwhisperHandoff(ancestorRoot, _ => { launches++; return Process.GetCurrentProcess(); }), audio);
+    return rejected.Status == HandoffStatus.FailedBeforeDispatch && accepted.Status == HandoffStatus.SubmittedUnconfirmed
+        && launches == 1 && File.ReadAllText(sentinel) == contents
+        && Pcm16Wav.DecodeStrict(new FileInfo(accepted.Path!), 100).SequenceEqual(audio.Samples)
+        ? TestOutcome.Pass() : TestOutcome.Fail("root / ancestor policy");
+}
+
+static bool RuntimeStopsAfterExternalHandoff()
+{
+    using var temp = RuntimeTemp();
+    var wav = Path.Combine(temp.Dir, "input.wav");
+    var frames = ThreeUtteranceFrames().ToList();
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 12, loud: false);
+    File.WriteAllBytes(wav, Pcm16Wav.Encode(frames.SelectMany(frame => frame.Samples).ToArray()));
+    foreach (var status in new[] { HandoffStatus.SubmittedUnconfirmed, HandoffStatus.DeferredUnsent, HandoffStatus.Busy, HandoffStatus.FailedBeforeDispatch, HandoffStatus.RecordedLocally })
+    {
+        var capture = new WavPcmCapture(wav, paced: false);
+        var recognizer = new ScriptedDictationRecognizer(request => Task.FromResult(request.Id % 2 == 1
+            ? new RecognizedUtterance(request.Id, request.Extent, request.Range, "音声入力本文",
+                ImmutableArray.Create(Run("音声入力", request.Range.Start, request.Range.Start + Segmenter.FrameLength),
+                    Run("本文", request.Range.Start + Segmenter.FrameLength, request.Range.End)))
+            : new RecognizedUtterance(request.Id, request.Extent, request.Range, "入力ストップ",
+                ImmutableArray.Create(Run("入力ストップ", request.Range.Start + Segmenter.FrameLength, request.Range.Start + Segmenter.FrameLength * 3)))));
+        var handoff = new FixedResultHandoff(status);
+        var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 5000), capture, recognizer, handoff, dryRun: false);
+        try
+        {
+            using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            if (runtime.RunAsync(cancel.Token).GetAwaiter().GetResult() != 0 || status != HandoffStatus.RecordedLocally) return false;
+        }
+        catch (HandoffAdmissionBlockedException ex) when (ex.Result.Status == status && status != HandoffStatus.RecordedLocally) { }
+        if (!capture.DisposedForTest || handoff.Count != (status == HandoffStatus.RecordedLocally ? 2 : 1)) return false;
+    }
+    return true;
 }
 
 static bool DictationDryRunKeepsAudioInMemory()
@@ -2683,6 +2807,26 @@ static bool TrayOptionsRejectNumericCommand()
     catch (ArgumentException ex)
     {
         return ex.Message.Contains("--tray-command", StringComparison.Ordinal);
+    }
+}
+
+static bool ProductionTrayRejectsPendingBeforeCapture()
+{
+    using var temp = RuntimeTemp();
+    var previousLocal = Environment.GetEnvironmentVariable("LOCALAPPDATA");
+    try
+    {
+        Environment.SetEnvironmentVariable("LOCALAPPDATA", temp.Dir);
+        var root = WindowsPaths.DefaultHandoffPath();
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, $"{Guid.NewGuid():N}.json"), "{malformed");
+        var factory = new ProductionRuntimeFactory();
+        return Throws<InvalidOperationException>(() => factory.StartAsync(
+            DictationRuntimeTestConfig(), new TrayInputSource(null, null), CancellationToken.None).GetAwaiter().GetResult(), "before capture starts");
+    }
+    finally
+    {
+        Environment.SetEnvironmentVariable("LOCALAPPDATA", previousLocal);
     }
 }
 

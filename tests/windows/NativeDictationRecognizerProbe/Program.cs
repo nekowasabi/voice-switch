@@ -69,9 +69,9 @@ try
         return 4;
     }
 
-    if (HasFlag(args, "--expect-leading-wake") && leadingWake is null)
+    if (HasFlag(args, "--expect-leading-wake") && leadingWake?.BodyStart is null)
     {
-        Console.Error.WriteLine("native dictation probe: expected production LeadingWake to accept the returned lexemes");
+        Console.Error.WriteLine("native dictation probe: expected production LeadingWake to return a non-null body start from the returned lexemes");
         return 5;
     }
 

@@ -27,7 +27,7 @@ What parity means here:
 
 - Shared pure behavior, such as text normalization and the energy segmenter, should match through common fixtures.
 - Platform runtime surfaces may differ only with a reasoned allowlist entry.
-- The 28 allowed differences are accounting rows. They do not prove complete user-experience parity.
+- The 29 allowed differences are accounting rows. They do not prove complete user-experience parity.
 - Windows currently parses `skipWhileMicInUseBy` for config compatibility but does not enforce that runtime guard.
 - Windows command mode keeps a standalone Segmenter core, while the dictation runtime uses finite SAPI recognition over PCM. Runtime VAD wiring is not the dictation file-ingress story.
 - Stop words differ by runtime session model. macOS command mode fires stop only when a configured recorder is actively using the microphone. Windows legacy command mode treats configured stop words as direct grammar commands, while the Windows dictation runtime has its own session-gated stop handling.

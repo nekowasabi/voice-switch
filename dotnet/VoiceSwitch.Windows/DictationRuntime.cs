@@ -354,6 +354,7 @@ public sealed class WindowsDictationRuntime
         if (!session.IsActive
             && !session.IsAwaitingBody
             && pending.Count == 0
+            && (!segmenter.HasOpenUtterance || segmenter.IsSkipping)
             && analysisStore.Next - analysisStore.Start > idleRetainSamples)
         {
             segmenter.Reset();
@@ -515,7 +516,7 @@ public sealed class WindowsDictationRuntime
             var result = await handoff.SubmitAsync(audio, cancellation);
             observer?.HandoffSubmitted(audio, result);
             Log.Info($"dictation handoff: {result.Status} {result.Id} wav={result.Path ?? "-"} reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End} {result.Message}");
-            if (result.Status is HandoffStatus.SubmittedUnconfirmed or HandoffStatus.DeferredUnsent)
+            if (result.Status is not (HandoffStatus.DryRunSuppressed or HandoffStatus.RecordedLocally))
             {
                 throw new HandoffAdmissionBlockedException(result);
             }
@@ -1355,8 +1356,9 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         FileStream gate;
         try
         {
+            ValidateOwnedState(root);
             Directory.CreateDirectory(root);
-            ValidateOwnedDirectory(root);
+            ValidateOwnedState(root);
             gate = OpenSynchronizationFile(root);
         }
         catch (IOException ex)
@@ -1368,11 +1370,13 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
             return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, ex.Message);
         }
 
+        using var ownedGate = gate;
+        var ownsFiles = false;
         try
         {
-            using var ownedGate = gate;
+            ValidateOwnedState(root);
             TryDelete(ObsoleteLockPath(root));
-            if (File.Exists(wavPath) || File.Exists(manifestPath))
+            if (Path.Exists(wavPath) || Path.Exists(manifestPath) || Path.Exists(manifestPath + ".tmp"))
             {
                 return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, "owned handoff id collision; no files were overwritten");
             }
@@ -1382,6 +1386,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
                 return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, "one UNSENT dictation body is already retained; current audio was not durably retained");
             }
 
+            ownsFiles = true;
             if (HasSubmittedUnconfirmed(root))
             {
                 return await PreserveDeferredAsync(audio, wavPath, manifestPath, manifest, "an unconfirmed submitted handoff already exists", cancellation);
@@ -1392,8 +1397,8 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
                 return await PreserveDeferredAsync(audio, wavPath, manifestPath, manifest, "unsupported path encoding for registered Superwhisper file intake", cancellation);
             }
 
-            await writeBytes(wavPath, Pcm16Wav.Encode(audio.Samples.AsSpan()), cancellation);
             await WriteManifestAtomicAsync(manifestPath, manifest, writeText, cancellation);
+            await writeBytes(wavPath, Pcm16Wav.Encode(audio.Samples.AsSpan()), cancellation);
             var exe = ResolveSuperwhisperExecutable();
             var psi = new ProcessStartInfo(exe)
             {
@@ -1412,9 +1417,13 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         }
         catch (Exception ex)
         {
-            deleteFile(wavPath);
-            deleteFile(manifestPath + ".tmp");
-            deleteFile(manifestPath);
+            if (ownsFiles && deleteFile(wavPath))
+            {
+                if (deleteFile(manifestPath + ".tmp"))
+                {
+                    deleteFile(manifestPath);
+                }
+            }
 
             return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, ex.Message);
         }
@@ -1430,15 +1439,19 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
     {
         try
         {
-            await writeBytes(wavPath, Pcm16Wav.Encode(audio.Samples.AsSpan()), cancellation);
             await WriteManifestAtomicAsync(manifestPath, manifest with { DispatchState = "DeferredUnsent" }, writeText, cancellation);
+            await writeBytes(wavPath, Pcm16Wav.Encode(audio.Samples.AsSpan()), cancellation);
             return new HandoffResult(HandoffStatus.DeferredUnsent, audio.SessionId, wavPath, $"UNSENT dictation body retained; copy this WAV before --complete-handoff if you need manual recovery: {reason}");
         }
         catch (Exception ex)
         {
-            deleteFile(wavPath);
-            deleteFile(manifestPath + ".tmp");
-            deleteFile(manifestPath);
+            if (deleteFile(wavPath))
+            {
+                if (deleteFile(manifestPath + ".tmp"))
+                {
+                    deleteFile(manifestPath);
+                }
+            }
             return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, $"could not retain UNSENT dictation body: {ex.Message}");
         }
     }
@@ -1466,8 +1479,9 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         FileStream gate;
         try
         {
+            ValidateOwnedState(root);
             Directory.CreateDirectory(root);
-            ValidateOwnedDirectory(root);
+            ValidateOwnedState(root);
             gate = OpenSynchronizationFile(root);
         }
         catch (IOException ex)
@@ -1512,7 +1526,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
             return new HandoffResult(HandoffStatus.CleanupFailed, id, wavPath, "manual completion acknowledged, but owned source cleanup failed");
         }
 
-        if (!deleteFile(manifestPath))
+        if (!deleteFile(manifestPath + ".tmp") || !deleteFile(manifestPath))
         {
             return new HandoffResult(HandoffStatus.CleanupFailed, id, wavPath, "manual completion acknowledged, but owned state cleanup failed");
         }
@@ -1581,23 +1595,65 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
     private static void ValidateOwnedDirectory(string root)
     {
         var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        if ((File.Exists(fullRoot) || Directory.Exists(fullRoot))
+        if (Path.Exists(fullRoot)
             && (File.GetAttributes(fullRoot) & FileAttributes.ReparsePoint) != 0)
         {
             throw new InvalidDataException("handoff owned directory root is a reparse point");
         }
     }
 
+    // The profile above root may legitimately be redirected (e.g. FSLogix).
+    // The owned root and all its entries must be ordinary paths, including gate,
+    // temporary manifest and obsolete lock files, before any read/write/cleanup.
+    private static void ValidateOwnedState(string root)
+    {
+        ValidateOwnedDirectory(root);
+        if (!Directory.Exists(root)) return;
+        foreach (var path in Directory.EnumerateFileSystemEntries(root))
+        {
+            var attributes = File.GetAttributes(path);
+            if ((attributes & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0)
+            {
+                throw new InvalidDataException("handoff owned entry is a directory or reparse point");
+            }
+        }
+    }
+
+    public static void EnsureCaptureAllowed(string root, bool dryRun = false)
+    {
+        if (dryRun) return;
+        var admission = CheckAdmission(root);
+        if (!admission.CanCapture)
+        {
+            throw new InvalidOperationException("dictation handoff requires recovery before capture starts: " + admission.Message);
+        }
+    }
+
     public static HandoffAdmission CheckAdmission(string root)
     {
-        var summary = PendingSummary(root, DateTimeOffset.UtcNow);
-        return summary.StartsWith("no pending", StringComparison.Ordinal)
-            ? new HandoffAdmission(true, summary)
-            : new HandoffAdmission(false, summary);
+        try
+        {
+            ValidateOwnedState(root);
+            Directory.CreateDirectory(root);
+            using var gate = OpenSynchronizationFile(root);
+            ValidateOwnedState(root);
+            var retainedFiles = Directory.EnumerateFiles(root).Where(path =>
+                path.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
+                || path.EndsWith(".wav", StringComparison.OrdinalIgnoreCase)
+                || path.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (retainedFiles.Length == 0) return new HandoffAdmission(true, "no pending dictation handoff");
+            return new HandoffAdmission(false, PendingSummary(root, DateTimeOffset.UtcNow)
+                + "; retained files require recovery: " + string.Join(", ", retainedFiles));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            return new HandoffAdmission(false, "handoff storage unavailable: " + ex.Message);
+        }
     }
 
     public static string PendingSummary(string root, DateTimeOffset now)
     {
+        ValidateOwnedState(root);
         if (!Directory.Exists(root))
         {
             return "no pending dictation handoff";
@@ -1660,7 +1716,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
     private static string? BuildFileIntakeArgument(string wavPath)
     {
         var fullPath = Path.GetFullPath(wavPath);
-        if (fullPath.Any(c => char.IsWhiteSpace(c) || c is '#' or '%' or '?' || c > 0x7f))
+        if (fullPath.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not ('/' or '\\' or ':' or '-' or '_' or '.' or '~')))
         {
             return null;
         }

@@ -541,15 +541,12 @@ def check_windows_core_behavior(result: Result, text_fixture: dict, segmenter_fi
         (core_tmp / "VoiceSwitch.Windows.Core.csproj").write_text(core_project(), encoding="utf-8")
         (tmp_path / "Harness.csproj").write_text(harness_project(core_tmp / "VoiceSwitch.Windows.Core.csproj"), encoding="utf-8")
         (tmp_path / "Program.cs").write_text(harness_program(text_fixture, segmenter_fixture), encoding="utf-8")
-        msbuild_out = tmp_path / "msbuild"
         completed = subprocess.run(
             [
                 dotnet,
                 "run",
                 "--project",
                 str(tmp_path / "Harness.csproj"),
-                f"-p:BaseIntermediateOutputPath={msbuild_out / 'obj'}/",
-                f"-p:OutputPath={msbuild_out / 'bin'}/",
             ],
             cwd=ROOT,
             text=True,
@@ -638,6 +635,7 @@ def harness_project(core: Path) -> str:
         <Project Sdk="Microsoft.NET.Sdk">
           <PropertyGroup>
             <OutputType>Exe</OutputType>
+            <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
             <TargetFramework>net8.0</TargetFramework>
             <RollForward>LatestMajor</RollForward>
             <LangVersion>latest</LangVersion>
@@ -645,6 +643,7 @@ def harness_project(core: Path) -> str:
             <ImplicitUsings>enable</ImplicitUsings>
           </PropertyGroup>
           <ItemGroup>
+            <Compile Include="Program.cs" />
             <ProjectReference Include="{core}" />
           </ItemGroup>
         </Project>

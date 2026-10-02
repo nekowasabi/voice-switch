@@ -85,12 +85,7 @@ public static class Program
                     else
                     {
                         var root = WindowsPaths.DefaultHandoffPath();
-                        var admission = RegisteredSuperwhisperHandoff.CheckAdmission(root);
-                        Log.Info(admission.Message);
-                        if (!effectiveDryRun && !admission.CanCapture)
-                        {
-                            throw new InvalidOperationException("dictation handoff requires recovery before capture starts: " + admission.Message);
-                        }
+                        RegisteredSuperwhisperHandoff.EnsureCaptureAllowed(root, effectiveDryRun);
 
                         handoff = new RegisteredSuperwhisperHandoff(root, dryRun: effectiveDryRun);
                     }
