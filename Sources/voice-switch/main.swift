@@ -301,8 +301,12 @@ func loadSamples(_ path: String) throws -> [Float] {
 /// One file at a time, so a result in the recordings folder is never attributed to the wrong handoff.
 let handoffBusy = OSAllocatedUnfairLock(initialState: false)
 
+/// Holds computer-use-jev until it exits. The termination handler does not retain the Process,
+/// so a local variable would drop the handler when handoff returns and a non-zero status would be lost.
+let liveHandoffs = OSAllocatedUnfairLock(initialState: [ObjectIdentifier: Process]())
+
 /// superwhisper transcribes the file. The text is passed as argv to computer-use-jev.
-/// Empty text does not launch it. The process is not waited on; a non-zero exit is only logged.
+/// Empty text does not launch it. The process is not waited on; it is kept alive so a non-zero exit is still logged.
 func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplication?) async {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("voice-switch")
     let wav = dir.appendingPathComponent("\(UUID().uuidString).wav")
@@ -335,10 +339,16 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     p.arguments = ["computer-use-jev", "-goal", result]
+    liveHandoffs.withLock { $0[ObjectIdentifier(p)] = p }
     p.terminationHandler = { proc in
         if proc.terminationStatus != 0 { log("dictation: computer-use-jev exited \(proc.terminationStatus)") }
+        // Release after this callback returns. Dropping the last reference inside it can free the Process mid-callback.
+        DispatchQueue.global().async { liveHandoffs.withLock { $0[ObjectIdentifier(proc)] = nil } }
     }
-    do { try p.run() } catch { log("dictation: computer-use-jev failed to start: \(error)") }
+    do { try p.run() } catch {
+        liveHandoffs.withLock { $0[ObjectIdentifier(p)] = nil }
+        log("dictation: computer-use-jev failed to start: \(error)")
+    }
 }
 
 /// Polls superwhisper's recordings folder for the run that started at or after `since` (unix seconds).
