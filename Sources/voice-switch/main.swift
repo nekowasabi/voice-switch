@@ -13,8 +13,8 @@
 //        voice-switch --simulate a.wav       feed a.wav through the live consumer instead of the mic
 //
 // One-breath dictation ("音声入力、明日の会議は…"): an utterance that starts with a wake word and goes on
-// is recorded until silence, the wake word is cut from the audio, and superwhisper transcribes the file
-// and auto-pastes the result into the frontmost app.
+// is recorded until silence, the wake word is cut from the audio, and superwhisper transcribes the file.
+// The text from its meta.json is passed as argv to computer-use-jev -goal, not through a shell.
 import AppKit
 import os
 import AVFoundation
@@ -301,7 +301,8 @@ func loadSamples(_ path: String) throws -> [Float] {
 /// One file at a time, so a result in the recordings folder is never attributed to the wrong handoff.
 let handoffBusy = OSAllocatedUnfairLock(initialState: false)
 
-/// superwhisper transcribes the file and auto-pastes into the frontmost app; we only wait to clean up and log.
+/// superwhisper transcribes the file. The text is passed as argv to computer-use-jev.
+/// Empty text does not launch it. The process is not waited on; a non-zero exit is only logged.
 func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplication?) async {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("voice-switch")
     let wav = dir.appendingPathComponent("\(UUID().uuidString).wav")
@@ -330,6 +331,14 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
         log("dictation: no superwhisper result within 30 s"); return
     }
     log("dictation: \(result.count) chars in \(Int(Date().timeIntervalSince(submitted) * 1000)) ms")
+    guard !result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    p.arguments = ["computer-use-jev", "-goal", result]
+    p.terminationHandler = { proc in
+        if proc.terminationStatus != 0 { log("dictation: computer-use-jev exited \(proc.terminationStatus)") }
+    }
+    do { try p.run() } catch { log("dictation: computer-use-jev failed to start: \(error)") }
 }
 
 /// Polls superwhisper's recordings folder for the run that started at or after `since` (unix seconds).
