@@ -1,6 +1,6 @@
 # voice-switch
 
-Menu-bar app. A wake word on its own runs a command through `/bin/sh`. A wake word followed by more speech is recorded and opened in superwhisper, which transcribes it. On `main`, the text is not passed to another program.
+Menu-bar app. A wake word on its own runs a command through `/bin/sh`. Speech after a wake word is recorded and opened in superwhisper only when `dictation` is set. Without it, that longer utterance is ignored. On `main`, the transcribed text is not passed to another program.
 
 [日本語](README_ja.md)
 
