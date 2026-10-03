@@ -322,20 +322,14 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     } catch {
         log("dictation: handing off to superwhisper failed: \(error)"); return
     }
-    // Opening a file brings superwhisper to the front despite -g, and it skips auto-paste when it is
-    // still frontmost at the end, so hand focus back to where the user was dictating.
-    for _ in 0 ..< 20 {
-        try? await Task.sleep(nanoseconds: 100_000_000)
-        if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.superduper.superwhisper" {
-            await MainActor.run { _ = target?.activate() }
-        }
-    }
     let recordings = NSString(string: cfg.recordingsDir ?? "~/Documents/superwhisper/recordings").expandingTildeInPath
     guard let result = await awaitResult(in: recordings, since: Int(submitted.timeIntervalSince1970) - 2) else {
         log("dictation: no superwhisper result within 30 s"); return
     }
     log("dictation: \(result.count) chars in \(Int(Date().timeIntervalSince(submitted) * 1000)) ms")
     guard !result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+    // Once, immediately before launch. Restoring focus while superwhisper transcribes makes it paste.
+    await MainActor.run { _ = target?.activate() }
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     p.arguments = ["computer-use-jev", "-goal", result]
@@ -575,7 +569,7 @@ final class Listener {
         var silentFrames: Int
         /// False while waiting for the text after a lone wake word; silence then means "nothing came", not "done".
         var heardSpeech: Bool
-        /// Frontmost app when the wake word was heard; superwhisper pastes into whatever is frontmost.
+        /// Frontmost app when the wake word was heard. Activated once, just before computer-use-jev starts.
         var target = NSWorkspace.shared.frontmostApplication
     }
 
