@@ -30,3 +30,19 @@ Environment: Linux, .NET SDK 8.0.425, net8 targets.
 The same multi-session PCM fixture produces two local-recording handoffs but only one external result before capture disposal for submitted, unsent, busy, and failed results. Tests also exercise admission in the production tray factory before microphone creation.
 
 Windows native SAPI, junctions, named-pipe behavior, real microphone input, macOS, and Superwhisper end-to-end behavior were not rerun. `swiftc` was unavailable. No external application launch, Superwhisper settings change, merge, or deployment was performed. `pstack` / `poteto-mode` skills and a checkout `.agents/skills` directory were unavailable; their specific workflows were not claimed as executed.
+
+
+## Windows revalidation, 2026-10-03
+
+The cloud Git bundle was restored and its SHA-256 and commit `0a680db345afdebb19c6310c2bdcfe3371f0238c` verified before testing. WSL .NET SDK 10.0.400 rebuilt the same net8 runtime and published Windows binaries.
+
+- Portable regressions: **101 PASS / 5 Windows-only SKIP / 0 FAIL**.
+- Native Windows regressions: **105 PASS / 1 Linux-only SKIP / 0 FAIL**. All five cloud-skipped Windows checks passed, including the owned junction and named-pipe checks. The remaining skip is the portable symlink test covered by the native junction case.
+- Parity: **62 PASS / 29 allowed differences / 0 FAIL**. `win-verify` and `git diff --check` passed.
+- Seven paced synthetic scenarios passed, including consecutive local-recording sessions, embedded and standalone stop words, silence, and cancellation.
+- The native production collector probes ran with their predicate flags. Leading wake returned body start **22240** and standalone stop returned **1120..18240**, in absolute samples.
+- The native tray lifecycle passed Start/Pause/Resume, valid and invalid Reload, Quit, IPC ownership, and child-process cleanup checks.
+
+A read-only review using the locally installed poteto-mode/pstack instructions through WSL Codex found no blocking implementation regression. It identified missing predicate flags in the published native probe commands; `BUILD.md` now includes those flags. The unavailable `deslop` skill was not claimed as executed.
+
+No real microphone, Superwhisper launch/settings, production deployment, or macOS execution was used. URI receiver decoding and actual external import/transcription/paste remain unverified. These results do not remove the documented manual-recovery and platform limitations.

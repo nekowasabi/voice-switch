@@ -87,8 +87,8 @@ dotnet run --project tests/windows/ProductionScriptSyntheticProbe/ProductionScri
 Run native dictation recognizer probes with the dictation config:
 
 ```powershell
-dotnet run --project tests/windows/NativeDictationRecognizerProbe/NativeDictationRecognizerProbe.csproj -c Release -- --config C:\temp\voice-switch-validation\config.dictation.json --phrase "音声入力、今日は晴れです" --expect 音声入力
-dotnet run --project tests/windows/NativeDictationRecognizerProbe/NativeDictationRecognizerProbe.csproj -c Release -- --config C:\temp\voice-switch-validation\config.dictation.json --phrase "入力ストップ" --expect 入力ストップ
+dotnet run --project tests/windows/NativeDictationRecognizerProbe/NativeDictationRecognizerProbe.csproj -c Release -- --config C:\temp\voice-switch-validation\config.dictation.json --phrase "音声入力、今日は晴れです" --expect 音声入力 --expect-leading-wake
+dotnet run --project tests/windows/NativeDictationRecognizerProbe/NativeDictationRecognizerProbe.csproj -c Release -- --config C:\temp\voice-switch-validation\config.dictation.json --phrase "入力ストップ" --expect 入力ストップ --expect-standalone-stop
 ```
 
 Run the record-only dictation runtime harness with the dictation config:
