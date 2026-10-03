@@ -1,6 +1,6 @@
 # voice-switch
 
-Menu-bar app. A wake word on its own runs a command through `/bin/sh`. Speech after a wake word is recorded and opened in superwhisper only when `dictation` is set. Without it, that longer utterance is ignored. On `main`, the transcribed text is not passed to another program.
+Menu-bar app. A wake word on its own runs a command through `/bin/sh`. Speech after a wake word is recorded and opened in superwhisper only when `dictation` is set. Without it, that longer utterance is ignored. When dictation returns a string, one tmux pane receives it only if a single catalog label matches. A miss or an ambiguous catalog sends nothing.
 
 [日本語](README_ja.md)
 
@@ -30,7 +30,8 @@ If `dictation` is present:
 
 - A lone wake word starts a dictation and waits for speech. The sample wait is `startTimeoutMs` 3000. Silence before any speech cancels it.
 - An utterance that starts with a wake word and continues is recorded until about `endSilenceMs` of silence (sample 1200), a stop word, superwhisper's record shortcut, or `dictation.maxSeconds` (sample 60). The wake-word audio is cut.
-- The wav is opened in superwhisper. The app polls `dictation.recordingsDir` (sample `~/Documents/superwhisper/recordings`) for a new `meta.json`, reads `llmResult` or else `result`, and logs the length. On `main` that string is not passed on. The code activates the app that was frontmost when the wake word was heard, while superwhisper is frontmost, so superwhisper does not skip its paste.
+- The wav is opened in superwhisper. The app polls `dictation.recordingsDir` (sample `~/Documents/superwhisper/recordings`) for a new `meta.json`, reads the first non-empty `llmResult` or else `result`, and logs the length. While superwhisper is frontmost, the code activates the app that was frontmost when the wake word was heard. Whether superwhisper pastes is not claimed here.
+- That string is matched to a closed catalog from `tmux list-panes -a -F '#{pane_id}\t#{window_name}\t#{pane_title}\t#{pane_current_command}'`, run through `/usr/bin/env`. The app does not start a tmux server. If tmux fails or there is no server, nothing is sent and the failure is logged. A pane hits when any non-empty label (pane title, window name, or current command) is a case-insensitive substring of the text (`String.lowercased()`, the same as Python `str.casefold` for the proof utterances). One hit runs only `/usr/bin/env` with argv `tmux send-keys -t <pane-id> -l -- <text>`. The pane id must be `%` plus digits, such as `%0`, never an index. Zero hits, two or more hits, or a rejected id sends nothing. The text is not passed through a shell. The process environment is not replaced. No API key is written. `command` and `stopCommand` are unchanged.
 
 `stopWords` said on their own end an in-progress dictation. If an app in `skipWhileMicInUseBy` is using the microphone instead, the same word runs `stopCommand`. The sample word is `入力ストップ`. The sample `stopCommand` is the same superwhisper record URL, which toggles.
 
@@ -44,6 +45,8 @@ The menu items are 一時停止 (releases the microphone), マイク, 設定フ�
 
 - `voice-switch --check a.wav` feeds files through the VAD and transcriber and prints a verdict per utterance.
 - `voice-switch --simulate a.wav` feeds one file through the live path instead of the microphone.
+
+On Linux, `python3 scripts/pane_route_proof.py` checks the same match rule against a private tmux socket. A Mac build is not claimed here.
 
 ## Not on main
 

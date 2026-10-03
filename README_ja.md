@@ -1,6 +1,6 @@
 # voice-switch
 
-メニューバーアプリ。ウェイクワードだけ言うと、コマンドを `/bin/sh` 経由で実行する。ウェイクワードに続く発話を録音して superwhisper で開くのは、`dictation` があるときだけ。無いときは、その長い発話は無視する。`main` では、その本文を別のプログラムには渡さない。
+メニューバーアプリ。ウェイクワードだけ言うと、コマンドを `/bin/sh` 経由で実行する。ウェイクワードに続く発話を録音して superwhisper で開くのは、`dictation` があるときだけ。無いときは、その長い発話は無視する。文字起こしの文字列は、カタログのラベルが一つだけ当たった tmux pane にだけ送る。当たらない、または複数当たるときは何も送らない。
 
 [English](README.md)
 
@@ -30,7 +30,8 @@
 
 - ウェイクワード単体は入力を開始し、続きの音声を待つ。見本の待ちは `startTimeoutMs` の 3000。その前に無音なら取り消す。
 - ウェイクワードで始まり、続きがある発話は、およそ `endSilenceMs` の無音（見本は 1200）、停止語、superwhisper の録音ショートカット、または `dictation.maxSeconds`（見本は 60）まで録音する。ウェイクワード部分の音声は切る。
-- wav は superwhisper で開く。`dictation.recordingsDir`（見本は `~/Documents/superwhisper/recordings`）の新しい `meta.json` から `llmResult`、無ければ `result` を読み、長さだけログする。`main` ではその文字列は渡さない。superwhisper が前面にいるあいだ、ウェイクワードを聞いたときの前面アプリを activate する。これは superwhisper がペーストを飛ばさないようにするため。
+- wav は superwhisper で開く。`dictation.recordingsDir`（見本は `~/Documents/superwhisper/recordings`）の新しい `meta.json` から、空でない `llmResult`、無ければ `result` を読み、長さをログする。superwhisper が前面にいるあいだ、ウェイクワードを聞いたときの前面アプリを activate する。superwhisper がペーストするかは、ここでは書いていない。
+- その文字列を、閉じた pane 一覧と照合する。一覧は `/usr/bin/env` 経由の `tmux list-panes -a -F '#{pane_id}\t#{window_name}\t#{pane_title}\t#{pane_current_command}'`。アプリは tmux サーバを起動しない。tmux が失敗したか、サーバが無いときは、何も送らずログする。空でないラベル（pane タイトル、ウィンドウ名、現在のコマンド）のどれかが、大文字小文字を無視して文字列の部分なら、その pane が当たる。Swift は `lowercased()` を使う。証明の6文では Python の `str.casefold` と同じになる。当たったのが一つなら、`/usr/bin/env` の argv は `tmux send-keys -t <pane-id> -l -- <文字列>` だけ。pane id は `%` と数字（例 `%0`）だけを受け、index は使わない。0件、2件以上、または id が違うときは送らない。文字列はシェルを通さない。プロセスの環境変数は置き換えない。API キーは書かない。`command` と `stopCommand` は変えない。
 
 `stopWords` を単体で言うと、進行中の入力を終える。代わりに `skipWhileMicInUseBy` のアプリがマイクを使っているときは、同じ語で `stopCommand` を実行する。見本の語は `入力ストップ`。見本の `stopCommand` は同じ superwhisper の録音 URL で、録音はトグルする。
 
@@ -44,6 +45,8 @@
 
 - `voice-switch --check a.wav` は、ファイルを VAD と音声認識に通して、発話ごとの判定を出す。
 - `voice-switch --simulate a.wav` は、マイクの代わりに1つのファイルを本番の経路へ流す。
+
+Linux では `python3 scripts/pane_route_proof.py` が、同じ照合を専用の tmux ソケットで確かめる。Mac のビルド成功は書いていない。
 
 ## main には無い
 

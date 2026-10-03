@@ -13,8 +13,8 @@
 //        voice-switch --simulate a.wav       feed a.wav through the live consumer instead of the mic
 //
 // One-breath dictation ("音声入力、明日の会議は…"): an utterance that starts with a wake word and goes on
-// is recorded until silence, the wake word is cut from the audio, and superwhisper transcribes the file
-// and auto-pastes the result into the frontmost app.
+// is recorded until silence, the wake word is cut from the audio, and superwhisper transcribes the file.
+// After the result string is read, a unique tmux pane label hit is sent with send-keys -t <pane-id> -l.
 import AppKit
 import os
 import AVFoundation
@@ -301,7 +301,9 @@ func loadSamples(_ path: String) throws -> [Float] {
 /// One file at a time, so a result in the recordings folder is never attributed to the wrong handoff.
 let handoffBusy = OSAllocatedUnfairLock(initialState: false)
 
-/// superwhisper transcribes the file and auto-pastes into the frontmost app; we only wait to clean up and log.
+/// superwhisper transcribes the file. Focus is handed back while superwhisper is frontmost, then the
+/// result string is read. That string is routed to one tmux pane when the closed catalog has a unique hit.
+/// Opening superwhisper and restoring focus are unchanged.
 func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplication?) async {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("voice-switch")
     let wav = dir.appendingPathComponent("\(UUID().uuidString).wav")
@@ -330,6 +332,7 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
         log("dictation: no superwhisper result within 30 s"); return
     }
     log("dictation: \(result.count) chars in \(Int(Date().timeIntervalSince(submitted) * 1000)) ms")
+    routeDictation(result)
 }
 
 /// Polls superwhisper's recordings folder for the run that started at or after `since` (unix seconds).
@@ -347,6 +350,95 @@ func awaitResult(in dir: String, since: Int) async -> String? {
         try? await Task.sleep(for: .milliseconds(100))
     }
     return nil
+}
+
+// MARK: tmux pane route
+
+/// Closed catalog row from `tmux list-panes`. Addressed only by pane id (`%0`), never by index.
+struct PaneLabel {
+    var id: String
+    var window: String
+    var title: String
+    var command: String
+}
+
+/// `%` plus ASCII digits. Rejects indexes and anything else.
+func isPaneID(_ id: String) -> Bool {
+    guard id.utf8.first == UInt8(ascii: "%") else { return false }
+    let digits = id.utf8.dropFirst()
+    return !digits.isEmpty && digits.allSatisfy { $0 >= UInt8(ascii: "0") && $0 <= UInt8(ascii: "9") }
+}
+
+func parsePanes(_ text: String) -> [PaneLabel]? {
+    var panes: [PaneLabel] = []
+    for raw in text.split(whereSeparator: \.isNewline) {
+        let fields = raw.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+        guard fields.count == 4 else { return nil }
+        panes.append(PaneLabel(id: fields[0], window: fields[1], title: fields[2], command: fields[3]))
+    }
+    return panes
+}
+
+/// A pane hits when any non-empty label is a case-insensitive substring of the utterance.
+/// `lowercased()` matches Python `str.casefold` for the six proof utterances.
+func matchingPanes(_ utterance: String, _ panes: [PaneLabel]) -> [PaneLabel] {
+    let folded = utterance.lowercased()
+    return panes.filter { pane in
+        let labels = [pane.title, pane.window, pane.command].filter { !$0.isEmpty }
+        return labels.contains { folded.contains($0.lowercased()) }
+    }
+}
+
+/// Does not start a tmux server. Failure or no server returns nil and sends nothing.
+func fetchPanes() -> [PaneLabel]? {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    p.arguments = ["tmux", "list-panes", "-a", "-F",
+                   "#{pane_id}\t#{window_name}\t#{pane_title}\t#{pane_current_command}"]
+    let out = Pipe()
+    let err = Pipe()
+    p.standardOutput = out
+    p.standardError = err
+    do { try p.run() } catch {
+        log("tmux: list-panes failed to start: \(error)")
+        return nil
+    }
+    p.waitUntilExit()
+    let errText = (String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    if p.terminationStatus != 0 {
+        let detail = errText.isEmpty ? "" : ": \(errText)"
+        log("tmux: list-panes exited \(p.terminationStatus)\(detail); nothing sent")
+        return nil
+    }
+    guard let text = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8),
+          let panes = parsePanes(text) else {
+        log("tmux: list-panes output was not a four-field catalog; nothing sent")
+        return nil
+    }
+    return panes
+}
+
+/// Unique label hit sends the dictation text literally. Miss, ambiguity, or a bad id sends nothing.
+func routeDictation(_ text: String) {
+    guard let panes = fetchPanes() else { return }
+    let hits = matchingPanes(text, panes)
+    guard hits.count == 1 else {
+        log(hits.isEmpty ? "tmux: no pane matched; nothing sent" : "tmux: \(hits.count) panes matched; nothing sent")
+        return
+    }
+    let id = hits[0].id
+    guard isPaneID(id) else {
+        log("tmux: pane id rejected; nothing sent")
+        return
+    }
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    p.arguments = ["tmux", "send-keys", "-t", id, "-l", "--", text]
+    p.terminationHandler = { proc in
+        if proc.terminationStatus != 0 { log("tmux: send-keys exited \(proc.terminationStatus)") }
+    }
+    do { try p.run() } catch { log("tmux: send-keys failed to start: \(error)") }
 }
 
 func writeWAV(_ samples: [Float], to url: URL) throws {
