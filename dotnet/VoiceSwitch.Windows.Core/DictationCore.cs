@@ -71,7 +71,8 @@ public sealed record RecognizedUtterance(
     SampleRange Source,
     string Text,
     ImmutableArray<LexicalRun> Lexemes,
-    bool HadRejectedSpeech = false);
+    bool HadRejectedSpeech = false,
+    double? Confidence = null);
 
 public sealed record DictationEvent(string Kind, FinishReason? Reason, SampleRange? Range, Guid? SessionId = null)
 {
