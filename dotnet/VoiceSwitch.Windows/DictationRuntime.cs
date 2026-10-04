@@ -50,6 +50,8 @@ public sealed class WindowsDictationRuntime
     private readonly IDictationRuntimeObserver? observer;
     private readonly bool dryRun;
     private readonly Func<nint> foregroundWindow;
+    private readonly DictationHotkeys? hotkeys;
+    private readonly Func<string?> readShortcuts;
     private readonly SampleStore originalStore;
     private readonly SampleStore analysisStore;
     private readonly Segmenter segmenter;
@@ -61,6 +63,8 @@ public sealed class WindowsDictationRuntime
     private string? lastSilenceDiagnosticKey;
     private DictationPhase shownPhase;
     private bool endedByUser;
+    // Finish pressed while the body was heard but not yet recognized; honored once the body makes the session active.
+    private bool finishRequested;
     private nint target;
 
     public WindowsDictationRuntime(
@@ -70,7 +74,9 @@ public sealed class WindowsDictationRuntime
         IDictationHandoff handoff,
         bool dryRun,
         IDictationRuntimeObserver? observer = null,
-        Func<nint>? foregroundWindow = null)
+        Func<nint>? foregroundWindow = null,
+        DictationHotkeys? hotkeys = null,
+        Func<string?>? readShortcuts = null)
     {
         this.config = config;
         this.capture = capture;
@@ -79,6 +85,8 @@ public sealed class WindowsDictationRuntime
         this.observer = observer;
         this.dryRun = dryRun;
         this.foregroundWindow = foregroundWindow ?? (() => 0);
+        this.hotkeys = hotkeys;
+        this.readShortcuts = readShortcuts ?? ReadSuperwhisperPreferences;
         var retainedSamples = checked((long)((config.Dictation?.MaxSeconds ?? config.MaxSeconds ?? 60) + 10) * (long)Segmenter.Rate);
         originalStore = new SampleStore(retainedSamples);
         analysisStore = new SampleStore(retainedSamples);
@@ -174,6 +182,12 @@ public sealed class WindowsDictationRuntime
                             return 1;
                         }
 
+                        if (ApplyHotkey(ref session, pending, lastLiveSpeechEnd))
+                        {
+                            TrimStore(session, pending);
+                            continue;
+                        }
+
                         if (pending.Count == 0 && session.AwaitingWakeSourceEnd is long wakeSourceEnd && lastLiveSpeechEnd <= wakeSourceEnd)
                         {
                             if (session.AdvanceTo(analysisStore.Next, originalStore.Copy) is not null)
@@ -256,6 +270,7 @@ public sealed class WindowsDictationRuntime
                         {
                             // Superwhisper pastes into whatever is frontmost, so remember where the user was when the wake word landed.
                             target = foregroundWindow();
+                            hotkeys?.Begin(DictationHotkeys.Load(readShortcuts()));
                         }
 
                         if (wasIdle && session.IsAwaitingBody)
@@ -345,6 +360,8 @@ public sealed class WindowsDictationRuntime
         {
             // The EOF break above skips the loop bottom, so a stop word in the last batch is still reported here.
             PublishPhase(endedByUser ? DictationPhase.Ended : DictationPhase.Idle);
+            // Pause or quit mid-dictation must give Superwhisper its shortcuts back (Mac: Hotkeys.end() on the empty frame).
+            hotkeys?.End();
             try
             {
                 linked.Cancel();
@@ -445,7 +462,62 @@ public sealed class WindowsDictationRuntime
 
         lastSilenceDiagnosticKey = null;
         target = 0;
+        finishRequested = false;
+        hotkeys?.End();
         return new DictationSession(config);
+    }
+
+    // True when a hotkey closed the session, which is then already reset.
+    private bool ApplyHotkey(ref DictationSession session, Dictionary<long, RecognitionWork> pending, long lastLiveSpeechEnd)
+    {
+        if (hotkeys is null)
+        {
+            return false;
+        }
+
+        var command = hotkeys.Take();
+        if (command == DictationCommand.Cancel && (session.IsActive || session.IsAwaitingBody))
+        {
+            session.Cancel(FinishReason.CancelCommand);
+            Log.Info("dictation cancelled");
+            session = ResetSession(pending, analysisStore.Next);
+            return true;
+        }
+
+        if (command == DictationCommand.Finish && session.AwaitingWakeSourceEnd is long wakeEnd && lastLiveSpeechEnd > wakeEnd)
+        {
+            Log.Info("dictation finish requested before the body was recognized");
+            finishRequested = true;
+        }
+
+        if ((command != DictationCommand.Finish && !finishRequested) || !session.IsActive)
+        {
+            return false;
+        }
+
+        var audio = session.AdvanceSpeechTo(lastLiveSpeechEnd, originalStore.Copy) ?? session.Finish(FinishReason.FinishCommand, originalStore.Copy);
+        endedByUser = true;
+        if (audio is not null)
+        {
+            Log.Info($"dictation ended by hotkey after {audio.Range.Length * 1000 / (long)Segmenter.Rate} ms of audio");
+            Submit(audio);
+        }
+
+        session = ResetSession(pending, analysisStore.Next);
+        return true;
+    }
+
+    private static string? ReadSuperwhisperPreferences()
+    {
+        try
+        {
+            var path = WindowsPaths.SuperwhisperPreferencesPath();
+            return File.Exists(path) ? File.ReadAllText(path) : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     private void PublishPhase(DictationSession session, long lastLiveSpeechEnd)

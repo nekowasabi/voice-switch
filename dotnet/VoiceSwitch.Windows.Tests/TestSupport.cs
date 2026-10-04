@@ -159,14 +159,14 @@ sealed class GatedPcmCapture : IPcmCapture
     private readonly IReadOnlyList<PcmFrame> beforeGate;
     private readonly IReadOnlyList<PcmFrame> afterGate;
     private readonly ManualResetEventSlim releaseGate;
-    private readonly int? delayAfterFrame;
+    private readonly IReadOnlyCollection<int> delayAfterFrames;
 
-    public GatedPcmCapture(IReadOnlyList<PcmFrame> beforeGate, IReadOnlyList<PcmFrame> afterGate, ManualResetEventSlim releaseGate, int? delayAfterFrame = null)
+    public GatedPcmCapture(IReadOnlyList<PcmFrame> beforeGate, IReadOnlyList<PcmFrame> afterGate, ManualResetEventSlim releaseGate, IReadOnlyCollection<int>? delayAfterFrames = null)
     {
         this.beforeGate = beforeGate;
         this.afterGate = afterGate;
         this.releaseGate = releaseGate;
-        this.delayAfterFrame = delayAfterFrame;
+        this.delayAfterFrames = delayAfterFrames ?? [];
     }
 
     public bool GateWasReached { get; private set; }
@@ -177,7 +177,7 @@ sealed class GatedPcmCapture : IPcmCapture
         {
             cancellation.ThrowIfCancellationRequested();
             yield return beforeGate[i];
-            if (delayAfterFrame == i)
+            if (delayAfterFrames.Contains(i))
             {
                 await Task.Delay(100, cancellation);
             }
