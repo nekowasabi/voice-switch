@@ -65,6 +65,10 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation runtime start timeout counts from when the wake is applied", () => Check(DictationRuntimeStartTimeoutCountsFromWakeApplied())),
     ("dictation runtime logs idle recognition text but keeps the body private", () => Check(DictationRuntimeLogsIdleTextButKeepsBodyPrivate())),
     ("dictation runtime applies a reloaded config at the next idle utterance", () => Check(DictationRuntimeAppliesReloadedConfigWhenIdle())),
+    ("dictation runtime skips a wake while Superwhisper uses the microphone", () => Check(DictationRuntimeSkipsWakeWhileMicInUse())),
+    ("dictation runtime skips a wake while an excluded app is in front", () => Check(DictationRuntimeSkipsWakeForExcludedApp())),
+    ("resident skips the wake command while Superwhisper uses the microphone", () => Check(ResidentSkipsWakeWhileMicInUse())),
+    ("mic-in-use sees this process's open capture on Windows", MicInUseSeesOwnCaptureOnWindows),
     ("dictation runtime does not reload while a dictation is open", () => Check(DictationRuntimeDoesNotReloadWhileDictating())),
     ("config file reload keeps the previous config when the new one is invalid", () => Check(ConfigFileReloadKeepsPreviousOnError())),
     ("dictation phases and foreground target across two stop-ended dictations", () => Check(DictationPhasesAndTargetAcrossTwoDictations())),
@@ -336,10 +340,11 @@ static bool ComparesRecognitionKey()
 
 static bool ReportsUnsupportedOptions()
 {
-    var config = new VoiceSwitchConfig(["音声入力"], "ja_JP", "wake", SkipWhileMicInUseBy: ["superwhisper"], Dictation: new DictationConfig());
+    var config = new VoiceSwitchConfig(["音声入力"], "ja_JP", "wake", SkipWhileMicInUseBy: ["superwhisper"], Dictation: new DictationConfig(ExcludeBundleIDs: ["com.example"]));
     var warnings = config.UnsupportedWarnings().ToArray();
     return !warnings.Any(w => w.Contains("dictation is parsed"))
-        && warnings.Any(w => w.Contains("skipWhileMicInUseBy"));
+        && !warnings.Any(w => w.Contains("skipWhileMicInUseBy"))
+        && warnings.Any(w => w.Contains("dictation.excludeProcessNames"));
 }
 
 static bool DictationWakePrefixTrimsExactBodyStart()
@@ -1343,6 +1348,106 @@ static bool DictationRuntimeAppliesReloadedConfigWhenIdle()
         && audio.Reason == FinishReason.Silence
         && audio.Range.Start == recognizer.Requests[1].Range.Start + 2400
         && output.Contains("dictation timing: startTimeoutMs=3000 endSilenceMs=600", StringComparison.Ordinal);
+}
+
+static bool DictationRuntimeSkipsWakeWhileMicInUse()
+{
+    var config = DictationRuntimeTestConfig(endSilenceMs: 600) with { SkipWhileMicInUseBy = ["Superwhisper.exe"] };
+    var asked = new List<string[]>();
+    var busy = true;
+    var handoff = new RecordingDictationHandoff();
+    var observer = new PhaseRecorder();
+    var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(ThreeUtteranceFrames(), [24, 48, 72]), Recognizing("wakebody", "wakebody", "body"), handoff, dryRun: true, observer,
+        micInUseBy: names =>
+        {
+            asked.Add(names.ToArray());
+            var answer = busy ? "Superwhisper" : null;
+            busy = false;
+            return answer;
+        });
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output);
+    return code == 0
+        && asked.Count == 2
+        && asked.All(names => names.SequenceEqual(["Superwhisper.exe"]))
+        && output.Contains("skipped: Superwhisper is using the microphone", StringComparison.Ordinal)
+        && handoff.Submissions.Count == 1
+        && handoff.Submissions[0].Range.Start >= 12000
+        && observer.Phases.First() == DictationPhase.Recording;
+}
+
+static bool DictationRuntimeSkipsWakeForExcludedApp()
+{
+    var config = DictationRuntimeTestConfig(endSilenceMs: 600) with
+    {
+        Dictation = DictationRuntimeTestConfig(endSilenceMs: 600).Dictation! with { ExcludeProcessNames = ["KeePass.exe"] }
+    };
+    var windows = new Queue<nint>([0x10, 0x20]);
+    var handoff = new RecordingDictationHandoff();
+    var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(ThreeUtteranceFrames(), [24, 48, 72]), Recognizing("wakebody", "wakebody", "body"), handoff, dryRun: true,
+        foregroundWindow: () => windows.Count > 0 ? windows.Dequeue() : 0,
+        windowProcess: window => window == 0x10 ? "keepass" : "notepad");
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output);
+    return code == 0
+        && output.Contains("dictation skipped: keepass is excluded", StringComparison.Ordinal)
+        && handoff.Submissions.Count == 1
+        && handoff.Submissions[0].Target == 0x20;
+}
+
+static bool ResidentSkipsWakeWhileMicInUse()
+{
+    using var temp = RuntimeTemp();
+    File.WriteAllText(temp.ConfigPath, """{"wakeWords":["音声入力"],"locale":"ja_JP","command":"wake","skipWhileMicInUseBy":["Superwhisper"]}""");
+    var commands = new List<string>();
+    var previous = Console.Out;
+    using var writer = new StringWriter();
+    Console.SetOut(writer);
+    int code;
+    try
+    {
+        code = new ResidentRuntime(temp.ConfigPath, temp.Load(), 1, _ => StartChild("ready-recognize-wake"), commands.Add, _ => { }, false, CancellationToken.None,
+            micInUseBy: names => names.Contains("Superwhisper") ? "Superwhisper" : null).Run();
+    }
+    finally
+    {
+        Console.SetOut(previous);
+    }
+
+    return code == 0
+        && commands.Count == 0
+        && writer.ToString().Contains("skipped: Superwhisper is using the microphone", StringComparison.Ordinal);
+}
+
+static TestOutcome MicInUseSeesOwnCaptureOnWindows()
+{
+    if (!OperatingSystem.IsWindows())
+    {
+        return TestOutcome.Skip("requires Windows audio sessions");
+    }
+
+    if (WinMmCapture.InputDevices().Count == 0)
+    {
+        return TestOutcome.Skip("no input device is connected");
+    }
+
+    var self = Process.GetCurrentProcess().ProcessName;
+    var before = MicInUse.By([self]);
+    string? during;
+    var capture = WinMmCapture.Open();
+    try
+    {
+        Thread.Sleep(500);
+        during = MicInUse.By([self + ".exe"]);
+    }
+    finally
+    {
+        capture.DisposeAsync().AsTask().GetAwaiter().GetResult();
+    }
+
+    Thread.Sleep(500);
+    var after = MicInUse.By([self]);
+    return before is null && during == self && after is null && MicInUse.By(["no-such-recorder"]) is null
+        ? TestOutcome.Pass()
+        : TestOutcome.Fail($"before={before} during={during} after={after}");
 }
 
 static bool DictationRuntimeDoesNotReloadWhileDictating()

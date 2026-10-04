@@ -54,6 +54,8 @@ public sealed class WindowsDictationRuntime
     private readonly Func<string?> readShortcuts;
     // Mac ConfigFile.reloadIfChanged: a new valid config, or null when the file is unchanged or invalid.
     private readonly Func<VoiceSwitchConfig?> reloadConfig;
+    private readonly Func<nint, string?> windowProcess;
+    private readonly Func<IReadOnlyCollection<string>, string?> micInUseBy;
     private readonly SampleStore originalStore;
     private readonly SampleStore analysisStore;
     private readonly Segmenter segmenter;
@@ -83,7 +85,9 @@ public sealed class WindowsDictationRuntime
         Func<nint>? foregroundWindow = null,
         DictationHotkeys? hotkeys = null,
         Func<string?>? readShortcuts = null,
-        Func<VoiceSwitchConfig?>? reloadConfig = null)
+        Func<VoiceSwitchConfig?>? reloadConfig = null,
+        Func<nint, string?>? windowProcess = null,
+        Func<IReadOnlyCollection<string>, string?>? micInUseBy = null)
     {
         this.config = config;
         this.capture = capture;
@@ -95,6 +99,8 @@ public sealed class WindowsDictationRuntime
         this.hotkeys = hotkeys;
         this.readShortcuts = readShortcuts ?? ReadSuperwhisperPreferences;
         this.reloadConfig = reloadConfig ?? (() => null);
+        this.windowProcess = windowProcess ?? ProcessOfWindow;
+        this.micInUseBy = micInUseBy ?? MicInUse.By;
         originalStore = new SampleStore(RetainedSamples(config, 10));
         analysisStore = new SampleStore(RetainedSamples(config, 10));
         // Mac parity: the segmenter caps at the top-level maxSeconds (2.5 s) so steady room noise is judged within seconds;
@@ -294,6 +300,14 @@ public sealed class WindowsDictationRuntime
                         {
                             // Superwhisper pastes into whatever is frontmost, so remember where the user was when the wake word landed.
                             target = foregroundWindow();
+                            if (SkipReason(target) is { } skipped)
+                            {
+                                Log.Info(skipped);
+                                session = ResetSession(pending, outcome.Recognition!.Source.End);
+                                TrimStore(session, pending);
+                                continue;
+                            }
+
                             hotkeys?.Begin(DictationHotkeys.Load(readShortcuts()));
                         }
 
@@ -581,6 +595,43 @@ public sealed class WindowsDictationRuntime
         session = ResetSession(pending, analysisStore.Next);
         return true;
     }
+
+    // Mac order: a recorder already taking the microphone first, then an excluded app in front.
+    private string? SkipReason(nint window)
+    {
+        if (micInUseBy(config.SkipWhileMicInUseBy ?? []) is { } busy)
+        {
+            // Superwhisper would be recording this speech already, and its record toggle would stop it.
+            return $"skipped: {busy} is using the microphone";
+        }
+
+        return config.Dictation?.ExcludeProcessNames is { Length: > 0 } excluded
+            && windowProcess(window) is { } app
+            && excluded.Any(name => string.Equals(Path.GetFileNameWithoutExtension(name), app, StringComparison.OrdinalIgnoreCase))
+                ? $"dictation skipped: {app} is excluded"
+                : null;
+    }
+
+    private static string? ProcessOfWindow(nint window)
+    {
+        if (window == 0 || !OperatingSystem.IsWindows() || GetWindowThreadProcessId(window, out var pid) == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            using var process = Process.GetProcessById((int)pid);
+            return process.ProcessName;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(nint window, out uint processId);
 
     private static string? ReadSuperwhisperPreferences()
     {

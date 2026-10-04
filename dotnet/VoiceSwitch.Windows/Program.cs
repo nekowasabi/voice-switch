@@ -173,6 +173,7 @@ public sealed class ResidentRuntime
     private readonly bool dryRun;
     private readonly CancellationToken cancellation;
     private readonly ConfigFile configFile;
+    private readonly Func<IReadOnlyCollection<string>, string?> micInUseBy;
 
     public ResidentRuntime(string configPath, VoiceSwitchConfig config, int? listenSeconds)
         : this(configPath, config, listenSeconds, SpeechPowerShell.Start, CommandRunner.Run, _ => { }, false, CancellationToken.None)
@@ -187,9 +188,11 @@ public sealed class ResidentRuntime
         Action<string> runCommand,
         Action<RuntimeDecision> observeDecision,
         bool dryRun,
-        CancellationToken cancellation)
+        CancellationToken cancellation,
+        Func<IReadOnlyCollection<string>, string?>? micInUseBy = null)
     {
         this.configPath = configPath;
+        this.micInUseBy = micInUseBy ?? MicInUse.By;
         this.config = config;
         this.listenSeconds = listenSeconds;
         this.startRecognizer = startRecognizer;
@@ -375,6 +378,13 @@ public sealed class ResidentRuntime
 
         var decision = TextMatching.Decide(message.Text, config);
         observeDecision(decision);
+        // Mac: the wake command toggles Superwhisper, so firing it while Superwhisper records would stop that recording.
+        if (decision.Reason == "wake" && micInUseBy(config.SkipWhileMicInUseBy ?? []) is { } busy)
+        {
+            Log.Info($"heard: {decision.Text} -> skipped: {busy} is using the microphone");
+            return true;
+        }
+
         if (decision.Kind == "run-command" && decision.Command is not null)
         {
             Log.Info($"heard: {decision.Text} -> {decision.Reason}");

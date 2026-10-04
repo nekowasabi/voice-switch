@@ -9,7 +9,9 @@ public sealed record DictationConfig(
     int? EndSilenceMs = null,
     double? MaxSeconds = null,
     string[]? ExcludeBundleIDs = null,
-    int? StartTimeoutMs = null);
+    int? StartTimeoutMs = null,
+    // Windows twin of excludeBundleIDs: executable names (with or without .exe) whose window in front stops a wake.
+    string[]? ExcludeProcessNames = null);
 
 public enum NoiseReductionMode
 {
@@ -46,12 +48,7 @@ public sealed record VoiceSwitchConfig(
     {
         if (Dictation?.ExcludeBundleIDs is { Length: > 0 })
         {
-            yield return "dictation.excludeBundleIDs is macOS bundle-id based; Windows target exclusions are not implemented.";
-        }
-
-        if (SkipWhileMicInUseBy is { Length: > 0 })
-        {
-            yield return "skipWhileMicInUseBy is parsed for config compatibility but is not implemented on Windows.";
+            yield return "dictation.excludeBundleIDs is macOS bundle-id based and ignored on Windows; list executable names in dictation.excludeProcessNames instead.";
         }
 
         if ((StopWords ?? []).Length > 0 && string.IsNullOrWhiteSpace(StopCommand))
