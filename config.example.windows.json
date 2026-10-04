@@ -11,7 +11,7 @@
   "vadMinRMS": 0.005,
   "dictation": {
     "recordingsDir": "%LOCALAPPDATA%\\com.superwhisper.app\\recordings",
-    "endSilenceMs": 1200, "startTimeoutMs": 3000,
+    "endSilenceMs": 2400, "startTimeoutMs": 3000,
     "maxSeconds": 60
   }
 }
