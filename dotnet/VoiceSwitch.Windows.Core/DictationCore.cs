@@ -191,6 +191,7 @@ public static class DictationBoundaries
         var index = 0;
         var consumedEnd = lexemes[0].Range.Start;
         var consumedAny = false;
+        WakeWord? byReading = null;
         while (index < lexemes.Length)
         {
             var matched = false;
@@ -225,15 +226,36 @@ public static class DictationBoundaries
                 }
             }
 
-            if (!matched)
+            if (matched)
             {
-                if (fusedSplit is long split)
-                {
-                    return new WakePrefix(split, split);
-                }
+                continue;
+            }
 
+            if (fusedSplit is long split)
+            {
+                return new WakePrefix(split, split);
+            }
+
+            // A fuzzy second wake must not turn "音声入力 温泉…" into a wait, so it is tried only before anything is consumed.
+            if (ReadingWake(lexemes, index, wakes, allowFuzzy: !consumedAny, closed: recognition.Extent == RecognitionExtent.ClosedUtterance) is not { } hit)
+            {
                 break;
             }
+
+            if (hit.Distance > 0)
+            {
+                return new WakePrefix(hit.End, null, hit.Wake, hit.Distance);
+            }
+
+            if (hit.Next is not int next)
+            {
+                return new WakePrefix(hit.End, hit.End, hit.Wake);
+            }
+
+            consumedAny = true;
+            consumedEnd = hit.End;
+            index = next;
+            byReading = hit.Wake;
         }
 
         if (!consumedAny)
@@ -242,7 +264,66 @@ public static class DictationBoundaries
         }
 
         var bodyStart = index < lexemes.Length ? lexemes[index].Range.Start : (long?)null;
-        return new WakePrefix(consumedEnd, bodyStart);
+        return new WakePrefix(consumedEnd, bodyStart, byReading);
+    }
+
+    // Wake readings of this many kana or fewer (おんせい) take a 1-distance match only when it is the whole closed
+    // utterance. On the 2026-10-04 live log that kept 8 of 11 recovered misses (温水 x5, 温泉, 温泉に入る, 音声にる) and
+    // dropped 温泉は / 温泉入浴 / 温泉有力を…, the shape that ordinary speech starting with 温泉 or 安静 would take.
+    public const int ShortWakeReading = 4;
+
+    // Next is the lexeme after the wake, or null when the wake ends inside a lexeme (End is then a proportional split).
+    private readonly record struct ReadingHit(WakeWord Wake, int Distance, long End, int? Next);
+
+    // SAPI writes a slurred 音声 as 温泉 or 温水, so text equality misses it while the kana differ by one.
+    // Longest wake reading first; the utterance prefix may be one kana shorter or longer than the wake.
+    private static ReadingHit? ReadingWake(LexicalRun[] lexemes, int index, IReadOnlyList<WakeWord> wakes, bool allowFuzzy, bool closed)
+    {
+        var readings = lexemes.Skip(index)
+            .Select(run => TextMatching.NormalizeReading(string.IsNullOrEmpty(run.Reading) ? run.Text : run.Reading))
+            .ToArray();
+        var all = string.Concat(readings);
+        foreach (var wake in wakes.Where(wake => wake.Reading.Length > 0).DistinctBy(wake => wake.Reading).OrderByDescending(wake => wake.Reading.Length))
+        {
+            var size = wake.Reading.Length;
+            (int Distance, int Length)? best = null;
+            foreach (var length in new[] { size, size - 1, size + 1 })
+            {
+                if (length <= 0 || length > all.Length)
+                {
+                    continue;
+                }
+
+                var distance = TextMatching.EditDistance(all[..length], wake.Reading);
+                var fuzzy = distance == 1 && allowFuzzy && (size > ShortWakeReading || (closed && length == all.Length));
+                if ((distance == 0 || fuzzy) && (best is null || distance < best.Value.Distance))
+                {
+                    best = (distance, length);
+                }
+            }
+
+            if (best is not { } match)
+            {
+                continue;
+            }
+
+            var offset = 0;
+            for (var k = 0; k < readings.Length; k++)
+            {
+                var end = offset + readings[k].Length;
+                if (match.Length <= end)
+                {
+                    var run = lexemes[index + k];
+                    return match.Length == end
+                        ? new ReadingHit(wake, match.Distance, run.Range.End, index + k + 1)
+                        : new ReadingHit(wake, match.Distance, run.Range.Start + run.Range.Length * (match.Length - offset) / readings[k].Length, null);
+                }
+
+                offset = end;
+            }
+        }
+
+        return null;
     }
 
     // ponytail: fixed floor with no field data behind it yet; tune from the conf= on "via=rejected" log lines.
@@ -310,6 +391,7 @@ public sealed record WakePrefix(long WakeEnd, long? BodyStart, WakeWord? ByReadi
 public sealed class DictationSession
 {
     private readonly VoiceSwitchConfig config;
+    private readonly WakeWord[] wakes;
     private readonly List<DictationEvent> events = new();
     private Guid sessionId;
     private long? bodyStart;
@@ -327,6 +409,7 @@ public sealed class DictationSession
     public DictationSession(VoiceSwitchConfig config)
     {
         this.config = config;
+        wakes = config.Wakes();
     }
 
     public IReadOnlyList<DictationEvent> Events => events;
@@ -356,7 +439,7 @@ public sealed class DictationSession
                 return null;
             }
 
-            var wake = DictationBoundaries.LeadingWake(recognition, config.WakeWords) ?? DictationBoundaries.RejectedWake(recognition, config.WakeWords);
+            var wake = DictationBoundaries.LeadingWake(recognition, wakes) ?? DictationBoundaries.RejectedWake(recognition, config.WakeWords);
             if (wake is { BodyStart: null })
             {
                 wakeEnd = Math.Max(wakeEnd, wake.WakeEnd);
@@ -372,7 +455,7 @@ public sealed class DictationSession
 
         if (bodyStart is null)
         {
-            var wake = DictationBoundaries.LeadingWake(recognition, config.WakeWords) ?? DictationBoundaries.RejectedWake(recognition, config.WakeWords);
+            var wake = DictationBoundaries.LeadingWake(recognition, wakes) ?? DictationBoundaries.RejectedWake(recognition, config.WakeWords);
             if (wake is null)
             {
                 return null;
