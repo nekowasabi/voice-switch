@@ -148,7 +148,9 @@ $build='C:\temp\voice-switch-validation'
 - Command mode recognizes only configured wake and stop words. Windows dispatches custom `stopCommand` only as an operator-supplied idempotent stop command; missing stop commands and the older Superwhisper record toggle sample are suppressed. Dictation mode uses finite SAPI recognition over PCM and has separate session-gated stop handling.
 - `skipWhileMicInUseBy` is parsed for config compatibility but logged as unsupported on Windows when present.
 - The tray host and CLI resident modes own capture lifecycles separately. Do not run both against the same capture at the same time.
-- Automatic Superwhisper completion correlation, target focus restoration, global finish/cancel shortcuts, mic-in-use detection, device selection/change recovery, and automatic dictation reload remain unimplemented or user-validation-held.
+- Mic-in-use detection, device selection/change recovery, and automatic dictation reload remain unimplemented or user-validation-held.
+- The tray adds a dictation HUD, a `WH_KEYBOARD_LL` hook for Superwhisper's finish and cancel keys (read from `preferences.json`, fallback Control+Space and Escape, active only while a dictation is open), an optional 効果音 toggle (`HKCU\Software\voice-switch` `ConfirmationSound`, default off), and focus restore to the window in front at wake for 2 s after handoff. These are verified by Release compile and tests with fakes only. A hand test on Windows is still needed for live mic wake, Ctrl+Space and Esc, HUD placement on multiple monitors, focus restore, and real Superwhisper paste.
+- Known deviations from macOS: keys typed into an elevated (admin) window bypass the hook (UIPI), `NoResult` keeps the WAV where macOS deletes it, and Alt or Win chords are not specially handled.
 - WSL interop must work to execute generated Windows `.exe` files from WSL. If it fails, run the same commands from Windows in the published folder.
 
 The Swift Windows files remain source-level compatibility stubs. The functional Windows runtime is the .NET implementation under `dotnet/`.

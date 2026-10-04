@@ -36,4 +36,18 @@ The registered Windows file route uses the raw `superwhisper://file//` argument 
 
 The default owned handoff directory is `%LOCALAPPDATA%\voice-switch\dictation-handoffs`. It stores only UUID WAV files. It does not store transcript text. `dictation.recordingsDir` defaults to `%LOCALAPPDATA%\com.superwhisper.app\recordings`.
 
-Windows foreground restoration and global finish/cancel shortcuts are narrow remaining OS-integration gaps. They are not treated as a core dictation gap.
+## Phases, shortcuts, HUD, focus
+
+`DictationPhase` (Idle, Waiting, Recording, Ended) is derived at the end of each loop. A change is logged as `dictation phase: X`. Ended is set only by a stop word or the finish key.
+
+Finish and cancel borrow Superwhisper's own keys. `DictationHotkeys` in the core reads `toggleRecordingShortcut` and `cancelRecordingShortcut` from `%LOCALAPPDATA%\com.superwhisper.app\preferences.json`, with Control+Space and Escape as fallback. The tray installs a `WH_KEYBOARD_LL` hook only while the phase is Waiting or Recording. It swallows the key and its keyUp. The runtime takes the pending command each frame. Cancel sends nothing. Finish sends the body.
+
+The HUD is a 160x40 rounded top-center form with `WS_EX_NOACTIVATE`, `TOOLWINDOW`, `TRANSPARENT`, and `TOPMOST`. The confirmation sound is off by default and plays on a lone wake only. After it the VAD gets zeros for 600 ms so the sound is not heard as speech.
+
+Focus restore records the foreground window at wake. For 2 s after handoff, and only while Superwhisper is in front, the tray calls `AttachThreadInput` plus `SetForegroundWindow`. `AllowSetForegroundWindow` can only grant the foreground process, and a synthetic Alt toggles the menu bar and breaks the paste, so neither is used.
+
+Known deviations are UIPI (keys typed into an elevated window bypass the hook), WAV kept on `NoResult` where macOS deletes it, and Alt or Win chords not specially handled.
+
+## Verification status
+
+Release compile and tests with fakes cover the phases, hotkeys, HUD state, sound gate, and focus logic. A hand test on Windows is still needed for live mic wake, Ctrl+Space and Esc, HUD placement on multiple monitors, focus restore, and real Superwhisper paste.
