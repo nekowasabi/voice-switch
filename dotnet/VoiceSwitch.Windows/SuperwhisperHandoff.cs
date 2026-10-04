@@ -1,5 +1,9 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.InteropServices;
+using System.Security.AccessControl;
+using System.Security.Principal;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Win32;
 using VoiceSwitch.Windows.Core;
@@ -106,6 +110,86 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         Log.Info($"dictation: no superwhisper result within 30 s, kept {wavPath}");
         return new HandoffResult(HandoffStatus.NoResult, audio.SessionId, wavPath, "no Superwhisper result within 30 s; WAV kept");
     }
+
+    // The production root, decided once per run start and logged.
+    public static string DefaultRoot()
+    {
+        var preferred = WindowsPaths.DefaultHandoffPath();
+        var sid = OperatingSystem.IsWindows() ? WindowsIdentity.GetCurrent().User?.Value ?? "user" : "user";
+        var shared = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "voice-switch", "dictation-handoffs", sid);
+        var root = ResolveRoot(preferred, ShortPath, shared);
+        Log.Info(root == preferred ? $"dictation handoff: WAV folder {root}" : $"dictation handoff: WAV folder {root} (fallback: {preferred} is not a plain ASCII path)");
+        return root;
+    }
+
+    // Superwhisper's file intake takes only plain ASCII paths, so a non-ASCII or spaced profile name would fail every
+    // dictation. Fall back to the folder's 8.3 short name, then to a folder under ProgramData that only this user can open.
+    public static string ResolveRoot(string preferred, Func<string, string?> shortPath, string shared)
+    {
+        if (IsIntakeSafe(Path.GetFullPath(preferred)))
+        {
+            return preferred;
+        }
+
+        try
+        {
+            // A short name exists only for a folder that exists, and only where the volume generates 8.3 names.
+            Directory.CreateDirectory(preferred);
+            if (shortPath(preferred) is { } shortened && IsIntakeSafe(Path.GetFullPath(shortened)))
+            {
+                return shortened;
+            }
+
+            CreatePrivateDirectory(shared);
+            return shared;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            Log.Info($"dictation handoff: no intake-safe WAV folder: {ex.Message}");
+            return preferred;
+        }
+    }
+
+    public static string? ShortPath(string path)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return null;
+        }
+
+        var buffer = new StringBuilder(1024);
+        var length = GetShortPathName(path, buffer, buffer.Capacity);
+        return length > 0 && length < buffer.Capacity ? buffer.ToString() : null;
+    }
+
+    private static void CreatePrivateDirectory(string path)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            Directory.CreateDirectory(path);
+            return;
+        }
+
+        // ProgramData lets every user read what another creates, and these WAVs are the user's voice.
+        var user = WindowsIdentity.GetCurrent().User ?? throw new InvalidOperationException("current user SID is unavailable");
+        var security = new DirectorySecurity();
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        security.AddAccessRule(new FileSystemAccessRule(user, FileSystemRights.FullControl,
+            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+        var dir = new DirectoryInfo(path);
+        Directory.CreateDirectory(dir.Parent!.FullName);
+        if (dir.Exists)
+        {
+            dir.SetAccessControl(security);
+        }
+        else
+        {
+            dir.Create(security);
+        }
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern int GetShortPathName(string longPath, StringBuilder shortPath, int bufferLength);
 
     // Superwhisper writes one <unix-seconds>/meta.json per run; the newest run at or after `since` is ours.
     internal static string? FindResult(string recordingsDir, long sinceUnixSeconds)
@@ -230,13 +314,11 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
     private static string? BuildFileIntakeArgument(string wavPath)
     {
         var fullPath = Path.GetFullPath(wavPath);
-        if (fullPath.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not ('/' or '\\' or ':' or '-' or '_' or '.' or '~')))
-        {
-            return null;
-        }
-
-        return "superwhisper://file//" + fullPath;
+        return IsIntakeSafe(fullPath) ? "superwhisper://file//" + fullPath : null;
     }
+
+    private static bool IsIntakeSafe(string fullPath) =>
+        fullPath.All(c => char.IsAsciiLetterOrDigit(c) || c is '/' or '\\' or ':' or '-' or '_' or '.' or '~');
 
     private static void TryDelete(string path)
     {

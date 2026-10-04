@@ -32,7 +32,7 @@ public sealed class ProductionRuntimeFactory(string configPath, TrayRuntimeHooks
             ? WinMmCapture.Open()
             : new WavPcmCapture(source.WavPath, paced: true);
         IDictationHandoff handoff = source.RecordOnlyDir is null
-            ? new RegisteredSuperwhisperHandoff(WindowsPaths.DefaultHandoffPath(), WindowsPaths.SuperwhisperRecordingsPath(config.Dictation), restoreFocus: hooks.RestoreFocus)
+            ? new RegisteredSuperwhisperHandoff(RegisteredSuperwhisperHandoff.DefaultRoot(), WindowsPaths.SuperwhisperRecordingsPath(config.Dictation), restoreFocus: hooks.RestoreFocus)
             : new LocalRecordingHandoff(source.RecordOnlyDir, source.WavPath);
 
         var observer = new TrayRuntimeObserver(hooks);
