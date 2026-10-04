@@ -38,17 +38,14 @@ For native Windows validation without touching an installed copy, publish to an 
 
 ```sh
 RELEASE_DIR=/mnt/c/temp/voice-switch-validation make win-publish
-cp config.example.windows.json /mnt/c/temp/voice-switch-validation/config.command.json
-cp config.example.windows-dictation.json /mnt/c/temp/voice-switch-validation/config.dictation.json
+cp config.example.windows.json /mnt/c/temp/voice-switch-validation/config.dictation.json
 ```
 
-`win-publish` creates `config.json` only if it is missing. That default file is the command-mode sample. Use `config.dictation.json` for dictation probes and record-only validation. Do not use the command-mode sample as evidence for dictation behavior.
+`win-publish` creates `config.json` only if it is missing, from `config.example.windows.json`, which is dictation mode. An existing `config.json` is never overwritten, so an older command-mode copy stays command mode until the `dictation` block is added.
 
 ## Windows configuration
 
-`config.example.windows.json` keeps command mode and uses the `superwhisper://record` deep link through `rundll32 url.dll,FileProtocolHandler` (`cmd /c start` returns access denied for this URL). Optional Windows dictation is configured separately with `config.example.windows-dictation.json`. The command-mode sample omits the unsupported process microphone-use guard.
-
-`config.example.windows-dictation.json` adds the `dictation` block. With that block present, Windows selects the PCM dictation runtime and does not fall back to the command toggle on dictation errors.
+`config.example.windows.json` is dictation mode, like the macOS sample. With the `dictation` block present, Windows selects the PCM dictation runtime and does not fall back to the command toggle on dictation errors. Removing the block selects command mode, which runs `command` (the `superwhisper://record` deep link through `rundll32 url.dll,FileProtocolHandler`; `cmd /c start` returns access denied for this URL). The sample omits the unsupported process microphone-use guard.
 
 The app first uses `config.json` next to `voice-switch.exe`. If that file is absent, it falls back to `%USERPROFILE%\.config\voice-switch\config.json` or `VOICE_SWITCH_CONFIG`.
 
@@ -79,8 +76,8 @@ pwsh -File tests\windows\compose-fixtures.ps1 -OutputDir C:\temp\voice-switch-fi
 Run the production-script synthetic command probe with the command config:
 
 ```powershell
-dotnet run --project tests/windows/ProductionScriptSyntheticProbe/ProductionScriptSyntheticProbe.csproj -c Release -- --config C:\temp\voice-switch-validation\config.command.json --phrase 音声入力
-dotnet run --project tests/windows/ProductionScriptSyntheticProbe/ProductionScriptSyntheticProbe.csproj -c Release -- --config C:\temp\voice-switch-validation\config.command.json --phrase 音声入力 --simulate-bug
+dotnet run --project tests/windows/ProductionScriptSyntheticProbe/ProductionScriptSyntheticProbe.csproj -c Release -- --config C:\temp\voice-switch-validation\config.dictation.json --phrase 音声入力
+dotnet run --project tests/windows/ProductionScriptSyntheticProbe/ProductionScriptSyntheticProbe.csproj -c Release -- --config C:\temp\voice-switch-validation\config.dictation.json --phrase 音声入力 --simulate-bug
 ```
 
 Run native dictation recognizer probes with the dictation config:

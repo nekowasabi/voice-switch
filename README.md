@@ -82,11 +82,10 @@ For a Windows-local validation folder from WSL, pass the destination explicitly:
 
 ```sh
 RELEASE_DIR=/mnt/c/temp/voice-switch-validation make win-publish
-cp config.example.windows.json /mnt/c/temp/voice-switch-validation/config.command.json
-cp config.example.windows-dictation.json /mnt/c/temp/voice-switch-validation/config.dictation.json
+cp config.example.windows.json /mnt/c/temp/voice-switch-validation/config.dictation.json
 ```
 
-`win-publish` creates `config.json` only when it is missing. That default file is command mode. Use `config.dictation.json` for dictation probes and record-only runs so the command-mode sample is not mistaken for the dictation runtime.
+`win-publish` creates `config.json` only when it is missing, from the dictation-mode sample. An existing `config.json` is never overwritten.
 
 Windows diagnostics that do not require external app launch:
 
@@ -102,7 +101,7 @@ voice-switch.exe --config config.dictation.json --input-wav fixture.wav --output
 
 Windows SAPI root cause fixed: PowerShell 5 was treating the configured phrase JSON array as one object, which built one concatenated grammar phrase. Native verification recognized `音声入力` through the compiled production script and matched `run-command` / `wake`; the simulated old parsing bug produced no recognized phrase before timeout. The restart-key, diagnostic-drain, double-dispose, and `ExpandPath` review findings are separate follow-ups.
 
-Windows dictation is selected by adding the `dictation` block from `config.example.windows-dictation.json`. The synthetic WAV path is validated without a microphone. The live microphone capture and Superwhisper file-intake handoff remain user-validation-held. When the handoff path is used: it writes `<id>.wav` under `%LOCALAPPDATA%\voice-switch\dictation-handoffs` and launches `Superwhisper.exe superwhisper://file//<path>`. Like macOS it then polls `dictation.recordingsDir` (default `%LOCALAPPDATA%\com.superwhisper.app\recordings`) for up to 30 s for a run whose `meta.json` has `llmResult` or `result`, logs the length, and deletes the WAV. With no result it logs the path and keeps the WAV. Files in that directory older than 10 minutes are deleted when the handoff is created. One handoff runs at a time: a dictation that ends while one is in flight is dropped with `dictation dropped: previous one still in flight`, and the runtime keeps listening. Paths that are not plain ASCII are not launched. Target restoration is not implemented yet, and live transcription and paste are not yet proven.
+Windows dictation is selected by the `dictation` block, which `config.example.windows.json` includes. The synthetic WAV path is validated without a microphone. The live microphone capture and Superwhisper file-intake handoff remain user-validation-held. When the handoff path is used: it writes `<id>.wav` under `%LOCALAPPDATA%\voice-switch\dictation-handoffs` and launches `Superwhisper.exe superwhisper://file//<path>`. Like macOS it then polls `dictation.recordingsDir` (default `%LOCALAPPDATA%\com.superwhisper.app\recordings`) for up to 30 s for a run whose `meta.json` has `llmResult` or `result`, logs the length, and deletes the WAV. With no result it logs the path and keeps the WAV. Files in that directory older than 10 minutes are deleted when the handoff is created. One handoff runs at a time: a dictation that ends while one is in flight is dropped with `dictation dropped: previous one still in flight`, and the runtime keeps listening. Paths that are not plain ASCII are not launched. Target restoration is not implemented yet, and live transcription and paste are not yet proven.
 
 Synthetic Windows dictation uses `--input-wav PATH` with strict PCM16 mono 16 kHz WAV input and no microphone fallback. The default pace is 480 samples every 30 ms; add `--input-wav-fast` for structural tests. Without `--output-dir`, synthetic input is a dry-run and never launches an external app. With `--output-dir PATH`, voice-switch records body WAV files and JSON source range/hash metadata locally through the production encoder; this is a record-only validation adapter, not a Superwhisper integration. DSP, when enabled, affects only the local SAPI analysis/control lane. The original PCM, including its noise, is still used for emitted body WAV and handoff.
 
