@@ -391,6 +391,10 @@ public sealed class WindowsDictationRuntime
             finally
             {
                 await capture.DisposeAsync();
+                if (recognizer is IAsyncDisposable warmRecognizer)
+                {
+                    await warmRecognizer.DisposeAsync();
+                }
             }
         }
     }
@@ -1078,93 +1082,102 @@ public sealed class WinMmCapture : IPcmCapture
     }
 }
 
-public sealed class SpeechPowerShellDictationRecognizer : IDictationRecognizer
+// One long-lived powershell.exe hosts SAPI for the whole run. A fresh child per request cost ~650 ms of PowerShell start,
+// System.Speech load, C# compile and recognizer enumeration before any audio was heard; the warm child answers in ~100 ms.
+public sealed class SpeechPowerShellDictationRecognizer : IDictationRecognizer, IAsyncDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
     private readonly VoiceSwitchConfig config;
     private readonly Action<RecognitionDiagnostic>? observe;
+    private readonly SemaphoreSlim gate = new(1, 1);
+    private SapiChild? child;
 
     public SpeechPowerShellDictationRecognizer(VoiceSwitchConfig config, Action<RecognitionDiagnostic>? observe = null)
     {
         this.config = config;
         this.observe = observe;
+        // Warm up now so the first wake word after launch does not pay the child's startup; a failure surfaces on the first request.
+        try
+        {
+            child = SapiChild.Start(config);
+        }
+        catch
+        {
+        }
     }
 
     public async Task<RecognizedUtterance> RecognizeAsync(RecognitionRequest request, CancellationToken cancellation)
     {
-        var psi = CreatePowerShell();
-        psi.Environment["VOICE_SWITCH_LOCALE"] = config.EffectiveLocale;
-        psi.Environment["VOICE_SWITCH_REQUEST_ID"] = request.Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        psi.Environment["VOICE_SWITCH_REQUEST_START"] = request.Range.Start.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        psi.Environment["VOICE_SWITCH_REQUEST_END"] = request.Range.End.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        psi.Environment["VOICE_SWITCH_REQUEST_EXTENT"] = request.Extent.ToString();
-        var pcm = ToBytes(request.Samples.AsSpan());
-        var stopwatch = Stopwatch.StartNew();
-        using var process = Process.Start(psi) ?? throw new InvalidOperationException("failed to start powershell.exe");
-        RecognitionProcessIdentity? identity = null;
-        Task<string>? outputTask = null;
-        Task<string>? errorTask = null;
-        long? childCpuMilliseconds = null;
+        await gate.WaitAsync(cancellation).ConfigureAwait(false);
         try
         {
-            identity = ReadIdentity(process);
-            observe?.Invoke(new RecognitionDiagnostic(request, identity.StartTimeUtc, 0, null, identity.ProcessId, Running: true, identity));
-            using var killOnCancel = cancellation.Register(static state => KillProcess((Process)state!), process);
-            outputTask = process.StandardOutput.ReadToEndAsync();
-            errorTask = process.StandardError.ReadToEndAsync();
-            await process.StandardInput.BaseStream.WriteAsync(pcm, cancellation);
-            process.StandardInput.Close();
-            var timeout = TimeSpan.FromSeconds(Math.Max(10, pcm.Length / 32000.0 + 20));
-            var waitTask = process.WaitForExitAsync(CancellationToken.None);
-            if (await Task.WhenAny(waitTask, Task.Delay(timeout, CancellationToken.None)).ConfigureAwait(false) != waitTask)
+            if (child is null || child.Process.HasExited)
             {
-                KillProcess(process);
-                throw new TimeoutException("dictation recognizer timed out.");
+                if (child is { } exited)
+                {
+                    child = null;
+                    await exited.KillAsync().ConfigureAwait(false);
+                }
+
+                child = SapiChild.Start(config);
             }
 
-            await waitTask.ConfigureAwait(false);
-            cancellation.ThrowIfCancellationRequested();
-        }
-        catch
-        {
-            KillProcess(process);
-            throw;
+            var current = child;
+            var identity = current.Identity;
+            var stopwatch = Stopwatch.StartNew();
+            var cpuBefore = TryGetChildCpuMilliseconds(current.Process);
+            RecognitionDto dto;
+            try
+            {
+                observe?.Invoke(new RecognitionDiagnostic(request, identity.StartTimeUtc, 0, null, identity.ProcessId, Running: true, identity));
+                using var killOnCancel = cancellation.Register(static state => KillProcess((Process)state!), current.Process);
+                var pcm = ToBytes(request.Samples.AsSpan());
+                var timeout = TimeSpan.FromSeconds(Math.Max(10, pcm.Length / 32000.0 + 20));
+                dto = await current.ExchangeAsync(request, pcm, timeout, cancellation).ConfigureAwait(false);
+                cancellation.ThrowIfCancellationRequested();
+            }
+            catch
+            {
+                child = null;
+                await current.KillAsync().ConfigureAwait(false);
+                cancellation.ThrowIfCancellationRequested();
+                throw;
+            }
+            finally
+            {
+                var cpuAfter = TryGetChildCpuMilliseconds(current.Process);
+                var childCpuMilliseconds = cpuBefore is long before && cpuAfter is long after ? after - before : cpuAfter;
+                observe?.Invoke(new RecognitionDiagnostic(request, identity.StartTimeUtc, stopwatch.ElapsedMilliseconds, childCpuMilliseconds, identity.ProcessId, Running: false, identity));
+            }
+
+            Log.Info($"dictation recognition: stt id={request.Id} ms={stopwatch.ElapsedMilliseconds} audioMs={request.Samples.Length / 16}");
+            return ToUtterance(request, dto);
         }
         finally
         {
-            await RetainUntilProcessExitedAsync(
-                () => process.HasExited,
-                () => KillProcess(process)).ConfigureAwait(false);
+            gate.Release();
+        }
+    }
 
-            if (identity is not null)
+    public async ValueTask DisposeAsync()
+    {
+        await gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (child is { } current)
             {
-                await DrainCompletedPipeAsync(outputTask).ConfigureAwait(false);
-                await DrainCompletedPipeAsync(errorTask).ConfigureAwait(false);
-                childCpuMilliseconds = TryGetChildCpuMilliseconds(process);
-                observe?.Invoke(new RecognitionDiagnostic(request, identity.StartTimeUtc, stopwatch.ElapsedMilliseconds, childCpuMilliseconds, identity.ProcessId, Running: false, identity));
+                child = null;
+                await current.DisposeAsync().ConfigureAwait(false);
             }
         }
-
-        var output = await (outputTask ?? Task.FromResult("")).ConfigureAwait(false);
-        var error = await (errorTask ?? Task.FromResult("")).ConfigureAwait(false);
-        stopwatch.Stop();
-
-        var line = output.Split(["\r\n", "\n"], StringSplitOptions.RemoveEmptyEntries).LastOrDefault()
-            ?? "";
-        var dto = JsonSerializer.Deserialize<RecognitionDto>(line, JsonOptions)
-            ?? throw new InvalidOperationException(process.ExitCode == 0
-                ? "dictation recognizer returned no JSON"
-                : $"dictation recognizer failed {process.ExitCode}: {error}");
-        if (dto.Type == "error")
+        finally
         {
-            throw new InvalidOperationException($"dictation recognizer failed {process.ExitCode}: {dto.Message ?? error}");
+            gate.Release();
         }
+    }
 
-        if (process.ExitCode != 0)
-        {
-            throw new InvalidOperationException($"dictation recognizer failed {process.ExitCode}: {dto.Message ?? error}");
-        }
-
+    private static RecognizedUtterance ToUtterance(RecognitionRequest request, RecognitionDto dto)
+    {
         if (dto.Id != request.Id)
         {
             throw new InvalidOperationException($"dictation recognizer returned id {dto.Id}, expected {request.Id}.");
@@ -1251,19 +1264,118 @@ public sealed class SpeechPowerShellDictationRecognizer : IDictationRecognizer
         }
     }
 
-    private static async Task DrainCompletedPipeAsync(Task<string>? pipeTask)
+    private sealed class SapiChild
     {
-        if (pipeTask is null)
+        private readonly Stream stdin;
+        private readonly StreamReader stdout;
+        private readonly Task<string> stderr;
+
+        private SapiChild(Process process)
         {
-            return;
+            Process = process;
+            Identity = ReadIdentity(process);
+            stdin = process.StandardInput.BaseStream;
+            stdout = process.StandardOutput;
+            // Drained from the start: a child blocked on a full stderr pipe would never answer.
+            stderr = process.StandardError.ReadToEndAsync();
         }
 
-        try
+        public Process Process { get; }
+        public RecognitionProcessIdentity Identity { get; }
+
+        public static SapiChild Start(VoiceSwitchConfig config)
         {
-            _ = await pipeTask.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+            var psi = CreatePowerShell();
+            psi.Environment["VOICE_SWITCH_LOCALE"] = config.EffectiveLocale;
+            var process = Process.Start(psi) ?? throw new InvalidOperationException("failed to start powershell.exe");
+            Log.Info($"dictation recognizer: SAPI child started pid={process.Id}");
+            return new SapiChild(process);
         }
-        catch
+
+        public async Task<RecognitionDto> ExchangeAsync(RecognitionRequest request, byte[] pcm, TimeSpan timeout, CancellationToken cancellation)
         {
+            var header = new byte[28];
+            System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(header.AsSpan(0), request.Id);
+            System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(header.AsSpan(8), request.Range.Start);
+            System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(header.AsSpan(16), request.Range.End);
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(24), pcm.Length);
+            await stdin.WriteAsync(header, cancellation).ConfigureAwait(false);
+            await stdin.WriteAsync(pcm, cancellation).ConfigureAwait(false);
+            await stdin.FlushAsync(cancellation).ConfigureAwait(false);
+            while (true)
+            {
+                string? line;
+                try
+                {
+                    line = await stdout.ReadLineAsync(cancellation).AsTask().WaitAsync(timeout, cancellation).ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    throw new TimeoutException("dictation recognizer timed out.");
+                }
+
+                if (line is null)
+                {
+                    var error = await ErrorTextAsync().ConfigureAwait(false);
+                    throw new InvalidOperationException($"dictation recognizer exited {(Process.HasExited ? Process.ExitCode : -1)}: {error}");
+                }
+
+                RecognitionDto? dto;
+                try
+                {
+                    dto = JsonSerializer.Deserialize<RecognitionDto>(line, JsonOptions);
+                }
+                catch (JsonException)
+                {
+                    continue;
+                }
+
+                if (dto is null || dto.Type == "ready")
+                {
+                    continue;
+                }
+
+                if (dto.Type == "error")
+                {
+                    throw new InvalidOperationException($"dictation recognizer failed: {dto.Message}");
+                }
+
+                return dto;
+            }
+        }
+
+        public async Task KillAsync()
+        {
+            KillProcess(Process);
+            await RetainUntilProcessExitedAsync(() => Process.HasExited, () => KillProcess(Process)).ConfigureAwait(false);
+            Process.Dispose();
+        }
+
+        // Closing stdin lets the child exit on its own; it is killed only if it lingers.
+        public async ValueTask DisposeAsync()
+        {
+            try
+            {
+                stdin.Close();
+                await Process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+            }
+            catch
+            {
+            }
+
+            await KillAsync().ConfigureAwait(false);
+        }
+
+        private async Task<string> ErrorTextAsync()
+        {
+            try
+            {
+                return (await stderr.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false)).Trim();
+            }
+            catch
+            {
+                return "";
+            }
         }
     }
 
@@ -1306,20 +1418,19 @@ public sealed class SpeechPowerShellDictationRecognizer : IDictationRecognizer
     private sealed record RecognitionDto(string? Type, string? Message, long Id, string? Text, bool Rejected, LexemeDto[] Lexemes, double Confidence = -1.0, string? RejectedText = null);
     private sealed record LexemeDto(string? Text, long Start, long End);
 
+// Protocol: each request is a 28-byte little-endian header (int64 id, int64 start, int64 end, int32 pcmLength) followed by
+// the PCM bytes; each answer is one JSON line. A "ready" line precedes the first answer; EOF on stdin ends the child.
 private const string Script = """
 $ProgressPreference = 'SilentlyContinue'
-[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 Add-Type -AssemblyName System.Speech
-function Send-Json($obj) { $obj | ConvertTo-Json -Compress -Depth 6 }
 $locale = $env:VOICE_SWITCH_LOCALE
-$requestId = [int64]$env:VOICE_SWITCH_REQUEST_ID
-$requestStart = [int64]$env:VOICE_SWITCH_REQUEST_START
-$requestEnd = [int64]$env:VOICE_SWITCH_REQUEST_END
-$inputStream = [Console]::OpenStandardInput()
-$pcmStream = [System.IO.MemoryStream]::new()
-$inputStream.CopyTo($pcmStream)
-$pcm = $pcmStream.ToArray()
+$stdout = [Console]::OpenStandardOutput()
+$reader = [System.IO.BinaryReader]::new([Console]::OpenStandardInput())
+function Send-Json($obj) {
+  $bytes = [System.Text.Encoding]::UTF8.GetBytes((($obj | ConvertTo-Json -Compress -Depth 6) + "`n"))
+  $stdout.Write($bytes, 0, $bytes.Length)
+  $stdout.Flush()
+}
 Add-Type -ReferencedAssemblies System.Speech -TypeDefinition @"
 using System;
 using System.Collections.Generic;
@@ -1483,14 +1594,26 @@ public sealed class VoiceSwitchLexeme
 $infos = [System.Speech.Recognition.SpeechRecognitionEngine]::InstalledRecognizers()
 $info = $infos | Where-Object { $_.Culture.Name -eq $locale } | Select-Object -First 1
 if ($null -eq $info) { Send-Json @{ type='error'; message=("No installed Windows speech recognizer for " + $locale) }; exit 2 }
-try {
-  $collector = [VoiceSwitchSapiCollector]::new($requestId, $requestStart, $requestEnd)
-  $collector.Run($info, $pcm)
-  if ($collector.Error) { Send-Json @{ type='error'; message=$collector.Error }; exit 3 }
-  Send-Json @{ id=$collector.Id; text=$collector.Text; rejected=$collector.Rejected; rejectedText=$collector.RejectedText; confidence=$collector.Confidence; lexemes=@($collector.Lexemes | ForEach-Object { @{ text=$_.Text; start=$_.Start; end=$_.End } }) }
-} catch {
-  Send-Json @{ type='error'; message=$_.Exception.Message }
-  exit 3
+Send-Json @{ type='ready'; recognizer=$info.Description }
+while ($true) {
+  try {
+    $requestId = $reader.ReadInt64()
+    $requestStart = $reader.ReadInt64()
+    $requestEnd = $reader.ReadInt64()
+    $length = $reader.ReadInt32()
+    $pcm = $reader.ReadBytes($length)
+  } catch {
+    exit 0
+  }
+  if ($pcm.Length -ne $length) { exit 0 }
+  try {
+    $collector = [VoiceSwitchSapiCollector]::new($requestId, $requestStart, $requestEnd)
+    $collector.Run($info, $pcm)
+    if ($collector.Error) { Send-Json @{ type='error'; id=$requestId; message=$collector.Error }; continue }
+    Send-Json @{ id=$collector.Id; text=$collector.Text; rejected=$collector.Rejected; rejectedText=$collector.RejectedText; confidence=$collector.Confidence; lexemes=@($collector.Lexemes | ForEach-Object { @{ text=$_.Text; start=$_.Start; end=$_.End } }) }
+  } catch {
+    Send-Json @{ type='error'; id=$requestId; message=$_.Exception.Message }
+  }
 }
 """;
 }
