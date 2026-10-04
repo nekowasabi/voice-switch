@@ -110,6 +110,8 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation handoff sweeps WAVs older than 10 minutes", () => Check(DictationHandoffSweepsOldFiles())),
     ("runtime launches Superwhisper for consecutive dictations", () => Check(RuntimeLaunchesSuperwhisperForConsecutiveDictations())),
     ("dictation handoff rejects unsupported intake path without writing", () => Check(DictationHandoffRejectsUnsupportedIntakePath())),
+    ("dictation handoff root falls back to an intake-safe path", () => Check(DictationHandoffRootFallsBackToIntakeSafePath())),
+    ("dictation handoff root resolves a spaced non-ASCII profile on Windows", DictationHandoffRootResolvesOnWindows),
     ("dictation handoff launch failure deletes WAV", () => Check(DictationHandoffLaunchFailureDeletesWav())),
     ("dictation handoff accepts trusted ancestor junction only", DictationHandoffAcceptsTrustedAncestorJunctionOnly),
     ("handoff owned links never touch outside sentinel", HandoffOwnedLinksRejectSafely),
@@ -2601,6 +2603,45 @@ static bool DictationHandoffRejectsUnsupportedIntakePath()
         && launches == 0
         && !Directory.Exists(root)
         && result.Message.Contains("ASCII path", StringComparison.Ordinal);
+}
+
+static bool DictationHandoffRootFallsBackToIntakeSafePath()
+{
+    using var temp = RuntimeTemp();
+    var ascii = Path.Combine(temp.Dir, "handoff");
+    var profile = Path.Combine(temp.Dir, "Jöhn Smith", "handoff");
+    var shortName = Path.Combine(temp.Dir, "JHNSMI~1", "handoff");
+    var shared = Path.Combine(temp.Dir, "shared", "S-1-5-21-1");
+    var asked = new List<string>();
+    var kept = RegisteredSuperwhisperHandoff.ResolveRoot(ascii, path => { asked.Add(path); return null; }, shared);
+    var shortened = RegisteredSuperwhisperHandoff.ResolveRoot(profile, path => { asked.Add(path); return shortName; }, shared);
+    var unsafeShort = RegisteredSuperwhisperHandoff.ResolveRoot(profile, _ => Path.Combine(temp.Dir, "Jöhn~1"), shared);
+    var noShort = RegisteredSuperwhisperHandoff.ResolveRoot(profile, _ => null, shared);
+    return kept == ascii
+        && shortened == shortName
+        && asked.SequenceEqual([profile])
+        && Directory.Exists(profile)
+        && unsafeShort == shared
+        && noShort == shared
+        && Directory.Exists(shared);
+}
+
+static TestOutcome DictationHandoffRootResolvesOnWindows()
+{
+    if (!OperatingSystem.IsWindows())
+    {
+        return TestOutcome.Skip("requires native Windows short names and ACLs");
+    }
+
+    using var temp = RuntimeTemp();
+    var profile = Path.Combine(temp.Dir, "sp ace 日本", "handoff");
+    var shared = Path.Combine(temp.Dir, "shared", "S-1-5-21-1");
+    var root = RegisteredSuperwhisperHandoff.ResolveRoot(profile, RegisteredSuperwhisperHandoff.ShortPath, shared);
+    var handoff = FakeSuperwhisper(root, Path.Combine(temp.Dir, "recordings"), _ => Process.GetCurrentProcess());
+    var result = SubmitHandoff(handoff, new DictationAudio(Guid.NewGuid(), new SampleRange(0, 3), ImmutableArray.Create<short>(1, 2, 3)));
+    return root != profile && result.Status != HandoffStatus.FailedBeforeDispatch
+        ? TestOutcome.Pass()
+        : TestOutcome.Fail($"root={root} status={result.Status} {result.Message}");
 }
 
 static bool DictationHandoffLaunchFailureDeletesWav()

@@ -78,7 +78,7 @@ public static class Program
                     else
                     {
                         handoff = new RegisteredSuperwhisperHandoff(
-                            WindowsPaths.DefaultHandoffPath(),
+                            RegisteredSuperwhisperHandoff.DefaultRoot(),
                             WindowsPaths.SuperwhisperRecordingsPath(config.Dictation),
                             dryRun: effectiveDryRun);
                     }
