@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\..\..\dotnet\VoiceSwitch.Windows\DictationRuntime.cs" Link="VoiceSwitch.Windows.DictationRuntime.cs" />
+    <Compile Include="..\..\..\dotnet\VoiceSwitch.Windows\ImeReadings.cs" Link="VoiceSwitch.Windows.ImeReadings.cs" />
     <Compile Include="..\..\..\dotnet\VoiceSwitch.Windows\MicInUse.cs" Link="VoiceSwitch.Windows.MicInUse.cs" />
     <Compile Include="..\..\..\dotnet\VoiceSwitch.Windows\NoiseReduction.cs" Link="VoiceSwitch.Windows.NoiseReduction.cs" />
     <Compile Include="..\..\..\dotnet\VoiceSwitch.Windows\SyntheticIngress.cs" Link="VoiceSwitch.Windows.SyntheticIngress.cs" />
