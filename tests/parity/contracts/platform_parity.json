@@ -271,6 +271,17 @@
         "file": "dotnet/VoiceSwitch.Windows/DictationRuntime.cs",
         "markers": ["hotkeys.Take()", "DictationCommand.Cancel", "FinishReason.FinishCommand", "hotkeys?.End()"]
       }
+    },
+    {
+      "id": "dictation_target_restoration",
+      "macos": {
+        "file": "Sources/voice-switch/MacApp.swift",
+        "markers": ["frontmostApplication", "target?.activate()", "com.superduper.superwhisper"]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows/Tray/WindowFocus.cs",
+        "markers": ["GetForegroundWindow()", "SetForegroundWindow(target)", "\"Superwhisper\""]
+      }
     }
   ],
   "allowed_capability_gaps": [
@@ -291,15 +302,6 @@
         "markers": ["micInUse(by:", "stop word, nothing is recording", "stopCommand ?? Platform.defaultSuperwhisperToggle"]
       },
       "reason": "Windows command mode, when dictation is absent, dispatches configured stop words directly instead of using the macOS session/mic-in-use guard; the Windows dictation runtime has its own session-gated stop handling."
-    },
-    {
-      "id": "dictation_target_restoration",
-      "platform": "windows",
-      "macos": {
-        "file": "Sources/voice-switch/MacApp.swift",
-        "markers": ["frontmostApplication", "target?.activate()", "com.superduper.superwhisper"]
-      },
-      "reason": "Windows foreground restoration is not implemented until user-started validation proves Superwhisper file intake focus behavior."
     },
     {
       "id": "menu_bar_device_and_login_items",
