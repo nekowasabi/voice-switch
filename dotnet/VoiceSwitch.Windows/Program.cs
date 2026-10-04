@@ -559,6 +559,10 @@ try {
     $builder.Append($choices)
     $grammar = [System.Speech.Recognition.Grammar]::new($builder)
     $engine.LoadGrammar($grammar)
+    if ($mode -ne 'device') {
+      # Why: free dictation surfaces near-miss phrases in the log so they can be added as wake words.
+      $engine.LoadGrammar([System.Speech.Recognition.DictationGrammar]::new())
+    }
   }
   $engine.SetInputToDefaultAudioDevice()
   Send-Json @{ type='diagnostic'; message=("recognizer ready: " + $info.Culture.Name + ' ' + $info.Description) }
@@ -704,8 +708,30 @@ public static class CommandRunner
 
 public static class Log
 {
-    public static void Info(string message) =>
-        Console.WriteLine($"{DateTimeOffset.Now:O} {message}");
+    private static readonly object FileGate = new();
+
+    public static void Info(string message)
+    {
+        var line = $"{DateTimeOffset.Now:O} {message}";
+        Console.WriteLine(line);
+        // Why: the tray host has no console, so wake-word misses are only diagnosable from a file.
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        try
+        {
+            lock (FileGate)
+            {
+                var path = WindowsPaths.DefaultLogPath();
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.AppendAllText(path, line + Environment.NewLine);
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
 
     public static void Fatal(string message) =>
         Console.Error.WriteLine($"{DateTimeOffset.Now:O} fatal: {message}");
