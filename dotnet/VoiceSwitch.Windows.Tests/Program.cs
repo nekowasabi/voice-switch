@@ -123,6 +123,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("resident dry-run observes wake and stop without commands", () => Check(ResidentDryRunSuppressesCommands())),
     ("resident cancellation stops child", () => Check(ResidentCancellationStopsChild())),
     ("dictation recognizer retains ownership until confirmed exit", () => Check(DictationRecognizerRetainsOwnershipUntilConfirmedExit())),
+    ("PowerShell children die with voice-switch", PowerShellChildrenDieWithParent),
     ("tray options reject synthetic input without record-only", () => Check(TrayOptionsRejectSyntheticWithoutRecordOnly())),
     ("tray options reject numeric command", () => Check(TrayOptionsRejectNumericCommand())),
     ("single exe routes bare and tray-only launches to the tray", () => Check(SingleExeRoutesTrayLaunches())),
@@ -146,6 +147,11 @@ var failed = 0;
 var skipped = 0;
 foreach (var (name, test) in tests)
 {
+    if (args is ["--only", var only] && !name.Contains(only, StringComparison.Ordinal))
+    {
+        continue;
+    }
+
     var outcome = test();
     if (outcome.Status == TestStatus.Pass)
     {
@@ -2854,6 +2860,33 @@ static bool DictationDiagnosticsArePrivate(string output) =>
     !output.Contains("samples=", StringComparison.OrdinalIgnoreCase)
     && !output.Contains("pcm=", StringComparison.OrdinalIgnoreCase);
 
+static TestOutcome PowerShellChildrenDieWithParent()
+{
+    if (!OperatingSystem.IsWindows())
+    {
+        return TestOutcome.Skip("requires native Windows job objects");
+    }
+
+    using var parent = Process.Start(ChildStartInfo("job-parent")) ?? throw new InvalidOperationException("child failed to start");
+    var line = parent.StandardOutput.ReadLine();
+    if (!int.TryParse(line, out var childPid))
+    {
+        parent.Kill();
+        return TestOutcome.Fail($"job-parent printed {line ?? "nothing"}");
+    }
+
+    using var child = Process.GetProcessById(childPid);
+    parent.Kill(entireProcessTree: false);
+    parent.WaitForExit();
+    if (child.WaitForExit(10000))
+    {
+        return TestOutcome.Pass();
+    }
+
+    child.Kill();
+    return TestOutcome.Fail($"powershell.exe pid={childPid} outlived its killed parent");
+}
+
 static TestOutcome ProductionScriptParsesWordsOnWindowsPowerShell()
 {
     if (!OperatingSystem.IsWindows())
@@ -3749,11 +3782,17 @@ static void WriteCommandConfig(string path, string? stopCommand)
 
 static TestSpeechProcess StartChild(string mode, Action<string>? observeLine = null)
 {
+    var process = Process.Start(ChildStartInfo(mode)) ?? throw new InvalidOperationException("child failed to start");
+    return new TestSpeechProcess(process, observeLine);
+}
+
+static ProcessStartInfo ChildStartInfo(string mode)
+{
     var dll = Assembly.GetEntryAssembly()?.Location ?? throw new InvalidOperationException("test assembly path not found");
     var host = Environment.ProcessPath ?? "dotnet";
     var isDotnetHost = Path.GetFileNameWithoutExtension(host).Equals("dotnet", StringComparison.OrdinalIgnoreCase);
     var arguments = isDotnetHost ? $"\"{dll}\" --child {mode}" : $"--child {mode}";
-    var process = Process.Start(new ProcessStartInfo(host, arguments)
+    return new ProcessStartInfo(host, arguments)
     {
         RedirectStandardOutput = true,
         RedirectStandardError = true,
@@ -3761,8 +3800,7 @@ static TestSpeechProcess StartChild(string mode, Action<string>? observeLine = n
         StandardErrorEncoding = System.Text.Encoding.UTF8,
         UseShellExecute = false,
         CreateNoWindow = true,
-    }) ?? throw new InvalidOperationException("child failed to start");
-    return new TestSpeechProcess(process, observeLine);
+    };
 }
 
 static int Child(string mode)
@@ -3776,8 +3814,22 @@ static int Child(string mode)
         "ready-recognize-wake-stop" => ChildReadyRecognizeWakeStop(),
         "ready-recognize-stop" => ChildReadyRecognize("入力ストップ", 0.88),
         "ready-recognize-wake" => ChildReadyRecognize("音声入力", 0.99),
+        "job-parent" => ChildJobParent(),
         _ => 2,
     };
+}
+
+static int ChildJobParent()
+{
+    var powershell = ChildProcessJob.Start(new ProcessStartInfo("powershell.exe", "-NoProfile -NonInteractive -Command Start-Sleep 60")
+    {
+        UseShellExecute = false,
+        CreateNoWindow = true
+    });
+    Console.WriteLine(powershell.Id);
+    Console.Out.Flush();
+    Thread.Sleep(Timeout.Infinite);
+    return 0;
 }
 
 static int ChildStderrError()

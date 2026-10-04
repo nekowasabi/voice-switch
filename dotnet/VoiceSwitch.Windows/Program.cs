@@ -444,7 +444,7 @@ public static class SpeechPowerShell
         var psi = CreatePowerShell();
         psi.Environment["VOICE_SWITCH_LOCALE"] = config.EffectiveLocale;
         psi.Environment["VOICE_SWITCH_WAKE_WORDS"] = ConfigLoader.ToJsonArray(config.WakeWords.Concat(config.StopWords ?? []));
-        var process = Process.Start(psi) ?? throw new InvalidOperationException("failed to start powershell.exe");
+        var process = ChildProcessJob.Start(psi);
         return new SpeechProcess(process);
     }
 
@@ -487,7 +487,7 @@ public static class SpeechPowerShell
         psi.Environment["VOICE_SWITCH_MODE"] = mode;
         psi.Environment["VOICE_SWITCH_LOCALE"] = config?.EffectiveLocale ?? "ja-JP";
         psi.Environment["VOICE_SWITCH_WAKE_WORDS"] = ConfigLoader.ToJsonArray(config?.WakeWords ?? []);
-        var process = Process.Start(psi) ?? throw new InvalidOperationException("failed to start powershell.exe");
+        var process = ChildProcessJob.Start(psi);
         return new SpeechProcess(process);
     }
 
