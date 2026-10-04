@@ -63,13 +63,13 @@ public sealed class WindowsDictationRuntime
     private string? lastSilenceDiagnosticKey;
     private DictationPhase shownPhase;
     private bool endedByUser;
-    // Finish pressed while the body was heard but not yet recognized; honored once the body makes the session active.
-    private bool finishRequested;
     private nint target;
     // Mac heardSpeech: once the voice after the wake word is heard it stays heard, so a repeated wake word keeps 録音中.
     private bool heardAfterWake;
     // Frames before this sample index carry our own confirmation sound, which must not count as the text starting.
     private long deafUntil;
+    // Sample positions where the VAD went from quiet to speech, oldest first, pruned with the store.
+    private readonly List<long> speechOnsets = new();
 
     public WindowsDictationRuntime(
         VoiceSwitchConfig config,
@@ -429,6 +429,10 @@ public sealed class WindowsDictationRuntime
                 ? $"dictation vad: speech-onset at={frame.Start}"
                 : $"dictation vad: speech-end at={frame.Start}");
             lastVadSpeech = segmenter.LastWasSpeech;
+            if (lastVadSpeech)
+            {
+                speechOnsets.Add(frame.Start);
+            }
         }
 
         if (segmenter.LastWasSpeech)
@@ -491,7 +495,6 @@ public sealed class WindowsDictationRuntime
 
         lastSilenceDiagnosticKey = null;
         target = 0;
-        finishRequested = false;
         heardAfterWake = false;
         hotkeys?.End();
         return new DictationSession(config);
@@ -514,18 +517,27 @@ public sealed class WindowsDictationRuntime
             return true;
         }
 
-        if (command == DictationCommand.Finish && session.IsAwaitingBody && HeardAfterWake(session, lastLiveSpeechEnd))
-        {
-            Log.Info("dictation finish requested before the body was recognized");
-            finishRequested = true;
-        }
-
-        if ((command != DictationCommand.Finish && !finishRequested) || !session.IsActive)
+        if (command != DictationCommand.Finish)
         {
             return false;
         }
 
-        var audio = session.AdvanceSpeechTo(lastLiveSpeechEnd, originalStore.Copy) ?? session.Finish(FinishReason.FinishCommand, originalStore.Copy);
+        DictationAudio? audio;
+        if (session.IsActive)
+        {
+            audio = session.AdvanceSpeechTo(lastLiveSpeechEnd, originalStore.Copy) ?? session.Finish(FinishReason.FinishCommand, originalStore.Copy);
+        }
+        else if (HeardBodyStart(session) is long heardStart && HeardAfterWake(session, lastLiveSpeechEnd))
+        {
+            // Mac hands off what it heard at once; waiting for SAPI to confirm the body cost another 0.2-1 s.
+            // The recognition still in flight goes stale with the reset below.
+            audio = session.FinishHeard(heardStart, lastLiveSpeechEnd, originalStore.Copy);
+        }
+        else
+        {
+            return false;
+        }
+
         endedByUser = true;
         if (audio is not null)
         {
@@ -560,6 +572,25 @@ public sealed class WindowsDictationRuntime
 
     private bool HeardAfterWake(DictationSession session, long lastLiveSpeechEnd) =>
         heardAfterWake |= session.AwaitingWakeSourceEnd is long wakeEnd && lastLiveSpeechEnd > wakeEnd;
+
+    // Where the text after a lone wake word starts: its first speech onset less the preroll (Mac keeps the same margin
+    // so the first syllable is whole), never reaching back into the wake word. Null until speech follows the wake.
+    private long? HeardBodyStart(DictationSession session)
+    {
+        if (session.AwaitingWakeEnd is not long wakeEnd || session.AwaitingWakeSourceEnd is not long sourceEnd)
+        {
+            return null;
+        }
+
+        var onset = speechOnsets.FindIndex(at => at >= sourceEnd);
+        if (onset < 0)
+        {
+            return null;
+        }
+
+        var preroll = (long)Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength;
+        return Math.Max(Math.Max(speechOnsets[onset] - preroll, wakeEnd), originalStore.Start);
+    }
 
     private void PublishPhase(DictationPhase phase)
     {
@@ -632,7 +663,7 @@ public sealed class WindowsDictationRuntime
         }
 
         long? first = Math.Max(analysisStore.Start, analysisStore.Next - Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength);
-        if (session.RequiredAudioStart is long required)
+        if ((session.RequiredAudioStart ?? HeardBodyStart(session)) is long required)
         {
             first = Math.Min(first.Value, required);
         }
@@ -645,6 +676,7 @@ public sealed class WindowsDictationRuntime
         var retainFrom = first ?? analysisStore.Next;
         originalStore.RetainFrom(retainFrom);
         analysisStore.RetainFrom(retainFrom);
+        speechOnsets.RemoveAll(at => at < analysisStore.Start);
         observer?.RetentionObserved(analysisStore.Start, analysisStore.Next, pending.Count);
     }
 

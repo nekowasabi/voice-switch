@@ -398,6 +398,18 @@ public sealed class DictationSession
             : null;
     }
 
+    // Finish pressed after a lone wake word once speech followed it, before the recognizer turned that speech into the body.
+    public DictationAudio? FinishHeard(long start, long end, Func<SampleRange, ImmutableArray<short>> copyAudio)
+    {
+        if (!IsAwaitingBody)
+        {
+            return null;
+        }
+
+        var stop = Math.Min(end, maxEnd);
+        return Finish(new SampleRange(start, Math.Max(start, stop)), FinishReason.FinishCommand, copyAudio);
+    }
+
     public DictationAudio? Finish(FinishReason reason, Func<SampleRange, ImmutableArray<short>> copyAudio)
     {
         if (terminal)
