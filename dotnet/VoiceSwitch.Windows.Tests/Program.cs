@@ -41,6 +41,10 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation rejected wake hypothesis opens a wait but never a body", () => Check(DictationRejectedWakeOpensWaitOnly())),
     ("dictation lone wake body then stop submits body", () => Check(DictationLoneWakeBodyThenStopSubmitsBody())),
     ("dictation repeated wake prefix keeps body", () => Check(DictationRepeatedWakePrefixKeepsBody())),
+    ("dictation wake reading recovers near-homophones but never cuts a body from a fuzzy match", () => Check(DictationWakeReadingRecoversNearHomophones())),
+    ("dictation kana wake word matches SAPI's kanji through the reading", () => Check(DictationKanaWakeMatchesKanjiThroughReading())),
+    ("dictation session opens a wait on a fuzzy wake and starts the body on the next utterance", () => Check(DictationSessionOpensWaitOnFuzzyWake())),
+    ("dictation runtime logs a reading-matched wake-only with its distance", () => Check(DictationRuntimeLogsReadingWakeOnly())),
     ("dictation standalone stop trims at absolute stop start", () => Check(DictationStandaloneStopTrimsAtAbsoluteStart())),
     ("dictation prefix head stop is retained", () => Check(DictationPrefixHeadStopIsRetained())),
     ("dictation embedded stop is retained", () => Check(DictationEmbeddedStopIsRetained())),
@@ -537,6 +541,78 @@ static bool DictationRepeatedWakePrefixKeepsBody()
     session.Apply(Recognized(1, RecognitionExtent.PrefixHead, 0, 22000, "音声入力音声入力本文", false,
         Run("音声", 0, 3000), Run("入力", 3000, 6000), Run("音声", 7000, 10000), Run("入力", 10000, 13000), Run("本文", 17000, 22000)), store.Copy);
     return session.IsActive && session.PendingBody == new SampleRange(17000, 22000);
+}
+
+static bool DictationWakeReadingRecoversNearHomophones()
+{
+    WakeWord[] wakes = [WakeWord.From("音声入力", "おんせいにゅうりょく"), WakeWord.From("音声に入る", "おんせいにはいる"), WakeWord.From("音声", "おんせい")];
+    var onsenNiHairu = Recognized(1, RecognitionExtent.ClosedUtterance, 0, 8000, "温泉に入る", false,
+        Run("温泉", 0, 4000, "おんせん"), Run("に", 4000, 5000, "に"), Run("入", 5000, 7000, "はい"), Run("る", 7000, 8000, "る"));
+    var onsui = Recognized(2, RecognitionExtent.ClosedUtterance, 0, 4000, "温水", false, Run("温水", 0, 4000, "おんすい"));
+    var osen = Recognized(3, RecognitionExtent.ClosedUtterance, 0, 4000, "汚染", false, Run("汚染", 0, 4000, "おせん"));
+    var onsenWa = Recognized(4, RecognitionExtent.ClosedUtterance, 0, 5000, "温泉は", false, Run("温泉", 0, 4000, "おんせん"), Run("は", 4000, 5000, "は"));
+    var exactThenBody = Recognized(5, RecognitionExtent.ClosedUtterance, 0, 16000, "音声入力明日", false,
+        Run("音声", 0, 4000, "おんせい"), Run("入力", 4000, 10000, "にゅうりょく"), Run("明日", 13000, 16000, "あした"));
+    var wakeThenFuzzy = Recognized(6, RecognitionExtent.ClosedUtterance, 0, 12000, "音声入力温泉本文", false,
+        Run("音声入力", 0, 4000, "おんせいにゅうりょく"), Run("温泉", 4000, 8000, "おんせん"), Run("本文", 9000, 12000, "ほんぶん"));
+    return DictationBoundaries.LeadingWake(onsenNiHairu, wakes) == new WakePrefix(8000, null, wakes[1], 1)
+        && DictationBoundaries.LeadingWake(onsui, wakes) == new WakePrefix(4000, null, wakes[2], 1)
+        // A PrefixHead is the first seconds of a longer utterance, so it is never "the whole utterance".
+        && DictationBoundaries.LeadingWake(onsui with { Extent = RecognitionExtent.PrefixHead }, wakes) is null
+        && DictationBoundaries.LeadingWake(osen, wakes) is null
+        && DictationBoundaries.LeadingWake(onsenWa, wakes) is null
+        && DictationBoundaries.LeadingWake(exactThenBody, wakes) == new WakePrefix(10000, 13000)
+        && DictationBoundaries.LeadingWake(wakeThenFuzzy, wakes) == new WakePrefix(4000, 4000);
+}
+
+static bool DictationKanaWakeMatchesKanjiThroughReading()
+{
+    var kana = WakeWord.From("おんせい");
+    var fourKanji = WakeWord.From("音声入力", "おんせいにゅうりょく");
+    var kanjiWithReading = Recognized(1, RecognitionExtent.ClosedUtterance, 0, 7000, "音声メモ", false, Run("音声", 0, 4000, "おんせい"), Run("メモ", 4000, 7000, "めも"));
+    var kanjiWithoutReading = Recognized(2, RecognitionExtent.ClosedUtterance, 0, 4000, "音声", false, Run("音声", 0, 4000));
+    var fusedKanaText = Recognized(3, RecognitionExtent.ClosedUtterance, 0, 8000, "おんせい入力", false, Run("おんせい入力", 0, 8000, "おんせいにゅうりょく"));
+    var fusedTail = Recognized(4, RecognitionExtent.ClosedUtterance, 0, 10000, "音声にゅうりょく今日", false,
+        Run("音声", 0, 2000, "おんせい"), Run("にゅうりょく今日", 2000, 10000, "にゅうりょくきょう"));
+    return DictationBoundaries.LeadingWake(kanjiWithReading, [kana]) == new WakePrefix(4000, 4000, kana, 0)
+        && DictationBoundaries.LeadingWake(kanjiWithoutReading, [kana]) is null
+        && DictationBoundaries.LeadingWake(fusedKanaText, [fourKanji]) == new WakePrefix(8000, null, fourKanji, 0)
+        // にゅうりょくきょう is 9 kana and the wake ends 6 kana into it: 2000 + 8000 * 6 / 9.
+        && DictationBoundaries.LeadingWake(fusedTail, [fourKanji]) == new WakePrefix(7333, 7333, fourKanji, 0);
+}
+
+static bool DictationSessionOpensWaitOnFuzzyWake()
+{
+    var config = DictationConfig() with { WakeWords = ["音声に入る"], WakeReadings = ["おんせいにはいる"] };
+    var session = new DictationSession(config);
+    var store = StoreWithRamp(0, 30000);
+    session.Apply(Recognized(1, RecognitionExtent.ClosedUtterance, 0, 8000, "温泉に入る", false,
+        Run("温泉", 0, 4000, "おんせん"), Run("に", 4000, 5000, "に"), Run("入", 5000, 7000, "はい"), Run("る", 7000, 8000, "る")), store.Copy);
+    var waiting = session.IsAwaitingBody && !session.IsActive && session.AwaitingWakeEnd == 8000;
+    session.Apply(Recognized(2, RecognitionExtent.ClosedUtterance, 10000, 14000, "本文", false, Run("本文", 10000, 14000, "ほんぶん")), store.Copy);
+    return waiting && session.IsActive && session.PendingBody == new SampleRange(10000, 14000);
+}
+
+static bool DictationRuntimeLogsReadingWakeOnly()
+{
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 40, loud: false);
+    var recognizer = new ScriptedDictationRecognizer(request =>
+    {
+        var start = request.Range.Start;
+        var quarter = request.Range.Length / 4;
+        return Task.FromResult(new RecognizedUtterance(request.Id, request.Extent, request.Range, "温泉に入る",
+            [Run("温泉", start, start + quarter, "おんせん"), Run("に", start + quarter, start + 2 * quarter, "に"), Run("入", start + 2 * quarter, start + 3 * quarter, "はい"), Run("る", start + 3 * quarter, request.Range.End, "る")]));
+    });
+    var config = DictationRuntimeTestConfig(startTimeoutMs: 300) with { WakeWords = ["音声に入る"] };
+    var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(frames, [24]), recognizer, new RecordingDictationHandoff(), dryRun: true,
+        wakeReading: word => word == "音声に入る" ? "おんせいにはいる" : null);
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output);
+    return code == 0
+        && output.Contains("dictation session: wake-only", StringComparison.Ordinal)
+        && output.Contains(" via=reading d=1 wake=\"おんせいにはいる\"", StringComparison.Ordinal);
 }
 
 static bool DictationStandaloneStopTrimsAtAbsoluteStart()

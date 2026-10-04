@@ -170,7 +170,10 @@ public sealed class SampleStore
 
 public static class DictationBoundaries
 {
-    public static WakePrefix? LeadingWake(RecognizedUtterance recognition, IEnumerable<string> wakeWords)
+    public static WakePrefix? LeadingWake(RecognizedUtterance recognition, IEnumerable<string> wakeWords) =>
+        LeadingWake(recognition, wakeWords.Select(word => WakeWord.From(word)).ToArray());
+
+    public static WakePrefix? LeadingWake(RecognizedUtterance recognition, IReadOnlyList<WakeWord> wakes)
     {
         var lexemes = recognition.Lexemes.Where(run => TextMatching.Normalize(run.Text).Length > 0).ToArray();
         if (lexemes.Length == 0)
@@ -178,8 +181,8 @@ public static class DictationBoundaries
             return null;
         }
 
-        var normalizedWake = wakeWords
-            .Select(TextMatching.Normalize)
+        var normalizedWake = wakes
+            .Select(wake => wake.Text)
             .Where(value => value.Length > 0)
             .Distinct()
             .OrderByDescending(value => value.Length)
@@ -301,7 +304,8 @@ public static class DictationBoundaries
     }
 }
 
-public sealed record WakePrefix(long WakeEnd, long? BodyStart);
+// ByReading is set only when the reading pass matched; Distance is that match's edit distance.
+public sealed record WakePrefix(long WakeEnd, long? BodyStart, WakeWord? ByReading = null, int Distance = 0);
 
 public sealed class DictationSession
 {
