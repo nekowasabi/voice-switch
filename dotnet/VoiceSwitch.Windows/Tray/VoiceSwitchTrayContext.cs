@@ -14,6 +14,7 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
     private readonly ToolStripMenuItem pauseItem = new("Pause");
     private readonly ToolStripMenuItem reloadItem = new("Reload");
     private readonly ToolStripMenuItem settingsItem = new("Settings");
+    private readonly ToolStripMenuItem soundItem = new("効果音") { CheckOnClick = true };
     private readonly ToolStripMenuItem errorItem = new("Recent error");
     private readonly ToolStripMenuItem quitItem = new("Quit");
     private readonly int uiThreadId;
@@ -30,12 +31,14 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
         supervisor.SnapshotChanged += OnSnapshotChanged;
 
         menu = new ContextMenuStrip();
-        foreach (var item in new[] { statusItem, startItem, pauseItem, reloadItem, settingsItem, errorItem, quitItem })
+        foreach (var item in new[] { statusItem, startItem, pauseItem, reloadItem, settingsItem, soundItem, errorItem, quitItem })
         {
             menu.Items.Add(item);
         }
 
         statusItem.Enabled = false;
+        soundItem.Checked = TraySettings.ConfirmationSound;
+        soundItem.CheckedChanged += (_, _) => TraySettings.ConfirmationSound = soundItem.Checked;
         startItem.Click += async (_, _) => await RunCommandAsync(TrayCommand.Start);
         pauseItem.Click += async (_, _) => await RunCommandAsync(TrayCommand.Pause);
         reloadItem.Click += async (_, _) => await RunCommandAsync(TrayCommand.Reload);
@@ -173,6 +176,7 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
         pauseItem.Name = "pause";
         reloadItem.Name = "reload";
         settingsItem.Name = "settings";
+        soundItem.Name = "sound";
         errorItem.Name = "error";
         quitItem.Name = "quit";
 

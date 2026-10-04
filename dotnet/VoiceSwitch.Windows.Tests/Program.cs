@@ -68,6 +68,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation hotkey finish while waiting without speech is ignored", () => Check(DictationHotkeyFinishWhileWaitingIsIgnored())),
     ("dictation hotkey finish after speech waits for the body recognition", () => Check(DictationHotkeyFinishAfterSpeechWaitsForBody())),
     ("dictation hotkeys disarm when the runtime stops mid-dictation", () => Check(DictationHotkeysDisarmWhenRuntimeStopsMidDictation())),
+    ("dictation wake sound deafens the VAD for 600 ms", () => Check(DictationWakeSoundDeafensVad())),
     ("dictation WinMM native layout and callback message", () => Check(DictationWinMmNativeLayoutAndInputDataMessage())),
     ("dictation WinMM dispose waits for worker before freeing buffers", () => Check(DictationWinMmDisposeWaitsForWorkerBeforeFreeingBuffers())),
     ("dictation sample store rejects discontinuity", () => Check(DictationSampleStoreRejectsDiscontinuity())),
@@ -1380,6 +1381,44 @@ static bool DictationHotkeysDisarmWhenRuntimeStopsMidDictation()
         && observer.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Idle])
         && hotkeys.Releasable(0)
         && !hotkeys.OnKey(0x20, KeyMods.Control, down: true, nowMs: 0);
+}
+
+static bool DictationWakeSoundDeafensVad()
+{
+    // Wake, 12 loud frames inside the 600 ms window after the wake is recognized, then a body after the window.
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 12, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 12, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 12, loud: false);
+    (int Requests, long BodyStart, int WakeSounds, List<DictationPhase> Phases) Run(bool sound)
+    {
+        var observer = new PhaseRecorder { WakeSound = sound };
+        var recognizer = Recognizing("wake", "body");
+        var handoff = new RecordingDictationHandoff();
+        var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 5000), new FixturePcmCapture(frames, [24, 28, 52]), recognizer, handoff, dryRun: true, observer);
+        if (RunWithTimeout(runtime, TimeSpan.FromSeconds(5)) != 0)
+        {
+            throw new InvalidOperationException("runtime failed");
+        }
+
+        return (recognizer.Requests.Count, handoff.Submissions.Single().Range.Start, observer.WakeSounds, observer.Phases);
+    }
+
+    var deaf = Run(sound: true);
+    var hearing = Run(sound: false);
+    // Bodies start two preroll frames before the first loud frame (51 and 27 respectively).
+    return deaf.Requests == 2
+        && deaf.BodyStart == 49 * Segmenter.FrameLength
+        && deaf.WakeSounds == 1
+        && deaf.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Recording, DictationPhase.Idle])
+        && hearing.Requests == 3
+        && hearing.BodyStart == 25 * Segmenter.FrameLength
+        && hearing.WakeSounds == 1
+        && hearing.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Recording, DictationPhase.Idle]);
 }
 
 static RecognizedUtterance Utterance(RecognitionRequest request, string kind) => kind switch

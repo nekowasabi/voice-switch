@@ -2,8 +2,18 @@ using VoiceSwitch.Windows.Core;
 
 namespace VoiceSwitch.Windows.Tray;
 
-public sealed class ProductionRuntimeFactory(string configPath) : ITrayRuntimeFactory
+// What the tray lends the dictation runtime, as plain delegates so this factory stays free of WinForms types.
+public sealed record TrayRuntimeHooks(
+    Action<DictationPhase>? OnPhase = null,
+    Func<bool>? PlayWakeSound = null,
+    Func<nint>? ForegroundWindow = null,
+    Action<nint>? RestoreFocus = null,
+    DictationHotkeys? Hotkeys = null);
+
+public sealed class ProductionRuntimeFactory(string configPath, TrayRuntimeHooks? hooks = null) : ITrayRuntimeFactory
 {
+    private readonly TrayRuntimeHooks hooks = hooks ?? new TrayRuntimeHooks();
+
     public Task<ITrayRuntimeRun> StartAsync(VoiceSwitchConfig config, TrayInputSource source, CancellationToken cancellation)
     {
         cancellation.ThrowIfCancellationRequested();
@@ -25,10 +35,10 @@ public sealed class ProductionRuntimeFactory(string configPath) : ITrayRuntimeFa
             ? new RegisteredSuperwhisperHandoff(WindowsPaths.DefaultHandoffPath(), WindowsPaths.SuperwhisperRecordingsPath(config.Dictation))
             : new LocalRecordingHandoff(source.RecordOnlyDir, source.WavPath);
 
-        var observer = new TrayRuntimeObserver();
+        var observer = new TrayRuntimeObserver(hooks);
         var recognizer = new SpeechPowerShellDictationRecognizer(config, observer.RecordSapiTiming);
         var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-        var runtime = new WindowsDictationRuntime(config, capture, recognizer, handoff, dryRun: false, observer);
+        var runtime = new WindowsDictationRuntime(config, capture, recognizer, handoff, dryRun: false, observer, hooks.ForegroundWindow, hooks.Hotkeys);
         var completion = Task.Run(() => runtime.RunAsync(linked.Token), CancellationToken.None);
         return Task.FromResult<ITrayRuntimeRun>(new ProductionRuntimeRun(completion, linked, observer));
     }
@@ -103,10 +113,13 @@ public sealed class ProductionRuntimeFactory(string configPath) : ITrayRuntimeFa
         }
     }
 
-    private sealed class TrayRuntimeObserver : IDictationRuntimeObserver
+    private sealed class TrayRuntimeObserver(TrayRuntimeHooks hooks) : IDictationRuntimeObserver
     {
         private readonly object sync = new();
         private RecognitionProcessIdentity? liveChild;
+
+        public void PhaseChanged(DictationPhase phase) => hooks.OnPhase?.Invoke(phase);
+        public bool PlayWakeSound() => hooks.PlayWakeSound?.Invoke() ?? false;
 
         public RecognitionProcessIdentity? OwnedChild
         {

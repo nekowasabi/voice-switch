@@ -33,14 +33,25 @@ public static class TrayHost
                 return 0;
             }
 
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            // Built on this STA thread before the runtime exists; the runtime reaches them only through the hooks below.
+            var hotkeys = new DictationHotkeys();
+            using var hud = new DictationHud();
+            using var hook = new KeyboardHook(hotkeys, hud);
             var supervisor = new TrayRuntimeSupervisor(
                 options.ConfigPath,
                 options.Source,
-                new ProductionRuntimeFactory(options.ConfigPath),
+                new ProductionRuntimeFactory(options.ConfigPath, new TrayRuntimeHooks(
+                    OnPhase: phase => hud.Post(() =>
+                    {
+                        hud.Show(phase);
+                        hook.PhaseChanged(phase);
+                    }),
+                    PlayWakeSound: TraySettings.PlayWakeSound,
+                    Hotkeys: hotkeys)),
                 instance.Key);
 
-            Application.EnableVisualStyles();
-            Application.SetCompatibleTextRenderingDefault(false);
             using var context = new VoiceSwitchTrayContext(supervisor);
             var ipc = new TrayIpcServer(instance.PipeName, supervisor, context.Diagnostics, context.QuitRuntimeAsync, context.RequestExitThread);
             try
