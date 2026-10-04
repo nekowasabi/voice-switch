@@ -1533,7 +1533,9 @@ static bool DictationRuntimeAppliesReloadedConfigWhenIdle()
             [Run("テスト", request.Range.Start, request.Range.Start + 2400), Run("本文", request.Range.Start + 2400, request.Range.End)])));
     var handoff = new RecordingDictationHandoff();
     var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 5000), new FixturePcmCapture(frames, [24, 48]), recognizer, handoff, dryRun: true,
-        reloadConfig: () => ++reloads == 1 ? edited : null);
+        reloadConfig: () => ++reloads == 1 ? edited : null,
+        // Real MS-IME holds the loop ~150 ms at the reload, and the unpaced fixture then skips the second idle poll counted below.
+        wakeReading: _ => null);
     var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output);
     var audio = handoff.Submissions.SingleOrDefault();
     return code == 0

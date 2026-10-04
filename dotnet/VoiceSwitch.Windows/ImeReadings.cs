@@ -5,36 +5,51 @@ namespace VoiceSwitch.Windows;
 
 public static class ImeReadings
 {
-    // Hiragana reading from MS-IME, or null when MS-IME is missing or fails; a reading is never worth a crash.
-    public static string? Of(string text)
+    public static string? Of(string text) => Of([text])[0];
+
+    // Hiragana readings from MS-IME, null where MS-IME is missing or fails; a reading is never worth a crash.
+    // One call for all words: starting MS-IME costs about 200 ms each time.
+    public static string?[] Of(IReadOnlyList<string> texts)
     {
+        var readings = new string?[texts.Count];
         if (!OperatingSystem.IsWindows())
         {
-            return null;
+            return readings;
         }
 
-        try
+        // IFELanguage has no proxy, so from an MTA thread (the runtime's workers, any console host) the cast fails with
+        // E_NOINTERFACE. A thread of its own in an STA is the only place the call works.
+        var thread = new Thread(() =>
         {
-            return Phonetic(text);
-        }
-        catch
-        {
-            return null;
-        }
+            try
+            {
+                Phonetic(texts, readings);
+            }
+            catch
+            {
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+        return readings;
     }
 
     [SupportedOSPlatform("windows")]
-    private static string? Phonetic(string text)
+    private static void Phonetic(IReadOnlyList<string> texts, string?[] readings)
     {
         if (Type.GetTypeFromProgID("MSIME.Japan") is not { } type || Activator.CreateInstance(type) is not IFELanguage ime)
         {
-            return null;
+            return;
         }
 
         ime.Open();
         try
         {
-            return ime.GetPhonetic(text, 1, -1, out var result) == 0 ? result : null;
+            for (var i = 0; i < texts.Count; i++)
+            {
+                readings[i] = ime.GetPhonetic(texts[i], 1, -1, out var result) == 0 ? result : null;
+            }
         }
         finally
         {

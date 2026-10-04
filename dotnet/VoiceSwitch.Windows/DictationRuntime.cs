@@ -56,7 +56,7 @@ public sealed class WindowsDictationRuntime
     private readonly Func<VoiceSwitchConfig?> reloadConfig;
     private readonly Func<nint, string?> windowProcess;
     private readonly Func<IReadOnlyCollection<string>, string?> micInUseBy;
-    private readonly Func<string, string?> wakeReading;
+    private readonly Func<string, string?>? wakeReading;
     private readonly SampleStore originalStore;
     private readonly SampleStore analysisStore;
     private readonly Segmenter segmenter;
@@ -91,7 +91,7 @@ public sealed class WindowsDictationRuntime
         Func<IReadOnlyCollection<string>, string?>? micInUseBy = null,
         Func<string, string?>? wakeReading = null)
     {
-        this.wakeReading = wakeReading ?? ImeReadings.Of;
+        this.wakeReading = wakeReading;
         config = WithWakeReadings(config);
         this.config = config;
         this.capture = capture;
@@ -508,7 +508,8 @@ public sealed class WindowsDictationRuntime
     private void LogTiming() =>
         Log.Info($"dictation timing: startTimeoutMs={config.Dictation?.StartTimeoutMs ?? 3000} endSilenceMs={config.Dictation?.EndSilenceMs ?? 1200} hangoverMs={config.HangoverMs ?? 300} minSpeechMs={config.MinSpeechMs ?? 300} maxSeconds={config.Dictation?.MaxSeconds ?? config.MaxSeconds ?? 60} wakeReadings=\"{string.Join(',', config.Wakes().Select(wake => $"{wake.Text}={wake.Reading}"))}\"");
 
-    private VoiceSwitchConfig WithWakeReadings(VoiceSwitchConfig c) => c with { WakeReadings = c.WakeWords.Select(wakeReading).ToArray() };
+    private VoiceSwitchConfig WithWakeReadings(VoiceSwitchConfig c) =>
+        c with { WakeReadings = wakeReading is null ? ImeReadings.Of(c.WakeWords) : c.WakeWords.Select(wakeReading).ToArray() };
 
     private bool FlushOpenUtterance(
         ChannelWriter<RecognitionWork> requests,
