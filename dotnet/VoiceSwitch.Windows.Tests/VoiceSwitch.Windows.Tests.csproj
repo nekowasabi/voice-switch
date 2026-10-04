@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <NoWarn>$(NoWarn);CS7022</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\VoiceSwitch.Windows\Program.cs" Link="VoiceSwitch.Windows.Program.cs" />
+    <Compile Include="..\VoiceSwitch.Windows\DictationRuntime.cs" Link="VoiceSwitch.Windows.DictationRuntime.cs" />
+    <Compile Include="..\VoiceSwitch.Windows\ImeReadings.cs" Link="VoiceSwitch.Windows.ImeReadings.cs" />
+    <Compile Include="..\VoiceSwitch.Windows\MicInUse.cs" Link="VoiceSwitch.Windows.MicInUse.cs" />
+    <Compile Include="..\VoiceSwitch.Windows\SuperwhisperHandoff.cs" Link="VoiceSwitch.Windows.SuperwhisperHandoff.cs" />
+    <Compile Include="..\VoiceSwitch.Windows\NoiseReduction.cs" Link="VoiceSwitch.Windows.NoiseReduction.cs" />
+    <Compile Include="..\VoiceSwitch.Windows\SyntheticIngress.cs" Link="VoiceSwitch.Windows.SyntheticIngress.cs" />
+    <Compile Include="..\VoiceSwitch.Windows\Tray\TrayContracts.cs" Link="VoiceSwitch.Windows.Tray.Contracts.cs" />
+    <Compile Include="..\VoiceSwitch.Windows\Tray\TrayOptions.cs" Link="VoiceSwitch.Windows.Tray.Options.cs" />
+    <Compile Include="..\VoiceSwitch.Windows\Tray\TrayIpc.cs" Link="VoiceSwitch.Windows.Tray.Ipc.cs" />
+    <Compile Include="..\VoiceSwitch.Windows\Tray\ProductionRuntimeFactory.cs" Link="VoiceSwitch.Windows.Tray.ProductionRuntimeFactory.cs" />
+    <Compile Include="..\VoiceSwitch.Windows\Tray\TrayRuntimeSupervisor.cs" Link="VoiceSwitch.Windows.Tray.Supervisor.cs" />
+    <Compile Include="..\VoiceSwitch.Windows\Tray\TraySingleInstance.cs" Link="VoiceSwitch.Windows.Tray.SingleInstance.cs" />
+    <Compile Include="..\VoiceSwitch.Windows\Tray\LoginItem.cs" Link="VoiceSwitch.Windows.Tray.LoginItem.cs" />
+    <ProjectReference Include="..\VoiceSwitch.Windows.Core\VoiceSwitch.Windows.Core.csproj" />
+  </ItemGroup>
+</Project>

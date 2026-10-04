@@ -1,0 +1,65 @@
+{
+  "normalization": [
+    {
+      "name": "drops spaces and Japanese punctuation",
+      "input": " 音声 入力。",
+      "expected": "音声入力"
+    },
+    {
+      "name": "drops western punctuation",
+      "input": "wake, word!?",
+      "expected": "wakeword"
+    },
+    {
+      "name": "keeps meaningful kana and kanji",
+      "input": "「入力ストップ」",
+      "expected": "入力ストップ"
+    }
+  ],
+  "decision_config": {
+    "wakeWords": ["音声入力", "おんせい"],
+    "locale": "ja_JP",
+    "command": "echo wake",
+    "stopWords": ["入力ストップ"],
+    "stopCommand": "echo stop",
+    "maxSeconds": 2.5,
+    "hangoverMs": 300,
+    "prerollMs": 300,
+    "minSpeechMs": 300,
+    "vadRatio": 3.0,
+    "vadMinRMS": 0.005,
+    "dictation": {
+      "recordingsDir": "%LOCALAPPDATA%\\com.superwhisper.app\\recordings",
+      "endSilenceMs": 1200,
+      "startTimeoutMs": 3000,
+      "maxSeconds": 60,
+      "excludeBundleIDs": []
+    }
+  },
+  "decisions": [
+    {
+      "name": "wake word is a whole normalized utterance",
+      "recognized": "音声 入力。",
+      "kind": "run-command",
+      "command": "echo wake",
+      "reason": "wake",
+      "text": "音声入力"
+    },
+    {
+      "name": "stop word uses stop command",
+      "recognized": "入力ストップ",
+      "kind": "run-command",
+      "command": "echo stop",
+      "reason": "stop",
+      "text": "入力ストップ"
+    },
+    {
+      "name": "embedded wake phrase is ignored",
+      "recognized": "音声入力してください",
+      "kind": "ignore",
+      "command": null,
+      "reason": "not a configured word",
+      "text": "音声入力してください"
+    }
+  ]
+}

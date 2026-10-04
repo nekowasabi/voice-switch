@@ -1,0 +1,299 @@
+{
+  "shared_cli_flags": ["--fire", "--vad-selftest", "--check"],
+  "allowed_sample_config_gaps": [
+    {
+      "key": "stopCommand",
+      "platform": "windows",
+      "reason": "Windows cannot observe external recording state, so the default sample omits the unsafe recording toggle as a stop command."
+    },
+    {
+      "key": "dictation.excludeBundleIDs",
+      "platform": "windows",
+      "reason": "Windows has no bundle IDs; it excludes the app in front by executable name in dictation.excludeProcessNames instead."
+    },
+    {
+      "key": "dictation.excludeProcessNames",
+      "platform": "macos",
+      "reason": "The Windows twin of dictation.excludeBundleIDs, matching the executable of the window in front at the wake word."
+    }
+  ],
+  "allowed_cli_gaps": [
+    {
+      "flag": "--paused",
+      "platform": "macos",
+      "reason": "The Windows exe is also its tray app; --paused starts it without opening the microphone, which the macOS menu bar app does from its 一時停止 item instead."
+    },
+    {
+      "flag": "--record-only",
+      "platform": "macos",
+      "reason": "The Windows tray app accepts synthetic WAV input recorded to a local directory so its harness never launches Superwhisper; macOS has no tray harness."
+    },
+    {
+      "flag": "--tray-command",
+      "platform": "macos",
+      "reason": "The Windows tray app is controlled over a per-user named pipe for scripted status, start, pause, reload, and quit; the macOS menu bar app has no IPC surface."
+    },
+    {
+      "flag": "--help",
+      "platform": "macos",
+      "reason": "The macOS first-run surface is the menu bar app; the current command-line help exists only in the Windows runtime."
+    },
+    {
+      "flag": "--self-test",
+      "platform": "macos",
+      "reason": "Windows exposes the C# core behavior harness as a CLI mode; macOS only exposes the older VAD self-test."
+    },
+    {
+      "flag": "--recognizers",
+      "platform": "macos",
+      "reason": "Installed recognizer diagnostics are Windows System.Speech-specific."
+    },
+    {
+      "flag": "--check-device",
+      "platform": "macos",
+      "reason": "The Windows speech input diagnostic has no matching macOS CLI surface yet."
+    },
+    {
+      "flag": "--listen-seconds",
+      "platform": "macos",
+      "reason": "The bounded resident run is a Windows diagnostic mode; macOS has --simulate for bounded audio-file checks instead."
+    },
+    {
+      "flag": "--dry-run",
+      "platform": "macos",
+      "reason": "The Windows runtime needs a safe production-path recognizer probe that reports matches without dispatching configured commands."
+    },
+    {
+      "flag": "--config",
+      "platform": "macos",
+      "reason": "Windows accepts an explicit config path for diagnostics; macOS currently uses VOICE_SWITCH_CONFIG or the default path."
+    },
+    {
+      "flag": "--input-wav",
+      "platform": "macos",
+      "reason": "Windows SAPI dictation now has a synthetic PCM ingress for native validation; macOS already has separate audio-file simulation surfaces."
+    },
+    {
+      "flag": "--input-wav-fast",
+      "platform": "macos",
+      "reason": "The fast structural WAV mode is specific to the Windows synthetic SAPI validation path."
+    },
+    {
+      "flag": "--output-dir",
+      "platform": "macos",
+      "reason": "The record-only handoff directory is a Windows synthetic validation adapter and does not represent a macOS Superwhisper integration."
+    },
+    {
+      "flag": "--simulate",
+      "platform": "windows",
+      "reason": "The macOS simulator is a public AVFoundation sample-driver CLI; Windows finite PCM dictation coverage exists as test probes, not an equivalent public CLI mode."
+    },
+    {
+      "flag": "--hotkey-test",
+      "platform": "windows",
+      "reason": "The hotkey tap borrows macOS Accessibility and CGEvent APIs around superwhisper shortcuts."
+    }
+  ],
+  "shared_capabilities": [
+    {
+      "id": "normalize_transcript_text",
+      "macos": {
+        "file": "Sources/voice-switch/Transcript.swift",
+        "markers": ["func normalize", "isWhitespace", "punctuation.contains"]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows.Core/TextMatching.cs",
+        "markers": ["public static string Normalize", "char.IsWhiteSpace", "Punctuation.Contains"]
+      },
+      "fixture": "normalization"
+    },
+    {
+      "id": "whole_utterance_wake_runs_command",
+      "macos": {
+        "file": "Sources/voice-switch/MacApp.swift",
+        "markers": ["!isHead", "wakeWords.map(normalize).contains(t)", "Platform.runCommand(config.cfg.command)"]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows.Core/TextMatching.cs",
+        "markers": ["config.WakeWords.Select(Normalize).Contains(text)", "RuntimeDecision.RunCommand(text, config.Command, \"wake\")"]
+      },
+      "fixture": "decisions"
+    },
+    {
+      "id": "whole_utterance_stop_runs_stop_command",
+      "macos": {
+        "file": "Sources/voice-switch/MacApp.swift",
+        "markers": ["stopWords ?? []", "stopCommand ?? Platform.defaultSuperwhisperToggle", "isStopWord"]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows.Core/TextMatching.cs",
+        "markers": ["config.StopWords ?? []", "PlatformDefaults.SuperwhisperToggle", "RuntimeDecision.RunCommand(text, config.StopCommand, \"stop\")"]
+      },
+      "fixture": "decisions"
+    },
+    {
+      "id": "energy_segmenter_events",
+      "macos": {
+        "file": "Sources/voice-switch/Segmenter.swift",
+        "markers": ["case utterance", "case head", "vadRatio", "vadMinRMS"]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows.Core/Segmenter.cs",
+        "markers": ["SegmenterEvent.Utterance", "SegmenterEvent.Head", "config.VadRatio", "config.VadMinRMS"]
+      },
+      "fixture": "segmenter"
+    },
+    {
+      "id": "platform_command_runner",
+      "macos": {
+        "file": "Sources/voice-switch/Platform.swift",
+        "markers": ["static func runCommand", "\"/bin/sh\"", "\"-c\""]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows/Program.cs",
+        "markers": ["public static class CommandRunner", "ComSpec", "\"/c \" + command"]
+      }
+    },
+    {
+      "id": "config_reload_keeps_previous_on_error",
+      "macos": {
+        "file": "Sources/voice-switch/Config.swift",
+        "markers": ["reloadIfChanged", "config reload failed, keeping previous"]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows/Program.cs",
+        "markers": ["ReloadIfChanged", "config reload failed, keeping previous", "ConfigReload.Unchanged"]
+      }
+    },
+    {
+      "id": "dictation_runtime_routes_to_pcm_runtime",
+      "macos": {
+        "file": "Sources/voice-switch/MacApp.swift",
+        "markers": ["var seg = Segmenter(cfg: config.cfg)", "case let .utterance(u)", "handoff("]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows/Program.cs",
+        "markers": ["config.Dictation is not null", "new WindowsDictationRuntime", "WinMmCapture.Open()"]
+      }
+    },
+    {
+      "id": "dictation_wake_prefix_trims_audio_body",
+      "macos": {
+        "file": "Sources/voice-switch/Transcript.swift",
+        "markers": ["dictationStart", "wakeWords", "cutAt"]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows.Core/DictationCore.cs",
+        "markers": ["LeadingWake", "WakePrefix", "StartBody(start, recognition.Source.End, now)"]
+      }
+    },
+    {
+      "id": "dictation_closed_stop_guard",
+      "macos": {
+        "file": "Sources/voice-switch/MacApp.swift",
+        "markers": ["!isHead", "isStopWord", "removeLast"]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows.Core/DictationCore.cs",
+        "markers": ["RecognitionExtent.ClosedUtterance", "StandaloneStopRange", "stop.Start"]
+      }
+    },
+    {
+      "id": "dictation_wav_encode",
+      "macos": {
+        "file": "Sources/voice-switch/MacApp.swift",
+        "markers": ["AVAudioFile", "AVLinearPCMBitDepthKey", "AVLinearPCMIsFloatKey"]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows.Core/DictationCore.cs",
+        "markers": ["public static byte[] Encode", "\"RIFF\"", "writer.Write(16000)", "writer.Write((short)16)"]
+      }
+    },
+    {
+      "id": "dictation_handoff_lifecycle",
+      "macos": {
+        "file": "Sources/voice-switch/MacApp.swift",
+        "markers": ["\"-g\", \"-a\", \"superwhisper\"", "awaitResult", "\"llmResult\", \"result\"", "no superwhisper result within 30 s"]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows/SuperwhisperHandoff.cs",
+        "markers": ["superwhisper://file//", "FindResult", "\"llmResult\", \"result\"", "no superwhisper result within 30 s"]
+      }
+    },
+    {
+      "id": "dictation_one_handoff_at_a_time",
+      "macos": {
+        "file": "Sources/voice-switch/MacApp.swift",
+        "markers": ["handoffBusy", "dictation dropped: previous one still in flight"]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows/DictationRuntime.cs",
+        "markers": ["inflight is { IsCompleted: false }", "dictation dropped: previous one still in flight"]
+      }
+    },
+    {
+      "id": "dictation_finish_cancel_shortcuts",
+      "macos": {
+        "file": "Sources/voice-switch/MacApp.swift",
+        "markers": ["enum Hotkeys", "case finish, cancel", "Hotkeys.take()", "swallowUp"]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows/DictationRuntime.cs",
+        "markers": ["hotkeys.Take()", "DictationCommand.Cancel", "FinishReason.FinishCommand", "hotkeys?.End()"]
+      }
+    },
+    {
+      "id": "dictation_target_restoration",
+      "macos": {
+        "file": "Sources/voice-switch/MacApp.swift",
+        "markers": ["frontmostApplication", "target?.activate()", "com.superduper.superwhisper"]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows/Tray/WindowFocus.cs",
+        "markers": ["GetForegroundWindow()", "SetForegroundWindow(target)", "\"Superwhisper\""]
+      }
+    },
+    {
+      "id": "menu_bar_device_and_login_items",
+      "macos": {
+        "file": "Sources/voice-switch/MacApp.swift",
+        "markers": ["NSStatusBar.system.statusItem", "AVCaptureDevice.DiscoverySession", "SMAppService.mainApp"]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows/Tray/VoiceSwitchTrayContext.cs",
+        "markers": ["new NotifyIcon", "WinMmCapture.InputDevices()", "LoginItem", "FollowDevice"]
+      }
+    },
+    {
+      "id": "skip_while_mic_in_use_guard",
+      "macos": {
+        "file": "Sources/voice-switch/MacApp.swift",
+        "markers": ["micInUse(by:", "skipWhileMicInUseBy", "is using the microphone"]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows/DictationRuntime.cs",
+        "markers": ["micInUseBy(config.SkipWhileMicInUseBy", "is using the microphone", "MicInUse.By"]
+      }
+    }
+  ],
+  "allowed_capability_gaps": [
+    {
+      "id": "stop_word_session_gating",
+      "platform": "windows",
+      "macos": {
+        "file": "Sources/voice-switch/MacApp.swift",
+        "markers": ["micInUse(by:", "stop word, nothing is recording", "stopCommand ?? Platform.defaultSuperwhisperToggle"]
+      },
+      "reason": "Windows command mode, when dictation is absent, dispatches configured stop words directly instead of using the macOS session/mic-in-use guard; the Windows dictation runtime has its own session-gated stop handling."
+    },
+    {
+      "id": "windows_speech_diagnostics",
+      "platform": "macos",
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows/Program.cs",
+        "markers": ["--recognizers", "--check-device", "RunRecognizerDiagnostics", "RunDeviceDiagnostic"]
+      },
+      "reason": "These modes inspect Windows System.Speech recognizers and default input setup."
+    }
+  ]
+}

@@ -1,12 +1,24 @@
 # voice-switch
 
-Menu-bar app. A wake word on its own runs a command through `/bin/sh`. Speech after a wake word is recorded and opened in superwhisper only when `dictation` is set. Without it, that longer utterance is ignored. On `main`, the transcribed text is not passed to another program.
+On macOS, a menu-bar app. A wake word on its own runs a command through `/bin/sh`. Speech after a wake word is recorded and opened in superwhisper only when `dictation` is set. Without it, that longer utterance is ignored. On `main`, the transcribed text is not passed to another program.
 
 [日本語](README_ja.md)
 
 The bundle identifier is `local.voice-switch`. `Info.plist` sets `LSMinimumSystemVersion` to 26.0. A successful Mac build is not claimed here.
 
-## Install
+## Platforms
+
+| | macOS | Windows |
+|---|---|---|
+| Menu / tray UI | Menu-bar app | Console resident and WinForms tray host |
+| Dictation HUD, finish and cancel keys | HUD and event tap | Top-center HUD and `WH_KEYBOARD_LL` hook, hand test pending |
+| Wake-word recognition | Apple SpeechTranscriber over segmented utterances | Windows SAPI constrained grammar for configured words |
+| Superwhisper hook | `open -g superwhisper://record` | `rundll32 url.dll,FileProtocolHandler superwhisper://record` |
+| Build | `make` | `PC=wsl make` |
+
+See [BUILD.md](./BUILD.md) for `$PC` details and verification.
+
+## Install (macOS)
 
 `make install` builds a release binary, wraps it as `VoiceSwitch.app`, ad-hoc signs it as `local.voice-switch`, copies the app to `~/Applications`, copies `config.example.json` to `~/.config/voice-switch/config.json` when that file is missing, and opens the app.
 
@@ -42,7 +54,7 @@ The menu items are 一時停止 (releases the microphone), マイク, 設定フ�
 
 ## CLI
 
-- `voice-switch --check a.wav` feeds files through the VAD and transcriber and prints a verdict per utterance.
+- `voice-switch --check a.wav` feeds files through the VAD and transcriber and prints a verdict per utterance. Windows has the same mode with SAPI; it reads PCM16 mono 16 kHz WAV only.
 - `voice-switch --simulate a.wav` feeds one file through the live path instead of the microphone.
 
 ## Not on main
@@ -58,3 +70,82 @@ On that branch, a non-empty `llmResult` (otherwise `result`) is passed as argv, 
 Whitespace-only text does not start it. The app does not wait for it to exit. A non-zero status is logged. The branch does not pass `-key`. `TYPESAFE_API_KEY` is not written in source or in config. If the CLI reads a key, it reads that environment variable. This repo does not contain a key value.
 
 A successful Mac build of that branch is not claimed here. It is also not claimed that superwhisper stops pasting after the focus change on that branch.
+
+## Quick start (Windows / WSL)
+
+```sh
+export PC=wsl
+make win-verify   # no SDK required
+make              # build, test, publish to ./release
+```
+
+For a Windows-local validation folder from WSL, pass the destination explicitly:
+
+```sh
+RELEASE_DIR=/mnt/c/temp/voice-switch-validation make win-publish
+cp config.example.windows.json /mnt/c/temp/voice-switch-validation/config.dictation.json
+```
+
+`win-publish` creates `config.json` only when it is missing, from the dictation-mode sample. An existing `config.json` is never overwritten.
+
+Windows diagnostics that do not require external app launch:
+
+```text
+voice-switch.exe --self-test
+voice-switch.exe --recognizers
+voice-switch.exe --check-device
+voice-switch.exe --check a.wav b.wav
+voice-switch.exe --config config.dictation.json --input-wav fixture.wav
+voice-switch.exe --config config.dictation.json --input-wav fixture.wav --output-dir out --input-wav-fast
+```
+
+`--check-device`, `--dry-run --listen-seconds`, and resident runs can open the live microphone. They are not part of the synthetic validation path below.
+
+Windows SAPI root cause fixed: PowerShell 5 was treating the configured phrase JSON array as one object, which built one concatenated grammar phrase. Native verification recognized `音声入力` through the compiled production script and matched `run-command` / `wake`; the simulated old parsing bug produced no recognized phrase before timeout. The restart-key, diagnostic-drain, double-dispose, and `ExpandPath` review findings are separate follow-ups.
+
+Windows dictation is selected by the `dictation` block, which `config.example.windows.json` includes. The synthetic WAV path is validated without a microphone. The live microphone capture and Superwhisper file-intake handoff remain user-validation-held. When the handoff path is used: it writes `<id>.wav` under `%LOCALAPPDATA%\voice-switch\dictation-handoffs` and launches `Superwhisper.exe superwhisper://file//<path>`. Like macOS it then polls `dictation.recordingsDir` (default `%LOCALAPPDATA%\com.superwhisper.app\recordings`) for up to 30 s for a run whose `meta.json` has `llmResult` or `result`, logs the length, and deletes the WAV. With no result it logs the path and keeps the WAV. Files in that directory older than 10 minutes are deleted when the handoff is created. One handoff runs at a time: a dictation that ends while one is in flight is dropped with `dictation dropped: previous one still in flight`, and the runtime keeps listening. Superwhisper only takes plain ASCII paths, so with a non-ASCII or spaced profile name the WAV folder falls back to its 8.3 short name, then to a per-user folder under `%ProgramData%\voice-switch` that only that user can open. While a dictation is open, the tray also borrows Superwhisper's finish and cancel keys through a low-level keyboard hook. It reads `toggleRecordingShortcut` and `cancelRecordingShortcut` from `%LOCALAPPDATA%\com.superwhisper.app\preferences.json` and falls back to Ctrl+Space and Esc. A top-center HUD shows 🎙 どうぞ, ● 録音中, and ■ 録音終了 (1.5 s, only after a stop word or the finish key). The phase also goes to the log as `dictation phase: X`. The tray menu item 効果音 toggles a sound on a lone wake (registry `HKCU\Software\voice-switch` `ConfirmationSound`, default off) and the VAD ignores audio for 600 ms after it. After handoff, for 2 s and only while Superwhisper is in front, the window that was in front at wake is brought back. Hand test on Windows is still needed for: live microphone wake, Ctrl+Space finish and Esc cancel, HUD placement on multiple monitors, focus restore, the 効果音 sound, and real Superwhisper intake and paste. Those are covered only by compile and tests with fakes. Known deviations: keys typed into an elevated (admin) window bypass the hook (UIPI), the WAV is kept on `NoResult` where macOS deletes it, and Alt or Win chords are not specially handled.
+
+Synthetic Windows dictation uses `--input-wav PATH` with strict PCM16 mono 16 kHz WAV input and no microphone fallback. The default pace is 480 samples every 30 ms; add `--input-wav-fast` for structural tests. Without `--output-dir`, synthetic input is a dry-run and never launches an external app. With `--output-dir PATH`, voice-switch records body WAV files and JSON source range/hash metadata locally through the production encoder; this is a record-only validation adapter, not a Superwhisper integration. DSP, when enabled, affects only the local SAPI analysis/control lane. The original PCM, including its noise, is still used for emitted body WAV and handoff.
+
+Stop-boundary validation passed 20/20 expanded clean strict standalone-stop checks, 20/20 body-tail checks, and 2/2 independent full-body checks. The known low-onset limit remains: 16/20 very-low stop-onset cases retain 0.375-15 ms of source audio so quiet body audio is not over-trimmed. The default endpoint stays lexical and does not move to `Source.Start`.
+
+`voice-switch.exe` is one app. Launched with no arguments, or with only `--config PATH`, it starts as a tray app and listens right away in command mode or dictation mode, whichever the config selects. `--paused` starts the tray without opening the microphone. Diagnostic flags such as `--self-test` run in the terminal instead. The tray supports record-only synthetic `--input-wav PATH --record-only DIR` and prevents duplicate tray instances for the same Windows user plus canonical config path. The tray and a terminal `--listen-seconds` run own their capture lifecycles separately, so do not run both against the same capture at the same time. Logs go to `%LOCALAPPDATA%\voice-switch\voice-switch.log`.
+
+The tray follows the macOS menu bar app. Its icon is a microphone while listening and a struck-through one otherwise. The menu is 状態, 再開, 一時停止, マイク (the dictation input device, saved by name; the run restarts on a change, an unplug, or a new Windows default), 設定ファイルを開く, 設定を再読み込み, ログを開く, 効果音, ログイン時に起動 (`HKCU\...\CurrentVersion\Run`), 直近のエラー, and 終了. Dictation mode reloads the config file between utterances like macOS. A wake word is ignored while a process named in `skipWhileMicInUseBy` (sample `Superwhisper`) has an active capture session, and dictation is skipped while the window in front belongs to an executable in `dictation.excludeProcessNames`. A wake word that SAPI hears as a near-homophone (音声 as 温泉 or 温水) still opens the wait, because kana readings are compared as well as text; `BUILD.md` has the rule and the log lines. Every PowerShell recognizer child dies with `voice-switch.exe`.
+
+Generate synthetic fixtures using the checked-in generator, then run record-only dictation validation:
+
+```powershell
+pwsh -File tests\windows\compose-fixtures.ps1 -OutputDir C:\temp\voice-switch-fixtures
+dotnet run --project tests/windows/SyntheticDictationRuntimeHarness/SyntheticDictationRuntimeHarness.csproj -c Release -- --config C:\temp\voice-switch-validation\config.dictation.json --wav C:\temp\voice-switch-fixtures\wake-body-separate-stop-clean.wav --output-dir C:\temp\voice-switch-runtime-out --evidence C:\temp\voice-switch-runtime-out\evidence.json
+```
+
+Native tray validation after an isolated publish requires PowerShell 7+:
+
+```powershell
+pwsh -File tests\windows\run-tray-host.ps1 -ReleaseDir C:\temp\voice-switch-validation -OutputRoot C:\temp\voice-switch-tray-runs
+```
+
+Manual tray smoke commands use the same record-only path. Start the host in one PowerShell window:
+
+```powershell
+$build='C:\temp\voice-switch-validation'
+$fixtures='C:\temp\voice-switch-fixtures'
+$out='C:\temp\voice-switch-tray-record-only'
+& "$build\voice-switch.exe" --config "$build\config.dictation.json" --paused --input-wav "$fixtures\consecutive-sessions-clean.wav" --record-only $out
+```
+
+Then run IPC commands in another PowerShell window. `--paused` keeps the host Paused, then `start`, `pause`, `start`, and `quit` exercise Start, Pause, Resume, and Quit without external app handoff:
+
+```powershell
+$build='C:\temp\voice-switch-validation'
+& "$build\voice-switch.exe" --config "$build\config.dictation.json" --tray-command status
+& "$build\voice-switch.exe" --config "$build\config.dictation.json" --tray-command start
+& "$build\voice-switch.exe" --config "$build\config.dictation.json" --tray-command pause
+& "$build\voice-switch.exe" --config "$build\config.dictation.json" --tray-command start
+& "$build\voice-switch.exe" --config "$build\config.dictation.json" --tray-command quit
+```
+
+Windows command mode dispatches configured custom stop commands only when `stopCommand` is an operator-supplied idempotent stop command. Missing `stopCommand` and the older Superwhisper record toggle sample are suppressed. That is distinct from the dictation runtime, which has session-gated stop handling. See [Windows feature parity audit](./docs/windows-feature-parity.md), [Windows DSP evaluation method](./docs/windows-dsp-evaluation-method.md), and [Windows DSP evaluation results 2026-10-03](./docs/windows-dsp-evaluation-results-20261003.md) for the current limits.
+
+Do not run CLI and tray concurrent capture. The default sample now runs live microphone capture and Superwhisper file intake, but neither has been confirmed by a hand test on Windows yet. The external app path may involve clipboard, selected text, active-application context, and focus behavior, so future validation must check those boundaries directly. A `Transcribed` handoff means Superwhisper wrote a result, not that the paste landed. A `NoResult` WAV is kept for manual recovery until the 10 minute sweep.
