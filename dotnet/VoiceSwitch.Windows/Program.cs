@@ -105,7 +105,8 @@ public static class Program
                             capture,
                             new SpeechPowerShellDictationRecognizer(config),
                             handoff,
-                            effectiveDryRun)
+                            effectiveDryRun,
+                            reloadConfig: new ConfigFile(configPath).ReloadIfChanged)
                         .RunAsync(interrupt.Token)
                         .GetAwaiter()
                         .GetResult();
@@ -171,7 +172,7 @@ public sealed class ResidentRuntime
     private readonly Action<RuntimeDecision> observeDecision;
     private readonly bool dryRun;
     private readonly CancellationToken cancellation;
-    private DateTime lastConfigWrite;
+    private readonly ConfigFile configFile;
 
     public ResidentRuntime(string configPath, VoiceSwitchConfig config, int? listenSeconds)
         : this(configPath, config, listenSeconds, SpeechPowerShell.Start, CommandRunner.Run, _ => { }, false, CancellationToken.None)
@@ -196,7 +197,7 @@ public sealed class ResidentRuntime
         this.observeDecision = observeDecision;
         this.dryRun = dryRun;
         this.cancellation = cancellation;
-        lastConfigWrite = File.GetLastWriteTimeUtc(configPath);
+        configFile = new ConfigFile(configPath);
     }
 
     public int Run()
@@ -328,28 +329,15 @@ public sealed class ResidentRuntime
 
     private ConfigReload ReloadIfChanged()
     {
-        var write = File.GetLastWriteTimeUtc(configPath);
-        if (write == lastConfigWrite)
+        if (configFile.ReloadIfChanged() is not { } next)
         {
             return ConfigReload.Unchanged;
         }
 
-        lastConfigWrite = write;
-        try
-        {
-            var previousRecognition = config.RecognitionKey();
-            var next = ConfigLoader.Load(configPath);
-            var recognitionChanged = previousRecognition != next.RecognitionKey();
-            config = next;
-            Log.Info($"config reloaded: {string.Join(", ", config.WakeWords)}");
-            LogUnsupportedOptions();
-            return recognitionChanged ? ConfigReload.RecognitionChanged : ConfigReload.Reloaded;
-        }
-        catch (Exception ex)
-        {
-            Log.Info($"config reload failed, keeping previous: {ex.Message}");
-            return ConfigReload.Unchanged;
-        }
+        var recognitionChanged = config.RecognitionKey() != next.RecognitionKey();
+        config = next;
+        LogUnsupportedOptions();
+        return recognitionChanged ? ConfigReload.RecognitionChanged : ConfigReload.Reloaded;
     }
 
     private void LogUnsupportedOptions()
@@ -405,6 +393,35 @@ public sealed class ResidentRuntime
         }
 
         return true;
+    }
+}
+
+// Mac ConfigFile: checked between utterances so wake words and timings can be edited without a restart.
+public sealed class ConfigFile(string path)
+{
+    private DateTime lastWrite = File.GetLastWriteTimeUtc(path);
+
+    // A new valid config, or null when the file is unchanged or invalid (the caller keeps what it has).
+    public VoiceSwitchConfig? ReloadIfChanged()
+    {
+        var write = File.GetLastWriteTimeUtc(path);
+        if (write == lastWrite)
+        {
+            return null;
+        }
+
+        lastWrite = write;
+        try
+        {
+            var next = ConfigLoader.Load(path);
+            Log.Info($"config reloaded: {string.Join(", ", next.WakeWords)}");
+            return next;
+        }
+        catch (Exception ex)
+        {
+            Log.Info($"config reload failed, keeping previous: {ex.Message}");
+            return null;
+        }
     }
 }
 

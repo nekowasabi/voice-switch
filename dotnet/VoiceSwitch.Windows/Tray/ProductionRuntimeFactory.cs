@@ -38,7 +38,8 @@ public sealed class ProductionRuntimeFactory(string configPath, TrayRuntimeHooks
         var observer = new TrayRuntimeObserver(hooks);
         var recognizer = new SpeechPowerShellDictationRecognizer(config, observer.RecordSapiTiming);
         var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-        var runtime = new WindowsDictationRuntime(config, capture, recognizer, handoff, dryRun: false, observer, hooks.ForegroundWindow, hooks.Hotkeys);
+        var runtime = new WindowsDictationRuntime(config, capture, recognizer, handoff, dryRun: false, observer, hooks.ForegroundWindow, hooks.Hotkeys,
+            reloadConfig: new ConfigFile(configPath).ReloadIfChanged);
         var completion = Task.Run(() => runtime.RunAsync(linked.Token), CancellationToken.None);
         return Task.FromResult<ITrayRuntimeRun>(new ProductionRuntimeRun(completion, linked, observer));
     }
