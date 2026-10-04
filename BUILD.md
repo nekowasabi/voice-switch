@@ -7,7 +7,7 @@
 | unset / anything except `wsl` | `make app` | macOS `VoiceSwitch.app` |
 | `PC=wsl` or `PC=WSL` | `make win` | Windows `.NET` build, tests, and publish |
 
-Case-insensitive `PC=wsl` and `PC=WSL` both select Windows. The Windows default release directory is `$(CURDIR)/artifacts/windows`. Pass `RELEASE_DIR` when you need a Windows-local folder from WSL.
+Case-insensitive `PC=wsl` and `PC=WSL` both select Windows. The Windows default release directory is `$(CURDIR)/release`. Pass `RELEASE_DIR` when you need a Windows-local folder from WSL.
 
 ## macOS
 
@@ -46,7 +46,7 @@ cp config.example.windows-dictation.json /mnt/c/temp/voice-switch-validation/con
 
 ## Windows configuration
 
-`config.example.windows.json` keeps command mode and uses the `superwhisper://record` deep link through `cmd /c start`. Optional Windows dictation is configured separately with `config.example.windows-dictation.json`. The command-mode sample omits the unsupported process microphone-use guard.
+`config.example.windows.json` keeps command mode and uses the `superwhisper://record` deep link through `rundll32 url.dll,FileProtocolHandler` (`cmd /c start` returns access denied for this URL). Optional Windows dictation is configured separately with `config.example.windows-dictation.json`. The command-mode sample omits the unsupported process microphone-use guard.
 
 `config.example.windows-dictation.json` adds the `dictation` block. With that block present, Windows selects the PCM dictation runtime and does not fall back to the command toggle on dictation errors.
 
