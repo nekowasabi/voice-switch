@@ -189,7 +189,7 @@
       },
       "windows": {
         "file": "dotnet/VoiceSwitch.Windows.Core/DictationCore.cs",
-        "markers": ["LeadingWake", "WakePrefix", "StartBody(start, recognition.Source.End)"]
+        "markers": ["LeadingWake", "WakePrefix", "StartBody(start, recognition.Source.End, now)"]
       }
     },
     {

@@ -866,7 +866,7 @@ static bool DictationRuntimeIgnoresLateStopAfterSilenceFinish()
             silenceSubmitted.Set();
         }
     });
-    var capture = new GatedPcmCapture(beforeLateStop, lateStop, silenceSubmitted);
+    var capture = new GatedPcmCapture(beforeLateStop, lateStop, silenceSubmitted, [24]);
     var runtime = new WindowsDictationRuntime(config, capture, recognizer, handoff, dryRun: true);
     var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output);
     var audio = handoff.Submissions.SingleOrDefault();

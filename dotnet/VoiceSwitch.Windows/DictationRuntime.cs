@@ -269,7 +269,7 @@ public sealed class WindowsDictationRuntime
                         var wasAwaiting = session.IsAwaitingBody;
                         var wasIdle = !wasActive && !wasAwaiting;
                         var stopBeforeApply = DictationBoundaries.StandaloneStopRange(outcome.Recognition!, config.StopWords ?? []);
-                        var audio = session.Apply(outcome.Recognition!, originalStore.Copy);
+                        var audio = session.Apply(outcome.Recognition!, originalStore.Copy, analysisStore.Next);
                         if (wasIdle && (session.IsActive || session.IsAwaitingBody))
                         {
                             // Superwhisper pastes into whatever is frontmost, so remember where the user was when the wake word landed.
@@ -560,12 +560,11 @@ public sealed class WindowsDictationRuntime
 
     private bool TryFinishSilence(DictationSession session, Dictionary<long, RecognitionWork> pending)
     {
-        if (session.PendingBody is not { } body || segmenter.LastWasSpeech)
+        if (session.PendingBody is not { } body || session.SilenceDeadline is not long silenceAt || segmenter.LastWasSpeech)
         {
             return false;
         }
 
-        var silenceAt = body.End + MsToSamples(config.Dictation?.EndSilenceMs ?? 1200);
         var open = segmenter.HasOpenUtterance;
         if (analysisStore.Next < silenceAt)
         {
