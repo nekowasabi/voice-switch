@@ -251,6 +251,9 @@ public sealed class DictationSession
     private Guid sessionId;
     private long? bodyStart;
     private long lastSpeechEnd;
+    // Where the end-silence window counts from: never before lastSpeechEnd, and at body start the clock when the body
+    // was applied. Recognition completes 0.8-2 s after the audio, and Mac counts silence from the moment the dictation opens.
+    private long silenceFrom;
     private long maxEnd;
     private long startTimeoutEnd;
     private long wakeEnd;
@@ -271,8 +274,10 @@ public sealed class DictationSession
     public long? RequiredAudioStart => bodyStart;
     public long? AwaitingWakeEnd => awaitingBody && !terminal ? wakeEnd : null;
     public long? AwaitingWakeSourceEnd => awaitingBody && !terminal ? wakeSourceEnd : null;
+    public long? SilenceDeadline => bodyStart is not null && !terminal ? silenceFrom + MsToSamples(config.Dictation?.EndSilenceMs ?? 1200) : null;
 
-    public DictationAudio? Apply(RecognizedUtterance recognition, Func<SampleRange, ImmutableArray<short>> copyAudio)
+    // now: the capture clock (sample position) when this recognition is applied; it trails the audio by the recognizer's latency.
+    public DictationAudio? Apply(RecognizedUtterance recognition, Func<SampleRange, ImmutableArray<short>> copyAudio, long now = 0)
     {
         if (terminal)
         {
@@ -293,12 +298,12 @@ public sealed class DictationSession
             {
                 wakeEnd = Math.Max(wakeEnd, wake.WakeEnd);
                 wakeSourceEnd = Math.Max(wakeSourceEnd, recognition.Source.End);
-                startTimeoutEnd = wakeEnd + MsToSamples(config.Dictation?.StartTimeoutMs ?? 3000);
+                startTimeoutEnd = Math.Max(wakeEnd, now) + MsToSamples(config.Dictation?.StartTimeoutMs ?? 3000);
                 return null;
             }
 
             var start = wake?.BodyStart ?? recognition.Source.Start;
-            StartBody(start, recognition.Source.End);
+            StartBody(start, recognition.Source.End, now);
             return null;
         }
 
@@ -314,13 +319,13 @@ public sealed class DictationSession
             maxEnd = (wake.BodyStart ?? wake.WakeEnd) + SecondsToSamples(config.Dictation?.MaxSeconds ?? config.MaxSeconds ?? 60);
             if (wake.BodyStart is long start)
             {
-                StartBody(start, recognition.Source.End);
+                StartBody(start, recognition.Source.End, now);
             }
             else
             {
                 wakeEnd = wake.WakeEnd;
                 wakeSourceEnd = recognition.Source.End;
-                startTimeoutEnd = wake.WakeEnd + MsToSamples(config.Dictation?.StartTimeoutMs ?? 3000);
+                startTimeoutEnd = Math.Max(wake.WakeEnd, now) + MsToSamples(config.Dictation?.StartTimeoutMs ?? 3000);
                 awaitingBody = true;
             }
 
@@ -338,6 +343,7 @@ public sealed class DictationSession
         }
 
         lastSpeechEnd = Math.Min(Math.Max(lastSpeechEnd, recognition.Source.End), maxEnd);
+        silenceFrom = Math.Max(silenceFrom, lastSpeechEnd);
         if (lastSpeechEnd >= maxEnd)
         {
             return Finish(new SampleRange(bodyStart.Value, maxEnd), FinishReason.MaximumDuration, copyAudio);
@@ -376,6 +382,7 @@ public sealed class DictationSession
         }
 
         lastSpeechEnd = Math.Min(Math.Max(lastSpeechEnd, speechEnd), maxEnd);
+        silenceFrom = Math.Max(silenceFrom, lastSpeechEnd);
         return lastSpeechEnd >= maxEnd
             ? Finish(new SampleRange(bodyStart.Value, maxEnd), FinishReason.MaximumDuration, copyAudio)
             : null;
@@ -383,13 +390,7 @@ public sealed class DictationSession
 
     public DictationAudio? FinishSilenceAt(long sampleEnd, Func<SampleRange, ImmutableArray<short>> copyAudio)
     {
-        if (terminal || bodyStart is null)
-        {
-            return null;
-        }
-
-        var silenceSamples = MsToSamples(config.Dictation?.EndSilenceMs ?? 1200);
-        return sampleEnd >= lastSpeechEnd + silenceSamples
+        return SilenceDeadline is long deadline && sampleEnd >= deadline
             ? Finish(FinishReason.Silence, copyAudio)
             : null;
     }
@@ -437,10 +438,11 @@ public sealed class DictationSession
     private static long MsToSamples(int ms) =>
         checked((long)Math.Round(ms * Segmenter.Rate / 1000.0, MidpointRounding.AwayFromZero));
 
-    private void StartBody(long start, long end)
+    private void StartBody(long start, long end, long now)
     {
         bodyStart = start;
         lastSpeechEnd = end;
+        silenceFrom = Math.Max(end, now);
         maxEnd = start + SecondsToSamples(config.Dictation?.MaxSeconds ?? config.MaxSeconds ?? 60);
         awaitingBody = false;
         events.Add(DictationEvent.Started(sessionId, new SampleRange(start, end)));
