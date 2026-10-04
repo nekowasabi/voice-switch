@@ -574,7 +574,10 @@ static bool DictationKanaWakeMatchesKanjiThroughReading()
     var fusedKanaText = Recognized(3, RecognitionExtent.ClosedUtterance, 0, 8000, "おんせい入力", false, Run("おんせい入力", 0, 8000, "おんせいにゅうりょく"));
     var fusedTail = Recognized(4, RecognitionExtent.ClosedUtterance, 0, 10000, "音声にゅうりょく今日", false,
         Run("音声", 0, 2000, "おんせい"), Run("にゅうりょく今日", 2000, 10000, "にゅうりょくきょう"));
-    return DictationBoundaries.LeadingWake(kanjiWithReading, [kana]) == new WakePrefix(4000, 4000, kana, 0)
+    var kanjiAlone = Recognized(5, RecognitionExtent.ClosedUtterance, 0, 4000, "音声", false, Run("音声", 0, 4000, "おんせい"));
+    return DictationBoundaries.LeadingWake(kanjiAlone, [kana]) == new WakePrefix(4000, null, kana, 0)
+        // A 4-kana reading is too unspecific to cut a body: 音声メモ… and 音声認識… are ordinary speech.
+        && DictationBoundaries.LeadingWake(kanjiWithReading, [kana]) is null
         && DictationBoundaries.LeadingWake(kanjiWithoutReading, [kana]) is null
         && DictationBoundaries.LeadingWake(fusedKanaText, [fourKanji]) == new WakePrefix(8000, null, fourKanji, 0)
         // にゅうりょくきょう is 9 kana and the wake ends 6 kana into it: 2000 + 8000 * 6 / 9.
