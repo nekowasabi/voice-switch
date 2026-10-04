@@ -14,7 +14,7 @@
     {
       "key": "dictation.recordingsDir",
       "platform": "windows",
-      "reason": "Windows uses an owned handoff lease directory instead of polling Superwhisper recordings."
+      "reason": "The default Windows sample stays in command mode; dictation defaults to %LOCALAPPDATA%\\com.superwhisper.app\\recordings when recordingsDir is unset."
     },
     {
       "key": "dictation.endSilenceMs",
@@ -77,11 +77,6 @@
       "flag": "--check-device",
       "platform": "macos",
       "reason": "The Windows speech input diagnostic has no matching macOS CLI surface yet."
-    },
-    {
-      "flag": "--complete-handoff",
-      "platform": "macos",
-      "reason": "Manual cleanup is specific to the Windows Superwhisper SubmittedUnconfirmed file handoff lifecycle."
     },
     {
       "flag": "--listen-seconds",
@@ -245,14 +240,25 @@
       }
     },
     {
-      "id": "dictation_manual_handoff_lifecycle",
+      "id": "dictation_handoff_lifecycle",
       "macos": {
         "file": "Sources/voice-switch/MacApp.swift",
-        "markers": ["handoffBusy", "\"-g\", \"-a\", \"superwhisper\"", "defer"]
+        "markers": ["\"-g\", \"-a\", \"superwhisper\"", "awaitResult", "\"llmResult\", \"result\"", "no superwhisper result within 30 s"]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows/SuperwhisperHandoff.cs",
+        "markers": ["superwhisper://file//", "FindResult", "\"llmResult\", \"result\"", "no superwhisper result within 30 s"]
+      }
+    },
+    {
+      "id": "dictation_one_handoff_at_a_time",
+      "macos": {
+        "file": "Sources/voice-switch/MacApp.swift",
+        "markers": ["handoffBusy", "dictation dropped: previous one still in flight"]
       },
       "windows": {
         "file": "dotnet/VoiceSwitch.Windows/DictationRuntime.cs",
-        "markers": ["SubmittedUnconfirmed", "DeferredUnsent", "CompleteManual", "superwhisper://file//", "HandoffManifest"]
+        "markers": ["inflight is { IsCompleted: false }", "dictation dropped: previous one still in flight"]
       }
     }
   ],
@@ -292,15 +298,6 @@
         "markers": ["enum Hotkeys", "case finish, cancel", "Hotkeys.take()"]
       },
       "reason": "Windows has no global shortcut adapter for dictation finish/cancel; cancellation remains console/process lifecycle only."
-    },
-    {
-      "id": "dictation_automatic_completion",
-      "platform": "windows",
-      "macos": {
-        "file": "Sources/voice-switch/MacApp.swift",
-        "markers": ["awaitResult", "llmResult", "result"]
-      },
-      "reason": "Windows Superwhisper completion correlation is unverified, so Windows uses explicit manual SubmittedUnconfirmed cleanup."
     },
     {
       "id": "menu_bar_device_and_login_items",

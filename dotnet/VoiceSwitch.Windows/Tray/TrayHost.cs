@@ -37,7 +37,6 @@ public static class TrayHost
                 options.ConfigPath,
                 options.Source,
                 new ProductionRuntimeFactory(options.ConfigPath),
-                CountPendingHandoffs,
                 instance.Key);
 
             Application.EnableVisualStyles();
@@ -92,14 +91,6 @@ public static class TrayHost
             Console.Error.WriteLine(ex.Message);
             return 2;
         }
-    }
-
-    private static int CountPendingHandoffs()
-    {
-        var root = WindowsPaths.DefaultHandoffPath();
-        return Directory.Exists(root)
-            ? Directory.EnumerateFiles(root, "*.json").Count()
-            : 0;
     }
 
     private const int AttachParentProcess = -1;

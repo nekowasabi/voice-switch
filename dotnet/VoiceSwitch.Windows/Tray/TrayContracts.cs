@@ -28,7 +28,6 @@ public enum TrayCommand
 public sealed record TraySnapshot(
     TrayState State,
     string ConfigPath,
-    int PendingHandoffs,
     string? LastError,
     bool SyntheticInput,
     long Generation,

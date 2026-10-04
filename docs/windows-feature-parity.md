@@ -2,7 +2,7 @@
 
 This document summarizes the repository-visible Windows parity review for the current branch. It cites committed source, tests, and contracts rather than uncommitted execution notes.
 
-Required dictation experience means one spoken wake prefix plus body, removal of only the wake prefix and a standalone terminal stop, automatic transcription and paste into the original target, and safe continuation. The current Windows implementation does not yet establish that complete experience. A passing parity gate accepts 29 declared differences. It does not prove full user-experience parity.
+Required dictation experience means one spoken wake prefix plus body, removal of only the wake prefix and a standalone terminal stop, automatic transcription and paste into the original target, and safe continuation. The current Windows implementation does not yet establish that complete experience. A passing parity gate accepts 27 declared differences. It does not prove full user-experience parity.
 
 Evidence terms:
 
@@ -32,10 +32,10 @@ Repository-relative source names:
 | Stop while recorder idle does nothing | Command stop checks configured process microphone use. | Windows command mode suppresses missing stop commands and the known Superwhisper record toggle. A custom `stopCommand` remains an operator-supplied idempotent stop contract. Dictation session stop is gated. | Safe default implemented. Observed recorder-state parity is still unsupported. This is allowed difference 23, not full parity. |
 | Silence, maximum duration, and empty start timeout | Defaults are 1200 ms, 60 s, and 3000 ms. Trailing silence is stripped and empty sessions cancel. | Dictation timers use the source clock and handle delayed recognition/open stop. Tray uses the same runtime. | Implemented and tested synthetically. Live timing proof is HOLD. |
 | Finish and cancel keyboard shortcuts | Global `CGEvent` tap borrows Superwhisper shortcuts while dictating. | Core finish/cancel semantics exist, but no global keyboard adapter exists. Console and tray cancellation stop the runtime. | Required shortcut user experience is unsupported. This is allowed difference 25. |
-| Automatic transcription through installed Superwhisper | UUID WAV is opened with `open -g -a`; the active mode processes the file. | Registered `superwhisper://file//` intake dispatch is implemented for ordinary raw paths. Paths with unverified whitespace, reserved URI characters, or non-ASCII are retained as `DeferredUnsent` instead of launched. | Dispatch is implemented only for the raw-path contract. Actual intake and transcription are HOLD. Record-only output is not Superwhisper. |
+| Automatic transcription through installed Superwhisper | UUID WAV is opened with `open -g -a`; the active mode processes the file. | Registered `superwhisper://file//` intake dispatch is implemented for ordinary raw paths. Paths with whitespace, reserved URI characters, or non-ASCII fail before anything is written or launched. | Dispatch is implemented only for the raw-path contract. Actual intake and transcription are HOLD. Record-only output is not Superwhisper. |
 | Paste into intended original application | Superwhisper owns paste. macOS captures frontmost target and retries activation. | No Windows target capture, restoration, or paste confinement adapter exists. | Target restoration is unsupported. Actual paste is HOLD. This is allowed difference 24. |
-| Automatic completion and safe cleanup | Polls recent timestamp-named recording metadata for `llmResult` or `result` for up to 30 s. Own WAV is removed with `defer`. | UUID WAV plus manifest stays `SubmittedUnconfirmed`. A blocked body can be retained as `DeferredUnsent`. Only `--complete-handoff <id>` completes owned state after external completion or manual UNSENT recovery/discard. | Automatic completion is unsupported. Association is HOLD. This is allowed difference 26. |
-| Seamless consecutive dictation | Capture continues. One `handoffBusy` flag prevents overlap and can drop a new submission while busy. | Record-only consecutive sessions were tested. Registered sink refuses startup while any owned state is pending. A raced completed body is retained once as `DeferredUnsent`, then the runtime stops visibly. | Local record-only pipeline works. Real repeated no-touch external workflow is blocked by manual completion. |
+| Automatic completion and safe cleanup | Polls recent timestamp-named recording metadata for `llmResult` or `result` for up to 30 s. Own WAV is removed with `defer`. | Same poll of `dictation.recordingsDir` (default `%LOCALAPPDATA%\com.superwhisper.app\recordings`) for 30 s, then the UUID WAV is deleted. With no result the WAV is kept and logged. Files older than 10 minutes in the owned directory are swept when the handoff is created. | Implemented and tested with a fake process and recordings folder. Live association is HOLD. |
+| Seamless consecutive dictation | Capture continues. One `handoffBusy` flag prevents overlap and can drop a new submission while busy. | Capture continues while the handoff runs off the loop. One in-flight handoff at a time; a dictation that ends meanwhile is dropped with `dictation dropped: previous one still in flight`. | Implemented and tested with fakes for every handoff status. Real repeated external workflow is HOLD. |
 | Exclude sensitive or frontmost applications | Frontmost bundle ID exclusion runs before dictation starts. | Field parses and warns, but is not enforced. | Unsupported. This is allowed difference 5. |
 | Skip wake while a designated app uses the microphone | CoreAudio process input-state check. | Field parses and warns only. No process microphone guard exists. | Unsupported. This is allowed differences 7 and 22. |
 | Default mic and device selection/recovery | Nil follows default. Chosen UID is persisted. Menu picker exists. Engine is recreated for pinned change or config notifications. | WinMM opens the WaveMapper default at capture start. No device picker, pinning, hotplug, or default-change recovery exists. | Default-open is implemented. Device behavior is HOLD. Picker and recovery are unsupported. |
@@ -53,7 +53,7 @@ The inventory source is `tests/parity/contracts/platform_parity.json`. "Allowed"
 | # | Contract allowance | Feature meaning |
 |---|---|---|
 | 1 | sample `dictation` missing from Windows default sample | Default sample remains command mode. Explicit Windows dictation sample exists. This is not absent dictation engine. |
-| 2 | sample `dictation.recordingsDir` missing from Windows default sample | Windows uses an owned lease directory instead of Mac metadata polling. Automatic completion remains missing. |
+| 2 | sample `dictation.recordingsDir` missing from Windows default sample | Default sample remains command mode. Dictation defaults to `%LOCALAPPDATA%\com.superwhisper.app\recordings`. Sample-only difference. |
 | 3 | sample `dictation.endSilenceMs` missing from Windows default sample | Available in explicit dictation sample/runtime. Sample-only difference. |
 | 4 | sample `dictation.maxSeconds` missing from Windows default sample | Available in explicit dictation sample/runtime. Sample-only difference. |
 | 5 | sample `dictation.excludeBundleIDs` missing from Windows default sample | Real unsupported foreground exclusion, despite parsed config. |
@@ -63,7 +63,6 @@ The inventory source is `tests/parity/contracts/platform_parity.json`. "Allowed"
 | 9 | CLI `--self-test` missing from macOS | Windows core harness versus older shared VAD self-test. Diagnostic difference. |
 | 10 | CLI `--recognizers` missing from macOS | Windows System.Speech diagnostic. OS-specific surface. |
 | 11 | CLI `--check-device` missing from macOS | Windows speech/default-input diagnostic. Does not implement a device picker. |
-| 12 | CLI `--complete-handoff` missing from macOS | Manual Windows lease cleanup exists because automatic completion is absent. Required user-experience gap. |
 | 13 | CLI `--listen-seconds` missing from macOS | Windows bounded live/diagnostic run. |
 | 14 | CLI `--dry-run` missing from macOS | Suppresses dispatch. Live dry-run can still open the microphone. Synthetic ingress avoids microphone use. |
 | 15 | CLI `--config` missing from macOS | Explicit Windows path versus Mac environment/default. Configuration entry difference. |
@@ -77,27 +76,26 @@ The inventory source is `tests/parity/contracts/platform_parity.json`. "Allowed"
 | 23 | capability `stop_word_session_gating` missing from Windows | Command mode has safe defaults but no observed recorder-state guard for arbitrary custom stop commands. Dictation stop is session-gated. Real mode-specific difference. |
 | 24 | capability `dictation_target_restoration` missing from Windows | Real missing foreground restoration. External focus behavior is HOLD. |
 | 25 | capability `dictation_finish_cancel_shortcuts` missing from Windows | Real missing global shortcut user experience. Overlaps 21. |
-| 26 | capability `dictation_automatic_completion` missing from Windows | Real missing automatic correlation/cleanup. Manual pending blocks consecutive external sessions. |
 | 27 | capability `menu_bar_device_and_login_items` missing from Windows | Broad name bundles implemented tray with absent device picker/login. Tray existence does not close picker/login gaps. |
 | 28 | capability `windows_speech_diagnostics` missing from macOS | Intentional System.Speech-specific diagnostics. Overlaps 10 and 11. |
 | 29 | sample `stopCommand` missing from Windows default sample | Intentional safety difference: Windows cannot observe external recording state and suppresses known recording toggles. Operators may provide an idempotent custom stop. |
 
 Entry totals, with each numbered row counted once:
 
-- 4 sample-only rows: 1, 3, 4, 6.
+- 5 sample-only rows: 1 through 4, and 6.
 - 13 diagnostic or configuration-entry rows: 8 through 11, 13 through 20, and 28.
-- 11 rows exposing required user-experience gaps or changed behavior: 2, 5, 7, 12, 21 through 26, and 29.
+- 8 rows exposing required user-experience gaps or changed behavior: 5, 7, 21 through 25, and 29.
 - 1 mixed tray/device/login grouping: 27.
 
-Total: 29. These are entry totals, not unique missing features. Rows 7 and 22 overlap. Rows 21 and 25 overlap. Rows 2, 12, and 26 concern the same completion boundary.
+Total: 27. These are entry totals, not unique missing features. Rows 7 and 22 overlap. Rows 21 and 25 overlap. Numbers 12 (`--complete-handoff`) and 26 (`dictation_automatic_completion`) are retired because Windows now polls like macOS; the other numbers are kept so references stay stable.
 
 ## What the gates prove
 
-The parity runner compares normalized fixtures, decisions, and segmenter outputs. It checks source markers and mutation behavior. Its shared `dictation_manual_handoff_lifecycle` marker explicitly compares Mac automatic polling/defer with Windows manual leases. Its `config_reload_keeps_previous_on_error` Windows marker targets legacy `Program` reload, not immutable dictation-console configuration.
+The parity runner compares normalized fixtures, decisions, and segmenter outputs. It checks source markers and mutation behavior. Its shared `dictation_handoff_lifecycle` and `dictation_one_handoff_at_a_time` markers compare the Mac and Windows result polls and in-flight drop. Its `config_reload_keeps_previous_on_error` Windows marker targets legacy `Program` reload, not immutable dictation-console configuration.
 
 Therefore a shared marker pass does not establish equivalent end-to-end handoff or reload user experience. Core tests cover exact source ranges, delayed recognition, embedded stops, empty/cancel paths, and ownership assertions. Synthetic recognition is not live SAPI acoustic accuracy. Record-only sinks are not external transcription.
 
-Highest-priority missing required user experience is safe automatic external transcription and paste into the original target, with trustworthy job identity and automatic lease completion. Manual pending currently prevents seamless repeated external dictation. Noise treatment improves only the local SAPI analysis/control lane. Original noisy PCM still goes to handoff. BODY CER is a local SAPI hypothesis metric, not external returned text or delivered-transcription accuracy.
+Highest-priority missing required user experience is safe automatic external transcription and paste into the original target, with trustworthy job identity. The result poll attributes the newest run within 2 s of launch, like macOS. Noise treatment improves only the local SAPI analysis/control lane. Original noisy PCM still goes to handoff. BODY CER is a local SAPI hypothesis metric, not external returned text or delivered-transcription accuracy.
 
 Next missing pieces are global finish/cancel, target exclusion and recorder mic-use safeguards, device selection/change recovery, and the dictation reload experience. These are separate from OS-specific diagnostics and the intentional no-autostart choice.
 

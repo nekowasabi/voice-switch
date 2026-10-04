@@ -234,7 +234,8 @@ def check_dictation_test_markers(result: Result, repo: SourceTree) -> None:
             "DictationRuntimeKeepsBodyWhileRecognitionIsDelayed",
             "ScriptedDictationRecognizer",
             "RecordingDictationHandoff",
-            "DictationHandoffRetainsFileWhenPostlaunchStateWriteFails",
+            "DictationHandoffTranscribesAndDeletesWav",
+            "RuntimeDropsOverlappingDictationAndAwaitsInflightAtEof",
             "DictationWinMmUsesInputDataCallbackMessage",
         ],
     )
@@ -889,7 +890,8 @@ def check_dictation_capability_mutations(result: Result, repo: SourceTree, contr
         ("dictation_wake_prefix_trims_audio_body", "dotnet/VoiceSwitch.Windows.Core/DictationCore.cs", "LeadingWake"),
         ("dictation_closed_stop_guard", "dotnet/VoiceSwitch.Windows.Core/DictationCore.cs", "StandaloneStopRange"),
         ("dictation_wav_encode", "dotnet/VoiceSwitch.Windows.Core/DictationCore.cs", "writer.Write(16000)"),
-        ("dictation_manual_handoff_lifecycle", "dotnet/VoiceSwitch.Windows/DictationRuntime.cs", "CompleteManual"),
+        ("dictation_handoff_lifecycle", "dotnet/VoiceSwitch.Windows/SuperwhisperHandoff.cs", "\"llmResult\", \"result\""),
+        ("dictation_one_handoff_at_a_time", "dotnet/VoiceSwitch.Windows/DictationRuntime.cs", "dictation dropped: previous one still in flight"),
     ]
     for capability_id, target, marker in cases:
         original = repo.read(target)

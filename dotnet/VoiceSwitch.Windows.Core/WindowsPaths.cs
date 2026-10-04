@@ -26,6 +26,9 @@ public static class WindowsPaths
         return Path.Combine(local, "voice-switch", "dictation-handoffs");
     }
 
+    public static string SuperwhisperRecordingsPath(DictationConfig? dictation) =>
+        ExpandPath(dictation?.RecordingsDir ?? @"%LOCALAPPDATA%\com.superwhisper.app\recordings");
+
     public static string ExpandPath(string path)
     {
         var expanded = path;
