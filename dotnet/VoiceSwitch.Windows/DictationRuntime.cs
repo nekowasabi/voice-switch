@@ -257,7 +257,7 @@ public sealed class WindowsDictationRuntime
                         var pendingBefore = pending.Count;
                         if (outcome.Recognition is { } observed)
                         {
-                            var leadingWake = DictationBoundaries.LeadingWake(observed, config.WakeWords) is not null;
+                            var leadingWake = DictationBoundaries.LeadingWake(observed, config.Wakes()) is not null;
                             var stopRange = DictationBoundaries.StandaloneStopRange(observed, config.StopWords ?? []);
                             // Mac logs "heard:" for what it transcribes while idle and never transcribes the body. Here a body longer
                             // than the segmenter cap arrives as PrefixHead and stays private; a closed utterance inside a session is
@@ -316,14 +316,16 @@ public sealed class WindowsDictationRuntime
                             hotkeys?.Begin(DictationHotkeys.Load(readShortcuts()));
                         }
 
+                        var prefix = DictationBoundaries.LeadingWake(outcome.Recognition!, config.Wakes());
+                        var byReading = prefix?.ByReading is { } readingWake ? $" via=reading d={prefix.Distance} wake=\"{readingWake.Reading}\"" : "";
                         if (wasIdle && session.IsAwaitingBody)
                         {
-                            var via = DictationBoundaries.LeadingWake(outcome.Recognition!, config.WakeWords) is not null ? "" : $" via=rejected conf={outcome.Recognition!.Confidence:0.00} rejectedText=\"{outcome.Recognition.RejectedText}\"";
+                            var via = prefix is not null ? byReading : $" via=rejected conf={outcome.Recognition!.Confidence:0.00} rejectedText=\"{outcome.Recognition.RejectedText}\"";
                             Log.Info($"dictation session: wake-only id={outcome.Work.Request.Id} source={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End}{via}");
                         }
                         else if (!wasActive && session.PendingBody is { } started)
                         {
-                            Log.Info($"dictation session: body-start id={outcome.Work.Request.Id} range={started.Start}..{started.End}");
+                            Log.Info($"dictation session: body-start id={outcome.Work.Request.Id} range={started.Start}..{started.End}{byReading}");
                         }
                         else if (wasIdle && stopBeforeApply is not null && !session.IsActive && !session.IsAwaitingBody)
                         {
