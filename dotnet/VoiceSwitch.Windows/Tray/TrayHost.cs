@@ -63,6 +63,7 @@ public static class TrayHost
         }
         catch (Exception ex)
         {
+            AttachParentConsole();
             Log.Fatal(ex.Message);
             return 1;
         }
