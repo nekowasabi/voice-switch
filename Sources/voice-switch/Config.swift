@@ -64,6 +64,8 @@ struct DictationConfig: Decodable {
     var excludeBundleIDs: [String]?
     /// How long a lone wake word waits for the text before giving up.
     var startTimeoutMs: Int?
+    /// Windows only (executable names); one config file can serve both platforms, and macOS ignores it.
+    var excludeProcessNames: [String]?
 
     init(recordingsDir: String? = nil, endSilenceMs: Int? = nil, maxSeconds: Double? = nil,
          excludeBundleIDs: [String]? = nil, startTimeoutMs: Int? = nil) {

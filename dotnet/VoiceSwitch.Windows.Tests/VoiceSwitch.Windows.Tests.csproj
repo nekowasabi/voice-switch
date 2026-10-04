@@ -7,6 +7,7 @@
   <ItemGroup>
     <Compile Include="..\VoiceSwitch.Windows\Program.cs" Link="VoiceSwitch.Windows.Program.cs" />
     <Compile Include="..\VoiceSwitch.Windows\DictationRuntime.cs" Link="VoiceSwitch.Windows.DictationRuntime.cs" />
+    <Compile Include="..\VoiceSwitch.Windows\MicInUse.cs" Link="VoiceSwitch.Windows.MicInUse.cs" />
     <Compile Include="..\VoiceSwitch.Windows\SuperwhisperHandoff.cs" Link="VoiceSwitch.Windows.SuperwhisperHandoff.cs" />
     <Compile Include="..\VoiceSwitch.Windows\NoiseReduction.cs" Link="VoiceSwitch.Windows.NoiseReduction.cs" />
     <Compile Include="..\VoiceSwitch.Windows\SyntheticIngress.cs" Link="VoiceSwitch.Windows.SyntheticIngress.cs" />

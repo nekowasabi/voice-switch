@@ -9,12 +9,12 @@
     {
       "key": "dictation.excludeBundleIDs",
       "platform": "windows",
-      "reason": "Windows has no frontmost bundle exclusion model."
+      "reason": "Windows has no bundle IDs; it excludes the app in front by executable name in dictation.excludeProcessNames instead."
     },
     {
-      "key": "skipWhileMicInUseBy",
-      "platform": "windows",
-      "reason": "Windows parses the field for compatibility but does not enforce microphone-in-use skipping."
+      "key": "dictation.excludeProcessNames",
+      "platform": "macos",
+      "reason": "The Windows twin of dictation.excludeBundleIDs, matching the executable of the window in front at the wake word."
     }
   ],
   "allowed_cli_gaps": [
@@ -268,18 +268,20 @@
         "file": "dotnet/VoiceSwitch.Windows/Tray/VoiceSwitchTrayContext.cs",
         "markers": ["new NotifyIcon", "WinMmCapture.InputDevices()", "LoginItem", "FollowDevice"]
       }
-    }
-  ],
-  "allowed_capability_gaps": [
+    },
     {
       "id": "skip_while_mic_in_use_guard",
-      "platform": "windows",
       "macos": {
         "file": "Sources/voice-switch/MacApp.swift",
         "markers": ["micInUse(by:", "skipWhileMicInUseBy", "is using the microphone"]
       },
-      "reason": "macOS can query CoreAudio process input state; the Windows runtime does not yet enforce skipWhileMicInUseBy."
-    },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows/DictationRuntime.cs",
+        "markers": ["micInUseBy(config.SkipWhileMicInUseBy", "is using the microphone", "MicInUse.By"]
+      }
+    }
+  ],
+  "allowed_capability_gaps": [
     {
       "id": "stop_word_session_gating",
       "platform": "windows",
