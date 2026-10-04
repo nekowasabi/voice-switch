@@ -293,7 +293,8 @@ public sealed class WindowsDictationRuntime
 
                         if (wasIdle && session.IsAwaitingBody)
                         {
-                            Log.Info($"dictation session: wake-only id={outcome.Work.Request.Id} source={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End}");
+                            var via = DictationBoundaries.LeadingWake(outcome.Recognition!, config.WakeWords) is not null ? "" : $" via=rejected conf={outcome.Recognition!.Confidence:0.00} rejectedText=\"{outcome.Recognition.RejectedText}\"";
+                            Log.Info($"dictation session: wake-only id={outcome.Work.Request.Id} source={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End}{via}");
                         }
                         else if (!wasActive && session.PendingBody is { } started)
                         {

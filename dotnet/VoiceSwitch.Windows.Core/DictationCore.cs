@@ -182,6 +182,7 @@ public static class DictationBoundaries
         while (index < lexemes.Length)
         {
             var matched = false;
+            long? fusedSplit = null;
             foreach (var wake in normalizedWake)
             {
                 var built = "";
@@ -200,10 +201,25 @@ public static class DictationBoundaries
                     index = end;
                     break;
                 }
+
+                // SAPI sometimes fuses the wake word's tail with the first body characters into one word ("音声" + "入力今日").
+                // That word's audio is split by character count, so the body starts inside it.
+                if (fusedSplit is null && built.Length > wake.Length && built.StartsWith(wake, StringComparison.Ordinal))
+                {
+                    var last = lexemes[end - 1];
+                    var lastLength = TextMatching.Normalize(last.Text).Length;
+                    var wakeCharsInLast = wake.Length - (built.Length - lastLength);
+                    fusedSplit = last.Range.Start + last.Range.Length * wakeCharsInLast / lastLength;
+                }
             }
 
             if (!matched)
             {
+                if (fusedSplit is long split)
+                {
+                    return new WakePrefix(split, split);
+                }
+
                 break;
             }
         }
@@ -215,6 +231,25 @@ public static class DictationBoundaries
 
         var bodyStart = index < lexemes.Length ? lexemes[index].Range.Start : (long?)null;
         return new WakePrefix(consumedEnd, bodyStart);
+    }
+
+    // ponytail: fixed floor with no field data behind it yet; tune from the conf= on "via=rejected" log lines.
+    public const double RejectedWakeMinConfidence = 0.2;
+
+    // SAPI rejected the whole utterance, but its best guess is exactly a wake word. Wake-only by construction:
+    // a rejected result has no word timings, so it can open the wait for the body but never cut one.
+    public static WakePrefix? RejectedWake(RecognizedUtterance recognition, IEnumerable<string> wakeWords)
+    {
+        if (recognition.Extent != RecognitionExtent.ClosedUtterance
+            || TextMatching.Normalize(recognition.Text).Length > 0
+            || recognition.RejectedText is not { } rejected
+            || !(recognition.Confidence >= RejectedWakeMinConfidence)
+            || !wakeWords.Select(TextMatching.Normalize).Contains(TextMatching.Normalize(rejected)))
+        {
+            return null;
+        }
+
+        return new WakePrefix(recognition.Source.End, null);
     }
 
     public static bool IsStandaloneStop(RecognizedUtterance recognition, IEnumerable<string> stopWords)
@@ -296,7 +331,7 @@ public sealed class DictationSession
                 return null;
             }
 
-            var wake = DictationBoundaries.LeadingWake(recognition, config.WakeWords);
+            var wake = DictationBoundaries.LeadingWake(recognition, config.WakeWords) ?? DictationBoundaries.RejectedWake(recognition, config.WakeWords);
             if (wake is { BodyStart: null })
             {
                 wakeEnd = Math.Max(wakeEnd, wake.WakeEnd);
@@ -312,7 +347,7 @@ public sealed class DictationSession
 
         if (bodyStart is null)
         {
-            var wake = DictationBoundaries.LeadingWake(recognition, config.WakeWords);
+            var wake = DictationBoundaries.LeadingWake(recognition, config.WakeWords) ?? DictationBoundaries.RejectedWake(recognition, config.WakeWords);
             if (wake is null)
             {
                 return null;
