@@ -14,6 +14,9 @@ public sealed class Segmenter
     private int silentSamples;
     private int silent;
     private bool skipping;
+    private float lastRms;
+    private double levelSum;
+    private int levelCount;
 
     public Segmenter(VoiceSwitchConfig config)
     {
@@ -24,6 +27,19 @@ public sealed class Segmenter
     public bool AdaptFloor { get; set; } = true;
     public bool HasOpenUtterance => utterance.Count > 0;
     public bool IsSkipping => skipping;
+    public float Floor => floor;
+    public float LastRms => lastRms;
+    public float Threshold => Math.Max(floor * (config.VadRatio ?? 3f), config.VadMinRMS ?? 0.005f);
+
+    // The floor only adapts while quiet, so steady sound above the threshold reads as speech forever. Once the
+    // recognizer heard no wake word in the over-cap head, that sound is the room, and its mean level becomes the floor.
+    public void RebaseFloor()
+    {
+        if (skipping && levelCount > 0)
+        {
+            floor = Math.Max(floor, (float)(levelSum / levelCount));
+        }
+    }
 
     public void Reset()
     {
@@ -62,6 +78,8 @@ public sealed class Segmenter
                 utteranceSamples = ringSamples;
                 silent = 0;
                 silentSamples = 0;
+                levelSum = lastRms;
+                levelCount = 1;
             }
 
             return null;
@@ -69,6 +87,8 @@ public sealed class Segmenter
 
         silent = speech ? 0 : silent + 1;
         silentSamples = speech ? 0 : silentSamples + frame.Length;
+        levelSum += lastRms;
+        levelCount++;
         SegmenterEvent? head = null;
         if (utteranceSamples <= maxSamples + hangoverSamples)
         {
@@ -129,7 +149,8 @@ public sealed class Segmenter
     private bool IsSpeech(float[] frame)
     {
         var rms = MathF.Sqrt(frame.Aggregate(0f, (sum, sample) => sum + sample * sample) / frame.Length);
-        var speech = rms > Math.Max(floor * (config.VadRatio ?? 3f), config.VadMinRMS ?? 0.005f);
+        lastRms = rms;
+        var speech = rms > Threshold;
         if (!speech && AdaptFloor)
         {
             floor = floor * 0.95f + rms * 0.05f;

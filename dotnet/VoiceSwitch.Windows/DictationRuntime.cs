@@ -94,7 +94,9 @@ public sealed class WindowsDictationRuntime
         var retainedSamples = checked((long)((config.Dictation?.MaxSeconds ?? config.MaxSeconds ?? 60) + 10) * (long)Segmenter.Rate);
         originalStore = new SampleStore(retainedSamples);
         analysisStore = new SampleStore(retainedSamples);
-        segmenter = new Segmenter(config with { MaxSeconds = config.Dictation?.MaxSeconds ?? config.MaxSeconds }) { AdaptFloor = true };
+        // Mac parity: the segmenter caps at the top-level maxSeconds (2.5 s) so steady room noise is judged within seconds;
+        // the body length is the session's dictation.maxSeconds. Capping here at 60 s left the VAD deaf for a minute per lock.
+        segmenter = new Segmenter(config) { AdaptFloor = true };
         idleRetainSamples = checked((long)((config.Dictation?.MaxSeconds ?? config.MaxSeconds ?? 60) + 2) * (long)Segmenter.Rate);
     }
 
@@ -275,6 +277,13 @@ public sealed class WindowsDictationRuntime
                         var wasIdle = !wasActive && !wasAwaiting;
                         var stopBeforeApply = DictationBoundaries.StandaloneStopRange(outcome.Recognition!, config.StopWords ?? []);
                         var audio = session.Apply(outcome.Recognition!, originalStore.Copy, analysisStore.Next);
+                        if (wasIdle && !session.IsActive && !session.IsAwaitingBody && outcome.Work.Request.Extent == RecognitionExtent.PrefixHead)
+                        {
+                            var floorBefore = segmenter.Floor;
+                            segmenter.RebaseFloor();
+                            Log.Info($"dictation vad: floor rebased id={outcome.Work.Request.Id} floor={floorBefore:0.0000}->{segmenter.Floor:0.0000} threshold={segmenter.Threshold:0.0000}");
+                        }
+
                         if (wasIdle && (session.IsActive || session.IsAwaitingBody))
                         {
                             // Superwhisper pastes into whatever is frontmost, so remember where the user was when the wake word landed.
@@ -426,6 +435,11 @@ public sealed class WindowsDictationRuntime
         if (ev is null)
         {
             return true;
+        }
+
+        if (ev.Kind == "head")
+        {
+            Log.Info($"dictation vad: cap reached at={frame.Start} samples={ev.Samples.Length} rms={segmenter.LastRms:0.0000} floor={segmenter.Floor:0.0000} threshold={segmenter.Threshold:0.0000}");
         }
 
         return QueueRecognition(ev, frame.Start + frame.Analysis.Length, requests, pending);

@@ -80,6 +80,8 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation WAV bytes are PCM16 mono 16k", () => Check(DictationWavBytesAreExact())),
     ("dictation strict WAV parsing and source continuity", () => Check(DictationStrictWavParsingAndSourceContinuity())),
     ("dictation segmenter uses partial EOF sample duration", () => Check(DictationSegmenterUsesPartialEofSampleDuration())),
+    ("dictation segmenter rebases the floor after steady noise from the first frame", () => Check(DictationSegmenterRebasesFloorAfterSteadyNoiseFromFirstFrame())),
+    ("dictation runtime hears the wake word after long steady noise above the threshold", () => Check(DictationRuntimeHearsWakeAfterLongSteadyNoise())),
     ("dictation runtime finalizes body at synthetic EOF", () => Check(DictationRuntimeFinalizesBodyAtSyntheticEof())),
     ("dictation runtime keeps partial EOF PCM range exact", () => Check(DictationRuntimeKeepsPartialEofPcmRangeExact())),
     ("dictation local recording handoff writes byte-exact bodies", () => Check(DictationLocalRecordingHandoffWritesByteExactBodies())),
@@ -1675,6 +1677,80 @@ static bool DictationSegmenterUsesPartialEofSampleDuration()
     return tooShort is null
         && exact is { Kind: "utterance" }
         && exact.Samples.Length == Segmenter.FrameLength * 10;
+}
+
+// Live failure 2026-10-04 18:35: ambient above vadMinRMS from the first frame read as speech forever, because the
+// floor only adapts while quiet. The runtime rebases once SAPI hears no wake word in the over-cap head.
+static bool DictationSegmenterRebasesFloorAfterSteadyNoiseFromFirstFrame()
+{
+    var config = new VoiceSwitchConfig(["test"], null, "true", MaxSeconds: 2.5, HangoverMs: 300, PrerollMs: 300, MinSpeechMs: 300, VadRatio: 3, VadMinRMS: 0.005f);
+    var segmenter = new Segmenter(config);
+    var noise = Enumerable.Repeat(0.01f, Segmenter.FrameLength).ToArray();
+    var voice = Enumerable.Repeat(0.1f, Segmenter.FrameLength).ToArray();
+    SegmenterEvent? head = null;
+    var headAt = -1;
+    for (var i = 0; i < 120 && head is null; i++)
+    {
+        head = segmenter.Push(noise);
+        headAt = i;
+    }
+
+    var stillLocked = true;
+    for (var i = 0; i < 30; i++)
+    {
+        stillLocked &= segmenter.Push(noise) is null && segmenter.LastWasSpeech;
+    }
+
+    segmenter.RebaseFloor();
+    var quietAfter = 0;
+    for (var i = 0; i < 12; i++)
+    {
+        _ = segmenter.Push(noise);
+        quietAfter += segmenter.LastWasSpeech ? 0 : 1;
+    }
+
+    SegmenterEvent? wake = null;
+    for (var i = 0; i < 12; i++)
+    {
+        _ = segmenter.Push(voice);
+    }
+
+    for (var i = 0; i < 11 && wake is null; i++)
+    {
+        wake = segmenter.Push(noise);
+    }
+
+    return head is { Kind: "head" }
+        && headAt is >= 90 and <= 100
+        && stillLocked
+        && quietAfter == 12
+        && wake is { Kind: "utterance" }
+        && wake.Samples.Length >= Segmenter.FrameLength * 12;
+}
+
+static bool DictationRuntimeHearsWakeAfterLongSteadyNoise()
+{
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFramesWithSample(frames, 150, 400);
+    AddFrames(frames, 12, loud: true);
+    AddFramesWithSample(frames, 40, 400);
+    AddFrames(frames, 30, loud: false);
+    var recognizer = new ScriptedDictationRecognizer(request => Task.FromResult(request.Extent == RecognitionExtent.PrefixHead
+        ? new RecognizedUtterance(request.Id, request.Extent, request.Range, "", [])
+        : Utterance(request, "wake")));
+    var observer = new PhaseRecorder();
+    var handoff = new RecordingDictationHandoff();
+    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(startTimeoutMs: 300), new FixturePcmCapture(frames, [95, 96, 97, 175, 176]), recognizer, handoff, dryRun: true, observer);
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output);
+    return code == 0
+        && recognizer.Requests.Count >= 2
+        && recognizer.Requests[0].Extent == RecognitionExtent.PrefixHead
+        && recognizer.Requests[0].Range.Length <= 3 * Segmenter.Rate
+        && output.Contains("dictation vad: cap reached", StringComparison.Ordinal)
+        && output.Contains("dictation vad: floor rebased", StringComparison.Ordinal)
+        && handoff.Submissions.Count == 0
+        && observer.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Idle]);
 }
 
 static bool DictationRuntimeFinalizesBodyAtSyntheticEof()
