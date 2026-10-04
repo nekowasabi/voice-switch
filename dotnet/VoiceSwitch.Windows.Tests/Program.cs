@@ -32,6 +32,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation wake prefix trims exact body start", () => Check(DictationWakePrefixTrimsExactBodyStart())),
     ("dictation wake and stop boundaries are explicit", () => Check(DictationWakeAndStopBoundariesAreExplicit())),
     ("dictation lone wake waits for body", () => Check(DictationLoneWakeWaitsForBody())),
+    ("dictation rejected wake hypothesis opens a wait but never a body", () => Check(DictationRejectedWakeOpensWaitOnly())),
     ("dictation lone wake body then stop submits body", () => Check(DictationLoneWakeBodyThenStopSubmitsBody())),
     ("dictation repeated wake prefix keeps body", () => Check(DictationRepeatedWakePrefixKeepsBody())),
     ("dictation standalone stop trims at absolute stop start", () => Check(DictationStandaloneStopTrimsAtAbsoluteStart())),
@@ -346,12 +347,38 @@ static bool DictationWakePrefixTrimsExactBodyStart()
         && session.Events.Single().Range == new SampleRange(13300, 24000);
 }
 
+static bool DictationRejectedWakeOpensWaitOnly()
+{
+    static RecognizedUtterance Rejected(long id, long start, string rejectedText, double confidence, RecognitionExtent extent = RecognitionExtent.ClosedUtterance) =>
+        new(id, extent, new SampleRange(start, start + 8000), "", [], HadRejectedSpeech: true, Confidence: confidence, RejectedText: rejectedText);
+
+    var config = DictationConfig();
+    var store = StoreWithRamp(0, 40000);
+    var accepted = new DictationSession(config);
+    accepted.Apply(Rejected(1, 0, "音声入力。", 0.35), store.Copy);
+    accepted.Apply(Rejected(2, 8000, "音声入力", 0.35), store.Copy);
+    var unsure = new DictationSession(config);
+    unsure.Apply(Rejected(3, 0, "音声入力", 0.05), store.Copy);
+    var longer = new DictationSession(config);
+    longer.Apply(Rejected(4, 0, "音声入力です", 0.35), store.Copy);
+    var head = new DictationSession(config);
+    head.Apply(Rejected(5, 0, "音声入力", 0.35, RecognitionExtent.PrefixHead), store.Copy);
+    return accepted.IsAwaitingBody && !accepted.IsActive && accepted.AwaitingWakeEnd == 16000
+        && !unsure.IsAwaitingBody && !unsure.IsActive
+        && !longer.IsAwaitingBody && !longer.IsActive
+        && !head.IsAwaitingBody && !head.IsActive;
+}
+
 static bool DictationWakeAndStopBoundariesAreExplicit()
 {
     var splitWake = Recognized(1, RecognitionExtent.PrefixHead, 0, 8000, "音声入力本文", false,
         Run("音声", 0, 2000), Run("入力", 2000, 4000), Run("本文", 5000, 8000));
     var fusedWake = Recognized(2, RecognitionExtent.PrefixHead, 0, 8000, "音声入力本文", false,
         Run("音声入力本文", 0, 8000));
+    var fusedRemainder = Recognized(6, RecognitionExtent.PrefixHead, 0, 8000, "音声入力本文", false,
+        Run("音声", 0, 2000), Run("入力、本文", 2000, 8000));
+    var fusedNotWake = Recognized(7, RecognitionExtent.PrefixHead, 0, 8000, "音声認識", false,
+        Run("音声", 0, 2000), Run("認識", 2000, 8000));
     var standaloneStop = Recognized(3, RecognitionExtent.ClosedUtterance, 10000, 14000, "入力ストップ", false,
         Run("入力", 10500, 12000), Run("ストップ", 12000, 13500));
     var embeddedStop = Recognized(4, RecognitionExtent.ClosedUtterance, 15000, 22000, "今日は入力ストップです", false,
@@ -360,7 +387,9 @@ static bool DictationWakeAndStopBoundariesAreExplicit()
         Run("入力", 23000, 24500), Run("ストップ", 24500, 26000));
 
     return DictationBoundaries.LeadingWake(splitWake, ["音声入力"]) == new WakePrefix(4000, 5000)
-        && DictationBoundaries.LeadingWake(fusedWake, ["音声入力"]) is null
+        && DictationBoundaries.LeadingWake(fusedWake, ["音声入力"]) == new WakePrefix(5333, 5333)
+        && DictationBoundaries.LeadingWake(fusedRemainder, ["音声入力"]) == new WakePrefix(5000, 5000)
+        && DictationBoundaries.LeadingWake(fusedNotWake, ["音声入力"]) is null
         && DictationBoundaries.StandaloneStopRange(standaloneStop, ["入力ストップ"]) == new SampleRange(10500, 13500)
         && DictationBoundaries.StandaloneStopRange(embeddedStop, ["入力ストップ"]) is null
         && DictationBoundaries.StandaloneStopRange(prefixStop, ["入力ストップ"]) is null;
