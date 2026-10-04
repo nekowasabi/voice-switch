@@ -245,7 +245,7 @@ public sealed class WindowsDictationRuntime
                             // text while no session is open shows wake misses; body utterances are the dictation and stay private.
                             var heard = session.IsActive || session.IsAwaitingBody
                                 ? ""
-                                : $" text=\"{observed.Text}\" conf={(observed.Confidence is double conf ? conf.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) : "-")}";
+                                : $" text=\"{observed.Text}\" conf={(observed.Confidence is double conf ? conf.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) : "-")}{(observed.RejectedText is { } rejectedText ? $" rejectedText=\"{rejectedText}\"" : "")}";
                             Log.Info($"dictation recognition: complete id={outcome.Work.Request.Id} extent={outcome.Work.Request.Extent} range={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End} rejected={observed.HadRejectedSpeech} leadingWake={leadingWake} standaloneStop={stopRange is not null} stopRange={(stopRange is null ? "-" : $"{stopRange.Value.Start}..{stopRange.Value.End}")} pendingBefore={pendingBefore}{heard}");
                         }
                         observer?.RecognitionCompleted(outcome.Work.Request, outcome.Recognition, outcome.Error);
@@ -1164,7 +1164,15 @@ public sealed class SpeechPowerShellDictationRecognizer : IDictationRecognizer
             throw new InvalidOperationException("dictation recognizer returned lexical ranges outside the request.");
         }
 
-        return new RecognizedUtterance(dto.Id, request.Extent, request.Range, dto.Text ?? "", lexemes, dto.Rejected, dto.Confidence >= 0 ? dto.Confidence : null);
+        return new RecognizedUtterance(
+            dto.Id,
+            request.Extent,
+            request.Range,
+            dto.Text ?? "",
+            lexemes,
+            dto.Rejected,
+            dto.Confidence >= 0 ? dto.Confidence : null,
+            string.IsNullOrEmpty(dto.RejectedText) ? null : dto.RejectedText);
     }
 
     internal static async Task RetainUntilProcessExitedAsync(Func<bool> hasExited, Action requestKill, TimeSpan? retryDelay = null)
@@ -1281,7 +1289,7 @@ public sealed class SpeechPowerShellDictationRecognizer : IDictationRecognizer
         return bytes;
     }
 
-    private sealed record RecognitionDto(string? Type, string? Message, long Id, string? Text, bool Rejected, LexemeDto[] Lexemes, double Confidence = -1.0);
+    private sealed record RecognitionDto(string? Type, string? Message, long Id, string? Text, bool Rejected, LexemeDto[] Lexemes, double Confidence = -1.0, string? RejectedText = null);
     private sealed record LexemeDto(string? Text, long Start, long End);
 
 private const string Script = """
@@ -1313,6 +1321,7 @@ public sealed class VoiceSwitchSapiCollector
     private readonly long requestStart;
     private readonly long requestEnd;
     private readonly List<string> texts = new List<string>();
+    private readonly List<string> rejectedTexts = new List<string>();
     private readonly List<VoiceSwitchLexeme> lexemes = new List<VoiceSwitchLexeme>();
     private readonly ManualResetEventSlim done = new ManualResetEventSlim(false);
     private bool rejected;
@@ -1328,8 +1337,9 @@ public sealed class VoiceSwitchSapiCollector
 
     public long Id { get { return requestId; } }
     public string Text { get { return string.Concat(texts); } }
+    public string RejectedText { get { return string.Concat(rejectedTexts); } }
     public bool Rejected { get { return rejected; } }
-    // Lowest confidence over the results that make up Text; -1 when SAPI returned none.
+    // Lowest confidence over the accepted and rejected results; -1 when SAPI returned none.
     public double Confidence { get { return confidence; } }
     public VoiceSwitchLexeme[] Lexemes { get { return lexemes.ToArray(); } }
     public string Error { get { return error; } }
@@ -1370,7 +1380,7 @@ public sealed class VoiceSwitchSapiCollector
             texts.Add(result.Text);
         }
 
-        confidence = confidence < 0 ? result.Confidence : Math.Min(confidence, result.Confidence);
+        TrackConfidence(result);
         foreach (RecognizedWordUnit word in result.Words)
         {
             try
@@ -1402,6 +1412,23 @@ public sealed class VoiceSwitchSapiCollector
     private void OnRejected(object sender, SpeechRecognitionRejectedEventArgs args)
     {
         rejected = true;
+        var result = args.Result;
+        if (result == null)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(result.Text))
+        {
+            rejectedTexts.Add(result.Text);
+        }
+
+        TrackConfidence(result);
+    }
+
+    private void TrackConfidence(RecognizedPhrase result)
+    {
+        confidence = confidence < 0 ? result.Confidence : Math.Min(confidence, result.Confidence);
     }
 
     private void OnCompleted(object sender, RecognizeCompletedEventArgs args)
@@ -1446,7 +1473,7 @@ try {
   $collector = [VoiceSwitchSapiCollector]::new($requestId, $requestStart, $requestEnd)
   $collector.Run($info, $pcm)
   if ($collector.Error) { Send-Json @{ type='error'; message=$collector.Error }; exit 3 }
-  Send-Json @{ id=$collector.Id; text=$collector.Text; rejected=$collector.Rejected; confidence=$collector.Confidence; lexemes=@($collector.Lexemes | ForEach-Object { @{ text=$_.Text; start=$_.Start; end=$_.End } }) }
+  Send-Json @{ id=$collector.Id; text=$collector.Text; rejected=$collector.Rejected; rejectedText=$collector.RejectedText; confidence=$collector.Confidence; lexemes=@($collector.Lexemes | ForEach-Object { @{ text=$_.Text; start=$_.Start; end=$_.End } }) }
 } catch {
   Send-Json @{ type='error'; message=$_.Exception.Message }
   exit 3

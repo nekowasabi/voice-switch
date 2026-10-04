@@ -72,7 +72,9 @@ public sealed record RecognizedUtterance(
     string Text,
     ImmutableArray<LexicalRun> Lexemes,
     bool HadRejectedSpeech = false,
-    double? Confidence = null);
+    double? Confidence = null,
+    // What SAPI heard but rejected as too uncertain; diagnostics only, never part of Text or Lexemes.
+    string? RejectedText = null);
 
 public sealed record DictationEvent(string Kind, FinishReason? Reason, SampleRange? Range, Guid? SessionId = null)
 {
