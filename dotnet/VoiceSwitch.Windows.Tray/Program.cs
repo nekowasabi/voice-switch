@@ -28,7 +28,7 @@ public static class Program
             var supervisor = new TrayRuntimeSupervisor(
                 options.ConfigPath,
                 options.Source,
-                new ProductionRuntimeFactory(),
+                new ProductionRuntimeFactory(options.ConfigPath),
                 CountPendingHandoffs,
                 instance.Key);
 

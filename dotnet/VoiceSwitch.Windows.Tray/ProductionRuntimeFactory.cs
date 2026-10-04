@@ -2,13 +2,21 @@ using VoiceSwitch.Windows.Core;
 
 namespace VoiceSwitch.Windows.Tray;
 
-public sealed class ProductionRuntimeFactory : ITrayRuntimeFactory
+public sealed class ProductionRuntimeFactory(string configPath) : ITrayRuntimeFactory
 {
     public Task<ITrayRuntimeRun> StartAsync(VoiceSwitchConfig config, TrayInputSource source, CancellationToken cancellation)
     {
         cancellation.ThrowIfCancellationRequested();
         ValidateSource(config, source);
         cancellation.ThrowIfCancellationRequested();
+
+        if (config.Dictation is null)
+        {
+            var commandCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+            var resident = new ResidentRuntime(configPath, config, null, SpeechPowerShell.Start, CommandRunner.Run, _ => { }, false, commandCancellation.Token);
+            var commandCompletion = Task.Factory.StartNew(resident.Run, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            return Task.FromResult<ITrayRuntimeRun>(new ProductionRuntimeRun(commandCompletion, commandCancellation, null));
+        }
 
         if (source.RecordOnlyDir is null)
         {
@@ -32,9 +40,9 @@ public sealed class ProductionRuntimeFactory : ITrayRuntimeFactory
 
     private static void ValidateSource(VoiceSwitchConfig config, TrayInputSource source)
     {
-        if (config.Dictation is null)
+        if (source.SyntheticInput && config.Dictation is null)
         {
-            throw new InvalidOperationException("tray host requires dictation config.");
+            throw new ArgumentException("--input-wav requires a config with dictation.");
         }
 
         if (source.WavPath is not null && source.RecordOnlyDir is null)
@@ -51,10 +59,10 @@ public sealed class ProductionRuntimeFactory : ITrayRuntimeFactory
     private sealed class ProductionRuntimeRun : ITrayRuntimeRun
     {
         private readonly CancellationTokenSource cancellation;
-        private readonly TrayRuntimeObserver observer;
+        private readonly TrayRuntimeObserver? observer;
         private bool disposed;
 
-        public ProductionRuntimeRun(Task<int> completion, CancellationTokenSource cancellation, TrayRuntimeObserver observer)
+        public ProductionRuntimeRun(Task<int> completion, CancellationTokenSource cancellation, TrayRuntimeObserver? observer)
         {
             Completion = completion;
             this.cancellation = cancellation;
@@ -62,7 +70,7 @@ public sealed class ProductionRuntimeFactory : ITrayRuntimeFactory
         }
 
         public Task<int> Completion { get; }
-        public RecognitionProcessIdentity? OwnedChild => observer.OwnedChild;
+        public RecognitionProcessIdentity? OwnedChild => observer?.OwnedChild;
 
         public async Task StopAsync(CancellationToken cancellationToken)
         {

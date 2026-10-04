@@ -315,11 +315,6 @@ public sealed class TrayRuntimeSupervisor : IAsyncDisposable
         {
             throw new ArgumentException("--input-wav requires a config with dictation.");
         }
-
-        if (config.Dictation is null)
-        {
-            throw new InvalidOperationException("tray host requires dictation config; legacy command mode remains available in voice-switch.exe.");
-        }
     }
 
     private int SafePendingCount()

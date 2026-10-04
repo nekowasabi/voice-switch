@@ -111,7 +111,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("production tray factory rejects unsafe synthetic source", () => Check(ProductionTrayFactoryRejectsUnsafeSyntheticSource())),
     ("tray supervisor starts paused and start is idempotent", () => Check(TraySupervisorStartsPausedAndStartIsIdempotent())),
     ("tray supervisor invalid reload keeps running generation", () => Check(TraySupervisorInvalidReloadKeepsRunningGeneration())),
-    ("tray supervisor legacy reload keeps running runtime", () => Check(TraySupervisorLegacyReloadKeepsRunningRuntime())),
+    ("tray supervisor reload switches dictation to command mode", () => Check(TraySupervisorReloadSwitchesToCommandMode())),
     ("tray supervisor valid reload stops old before new", () => Check(TraySupervisorValidReloadStopsOldBeforeNew())),
     ("tray supervisor retains run after stop failure", () => Check(TraySupervisorRetainsRunAfterStopFailure())),
     ("tray supervisor retries quit after stop failure", () => Check(TraySupervisorRetriesQuitAfterStopFailure())),
@@ -2820,7 +2820,7 @@ static bool ProductionTrayRejectsPendingBeforeCapture()
         var root = WindowsPaths.DefaultHandoffPath();
         Directory.CreateDirectory(root);
         File.WriteAllText(Path.Combine(root, $"{Guid.NewGuid():N}.json"), "{malformed");
-        var factory = new ProductionRuntimeFactory();
+        var factory = new ProductionRuntimeFactory(temp.ConfigPath);
         return Throws<InvalidOperationException>(() => factory.StartAsync(
             DictationRuntimeTestConfig(), new TrayInputSource(null, null), CancellationToken.None).GetAwaiter().GetResult(), "before capture starts");
     }
@@ -2835,10 +2835,10 @@ static bool ProductionTrayFactoryRejectsUnsafeSyntheticSource()
     using var temp = RuntimeTemp();
     WriteTrayDictationConfig(temp.ConfigPath, "音声入力");
     var config = ConfigLoader.Load(temp.ConfigPath);
-    var factory = new ProductionRuntimeFactory();
+    var factory = new ProductionRuntimeFactory(temp.ConfigPath);
     return Throws<ArgumentException>(() => factory.StartAsync(config, new TrayInputSource("in.wav", null), CancellationToken.None).GetAwaiter().GetResult(), "--record-only")
         && Throws<ArgumentException>(() => factory.StartAsync(config, new TrayInputSource(null, Path.Combine(temp.Dir, "out")), CancellationToken.None).GetAwaiter().GetResult(), "--input-wav")
-        && Throws<InvalidOperationException>(() => factory.StartAsync(config with { Dictation = null }, new TrayInputSource("in.wav", Path.Combine(temp.Dir, "out")), CancellationToken.None).GetAwaiter().GetResult(), "dictation config");
+        && Throws<ArgumentException>(() => factory.StartAsync(config with { Dictation = null }, new TrayInputSource("in.wav", Path.Combine(temp.Dir, "out")), CancellationToken.None).GetAwaiter().GetResult(), "requires a config with dictation");
 }
 
 static bool TraySupervisorStartsPausedAndStartIsIdempotent()
@@ -2875,7 +2875,7 @@ static bool TraySupervisorInvalidReloadKeepsRunningGeneration()
         && factory.Started.Single().StopCount == 0;
 }
 
-static bool TraySupervisorLegacyReloadKeepsRunningRuntime()
+static bool TraySupervisorReloadSwitchesToCommandMode()
 {
     using var temp = RuntimeTemp();
     WriteTrayDictationConfig(temp.ConfigPath, "音声入力");
@@ -2886,11 +2886,10 @@ static bool TraySupervisorLegacyReloadKeepsRunningRuntime()
     File.WriteAllText(temp.ConfigPath, """{"wakeWords":["音声入力"],"command":"wake"}""");
     supervisor.ReloadAsync(CancellationToken.None).GetAwaiter().GetResult();
     return supervisor.Snapshot.State == TrayState.Listening
-        && supervisor.Snapshot.Generation == generation
-        && supervisor.Snapshot.LastError is not null
-        && supervisor.Snapshot.LastError.Contains("dictation config", StringComparison.Ordinal)
-        && factory.Started.Count == 1
-        && factory.Started.Single().StopCount == 0;
+        && supervisor.Snapshot.Generation == generation + 1
+        && supervisor.Snapshot.LastError is null
+        && factory.Started.Count == 2
+        && factory.Started[0].StopCount == 1;
 }
 
 static bool TraySupervisorValidReloadStopsOldBeforeNew()
