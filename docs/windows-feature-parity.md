@@ -73,12 +73,21 @@ Total: 3 + 15 + 2 = 20 entries, not unique missing features. `menu_bar_device_an
 - `NoResult` keeps the WAV for manual recovery until the 10 minute sweep. macOS deletes it.
 - Alt and Win chords are not specially handled. Only the configured finish and cancel keys are matched.
 - Focus restore runs only for 2 s after handoff and only while Superwhisper is the foreground window.
+- Beyond Mac: SAPI words that fuse the wake word with the body are split by character count, and a rejected hypothesis that is exactly a wake word opens a wait. Neither changed a result on the 84 TTS fixtures.
+- A config reload in dictation mode does not reach the warm SAPI child's locale or the noise processor; those need the tray Reload.
+- The マイク picker and device recovery cover dictation mode only; command mode (SAPI) always records from the default device. Device names are WinMM's, cut at 31 characters.
+- `dictation.excludeProcessNames` replaces `dictation.excludeBundleIDs`, and `skipWhileMicInUseBy` lists executable names instead of bundle IDs.
+- `--check` reads PCM16 mono 16 kHz WAV only, where macOS converts any audio file.
 
 ## Verified by tests or compile only
 
-Everything above is covered by Release compile, package-free unit tests, and the synthetic runtime harness with fakes. None of it has run on a live Windows desktop. These need a hand test on Windows:
+Everything above is covered by Release compile, package-free unit tests, and the synthetic runtime harness with fakes. Some of it was also run natively on Windows: the job object (a hard-killed tray leaves no PowerShell child), the dictation config reload, the handoff folder log, the tray icon and Japanese menu through `--tray-command status`, the microphone pinning and fallback, the mic-in-use guard between two voice-switch processes, and `--check` on TTS fixtures. These still need a hand test on Windows:
 
 - Live microphone wake and stop.
+- Ctrl+Space right after speaking following a lone wake word hands off at once.
+- The wake is ignored while Superwhisper itself records (its session turning Active).
+- Unplugging the chosen microphone or changing the Windows default device restarts capture on the new device.
+- The tray icon in the real taskbar, and ログイン時に起動 at an actual sign-in.
 - Real Ctrl+Space finish and Esc cancel through the hook.
 - HUD placement on a multi-monitor setup.
 - Focus restore to the original window.
@@ -87,12 +96,12 @@ Everything above is covered by Release compile, package-free unit tests, and the
 
 ## What the gates prove
 
-The parity runner compares normalized fixtures, decisions, and segmenter outputs. It checks source markers and mutation behavior. Its shared `dictation_handoff_lifecycle` and `dictation_one_handoff_at_a_time` markers compare the Mac and Windows result polls and in-flight drop. Its `config_reload_keeps_previous_on_error` Windows marker targets legacy `Program` reload, not immutable dictation-console configuration.
+The parity runner compares normalized fixtures, decisions, and segmenter outputs. It checks source markers and mutation behavior. Its shared `dictation_handoff_lifecycle` and `dictation_one_handoff_at_a_time` markers compare the Mac and Windows result polls and in-flight drop. Its `config_reload_keeps_previous_on_error` Windows marker targets `Program.cs`, where the `ConfigFile` reload now serves both command mode and the dictation runtime.
 
 Therefore a shared marker pass does not establish equivalent end-to-end handoff or reload user experience. Core tests cover exact source ranges, delayed recognition, embedded stops, empty/cancel paths, and ownership assertions. Synthetic recognition is not live SAPI acoustic accuracy. Record-only sinks are not external transcription.
 
 Highest-priority missing required user experience is safe automatic external transcription and paste into the original target, with trustworthy job identity. The result poll attributes the newest run within 2 s of launch, like macOS. Noise treatment improves only the local SAPI analysis/control lane. Original noisy PCM still goes to handoff. BODY CER is a local SAPI hypothesis metric, not external returned text or delivered-transcription accuracy.
 
-Next missing pieces are target exclusion and recorder mic-use safeguards, device selection/change recovery, and the dictation reload experience. These are separate from OS-specific diagnostics and the intentional no-autostart choice.
+Target exclusion, the recorder mic-use guard, device selection and recovery, dictation reload, and login registration now exist on Windows. The remaining declared differences are OS-specific diagnostics, the default stop command, and command-mode stop gating.
 
 Actual external validation remains HOLD. Future validation must treat clipboard, selected text, active-application context, focus movement, and automatic paste as risk conditions to verify directly. An empty owned text control alone does not isolate clipboard/context or prove the paste destination. Keyboard hooks do not confine all input paths. A new desktop does not isolate the window-station clipboard or prove singleton routing.
