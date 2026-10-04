@@ -21,7 +21,7 @@ Repository-relative source names:
 - `Win runtime`: `dotnet/VoiceSwitch.Windows/DictationRuntime.cs`
 - `Win core`: `dotnet/VoiceSwitch.Windows.Core/DictationCore.cs`
 - `Win CLI`: `dotnet/VoiceSwitch.Windows/Program.cs`
-- `Tray`: `dotnet/VoiceSwitch.Windows.Tray/`
+- `Tray`: `dotnet/VoiceSwitch.Windows/Tray/` (same `voice-switch.exe`)
 
 | Required experience | macOS source behavior | Windows command, dictation, or tray behavior | Verdict |
 |---|---|---|---|
@@ -40,7 +40,7 @@ Repository-relative source names:
 | Skip wake while a designated app uses the microphone | CoreAudio process input-state check. | Field parses and warns only. No process microphone guard exists. | Unsupported. This is allowed differences 7 and 22. |
 | Default mic and device selection/recovery | Nil follows default. Chosen UID is persisted. Menu picker exists. Engine is recreated for pinned change or config notifications. | WinMM opens the WaveMapper default at capture start. No device picker, pinning, hotplug, or default-change recovery exists. | Default-open is implemented. Device behavior is HOLD. Picker and recovery are unsupported. |
 | Permissions and speech readiness | Apple model is prepared. Microphone and Accessibility permissions are surfaced. | SAPI diagnostics and capture errors exist. No equivalent first-run microphone/privacy onboarding or shortcut permission flow exists. | Error paths are implemented. Actual microphone permission and readiness are HOLD. |
-| Resident status, start, pause, settings, error, quit | Menu icon, pause/resume, device/config/log/login/quit menu. Starts listening after permission on launch. | Optional tray starts Paused. It supports Start/Pause/Reload/config/error/status/Quit with serialized owned runtime and bounded IPC. | Tray is implemented. Paused launch is intentional. There is no device or login menu. |
+| Resident status, start, pause, settings, error, quit | Menu icon, pause/resume, device/config/log/login/quit menu. Starts listening after permission on launch. | `voice-switch.exe` launched without diagnostic flags is the tray app and starts listening, in command or dictation mode. `--paused` opts out. It supports Start/Pause/Reload/config/error/status/Quit with serialized owned runtime and bounded IPC. | Tray is implemented and matches the macOS listen-on-launch default. There is no device or login menu. |
 | Safe duplicate ownership and stop/exit | The macOS app lifecycle owns the listener. | Tray uses canonical-config plus SID owner lease. Commands identify without acquiring the lease. Failed cleanup keeps live ownership. | Implemented and tested by `tests/windows/run-tray-host.ps1`. This proves lifecycle, not dictation or paste. |
 | Reload without losing last valid config | Reloads at utterance boundary. Invalid config keeps old config. | Legacy command resident auto-reloads. Dictation console holds read-only CLI config. Tray manual Reload validates first, then cancels/restarts the running session. Invalid config retains current config/run. | Differentiated behavior is implemented. Automatic dictation reload and preserving an active dictation session across reload are not equivalent. |
 | Login/autostart | `SMAppService` user toggle. | No Windows login registration. | Intentional scoped omission, not achieved parity. This is allowed difference 27. |
@@ -99,6 +99,6 @@ Therefore a shared marker pass does not establish equivalent end-to-end handoff 
 
 Highest-priority missing required user experience is safe automatic external transcription and paste into the original target, with trustworthy job identity and automatic lease completion. Manual pending currently prevents seamless repeated external dictation. Noise treatment improves only the local SAPI analysis/control lane. Original noisy PCM still goes to handoff. BODY CER is a local SAPI hypothesis metric, not external returned text or delivered-transcription accuracy.
 
-Next missing pieces are global finish/cancel, target exclusion and recorder mic-use safeguards, device selection/change recovery, and the dictation reload experience. These are separate from OS-specific diagnostics and intentional Paused/no-autostart choices.
+Next missing pieces are global finish/cancel, target exclusion and recorder mic-use safeguards, device selection/change recovery, and the dictation reload experience. These are separate from OS-specific diagnostics and the intentional no-autostart choice.
 
 Actual external validation remains HOLD. Future validation must treat clipboard, selected text, active-application context, focus movement, and automatic paste as risk conditions to verify directly. An empty owned text control alone does not isolate clipboard/context or prove the paste destination. Keyboard hooks do not confine all input paths. A new desktop does not isolate the window-station clipboard or prove singleton routing.

@@ -1,19 +1,26 @@
-using System.Text.Json;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using VoiceSwitch.Windows.Core;
 
 namespace VoiceSwitch.Windows.Tray;
 
-public static class Program
+public static class TrayHost
 {
     [STAThread]
     public static int Main(string[] args)
     {
+        if (!CliOptions.IsTrayLaunch(args))
+        {
+            AttachParentConsole();
+            return VoiceSwitch.Windows.Program.Run(args);
+        }
+
         try
         {
             var options = TrayOptions.Parse(args);
             if (options.IpcCommand is { } command)
             {
+                AttachParentConsole();
                 using var identity = TraySingleInstance.Identify(options.ConfigPath);
                 return SendCommand(identity.PipeName, command);
             }
@@ -21,6 +28,7 @@ public static class Program
             using var instance = TraySingleInstance.Acquire(options.ConfigPath);
             if (!instance.IsOwner)
             {
+                AttachParentConsole();
                 Console.WriteLine(TrayIpcServer.SendAsync(instance.PipeName, TrayCommand.ShowStatus, TimeSpan.FromSeconds(3)).GetAwaiter().GetResult());
                 return 0;
             }
@@ -38,7 +46,7 @@ public static class Program
             var ipc = new TrayIpcServer(instance.PipeName, supervisor, context.Diagnostics, context.QuitRuntimeAsync, context.RequestExitThread);
             try
             {
-                if (options.Start)
+                if (!options.Paused)
                 {
                     _ = supervisor.StartAsync(CancellationToken.None);
                 }
@@ -55,8 +63,18 @@ public static class Program
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine(ex.Message);
+            Log.Fatal(ex.Message);
             return 1;
+        }
+    }
+
+    // Why: a WinExe gets no console, so CLI output from cmd/PowerShell would vanish. Only attach when
+    // stdout is unset; redirected handles (pipes from WSL, files) already work and must not be replaced.
+    private static void AttachParentConsole()
+    {
+        if (GetStdHandle(StdOutputHandle) == IntPtr.Zero)
+        {
+            AttachConsole(AttachParentProcess);
         }
     }
 
@@ -82,4 +100,13 @@ public static class Program
             ? Directory.EnumerateFiles(root, "*.json").Count()
             : 0;
     }
+
+    private const int AttachParentProcess = -1;
+    private const int StdOutputHandle = -11;
+
+    [DllImport("kernel32.dll")]
+    private static extern bool AttachConsole(int processId);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GetStdHandle(int handle);
 }

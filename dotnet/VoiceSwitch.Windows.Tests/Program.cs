@@ -107,6 +107,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation recognizer retains ownership until confirmed exit", () => Check(DictationRecognizerRetainsOwnershipUntilConfirmedExit())),
     ("tray options reject synthetic input without record-only", () => Check(TrayOptionsRejectSyntheticWithoutRecordOnly())),
     ("tray options reject numeric command", () => Check(TrayOptionsRejectNumericCommand())),
+    ("single exe routes bare and tray-only launches to the tray", () => Check(SingleExeRoutesTrayLaunches())),
     ("production tray rejects pending handoff before opening capture", () => Check(ProductionTrayRejectsPendingBeforeCapture())),
     ("production tray factory rejects unsafe synthetic source", () => Check(ProductionTrayFactoryRejectsUnsafeSyntheticSource())),
     ("tray supervisor starts paused and start is idempotent", () => Check(TraySupervisorStartsPausedAndStartIsIdempotent())),
@@ -281,7 +282,7 @@ static bool ProgramRejectsSyntheticWavWithoutDictationConfig()
         stopCommand = "cmd /c echo stop"
     }));
     var missingWav = Path.Combine(temp.Dir, "missing.wav");
-    var (code, output) = CaptureConsole(() => VoiceSwitch.Windows.Program.Main(["--config", temp.ConfigPath, "--input-wav", missingWav]));
+    var (code, output) = CaptureConsole(() => VoiceSwitch.Windows.Program.Run(["--config", temp.ConfigPath, "--input-wav", missingWav]));
     return code == 1
         && output.Contains("--input-wav requires a config with dictation", StringComparison.Ordinal)
         && !File.Exists(marker);
@@ -2797,6 +2798,17 @@ static bool TrayOptionsRejectSyntheticWithoutRecordOnly()
     }
 }
 
+static bool SingleExeRoutesTrayLaunches() =>
+    CliOptions.IsTrayLaunch([])
+    && CliOptions.IsTrayLaunch(["--config", "c.json"])
+    && CliOptions.IsTrayLaunch(["--config", "c.json", "--paused"])
+    && CliOptions.IsTrayLaunch(["--tray-command", "quit"])
+    && CliOptions.IsTrayLaunch(["--config", "c.json", "--input-wav", "in.wav", "--record-only", "out"])
+    && !CliOptions.IsTrayLaunch(["--self-test"])
+    && !CliOptions.IsTrayLaunch(["--config", "c.json", "--dry-run", "--listen-seconds", "5"])
+    && !CliOptions.IsTrayLaunch(["--config", "c.json", "--input-wav", "in.wav"])
+    && !CliOptions.IsTrayLaunch(["--recognizers"]);
+
 static bool TrayOptionsRejectNumericCommand()
 {
     try
@@ -3080,7 +3092,7 @@ static TestOutcome TrayIpcNoServerErrorIsActionable()
     }
     catch (TimeoutException ex)
     {
-        return ex.Message.Contains("Start voice-switch-tray first", StringComparison.Ordinal)
+        return ex.Message.Contains("Start voice-switch.exe first", StringComparison.Ordinal)
             && ex.Message.Contains(nameof(TrayCommand.ShowStatus), StringComparison.Ordinal)
             ? TestOutcome.Pass()
             : TestOutcome.Fail(ex.Message);

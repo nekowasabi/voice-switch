@@ -109,7 +109,7 @@ Synthetic Windows dictation uses `--input-wav PATH` with strict PCM16 mono 16 kH
 
 Stop-boundary validation passed 20/20 expanded clean strict standalone-stop checks, 20/20 body-tail checks, and 2/2 independent full-body checks. The known low-onset limit remains: 16/20 very-low stop-onset cases retain 0.375-15 ms of source audio so quiet body audio is not over-trimmed. The default endpoint stays lexical and does not move to `Source.Start`.
 
-The Windows tray host is a separate `voice-switch-tray.exe`. It starts Paused, opens no microphone until Start/Resume, supports record-only synthetic `--input-wav PATH --record-only DIR`, and prevents duplicate tray instances for the same Windows user plus canonical config path. The tray and CLI resident modes own their capture lifecycles separately, so do not run both against the same capture at the same time. It does not install login/autostart registration.
+`voice-switch.exe` is one app. Launched with no arguments, or with only `--config PATH`, it starts as a tray app and listens right away in command mode or dictation mode, whichever the config selects. `--paused` starts the tray without opening the microphone. Diagnostic flags such as `--self-test` run in the terminal instead. The tray supports record-only synthetic `--input-wav PATH --record-only DIR` and prevents duplicate tray instances for the same Windows user plus canonical config path. The tray and a terminal `--listen-seconds` run own their capture lifecycles separately, so do not run both against the same capture at the same time. It does not install login/autostart registration. Logs go to `%LOCALAPPDATA%\voice-switch\voice-switch.log`.
 
 Generate synthetic fixtures using the checked-in generator, then run record-only dictation validation:
 
@@ -130,20 +130,20 @@ Manual tray smoke commands use the same record-only path. Start the host in one 
 $build='C:\temp\voice-switch-validation'
 $fixtures='C:\temp\voice-switch-fixtures'
 $out='C:\temp\voice-switch-tray-record-only'
-& "$build\voice-switch-tray.exe" --config "$build\config.dictation.json" --input-wav "$fixtures\consecutive-sessions-clean.wav" --record-only $out
+& "$build\voice-switch.exe" --config "$build\config.dictation.json" --paused --input-wav "$fixtures\consecutive-sessions-clean.wav" --record-only $out
 ```
 
-Then run IPC commands in another PowerShell window. The host starts Paused, then `start`, `pause`, `start`, and `quit` exercise Start, Pause, Resume, and Quit without external app handoff:
+Then run IPC commands in another PowerShell window. `--paused` keeps the host Paused, then `start`, `pause`, `start`, and `quit` exercise Start, Pause, Resume, and Quit without external app handoff:
 
 ```powershell
 $build='C:\temp\voice-switch-validation'
-& "$build\voice-switch-tray.exe" --config "$build\config.dictation.json" --tray-command status
-& "$build\voice-switch-tray.exe" --config "$build\config.dictation.json" --tray-command start
-& "$build\voice-switch-tray.exe" --config "$build\config.dictation.json" --tray-command pause
-& "$build\voice-switch-tray.exe" --config "$build\config.dictation.json" --tray-command start
-& "$build\voice-switch-tray.exe" --config "$build\config.dictation.json" --tray-command quit
+& "$build\voice-switch.exe" --config "$build\config.dictation.json" --tray-command status
+& "$build\voice-switch.exe" --config "$build\config.dictation.json" --tray-command start
+& "$build\voice-switch.exe" --config "$build\config.dictation.json" --tray-command pause
+& "$build\voice-switch.exe" --config "$build\config.dictation.json" --tray-command start
+& "$build\voice-switch.exe" --config "$build\config.dictation.json" --tray-command quit
 ```
 
-Legacy Windows command mode dispatches configured custom stop commands only when `stopCommand` is an operator-supplied idempotent stop command. Missing `stopCommand` and the older Superwhisper record toggle sample are suppressed. That is distinct from the dictation runtime, which has session-gated stop handling. See [Windows feature parity audit](./docs/windows-feature-parity.md), [Windows DSP evaluation method](./docs/windows-dsp-evaluation-method.md), and [Windows DSP evaluation results 2026-10-03](./docs/windows-dsp-evaluation-results-20261003.md) for the current limits.
+Windows command mode dispatches configured custom stop commands only when `stopCommand` is an operator-supplied idempotent stop command. Missing `stopCommand` and the older Superwhisper record toggle sample are suppressed. That is distinct from the dictation runtime, which has session-gated stop handling. See [Windows feature parity audit](./docs/windows-feature-parity.md), [Windows DSP evaluation method](./docs/windows-dsp-evaluation-method.md), and [Windows DSP evaluation results 2026-10-03](./docs/windows-dsp-evaluation-results-20261003.md) for the current limits.
 
 Do not run CLI and tray concurrent capture. Live microphone capture and external app intake/paste remain on HOLD until narrowly authorized safe boundary verification. The external app path may involve clipboard, selected text, active-application context, and focus behavior, so future validation must check those boundaries directly. Pending handoff completion remains manual: `SubmittedUnconfirmed` is not proof of paste, `DeferredUnsent` is not externally consumed, a 24-hour overdue warning is shown, and there is no automatic timed delete or retry.

@@ -11,7 +11,7 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
 }
 
 $repo = Resolve-Path (Join-Path $PSScriptRoot "..\..")
-$tray = Join-Path $ReleaseDir "voice-switch-tray.exe"
+$tray = Join-Path $ReleaseDir "voice-switch.exe"
 if (-not (Test-Path $tray)) { throw "tray executable not found: $tray" }
 
 function Initialize-FreshDirectory([string]$Path) {
@@ -52,7 +52,7 @@ function Start-Tray($Config, $Wav, $OutDir) {
   $stderr = Join-Path $OutDir "host.stderr.txt"
   $psi = [System.Diagnostics.ProcessStartInfo]::new()
   $psi.FileName = $tray
-  foreach ($arg in @("--config", $Config, "--input-wav", $Wav, "--record-only", $OutDir)) { $psi.ArgumentList.Add($arg) }
+  foreach ($arg in @("--config", $Config, "--paused", "--input-wav", $Wav, "--record-only", $OutDir)) { $psi.ArgumentList.Add($arg) }
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
   $psi.UseShellExecute = $false
@@ -166,7 +166,7 @@ $raceRecordings = Join-Path $RunRoot "command-first recordings"
 Write-TrayConfig $raceConfig
 $noServer = Invoke-TrayRaw $raceConfig "status" 12000
 Assert ($noServer.ExitCode -eq 2) "status without a tray host returned exit=$($noServer.ExitCode)"
-Assert ($noServer.Stderr -match "Start voice-switch-tray first") "status without a tray host was not actionable: $($noServer.Stderr)"
+Assert ($noServer.Stderr -match "Start voice-switch.exe first") "status without a tray host was not actionable: $($noServer.Stderr)"
 $raceClient = Start-TrayCommand $raceConfig "status" (Join-Path $RunRoot "command-first client") "status-first"
 Start-Sleep -Milliseconds 300
 $raceHost = Start-Tray $raceConfig $fixture $raceRecordings

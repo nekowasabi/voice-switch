@@ -28,12 +28,11 @@ WIN_CONFIG ?= Release
 DOTNET ?= $(shell command -v dotnet 2>/dev/null || printf '%s' "$(HOME)/.local/share/mise/shims/dotnet")
 WIN_RID ?= win-x64
 WIN_APP := dotnet/VoiceSwitch.Windows/VoiceSwitch.Windows.csproj
-WIN_TRAY := dotnet/VoiceSwitch.Windows.Tray/VoiceSwitch.Windows.Tray.csproj
 WIN_TESTS := dotnet/VoiceSwitch.Windows.Tests/VoiceSwitch.Windows.Tests.csproj
 DOTNET_RESTORE_FLAGS ?= --ignore-failed-sources --disable-parallel
 RELEASE_DIR ?= $(CURDIR)/release
 
-.PHONY: build app install uninstall logs win win-restore win-build win-test parity-test win-publish win-tray-publish win-verify help
+.PHONY: build app install uninstall logs win win-restore win-build win-test parity-test win-publish win-verify help
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -76,12 +75,10 @@ win: win-publish ## Windows: build, test, and publish voice-switch.exe (PC=wsl d
 
 win-restore: ## Windows: restore .NET projects
 	$(DOTNET) restore $(WIN_APP) -r $(WIN_RID) $(DOTNET_RESTORE_FLAGS)
-	$(DOTNET) restore $(WIN_TRAY) -r $(WIN_RID) $(DOTNET_RESTORE_FLAGS)
 	$(DOTNET) restore $(WIN_TESTS) $(DOTNET_RESTORE_FLAGS)
 
 win-build: win-restore win-test ## Windows: build .NET app and behavior tests
 	$(DOTNET) build $(WIN_APP) -c $(WIN_CONFIG) -r $(WIN_RID) --no-restore
-	$(DOTNET) build $(WIN_TRAY) -c $(WIN_CONFIG) -r $(WIN_RID) --no-restore
 
 win-test: win-restore ## Windows: run package-free behavior tests
 	$(DOTNET) run --project $(WIN_TESTS) -c $(WIN_CONFIG) --no-restore
@@ -92,33 +89,28 @@ parity-test: ## Run macOS/Windows parity contract checks
 
 win-publish: win-build ## Windows: publish voice-switch.exe to RELEASE_DIR
 	mkdir -p "$(RELEASE_DIR)"
+	# The tray used to ship as a second exe; drop its leftovers so release/ holds one app.
+	rm -f "$(RELEASE_DIR)"/voice-switch-tray.*
 	$(DOTNET) publish $(WIN_APP) -c $(WIN_CONFIG) -r $(WIN_RID) --self-contained false \
 		-p:PublishSingleFile=false \
 		-p:DebugType=None \
 		-p:CopyOutputSymbolsToPublishDirectory=false \
 		-o "$(RELEASE_DIR)"
-	$(MAKE) win-tray-publish
 	test -f "$(RELEASE_DIR)/config.json" || cp config.example.windows.json "$(RELEASE_DIR)/config.json"
 	@echo "Windows build → $(RELEASE_DIR)"
-	@echo "Try: $(RELEASE_DIR)/voice-switch.exe --self-test"
-	@echo "     $(RELEASE_DIR)/voice-switch.exe --recognizers"
-	@echo "     $(RELEASE_DIR)/voice-switch.exe --check-device"
-	@echo "     $(RELEASE_DIR)/voice-switch-tray.exe --config $(RELEASE_DIR)/config.json"
-
-win-tray-publish: win-restore ## Windows: publish voice-switch-tray.exe to RELEASE_DIR
-	mkdir -p "$(RELEASE_DIR)"
-	$(DOTNET) publish $(WIN_TRAY) -c $(WIN_CONFIG) -r $(WIN_RID) --self-contained false \
-		-p:PublishSingleFile=false \
-		-p:DebugType=None \
-		-p:CopyOutputSymbolsToPublishDirectory=false \
-		-o "$(RELEASE_DIR)"
+	@echo "Run:  $(RELEASE_DIR)/voice-switch.exe            (tray app, listens on launch)"
+	@echo "Try:  $(RELEASE_DIR)/voice-switch.exe --self-test"
+	@echo "      $(RELEASE_DIR)/voice-switch.exe --recognizers"
+	@echo "      $(RELEASE_DIR)/voice-switch.exe --check-device"
+	@echo "      $(RELEASE_DIR)/voice-switch.exe --tray-command quit"
 
 win-verify: ## Verify Windows path layout / Makefile routing (no Swift SDK required)
 	@test -f Sources/voice-switch/Platform.swift
 	@test -f Sources/voice-switch/WindowsApp.swift
 	@test -f Sources/voice-switch/Segmenter.swift
 	@test -f dotnet/VoiceSwitch.Windows/VoiceSwitch.Windows.csproj
-	@test -f dotnet/VoiceSwitch.Windows.Tray/VoiceSwitch.Windows.Tray.csproj
+	@test -f dotnet/VoiceSwitch.Windows/Tray/TrayHost.cs
+	@test ! -e dotnet/VoiceSwitch.Windows.Tray
 	@test -f dotnet/VoiceSwitch.Windows.Core/VoiceSwitchConfig.cs
 	@test -f dotnet/VoiceSwitch.Windows/SyntheticIngress.cs
 	@test -f scripts/windows-say.ps1
