@@ -432,3 +432,25 @@ sealed class FixedResultHandoff(HandoffStatus status) : IDictationHandoff
         return Task.FromResult(new HandoffResult(status, audio.SessionId, null, "fixture"));
     }
 }
+
+sealed class GatedHandoff : IDictationHandoff
+{
+    private readonly TaskCompletionSource gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int count;
+    public int Count => Volatile.Read(ref count);
+    public bool Released { get; private set; }
+
+    public async Task<HandoffResult> SubmitAsync(DictationAudio audio, CancellationToken cancellation)
+    {
+        Interlocked.Increment(ref count);
+        await gate.Task;
+        return new HandoffResult(HandoffStatus.DryRunSuppressed, audio.SessionId, null, "gated fixture");
+    }
+
+    public async Task ReleaseAfterAsync(TimeSpan delay)
+    {
+        await Task.Delay(delay);
+        Released = true;
+        gate.TrySetResult();
+    }
+}

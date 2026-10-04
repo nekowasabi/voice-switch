@@ -92,7 +92,8 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("handoff failed WAV cleanup preserves recovery state", () => Check(HandoffFailedCleanupPreservesState())),
     ("handoff admission rejects pending orphan and busy storage", () => Check(HandoffAdmissionRejectsStorage())),
     ("handoff owned links never touch outside sentinel", HandoffOwnedLinksRejectSafely),
-    ("runtime stops and disposes capture after external handoff result", () => Check(RuntimeStopsAfterExternalHandoff())),
+    ("runtime keeps listening after every handoff status", () => Check(RuntimeKeepsListeningAfterEveryHandoffStatus())),
+    ("runtime drops dictation while handoff in flight and awaits it at EOF", () => Check(RuntimeDropsOverlappingDictationAndAwaitsInflightAtEof())),
     ("dictation dry-run keeps audio in memory", () => Check(DictationDryRunKeepsAudioInMemory())),
     ("production script parses configured words distinctly on Windows PowerShell", ProductionScriptParsesWordsOnWindowsPowerShell),
     ("resident fails on clean child exit before ready", () => Check(ResidentFailsOnCleanEarlyExit())),
@@ -2236,35 +2237,54 @@ static TestOutcome HandoffOwnedLinksRejectSafely()
         ? TestOutcome.Pass() : TestOutcome.Fail("root / ancestor policy");
 }
 
-static bool RuntimeStopsAfterExternalHandoff()
+static bool RuntimeKeepsListeningAfterEveryHandoffStatus()
 {
     using var temp = RuntimeTemp();
-    var wav = Path.Combine(temp.Dir, "input.wav");
+    var wav = TwoDictationWav(temp.Dir);
+    foreach (var status in Enum.GetValues<HandoffStatus>())
+    {
+        var capture = new WavPcmCapture(wav, paced: false);
+        var handoff = new FixedResultHandoff(status);
+        var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 5000), capture, TwoDictationRecognizer(), handoff, dryRun: false);
+        using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        if (runtime.RunAsync(cancel.Token).GetAwaiter().GetResult() != 0 || !capture.DisposedForTest || handoff.Count != 2) return false;
+    }
+    return true;
+}
+
+static bool RuntimeDropsOverlappingDictationAndAwaitsInflightAtEof()
+{
+    using var temp = RuntimeTemp();
+    var handoff = new GatedHandoff();
+    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 5000), new WavPcmCapture(TwoDictationWav(temp.Dir), paced: false), TwoDictationRecognizer(), handoff, dryRun: false);
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(10), out var output, line =>
+    {
+        if (line.Contains("dictation dropped: previous one still in flight")) _ = handoff.ReleaseAfterAsync(TimeSpan.FromMilliseconds(300));
+    });
+    return code == 0
+        && handoff.Count == 1
+        && handoff.Released
+        && output.Split('\n').Count(line => line.Contains("dictation dropped: previous one still in flight")) == 1
+        && output.Split('\n').Count(line => line.Contains("dictation handoff: DryRunSuppressed")) == 1;
+}
+
+static string TwoDictationWav(string dir)
+{
+    var wav = Path.Combine(dir, "input.wav");
     var frames = ThreeUtteranceFrames().ToList();
     AddFrames(frames, 12, loud: true);
     AddFrames(frames, 12, loud: false);
     File.WriteAllBytes(wav, Pcm16Wav.Encode(frames.SelectMany(frame => frame.Samples).ToArray()));
-    foreach (var status in new[] { HandoffStatus.SubmittedUnconfirmed, HandoffStatus.DeferredUnsent, HandoffStatus.Busy, HandoffStatus.FailedBeforeDispatch, HandoffStatus.RecordedLocally })
-    {
-        var capture = new WavPcmCapture(wav, paced: false);
-        var recognizer = new ScriptedDictationRecognizer(request => Task.FromResult(request.Id % 2 == 1
-            ? new RecognizedUtterance(request.Id, request.Extent, request.Range, "音声入力本文",
-                ImmutableArray.Create(Run("音声入力", request.Range.Start, request.Range.Start + Segmenter.FrameLength),
-                    Run("本文", request.Range.Start + Segmenter.FrameLength, request.Range.End)))
-            : new RecognizedUtterance(request.Id, request.Extent, request.Range, "入力ストップ",
-                ImmutableArray.Create(Run("入力ストップ", request.Range.Start + Segmenter.FrameLength, request.Range.Start + Segmenter.FrameLength * 3)))));
-        var handoff = new FixedResultHandoff(status);
-        var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 5000), capture, recognizer, handoff, dryRun: false);
-        try
-        {
-            using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            if (runtime.RunAsync(cancel.Token).GetAwaiter().GetResult() != 0 || status != HandoffStatus.RecordedLocally) return false;
-        }
-        catch (HandoffAdmissionBlockedException ex) when (ex.Result.Status == status && status != HandoffStatus.RecordedLocally) { }
-        if (!capture.DisposedForTest || handoff.Count != (status == HandoffStatus.RecordedLocally ? 2 : 1)) return false;
-    }
-    return true;
+    return wav;
 }
+
+static ScriptedDictationRecognizer TwoDictationRecognizer() =>
+    new(request => Task.FromResult(request.Id % 2 == 1
+        ? new RecognizedUtterance(request.Id, request.Extent, request.Range, "音声入力本文",
+            ImmutableArray.Create(Run("音声入力", request.Range.Start, request.Range.Start + Segmenter.FrameLength),
+                Run("本文", request.Range.Start + Segmenter.FrameLength, request.Range.End)))
+        : new RecognizedUtterance(request.Id, request.Extent, request.Range, "入力ストップ",
+            ImmutableArray.Create(Run("入力ストップ", request.Range.Start + Segmenter.FrameLength, request.Range.Start + Segmenter.FrameLength * 3)))));
 
 static bool DictationDryRunKeepsAudioInMemory()
 {
