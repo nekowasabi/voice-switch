@@ -6,7 +6,12 @@ ID      := local.voice-switch
 # Earlier versions ran as a LaunchAgent; install removes it so two copies never listen at once.
 OLD_PLIST := $(HOME)/Library/LaunchAgents/$(ID).plist
 
-.PHONY: build app install uninstall logs
+# Default `make` quits, rebuilds and relaunches the app (same as focusbm).
+.DEFAULT_GOAL := relaunch
+
+.PHONY: build app install relaunch uninstall logs
+
+relaunch: install
 
 build:
 	swift build -c release
@@ -24,6 +29,8 @@ install: app
 	-launchctl bootout gui/$$(id -u)/$(ID) 2>/dev/null
 	rm -f $(OLD_PLIST) $(HOME)/.local/bin/voice-switch
 	-osascript -e 'quit app id "$(ID)"' 2>/dev/null
+	# open fails with -600 if it races the old instance still shutting down, so wait for it to exit.
+	@for i in $$(seq 50); do pgrep -x voice-switch >/dev/null || break; sleep 0.1; done
 	install -d $(DEST) $(dir $(CONFIG))
 	rm -rf $(DEST)/$(APP)
 	cp -R $(BUILT) $(DEST)/$(APP)

@@ -558,12 +558,28 @@ final class Listener {
         var heardSpeech: Bool
         /// Frontmost app when the wake word was heard; superwhisper pastes into whatever is frontmost.
         var target = NSWorkspace.shared.frontmostApplication
+        /// Frames during which the mic hears our own confirmation sound, so it cannot count as the text starting.
+        var deafFrames = 0
     }
+
+    enum Phase { case idle, waiting, recording }
+
+    /// Called on the main thread whenever the dictation phase changes.
+    var onPhase: ((Phase) -> Void)?
 
     private func consume(_ stream: AsyncStream<[Float]>) async {
         var seg = Segmenter(cfg: config.cfg)
         var dictation: Dictation?
+        var shown = Phase.idle
         for await f in stream {
+            // Derived from `dictation` after every frame (defer covers each `continue`) instead of at each place that sets it.
+            defer {
+                let phase: Phase = dictation.map { $0.heardSpeech ? .recording : .waiting } ?? .idle
+                if phase != shown {
+                    shown = phase
+                    DispatchQueue.main.async { self.onPhase?(phase) }
+                }
+            }
             if f.isEmpty { seg = Segmenter(cfg: config.cfg); dictation = nil; Hotkeys.end(); continue }
             seg.adaptFloor = dictation == nil
             let event = seg.push(f)
@@ -584,7 +600,7 @@ final class Listener {
                     if d.heardSpeech, !d.samples.isEmpty { submit(d, cfg: dc) }
                     continue
                 }
-                if !d.heardSpeech && seg.lastWasSpeech {
+                if d.deafFrames > 0 { d.deafFrames -= 1 } else if !d.heardSpeech && seg.lastWasSpeech {
                     // Drop the wait before the text, keeping a preroll so the first syllable is whole.
                     d.samples = Array(d.samples.suffix(frames(ms: config.cfg.prerollMs ?? 300) * frameLen + frameLen))
                     d.heardSpeech = true
@@ -651,6 +667,11 @@ final class Listener {
                 log("dictation started (cut at \(Int(start.cutAt * 1000)) ms)")
             } else {
                 dictation = Dictation(samples: [], silentFrames: 0, heardSpeech: false)
+                // Only here: in a one-breath dictation the user is already talking and the sound would be recorded.
+                if UserDefaults.standard.bool(forKey: soundKey) {
+                    NSSound(named: "Tink")?.play()
+                    dictation?.deafFrames = frames(ms: 600) // frames queued during STT predate the sound, so leave margin
+                }
                 log("dictation started (waiting for text)")
             }
             Hotkeys.begin()
@@ -717,6 +738,49 @@ func runCommand(_ command: String) {
 // MARK: menu bar app
 
 let deviceKey = "inputDeviceUID"
+let soundKey = "confirmationSound"
+
+/// Floating label at the top of the screen while a dictation is open; the menu bar may be hidden.
+final class HUD {
+    private let label = NSTextField(labelWithString: "")
+    private lazy var panel: NSPanel = {
+        let p = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+        p.level = .statusBar
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        p.ignoresMouseEvents = true
+        p.isOpaque = false
+        p.backgroundColor = .clear
+        p.hasShadow = true
+        let bg = NSVisualEffectView()
+        bg.material = .hudWindow
+        bg.state = .active
+        bg.wantsLayer = true
+        bg.layer?.cornerRadius = 12
+        label.font = .systemFont(ofSize: 15, weight: .semibold)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        bg.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: bg.centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: bg.centerYAnchor),
+        ])
+        p.contentView = bg
+        return p
+    }()
+
+    func show(_ phase: Listener.Phase) {
+        switch phase {
+        case .idle: panel.orderOut(nil); return
+        case .waiting: label.stringValue = "🎙 どうぞ"; label.textColor = .labelColor
+        case .recording: label.stringValue = "● 録音中"; label.textColor = .systemRed
+        }
+        // The screen with the mouse, so it shows where the user is looking on multi-monitor setups.
+        let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
+        guard let area = screen?.visibleFrame else { return }
+        let size = NSSize(width: 160, height: 40)
+        panel.setFrame(NSRect(x: area.midX - size.width / 2, y: area.maxY - size.height - 12, width: size.width, height: size.height), display: true)
+        panel.orderFrontRegardless()
+    }
+}
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let configPath: String
@@ -724,7 +788,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     let toggle = NSMenuItem(title: "一時停止", action: #selector(togglePause), keyEquivalent: "p")
     let login = NSMenuItem(title: "ログイン時に起動", action: #selector(toggleLogin), keyEquivalent: "")
+    let sound = NSMenuItem(title: "効果音", action: #selector(toggleSound), keyEquivalent: "")
     let micMenu = NSMenu()
+    let hud = HUD()
 
     init(configPath: String) { self.configPath = configPath }
 
@@ -738,6 +804,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(mic)
         menu.addItem(NSMenuItem(title: "設定ファイルを開く", action: #selector(openConfig), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "ログを開く", action: #selector(openLog), keyEquivalent: "l"))
+        menu.addItem(sound)
         menu.addItem(login)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
@@ -750,6 +817,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             fail("設定ファイルを読めません: \(configPath)\n\(error)"); return
         }
         listener = Listener(config: config)
+        listener.onPhase = { [hud] in hud.show($0) }
         listener.deviceUID = UserDefaults.standard.string(forKey: deviceKey)
         Task { @MainActor in
             do {
@@ -775,6 +843,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         toggle.title = on ? "一時停止" : "再開"
         toggle.isEnabled = listener != nil
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        sound.state = UserDefaults.standard.bool(forKey: soundKey) ? .on : .off
+    }
+
+    @objc func toggleSound() {
+        UserDefaults.standard.set(!UserDefaults.standard.bool(forKey: soundKey), forKey: soundKey)
+        refresh()
     }
 
     func fail(_ message: String) {
@@ -859,6 +933,9 @@ if mode == "--check" {
 } else if mode == "--simulate" {
     // Feeds a wav through the live consumer (VAD, wake word, dictation, handoff) instead of the mic.
     let listener = Listener(config: try ConfigFile(path: configPath))
+    _ = NSApplication.shared
+    let hud = HUD()
+    listener.onPhase = { log("phase: \($0)"); hud.show($0) }
     Task {
         do {
             try await ensureModel(Locale(identifier: listener.config.cfg.locale ?? "ja_JP"))
