@@ -2,7 +2,7 @@
 #
 # Default `make` follows $PC:
 #   PC=wsl | PC=WSL  → Windows voice-switch.exe (.NET)
-#   otherwise        → macOS VoiceSwitch.app (existing flow)
+#   otherwise        → macOS: quit, rebuild and relaunch VoiceSwitch.app (same as focusbm)
 #
 # Windows follows the WSL -> .NET Windows-targeting path.
 
@@ -19,7 +19,7 @@ PC_NORM := $(shell printf '%s' "$(PC)" | tr '[:upper:]' '[:lower:]')
 ifeq ($(PC_NORM),wsl)
 .DEFAULT_GOAL := win
 else
-.DEFAULT_GOAL := app
+.DEFAULT_GOAL := relaunch
 endif
 
 SWIFT ?= swift
@@ -32,7 +32,7 @@ WIN_TESTS := dotnet/VoiceSwitch.Windows.Tests/VoiceSwitch.Windows.Tests.csproj
 DOTNET_RESTORE_FLAGS ?= --ignore-failed-sources --disable-parallel
 RELEASE_DIR ?= $(CURDIR)/release
 
-.PHONY: build app install uninstall logs win win-restore win-build win-test parity-test win-publish win-verify help
+.PHONY: build app install relaunch uninstall logs win win-restore win-build win-test parity-test win-publish win-verify help
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -41,7 +41,7 @@ help: ## List targets
 build: ## macOS: swift build -c release
 	$(SWIFT) build -c release
 
-app: build ## macOS: wrap .build/release/voice-switch as VoiceSwitch.app (default when PC!=wsl)
+app: build ## macOS: wrap .build/release/voice-switch as VoiceSwitch.app
 	@if [ "$$(uname -s)" != "Darwin" ] && [ "$(PC_NORM)" != "wsl" ]; then \
 		echo "error: macOS app target requires Darwin. On WSL run: PC=wsl make" >&2; \
 		exit 1; \
@@ -58,11 +58,15 @@ install: app ## macOS: install into DEST and open
 	-launchctl bootout gui/$$(id -u)/$(ID) 2>/dev/null
 	rm -f $(OLD_PLIST) $(HOME)/.local/bin/voice-switch
 	-osascript -e 'quit app id "$(ID)"' 2>/dev/null
+	# open fails with -600 if it races the old instance still shutting down, so wait for it to exit.
+	@for i in $$(seq 50); do pgrep -x voice-switch >/dev/null || break; sleep 0.1; done
 	install -d $(DEST) $(dir $(CONFIG))
 	rm -rf $(DEST)/$(APP)
 	cp -R $(BUILT) $(DEST)/$(APP)
 	test -f $(CONFIG) || cp config.example.json $(CONFIG)
 	open $(DEST)/$(APP)
+
+relaunch: install ## macOS: quit, rebuild and relaunch (default when PC!=wsl)
 
 uninstall: ## macOS: remove installed app
 	-osascript -e 'quit app id "$(ID)"' 2>/dev/null

@@ -49,6 +49,9 @@ if mode == "--vad-selftest" {
     exit(0)
 } else if mode == "--simulate" {
     let listener = Listener(config: try ConfigFile(path: configPath))
+    _ = NSApplication.shared
+    let hud = HUD()
+    listener.onPhase = { log("phase: \($0)"); hud.show($0) }
     Task {
         do {
             try await ensureModel(Locale(identifier: listener.config.cfg.locale ?? "ja_JP"))

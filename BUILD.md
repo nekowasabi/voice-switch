@@ -4,7 +4,7 @@
 
 | Environment | Default `make` | What you get |
 |---|---|---|
-| unset / anything except `wsl` | `make app` | macOS `VoiceSwitch.app` |
+| unset / anything except `wsl` | `make relaunch` | macOS `VoiceSwitch.app`, quit, reinstalled, and reopened |
 | `PC=wsl` or `PC=WSL` | `make win` | Windows `.NET` build, tests, and publish |
 
 Case-insensitive `PC=wsl` and `PC=WSL` both select Windows. The Windows default release directory is `$(CURDIR)/release`. Pass `RELEASE_DIR` when you need a Windows-local folder from WSL.
