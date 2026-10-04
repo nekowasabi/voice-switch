@@ -66,6 +66,8 @@ public sealed class WindowsDictationRuntime
     // Finish pressed while the body was heard but not yet recognized; honored once the body makes the session active.
     private bool finishRequested;
     private nint target;
+    // Frames before this sample index carry our own confirmation sound, which must not count as the text starting.
+    private long deafUntil;
 
     public WindowsDictationRuntime(
         VoiceSwitchConfig config,
@@ -398,7 +400,9 @@ public sealed class WindowsDictationRuntime
 
         originalStore.Append(frame.Start, frame.Original.AsSpan());
         analysisStore.Append(frame.Start, frame.Analysis.AsSpan());
-        var ev = segmenter.Push(ToFloat(frame.Analysis.AsSpan()));
+        segmenter.AdaptFloor = !(session.IsActive || session.IsAwaitingBody);
+        // Only the VAD goes deaf; the stores keep the real audio so SAPI and the preroll stay intact.
+        var ev = segmenter.Push(frame.Start < deafUntil ? new float[frame.Analysis.Length] : ToFloat(frame.Analysis.AsSpan()));
         if (segmenter.LastWasSpeech != lastVadSpeech)
         {
             Log.Info(segmenter.LastWasSpeech
@@ -535,6 +539,13 @@ public sealed class WindowsDictationRuntime
         if (phase == shownPhase || (shownPhase == DictationPhase.Ended && phase == DictationPhase.Idle))
         {
             return;
+        }
+
+        // Only a lone wake word: in a one-breath dictation the user is already talking and the sound would be recorded.
+        // A repeated wake word while waiting drops Recording back to Waiting and must stay silent.
+        if (phase == DictationPhase.Waiting && shownPhase is DictationPhase.Idle or DictationPhase.Ended && observer?.PlayWakeSound() == true)
+        {
+            deafUntil = analysisStore.Next + MsToSamples(600);
         }
 
         shownPhase = phase;
