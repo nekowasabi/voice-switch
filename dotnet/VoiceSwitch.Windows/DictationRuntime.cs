@@ -66,6 +66,8 @@ public sealed class WindowsDictationRuntime
     // Finish pressed while the body was heard but not yet recognized; honored once the body makes the session active.
     private bool finishRequested;
     private nint target;
+    // Mac heardSpeech: once the voice after the wake word is heard it stays heard, so a repeated wake word keeps 録音中.
+    private bool heardAfterWake;
     // Frames before this sample index carry our own confirmation sound, which must not count as the text starting.
     private long deafUntil;
 
@@ -467,6 +469,7 @@ public sealed class WindowsDictationRuntime
         lastSilenceDiagnosticKey = null;
         target = 0;
         finishRequested = false;
+        heardAfterWake = false;
         hotkeys?.End();
         return new DictationSession(config);
     }
@@ -488,7 +491,7 @@ public sealed class WindowsDictationRuntime
             return true;
         }
 
-        if (command == DictationCommand.Finish && session.AwaitingWakeSourceEnd is long wakeEnd && lastLiveSpeechEnd > wakeEnd)
+        if (command == DictationCommand.Finish && session.IsAwaitingBody && HeardAfterWake(session, lastLiveSpeechEnd))
         {
             Log.Info("dictation finish requested before the body was recognized");
             finishRequested = true;
@@ -528,9 +531,12 @@ public sealed class WindowsDictationRuntime
     {
         PublishPhase(endedByUser ? DictationPhase.Ended
             : session.IsActive ? DictationPhase.Recording
-            : session.AwaitingWakeSourceEnd is long wakeEnd ? (lastLiveSpeechEnd > wakeEnd ? DictationPhase.Recording : DictationPhase.Waiting)
+            : session.IsAwaitingBody ? (HeardAfterWake(session, lastLiveSpeechEnd) ? DictationPhase.Recording : DictationPhase.Waiting)
             : DictationPhase.Idle);
     }
+
+    private bool HeardAfterWake(DictationSession session, long lastLiveSpeechEnd) =>
+        heardAfterWake |= session.AwaitingWakeSourceEnd is long wakeEnd && lastLiveSpeechEnd > wakeEnd;
 
     private void PublishPhase(DictationPhase phase)
     {
@@ -542,8 +548,7 @@ public sealed class WindowsDictationRuntime
         }
 
         // Only a lone wake word: in a one-breath dictation the user is already talking and the sound would be recorded.
-        // A repeated wake word while waiting drops Recording back to Waiting and must stay silent.
-        if (phase == DictationPhase.Waiting && shownPhase is DictationPhase.Idle or DictationPhase.Ended && observer?.PlayWakeSound() == true)
+        if (phase == DictationPhase.Waiting && observer?.PlayWakeSound() == true)
         {
             deafUntil = analysisStore.Next + MsToSamples(600);
         }
