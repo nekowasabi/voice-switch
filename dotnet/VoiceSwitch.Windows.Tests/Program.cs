@@ -70,7 +70,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation hotkey finish while recording submits FinishCommand", () => Check(DictationHotkeyFinishWhileRecordingSubmitsFinishCommand())),
     ("dictation hotkey cancel while recording submits nothing", () => Check(DictationHotkeyCancelWhileRecordingSubmitsNothing())),
     ("dictation hotkey finish while waiting without speech is ignored", () => Check(DictationHotkeyFinishWhileWaitingIsIgnored())),
-    ("dictation hotkey finish after speech waits for the body recognition", () => Check(DictationHotkeyFinishAfterSpeechWaitsForBody())),
+    ("dictation hotkey finish after speech hands off before the body is recognized", () => Check(DictationHotkeyFinishAfterSpeechHandsOffBeforeBody())),
     ("dictation hotkeys disarm when the runtime stops mid-dictation", () => Check(DictationHotkeysDisarmWhenRuntimeStopsMidDictation())),
     ("dictation wake sound deafens the VAD for 600 ms", () => Check(DictationWakeSoundDeafensVad())),
     ("dictation WinMM native layout and callback message", () => Check(DictationWinMmNativeLayoutAndInputDataMessage())),
@@ -1438,17 +1438,14 @@ static bool DictationHotkeyFinishWhileWaitingIsIgnored()
         && observer.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Idle]);
 }
 
-static bool DictationHotkeyFinishAfterSpeechWaitsForBody()
+static bool DictationHotkeyFinishAfterSpeechHandsOffBeforeBody()
 {
-    var before = new List<PcmFrame>();
-    AddFrames(before, 3, loud: false);
-    AddFrames(before, 12, loud: true);
-    AddFrames(before, 12, loud: false);
-    AddFrames(before, 12, loud: true);
-    AddFrames(before, 12, loud: false);
-    var after = new List<PcmFrame>(before);
-    AddFrames(after, 12, loud: false);
-    after = after.Skip(before.Count).ToList();
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 12, loud: false);
+    AddFrames(frames, 8, loud: true);
+    AddFrames(frames, 40, loud: false);
     var hotkeys = new DictationHotkeys();
     var observer = new PhaseRecorder(phase =>
     {
@@ -1457,34 +1454,35 @@ static bool DictationHotkeyFinishAfterSpeechWaitsForBody()
             hotkeys.OnKey(0x20, KeyMods.Control, down: true, nowMs: 0);
         }
     });
+    // The wake word ends at 4800, well before its utterance closes at 12000 after the hangover.
     var recognizer = new ScriptedDictationRecognizer(async request =>
     {
-        if (request.Id == 2)
+        if (request.Id == 1)
         {
-            await Task.Delay(300);
+            return new RecognizedUtterance(1, request.Extent, request.Range, "音声入力", [Run("音声入力", 0, 4800)]);
         }
 
-        return Utterance(request, request.Id == 1 ? "wake" : "body");
+        await Task.Delay(1000);
+        return Utterance(request, "body");
     });
-    using var bodyStarted = new ManualResetEventSlim(false);
     var handoff = new RecordingDictationHandoff();
-    // The pause after frame 28 lets Finish arrive while the body is heard but not yet recognized (the latch path).
-    var capture = new GatedPcmCapture(before, after, bodyStarted, [24, 28]);
+    // Pauses let the wake land and then the key arrive two body frames in, as it would at 30 ms per frame.
+    var capture = new FixturePcmCapture(frames, [24, 28]);
     var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 5000), capture, recognizer, handoff, dryRun: true, observer, hotkeys: hotkeys, readShortcuts: () => null);
-    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output, line =>
-    {
-        if (line.Contains("dictation session: body-start", StringComparison.Ordinal))
-        {
-            bodyStarted.Set();
-        }
-    });
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output);
     var audio = handoff.Submissions.SingleOrDefault();
+    var handedOff = output.IndexOf("dictation ended by hotkey", StringComparison.Ordinal);
+    var bodyQueued = output.IndexOf("dictation recognition: enqueued id=2", StringComparison.Ordinal);
+    // The body's speech starts at frame 27 (12960); the 90 ms preroll keeps the three frames before it.
     return code == 0
-        && capture.GateWasReached
-        && output.Contains("dictation finish requested before the body was recognized", StringComparison.Ordinal)
         && audio is not null
         && audio.Reason == FinishReason.FinishCommand
-        && audio.Range == new SampleRange(recognizer.Requests[1].Range.Start, recognizer.Requests[1].Range.End)
+        && audio.Range.Start == 11520
+        && audio.Range.End is >= 13440 and <= 14400
+        && handedOff >= 0
+        && bodyQueued > handedOff
+        && output.Contains("dictation recognition: stale id=2", StringComparison.Ordinal)
+        && !output.Contains("dictation session: body-start", StringComparison.Ordinal)
         && observer.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Recording, DictationPhase.Ended]);
 }
 
