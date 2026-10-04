@@ -31,7 +31,7 @@ WIN_APP := dotnet/VoiceSwitch.Windows/VoiceSwitch.Windows.csproj
 WIN_TRAY := dotnet/VoiceSwitch.Windows.Tray/VoiceSwitch.Windows.Tray.csproj
 WIN_TESTS := dotnet/VoiceSwitch.Windows.Tests/VoiceSwitch.Windows.Tests.csproj
 DOTNET_RESTORE_FLAGS ?= --ignore-failed-sources --disable-parallel
-RELEASE_DIR ?= $(CURDIR)/artifacts/windows
+RELEASE_DIR ?= $(CURDIR)/release
 
 .PHONY: build app install uninstall logs win win-restore win-build win-test parity-test win-publish win-tray-publish win-verify help
 

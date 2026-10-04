@@ -12,7 +12,7 @@ The bundle identifier is `local.voice-switch`. `Info.plist` sets `LSMinimumSyste
 |---|---|---|
 | Menu / tray UI | Menu-bar app | Console resident and WinForms tray host |
 | Wake-word recognition | Apple SpeechTranscriber over segmented utterances | Windows SAPI constrained grammar for configured words |
-| Superwhisper hook | `open -g superwhisper://record` | `cmd /c start "" superwhisper://record` |
+| Superwhisper hook | `open -g superwhisper://record` | `rundll32 url.dll,FileProtocolHandler superwhisper://record` |
 | Build | `make` | `PC=wsl make` |
 
 See [BUILD.md](./BUILD.md) for `$PC` details and verification.
@@ -75,7 +75,7 @@ A successful Mac build of that branch is not claimed here. It is also not claime
 ```sh
 export PC=wsl
 make win-verify   # no SDK required
-make              # build, test, publish to ./artifacts/windows
+make              # build, test, publish to ./release
 ```
 
 For a Windows-local validation folder from WSL, pass the destination explicitly:
