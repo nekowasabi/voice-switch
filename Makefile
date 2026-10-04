@@ -89,7 +89,7 @@ parity-test: ## Run macOS/Windows parity contract checks
 
 win-publish: win-build ## Windows: publish voice-switch.exe to RELEASE_DIR
 	mkdir -p "$(RELEASE_DIR)"
-	# The tray used to ship as a second exe; drop its leftovers so release/ holds one app.
+	@# The tray used to ship as a second exe; drop its leftovers so release/ holds one app.
 	rm -f "$(RELEASE_DIR)"/voice-switch-tray.*
 	$(DOTNET) publish $(WIN_APP) -c $(WIN_CONFIG) -r $(WIN_RID) --self-contained false \
 		-p:PublishSingleFile=false \
