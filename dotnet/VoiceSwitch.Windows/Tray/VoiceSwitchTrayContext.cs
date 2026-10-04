@@ -15,6 +15,7 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
     private readonly ToolStripMenuItem statusItem = new("状態") { Name = "status" };
     private readonly ToolStripMenuItem startItem = new("再開") { Name = "start" };
     private readonly ToolStripMenuItem pauseItem = new("一時停止") { Name = "pause" };
+    private readonly ToolStripMenuItem micItem = new("マイク") { Name = "mic" };
     private readonly ToolStripMenuItem openConfigItem = new("設定ファイルを開く") { Name = "open-config" };
     private readonly ToolStripMenuItem reloadItem = new("設定を再読み込み") { Name = "reload" };
     private readonly ToolStripMenuItem openLogItem = new("ログを開く") { Name = "open-log" };
@@ -23,6 +24,8 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
     private readonly ToolStripMenuItem errorItem = new("直近のエラー") { Name = "error" };
     private readonly ToolStripMenuItem quitItem = new("終了") { Name = "quit" };
     private readonly LoginItem login = new();
+    private int deviceTicks;
+    private string? lastEffectiveDevice;
     private readonly int uiThreadId;
     private readonly System.Windows.Forms.Timer diagnosticsTimer;
     private TraySnapshot snapshot;
@@ -37,7 +40,10 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
         supervisor.SnapshotChanged += OnSnapshotChanged;
 
         menu = new ContextMenuStrip();
-        menu.Items.AddRange([statusItem, startItem, pauseItem, new ToolStripSeparator(), openConfigItem, reloadItem, openLogItem, soundItem, loginItem, errorItem, new ToolStripSeparator(), quitItem]);
+        menu.Items.AddRange([statusItem, startItem, pauseItem, new ToolStripSeparator(), micItem, openConfigItem, reloadItem, openLogItem, soundItem, loginItem, errorItem, new ToolStripSeparator(), quitItem]);
+        // Rebuilt on every open so plugged and unplugged devices show up (Mac menuNeedsUpdate).
+        micItem.DropDownItems.Add(new ToolStripMenuItem("-"));
+        micItem.DropDownOpening += (_, _) => FillMicMenu();
 
         statusItem.Enabled = false;
         soundItem.Checked = TraySettings.ConfirmationSound;
@@ -80,6 +86,10 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
             if (!disposed)
             {
                 ApplySnapshot(supervisor.Snapshot);
+                if (++deviceTicks % 4 == 0)
+                {
+                    FollowDevice();
+                }
             }
         };
         diagnosticsTimer.Start();
@@ -197,7 +207,7 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
         PublishDiagnosticsOnUi();
     }
 
-    private async Task RunCommandAsync(TrayCommand command, CancellationToken cancellation = default)
+    private async Task RunCommandAsync(TrayCommand command, CancellationToken cancellation = default, bool quiet = false)
     {
         try
         {
@@ -219,9 +229,13 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
                     break;
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!quiet)
         {
             MessageBox.Show(ex.Message, "voice-switch tray", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        catch (Exception ex)
+        {
+            Log.Info($"tray: {command} failed: {ex.Message}");
         }
     }
 
@@ -255,6 +269,42 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
         }
 
         return done.Task;
+    }
+
+    private void FillMicMenu()
+    {
+        var pinned = TraySettings.MicDevice;
+        micItem.DropDownItems.Clear();
+        foreach (var (title, name) in new (string, string?)[] { ("システムのデフォルト", null) }.Concat(WinMmCapture.InputDevices().Select(d => (d, (string?)d))))
+        {
+            var item = new ToolStripMenuItem(title) { Checked = name == pinned };
+            item.Click += async (_, _) =>
+            {
+                TraySettings.MicDevice = name;
+                Log.Info($"tray: microphone {name ?? "system default"}");
+                await RunCommandAsync(TrayCommand.Reload);
+            };
+            micItem.DropDownItems.Add(item);
+        }
+    }
+
+    // WinMM never tells an open capture that its device went away or that the default changed, so every 2 s the
+    // device a fresh open would pick is compared with the one in use; a difference restarts the run onto it.
+    private void FollowDevice()
+    {
+        var effective = WinMmCapture.EffectiveDevice(TraySettings.MicDevice);
+        var changed = effective != lastEffectiveDevice;
+        lastEffectiveDevice = effective;
+        if (snapshot.State == TrayState.Listening && WinMmCapture.CurrentDevice is { } current && current != effective)
+        {
+            Log.Info($"tray: microphone changed from {current} to {effective ?? "none"}; restarting");
+            _ = RunCommandAsync(TrayCommand.Reload, quiet: true);
+        }
+        else if (snapshot.State == TrayState.Error && changed && effective is not null)
+        {
+            Log.Info($"tray: microphone {effective} is available; starting");
+            _ = RunCommandAsync(TrayCommand.Start, quiet: true);
+        }
     }
 
     private static string StateLabel(TrayState state) => state switch

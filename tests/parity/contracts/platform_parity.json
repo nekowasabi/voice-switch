@@ -257,6 +257,17 @@
         "file": "dotnet/VoiceSwitch.Windows/Tray/WindowFocus.cs",
         "markers": ["GetForegroundWindow()", "SetForegroundWindow(target)", "\"Superwhisper\""]
       }
+    },
+    {
+      "id": "menu_bar_device_and_login_items",
+      "macos": {
+        "file": "Sources/voice-switch/MacApp.swift",
+        "markers": ["NSStatusBar.system.statusItem", "AVCaptureDevice.DiscoverySession", "SMAppService.mainApp"]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows/Tray/VoiceSwitchTrayContext.cs",
+        "markers": ["new NotifyIcon", "WinMmCapture.InputDevices()", "LoginItem", "FollowDevice"]
+      }
     }
   ],
   "allowed_capability_gaps": [
@@ -277,15 +288,6 @@
         "markers": ["micInUse(by:", "stop word, nothing is recording", "stopCommand ?? Platform.defaultSuperwhisperToggle"]
       },
       "reason": "Windows command mode, when dictation is absent, dispatches configured stop words directly instead of using the macOS session/mic-in-use guard; the Windows dictation runtime has its own session-gated stop handling."
-    },
-    {
-      "id": "menu_bar_device_and_login_items",
-      "platform": "windows",
-      "macos": {
-        "file": "Sources/voice-switch/MacApp.swift",
-        "markers": ["NSStatusBar.system.statusItem", "AVCaptureDevice.DiscoverySession", "SMAppService.mainApp"]
-      },
-      "reason": "The Windows tray now has the mic / mic-slash icon, open config, open log, and a login (HKCU Run) toggle, but no microphone picker yet."
     },
     {
       "id": "windows_speech_diagnostics",

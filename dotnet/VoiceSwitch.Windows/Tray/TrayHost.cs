@@ -51,7 +51,8 @@ public static class TrayHost
                     PlayWakeSound: TraySettings.PlayWakeSound,
                     ForegroundWindow: WindowFocus.Foreground,
                     RestoreFocus: target => hud.Post(() => WindowFocus.RestoreIfSuperwhisperForeground(target)),
-                    Hotkeys: hotkeys)),
+                    Hotkeys: hotkeys,
+                    MicDevice: () => TraySettings.MicDevice)),
                 instance.Key);
 
             using var context = new VoiceSwitchTrayContext(supervisor);

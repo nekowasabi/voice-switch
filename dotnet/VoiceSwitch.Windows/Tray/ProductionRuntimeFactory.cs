@@ -8,7 +8,8 @@ public sealed record TrayRuntimeHooks(
     Func<bool>? PlayWakeSound = null,
     Func<nint>? ForegroundWindow = null,
     Action<nint>? RestoreFocus = null,
-    DictationHotkeys? Hotkeys = null);
+    DictationHotkeys? Hotkeys = null,
+    Func<string?>? MicDevice = null);
 
 public sealed class ProductionRuntimeFactory(string configPath, TrayRuntimeHooks? hooks = null) : ITrayRuntimeFactory
 {
@@ -29,7 +30,7 @@ public sealed class ProductionRuntimeFactory(string configPath, TrayRuntimeHooks
         }
 
         IPcmCapture capture = source.WavPath is null
-            ? WinMmCapture.Open()
+            ? WinMmCapture.Open(hooks.MicDevice?.Invoke())
             : new WavPcmCapture(source.WavPath, paced: true);
         IDictationHandoff handoff = source.RecordOnlyDir is null
             ? new RegisteredSuperwhisperHandoff(RegisteredSuperwhisperHandoff.DefaultRoot(), WindowsPaths.SuperwhisperRecordingsPath(config.Dictation), restoreFocus: hooks.RestoreFocus)

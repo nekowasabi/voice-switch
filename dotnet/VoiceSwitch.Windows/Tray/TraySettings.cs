@@ -8,6 +8,30 @@ public static class TraySettings
 {
     private const string Key = @"Software\voice-switch";
     private const string ConfirmationSoundValue = "ConfirmationSound";
+    private const string MicDeviceValue = "MicDevice";
+
+    // The input device chosen in the マイク menu, by WinMM name; null follows the system default (Mac deviceUID).
+    public static string? MicDevice
+    {
+        get => OperatingSystem.IsWindows() ? Registry.GetValue($@"HKEY_CURRENT_USER\{Key}", MicDeviceValue, null) as string : null;
+        set
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
+            using var key = Registry.CurrentUser.CreateSubKey(Key);
+            if (value is null)
+            {
+                key.DeleteValue(MicDeviceValue, throwOnMissingValue: false);
+            }
+            else
+            {
+                key.SetValue(MicDeviceValue, value, RegistryValueKind.String);
+            }
+        }
+    }
 
     public static bool ConfirmationSound
     {
