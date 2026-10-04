@@ -14,6 +14,10 @@
     <Compile Include="..\..\..\dotnet\VoiceSwitch.Windows\Tray\TrayIpc.cs" Link="VoiceSwitch.Windows.Tray.Ipc.cs" />
     <Compile Include="..\..\..\dotnet\VoiceSwitch.Windows\Tray\TrayRuntimeSupervisor.cs" Link="VoiceSwitch.Windows.Tray.Supervisor.cs" />
     <Compile Include="..\..\..\dotnet\VoiceSwitch.Windows\Tray\VoiceSwitchTrayContext.cs" Link="VoiceSwitch.Windows.Tray.Context.cs" />
+    <Compile Include="..\..\..\dotnet\VoiceSwitch.Windows\Tray\TraySettings.cs" Link="VoiceSwitch.Windows.Tray.Settings.cs" />
+    <Compile Include="..\..\..\dotnet\VoiceSwitch.Windows\Tray\TrayIcons.cs" Link="VoiceSwitch.Windows.Tray.Icons.cs" />
+    <Compile Include="..\..\..\dotnet\VoiceSwitch.Windows\Tray\LoginItem.cs" Link="VoiceSwitch.Windows.Tray.LoginItem.cs" />
+    <Compile Include="..\..\..\dotnet\VoiceSwitch.Windows\MicInUse.cs" Link="VoiceSwitch.Windows.MicInUse.cs" />
     <Compile Include="..\SyntheticDictationRuntimeHarness\Log.cs" Link="Log.cs" />
     <ProjectReference Include="..\..\..\dotnet\VoiceSwitch.Windows.Core\VoiceSwitch.Windows.Core.csproj" />
   </ItemGroup>
