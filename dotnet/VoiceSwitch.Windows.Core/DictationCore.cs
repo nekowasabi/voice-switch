@@ -61,7 +61,9 @@ public enum DictationPhase
     Ended
 }
 
-public sealed record LexicalRun(string Text, SampleRange Range);
+public sealed record LexicalRun(string Text, SampleRange Range, string? Reading = null);
+
+public sealed record RecognitionAlternate(string Text, string Reading);
 
 public sealed record RecognitionRequest(long Id, RecognitionExtent Extent, SampleRange Range, ImmutableArray<short> Samples);
 
@@ -76,7 +78,9 @@ public sealed record RecognizedUtterance(
     // What SAPI heard but rejected as too uncertain; diagnostics only, never part of Text or Lexemes.
     string? RejectedText = null,
     // Every accepted result came from the constrained stop-word grammar, none from free dictation.
-    bool FromStopGrammar = false);
+    bool FromStopGrammar = false,
+    // SAPI's runner-up readings of the same audio; diagnostics only.
+    ImmutableArray<RecognitionAlternate> Alternates = default);
 
 public sealed record DictationEvent(string Kind, FinishReason? Reason, SampleRange? Range, Guid? SessionId = null)
 {

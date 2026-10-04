@@ -260,7 +260,7 @@ public sealed class WindowsDictationRuntime
                             // a stop-word candidate, so its text, grammar and confidence are logged to make stop misses tunable.
                             var heard = (session.IsActive || session.IsAwaitingBody) && observed.Extent != RecognitionExtent.ClosedUtterance
                                 ? ""
-                                : $" text=\"{observed.Text}\" conf={(observed.Confidence is double conf ? conf.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) : "-")}{(observed.RejectedText is { } rejectedText ? $" rejectedText=\"{rejectedText}\"" : "")} grammar={(observed.FromStopGrammar ? "stop" : "dictation")}";
+                                : $" text=\"{observed.Text}\" conf={(observed.Confidence is double conf ? conf.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) : "-")}{(observed.RejectedText is { } rejectedText ? $" rejectedText=\"{rejectedText}\"" : "")} grammar={(observed.FromStopGrammar ? "stop" : "dictation")} reading=\"{string.Join(' ', observed.Lexemes.Where(lexeme => lexeme.Reading is not null).Select(lexeme => lexeme.Reading))}\"{(observed.Alternates.IsDefaultOrEmpty ? "" : $" alts=\"{string.Join('|', observed.Alternates.Select(alternate => $"{alternate.Text}/{alternate.Reading}"))}\"")}";
                             Log.Info($"dictation recognition: complete id={outcome.Work.Request.Id} extent={outcome.Work.Request.Extent} range={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End} rejected={observed.HadRejectedSpeech} leadingWake={leadingWake} standaloneStop={stopRange is not null} stopRange={(stopRange is null ? "-" : $"{stopRange.Value.Start}..{stopRange.Value.End}")} pendingBefore={pendingBefore}{heard}");
                         }
                         observer?.RecognitionCompleted(outcome.Work.Request, outcome.Recognition, outcome.Error);
@@ -1457,7 +1457,7 @@ public sealed class SpeechPowerShellDictationRecognizer : IDictationRecognizer, 
         }
 
         var lexemes = (dto.Lexemes ?? [])
-            .Select(item => new LexicalRun(item.Text ?? "", new SampleRange(item.Start, item.End)))
+            .Select(item => new LexicalRun(item.Text ?? "", new SampleRange(item.Start, item.End), string.IsNullOrEmpty(item.Reading) ? null : item.Reading))
             .ToImmutableArray();
         if (lexemes.Any(item => item.Range.Start < request.Range.Start || item.Range.End > request.Range.End))
         {
@@ -1473,7 +1473,8 @@ public sealed class SpeechPowerShellDictationRecognizer : IDictationRecognizer, 
             dto.Rejected,
             dto.Confidence >= 0 ? dto.Confidence : null,
             string.IsNullOrEmpty(dto.RejectedText) ? null : dto.RejectedText,
-            dto.StopGrammar);
+            dto.StopGrammar,
+            (dto.Alternates ?? []).Select(item => new RecognitionAlternate(item.Text ?? "", item.Reading ?? "")).ToImmutableArray());
     }
 
     internal static async Task RetainUntilProcessExitedAsync(Func<bool> hasExited, Action requestKill, TimeSpan? retryDelay = null)
@@ -1690,8 +1691,9 @@ public sealed class SpeechPowerShellDictationRecognizer : IDictationRecognizer, 
         return bytes;
     }
 
-    private sealed record RecognitionDto(string? Type, string? Message, long Id, string? Text, bool Rejected, LexemeDto[] Lexemes, double Confidence = -1.0, string? RejectedText = null, bool StopGrammar = false);
-    private sealed record LexemeDto(string? Text, long Start, long End);
+    private sealed record RecognitionDto(string? Type, string? Message, long Id, string? Text, bool Rejected, LexemeDto[] Lexemes, double Confidence = -1.0, string? RejectedText = null, bool StopGrammar = false, AlternateDto[]? Alternates = null);
+    private sealed record LexemeDto(string? Text, long Start, long End, string? Reading = null);
+    private sealed record AlternateDto(string? Text, string? Reading);
 
 // Protocol: each request is a 28-byte little-endian header (int64 id, int64 start, int64 end, int32 pcmLength) followed by
 // the PCM bytes; each answer is one JSON line. A "ready" line precedes the first answer; EOF on stdin ends the child.
@@ -1729,6 +1731,7 @@ public sealed class VoiceSwitchSapiCollector
     private readonly List<string> texts = new List<string>();
     private readonly List<string> rejectedTexts = new List<string>();
     private readonly List<VoiceSwitchLexeme> lexemes = new List<VoiceSwitchLexeme>();
+    private readonly List<VoiceSwitchAlternate> alternates = new List<VoiceSwitchAlternate>();
     private readonly ManualResetEventSlim done = new ManualResetEventSlim(false);
     private bool rejected;
     private double confidence = -1.0;
@@ -1751,6 +1754,7 @@ public sealed class VoiceSwitchSapiCollector
     // Lowest confidence over the accepted and rejected results; -1 when SAPI returned none.
     public double Confidence { get { return confidence; } }
     public VoiceSwitchLexeme[] Lexemes { get { return lexemes.ToArray(); } }
+    public VoiceSwitchAlternate[] Alternates { get { return alternates.ToArray(); } }
     public string Error { get { return error; } }
     // Every accepted result came from the stop-word grammar; a body phrase that also yielded a dictation result is not a stop.
     public bool StopGrammar { get { return stopResults > 0 && dictationResults == 0; } }
@@ -1831,12 +1835,40 @@ public sealed class VoiceSwitchSapiCollector
                     continue;
                 }
 
-                lexemes.Add(new VoiceSwitchLexeme(word.Text, start, end));
+                lexemes.Add(new VoiceSwitchLexeme(word.Text, word.LexicalForm ?? "", start, end));
             }
             catch
             {
                 rejected = true;
             }
+        }
+
+        // Alternates are diagnostics only, so a failure reading them must not reject the recognized text.
+        try
+        {
+            foreach (RecognizedPhrase alternate in result.Alternates)
+            {
+                if (alternates.Count >= 3)
+                {
+                    break;
+                }
+
+                if (alternate.Text == result.Text)
+                {
+                    continue;
+                }
+
+                var reading = new List<string>();
+                foreach (RecognizedWordUnit unit in alternate.Words)
+                {
+                    reading.Add(unit.LexicalForm ?? "");
+                }
+
+                alternates.Add(new VoiceSwitchAlternate(alternate.Text, string.Concat(reading)));
+            }
+        }
+        catch
+        {
         }
     }
 
@@ -1885,16 +1917,30 @@ public sealed class VoiceSwitchSapiCollector
 
 public sealed class VoiceSwitchLexeme
 {
-    public VoiceSwitchLexeme(string text, long start, long end)
+    public VoiceSwitchLexeme(string text, string reading, long start, long end)
     {
         Text = text;
+        Reading = reading;
         Start = start;
         End = end;
     }
 
     public string Text { get; private set; }
+    public string Reading { get; private set; }
     public long Start { get; private set; }
     public long End { get; private set; }
+}
+
+public sealed class VoiceSwitchAlternate
+{
+    public VoiceSwitchAlternate(string text, string reading)
+    {
+        Text = text;
+        Reading = reading;
+    }
+
+    public string Text { get; private set; }
+    public string Reading { get; private set; }
 }
 "@
 $infos = [System.Speech.Recognition.SpeechRecognitionEngine]::InstalledRecognizers()
@@ -1916,7 +1962,7 @@ while ($true) {
     $collector = [VoiceSwitchSapiCollector]::new($requestId, $requestStart, $requestEnd)
     $collector.Run($info, $pcm, $stopWords)
     if ($collector.Error) { Send-Json @{ type='error'; id=$requestId; message=$collector.Error }; continue }
-    Send-Json @{ id=$collector.Id; text=$collector.Text; rejected=$collector.Rejected; rejectedText=$collector.RejectedText; confidence=$collector.Confidence; stopGrammar=$collector.StopGrammar; lexemes=@($collector.Lexemes | ForEach-Object { @{ text=$_.Text; start=$_.Start; end=$_.End } }) }
+    Send-Json @{ id=$collector.Id; text=$collector.Text; rejected=$collector.Rejected; rejectedText=$collector.RejectedText; confidence=$collector.Confidence; stopGrammar=$collector.StopGrammar; lexemes=@($collector.Lexemes | ForEach-Object { @{ text=$_.Text; reading=$_.Reading; start=$_.Start; end=$_.End } }); alternates=@($collector.Alternates | ForEach-Object { @{ text=$_.Text; reading=$_.Reading } }) }
   } catch {
     Send-Json @{ type='error'; id=$requestId; message=$_.Exception.Message }
   }

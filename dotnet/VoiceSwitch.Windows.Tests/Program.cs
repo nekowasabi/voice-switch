@@ -1401,8 +1401,11 @@ static bool DictationRuntimeLogsShortUtterancesButKeepsLongBodyPrivate()
         && shortOutput.Contains("leadingWake=True standaloneStop=False stopRange=- pendingBefore=1 text=\"音声入力\" conf=- grammar=dictation", StringComparison.Ordinal)
         && shortOutput.Contains("extent=ClosedUtterance", StringComparison.Ordinal)
         && shortOutput.Contains("text=\"本文\" conf=- grammar=dictation", StringComparison.Ordinal)
+        && shortOutput.Contains("text=\"音声入力\" conf=- grammar=dictation reading=\"おんせい にゅうりょく\"", StringComparison.Ordinal)
+        && shortOutput.Contains("text=\"本文\" conf=- grammar=dictation reading=\"ほんぶん\"", StringComparison.Ordinal)
         && longOutput.Contains("extent=PrefixHead", StringComparison.Ordinal)
-        && !longOutput.Contains("本文", StringComparison.Ordinal);
+        && !longOutput.Contains("本文", StringComparison.Ordinal)
+        && !longOutput.Contains("ほんぶん", StringComparison.Ordinal);
 }
 
 static bool DictationRuntimeAppliesReloadedConfigWhenIdle()
@@ -1841,8 +1844,8 @@ static bool DictationWakeSoundDeafensVad()
 
 static RecognizedUtterance Utterance(RecognitionRequest request, string kind) => kind switch
 {
-    "wake" => new(request.Id, request.Extent, request.Range, "音声入力", [Run("音声入力", request.Range.Start, request.Range.End)]),
-    "body" => new(request.Id, request.Extent, request.Range, "本文", [Run("本文", request.Range.Start + Segmenter.FrameLength, request.Range.End)]),
+    "wake" => new(request.Id, request.Extent, request.Range, "音声入力", [Run("音声入力", request.Range.Start, request.Range.End, "おんせい にゅうりょく")]),
+    "body" => new(request.Id, request.Extent, request.Range, "本文", [Run("本文", request.Range.Start + Segmenter.FrameLength, request.Range.End, "ほんぶん")]),
     "stop" => new(request.Id, request.Extent, request.Range, "入力ストップ", [Run("入力ストップ", request.Range.Start + Segmenter.FrameLength, request.Range.Start + Segmenter.FrameLength * 3)]),
     _ => new(request.Id, request.Extent, request.Range, "音声入力本文", [Run("音声入力", request.Range.Start, request.Range.Start + Segmenter.FrameLength), Run("本文", request.Range.Start + Segmenter.FrameLength, request.Range.End)])
 };
@@ -3121,7 +3124,7 @@ static SampleStore StoreWithRamp(long start, int length)
     return store;
 }
 
-static LexicalRun Run(string text, long start, long end) => new(text, new SampleRange(start, end));
+static LexicalRun Run(string text, long start, long end, string? reading = null) => new(text, new SampleRange(start, end), reading);
 
 static RecognizedUtterance Recognized(long id, RecognitionExtent extent, long start, long end, string text, bool rejected, params LexicalRun[] runs) =>
     new(id, extent, new SampleRange(start, end), text, runs.ToImmutableArray(), rejected);
