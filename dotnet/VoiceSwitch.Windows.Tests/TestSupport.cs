@@ -122,12 +122,18 @@ sealed class FakeTrayRuntimeRun : ITrayRuntimeRun
 sealed class FixturePcmCapture : IPcmCapture
 {
     private readonly IReadOnlyList<PcmFrame> frames;
-    private readonly int? delayAfterFrame;
+    private readonly IReadOnlyCollection<int> delayAfterFrames;
 
     public FixturePcmCapture(IReadOnlyList<PcmFrame> frames, int? delayAfterFrame = null)
+        : this(frames, delayAfterFrame is int index ? [index] : [])
+    {
+    }
+
+    // A 100 ms pause after each listed frame lets a queued recognition land before the next frames arrive.
+    public FixturePcmCapture(IReadOnlyList<PcmFrame> frames, IReadOnlyCollection<int> delayAfterFrames)
     {
         this.frames = frames;
-        this.delayAfterFrame = delayAfterFrame;
+        this.delayAfterFrames = delayAfterFrames;
     }
 
     public async IAsyncEnumerable<PcmFrame> ReadFramesAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellation)
@@ -136,7 +142,7 @@ sealed class FixturePcmCapture : IPcmCapture
         {
             cancellation.ThrowIfCancellationRequested();
             yield return frames[i];
-            if (delayAfterFrame == i)
+            if (delayAfterFrames.Contains(i))
             {
                 await Task.Delay(100, cancellation);
             }
@@ -153,22 +159,29 @@ sealed class GatedPcmCapture : IPcmCapture
     private readonly IReadOnlyList<PcmFrame> beforeGate;
     private readonly IReadOnlyList<PcmFrame> afterGate;
     private readonly ManualResetEventSlim releaseGate;
+    private readonly int? delayAfterFrame;
 
-    public GatedPcmCapture(IReadOnlyList<PcmFrame> beforeGate, IReadOnlyList<PcmFrame> afterGate, ManualResetEventSlim releaseGate)
+    public GatedPcmCapture(IReadOnlyList<PcmFrame> beforeGate, IReadOnlyList<PcmFrame> afterGate, ManualResetEventSlim releaseGate, int? delayAfterFrame = null)
     {
         this.beforeGate = beforeGate;
         this.afterGate = afterGate;
         this.releaseGate = releaseGate;
+        this.delayAfterFrame = delayAfterFrame;
     }
 
     public bool GateWasReached { get; private set; }
 
     public async IAsyncEnumerable<PcmFrame> ReadFramesAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellation)
     {
-        foreach (var frame in beforeGate)
+        for (var i = 0; i < beforeGate.Count; i++)
         {
             cancellation.ThrowIfCancellationRequested();
-            yield return frame;
+            yield return beforeGate[i];
+            if (delayAfterFrame == i)
+            {
+                await Task.Delay(100, cancellation);
+            }
+
             await Task.Yield();
         }
 
@@ -330,6 +343,38 @@ sealed class RecordingDictationHandoff : IDictationHandoff
         onSubmit?.Invoke(audio);
         return Task.FromResult(new HandoffResult(HandoffStatus.DryRunSuppressed, audio.SessionId, null, "recorded by test"));
     }
+}
+
+sealed class PhaseRecorder : IDictationRuntimeObserver
+{
+    private readonly Action<DictationPhase>? onPhase;
+
+    public PhaseRecorder(Action<DictationPhase>? onPhase = null)
+    {
+        this.onPhase = onPhase;
+    }
+
+    public List<DictationPhase> Phases { get; } = new();
+    public bool WakeSound { get; init; }
+    public int WakeSounds { get; private set; }
+
+    public void PhaseChanged(DictationPhase phase)
+    {
+        Phases.Add(phase);
+        onPhase?.Invoke(phase);
+    }
+
+    public bool PlayWakeSound()
+    {
+        WakeSounds++;
+        return WakeSound;
+    }
+
+    public void RecognitionQueued(RecognitionRequest request, int pending, long retainedStart, long retainedEnd) { }
+    public void RecognitionCompleted(RecognitionRequest request, RecognizedUtterance? recognition, Exception? error) { }
+    public void HandoffSubmitted(DictationAudio audio, HandoffResult result) { }
+    public void RetentionObserved(long retainedStart, long retainedEnd, int pending) { }
+    public void NoiseProcessorCompleted(NoiseProcessorStatus status) { }
 }
 
 sealed class CapturingTextWriter : TextWriter

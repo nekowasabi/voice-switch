@@ -55,6 +55,11 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation runtime capture fault disposes capture", () => Check(DictationRuntimeCaptureFaultDisposesCapture())),
     ("dictation runtime ignores stale queued recognition after reset", () => Check(DictationRuntimeIgnoresStaleQueuedRecognitionAfterReset())),
     ("dictation runtime preserves queued session after delayed stop", () => Check(DictationRuntimePreservesQueuedSessionAfterDelayedStop())),
+    ("dictation phases follow lone wake, body and stop word", () => Check(DictationPhasesFollowLoneWakeBodyAndStop())),
+    ("dictation phases follow one-breath dictation ended by silence", () => Check(DictationPhasesFollowOneBreathDictationEndedBySilence())),
+    ("dictation phases follow lone wake ended by stop word", () => Check(DictationPhasesFollowLoneWakeEndedByStop())),
+    ("dictation phases follow lone wake ended by start timeout", () => Check(DictationPhasesFollowLoneWakeStartTimeout())),
+    ("dictation phases and foreground target across two stop-ended dictations", () => Check(DictationPhasesAndTargetAcrossTwoDictations())),
     ("dictation WinMM native layout and callback message", () => Check(DictationWinMmNativeLayoutAndInputDataMessage())),
     ("dictation WinMM dispose waits for worker before freeing buffers", () => Check(DictationWinMmDisposeWaitsForWorkerBeforeFreeingBuffers())),
     ("dictation sample store rejects discontinuity", () => Check(DictationSampleStoreRejectsDiscontinuity())),
@@ -1094,6 +1099,89 @@ static bool DictationRuntimePreservesQueuedSessionAfterDelayedStop()
         && handoff.Submissions.Count == 2
         && recognizer.Requests.Count == 4;
 }
+
+static bool DictationPhasesFollowLoneWakeBodyAndStop()
+{
+    var observer = new PhaseRecorder();
+    var handoff = new RecordingDictationHandoff();
+    // Pauses after the wake utterance and after the first body frames, so each phase is published before the next batch lands.
+    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 5000), new FixturePcmCapture(ThreeUtteranceFrames(), [24, 28]), Recognizing("wake", "body", "stop"), handoff, dryRun: true, observer);
+    return RunWithTimeout(runtime, TimeSpan.FromSeconds(5)) == 0
+        && handoff.Submissions.Single().Reason == FinishReason.StandaloneStop
+        && observer.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Recording, DictationPhase.Ended]);
+}
+
+static bool DictationPhasesFollowOneBreathDictationEndedBySilence()
+{
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 50, loud: false);
+    var observer = new PhaseRecorder();
+    var handoff = new RecordingDictationHandoff();
+    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 1200), new FixturePcmCapture(frames, delayAfterFrame: 24), Recognizing("wakebody"), handoff, dryRun: true, observer);
+    return RunWithTimeout(runtime, TimeSpan.FromSeconds(5)) == 0
+        && handoff.Submissions.Single().Reason == FinishReason.Silence
+        && observer.Phases.SequenceEqual([DictationPhase.Recording, DictationPhase.Idle]);
+}
+
+static bool DictationPhasesFollowLoneWakeEndedByStop()
+{
+    var observer = new PhaseRecorder();
+    var handoff = new RecordingDictationHandoff();
+    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 5000), new FixturePcmCapture(TwoUtteranceFrames(), [24, 28]), Recognizing("wake", "stop"), handoff, dryRun: true, observer);
+    return RunWithTimeout(runtime, TimeSpan.FromSeconds(5)) == 0
+        && handoff.Submissions.Count == 0
+        && observer.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Recording, DictationPhase.Ended]);
+}
+
+static bool DictationPhasesFollowLoneWakeStartTimeout()
+{
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 40, loud: false);
+    var observer = new PhaseRecorder();
+    var handoff = new RecordingDictationHandoff();
+    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(startTimeoutMs: 300), new FixturePcmCapture(frames, delayAfterFrame: 24), Recognizing("wake"), handoff, dryRun: true, observer);
+    return RunWithTimeout(runtime, TimeSpan.FromSeconds(5)) == 0
+        && handoff.Submissions.Count == 0
+        && observer.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Idle]);
+}
+
+static bool DictationPhasesAndTargetAcrossTwoDictations()
+{
+    var frames = ThreeUtteranceFrames().ToList();
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 12, loud: false);
+    var observer = new PhaseRecorder();
+    var handoff = new RecordingDictationHandoff();
+    var window = 0x41;
+    var runtime = new WindowsDictationRuntime(
+        DictationRuntimeTestConfig(endSilenceMs: 5000),
+        new FixturePcmCapture(frames, [24, 48, 72]),
+        Recognizing("wakebody", "stop", "wakebody", "stop"),
+        handoff,
+        dryRun: true,
+        observer,
+        foregroundWindow: () => ++window);
+    return RunWithTimeout(runtime, TimeSpan.FromSeconds(5)) == 0
+        && handoff.Submissions.Select(audio => audio.Target).SequenceEqual([(nint)0x42, (nint)0x43])
+        && handoff.Submissions.All(audio => audio.Reason == FinishReason.StandaloneStop)
+        && observer.Phases.SequenceEqual([DictationPhase.Recording, DictationPhase.Ended, DictationPhase.Recording, DictationPhase.Ended]);
+}
+
+static RecognizedUtterance Utterance(RecognitionRequest request, string kind) => kind switch
+{
+    "wake" => new(request.Id, request.Extent, request.Range, "音声入力", [Run("音声入力", request.Range.Start, request.Range.End)]),
+    "body" => new(request.Id, request.Extent, request.Range, "本文", [Run("本文", request.Range.Start + Segmenter.FrameLength, request.Range.End)]),
+    "stop" => new(request.Id, request.Extent, request.Range, "入力ストップ", [Run("入力ストップ", request.Range.Start + Segmenter.FrameLength, request.Range.Start + Segmenter.FrameLength * 3)]),
+    _ => new(request.Id, request.Extent, request.Range, "音声入力本文", [Run("音声入力", request.Range.Start, request.Range.Start + Segmenter.FrameLength), Run("本文", request.Range.Start + Segmenter.FrameLength, request.Range.End)])
+};
+
+// kinds[i] answers request i+1; the last kind repeats for any later request.
+static ScriptedDictationRecognizer Recognizing(params string[] kinds) =>
+    new(request => Task.FromResult(Utterance(request, kinds[Math.Min((int)request.Id, kinds.Length) - 1])));
 
 static bool DictationWinMmNativeLayoutAndInputDataMessage() =>
     DictationWinMmUsesInputDataCallbackMessage()

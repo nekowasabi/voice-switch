@@ -34,6 +34,10 @@ public interface IDictationRuntimeObserver
     void HandoffSubmitted(DictationAudio audio, HandoffResult result);
     void RetentionObserved(long retainedStart, long retainedEnd, int pending);
     void NoiseProcessorCompleted(NoiseProcessorStatus status);
+    // Called on the runtime thread after a frame or recognition batch changes the phase; Ended -> Idle is not reported.
+    void PhaseChanged(DictationPhase phase) { }
+    // Lone wake word only. Return true when a sound was played so the runtime ignores the microphone briefly.
+    bool PlayWakeSound() => false;
 }
 
 public sealed class WindowsDictationRuntime
@@ -45,6 +49,7 @@ public sealed class WindowsDictationRuntime
     private readonly IDictationHandoff handoff;
     private readonly IDictationRuntimeObserver? observer;
     private readonly bool dryRun;
+    private readonly Func<nint> foregroundWindow;
     private readonly SampleStore originalStore;
     private readonly SampleStore analysisStore;
     private readonly Segmenter segmenter;
@@ -54,6 +59,9 @@ public sealed class WindowsDictationRuntime
     private Task? inflight;
     private bool lastVadSpeech;
     private string? lastSilenceDiagnosticKey;
+    private DictationPhase shownPhase;
+    private bool endedByUser;
+    private nint target;
 
     public WindowsDictationRuntime(
         VoiceSwitchConfig config,
@@ -61,7 +69,8 @@ public sealed class WindowsDictationRuntime
         IDictationRecognizer recognizer,
         IDictationHandoff handoff,
         bool dryRun,
-        IDictationRuntimeObserver? observer = null)
+        IDictationRuntimeObserver? observer = null,
+        Func<nint>? foregroundWindow = null)
     {
         this.config = config;
         this.capture = capture;
@@ -69,6 +78,7 @@ public sealed class WindowsDictationRuntime
         this.handoff = handoff;
         this.observer = observer;
         this.dryRun = dryRun;
+        this.foregroundWindow = foregroundWindow ?? (() => 0);
         var retainedSamples = checked((long)((config.Dictation?.MaxSeconds ?? config.MaxSeconds ?? 60) + 10) * (long)Segmenter.Rate);
         originalStore = new SampleStore(retainedSamples);
         analysisStore = new SampleStore(retainedSamples);
@@ -242,6 +252,12 @@ public sealed class WindowsDictationRuntime
                         var wasIdle = !wasActive && !wasAwaiting;
                         var stopBeforeApply = DictationBoundaries.StandaloneStopRange(outcome.Recognition!, config.StopWords ?? []);
                         var audio = session.Apply(outcome.Recognition!, originalStore.Copy);
+                        if (wasIdle && (session.IsActive || session.IsAwaitingBody))
+                        {
+                            // Superwhisper pastes into whatever is frontmost, so remember where the user was when the wake word landed.
+                            target = foregroundWindow();
+                        }
+
                         if (wasIdle && session.IsAwaitingBody)
                         {
                             Log.Info($"dictation session: wake-only id={outcome.Work.Request.Id} source={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End}");
@@ -253,6 +269,11 @@ public sealed class WindowsDictationRuntime
                         else if (wasIdle && stopBeforeApply is not null && !session.IsActive && !session.IsAwaitingBody)
                         {
                             Log.Info($"dictation session: ignored-stop-no-active id={outcome.Work.Request.Id} stopRange={stopBeforeApply.Value.Start}..{stopBeforeApply.Value.End}");
+                        }
+                        else if (wasAwaiting && stopBeforeApply is not null && session.IsTerminal)
+                        {
+                            Log.Info($"dictation session: stop-while-waiting id={outcome.Work.Request.Id}");
+                            endedByUser = true;
                         }
 
                         if (audio is not null)
@@ -310,6 +331,8 @@ public sealed class WindowsDictationRuntime
 
                     break;
                 }
+
+                PublishPhase(session, lastLiveSpeechEnd);
             }
 
             return 0;
@@ -320,6 +343,8 @@ public sealed class WindowsDictationRuntime
         }
         finally
         {
+            // The EOF break above skips the loop bottom, so a stop word in the last batch is still reported here.
+            PublishPhase(endedByUser ? DictationPhase.Ended : DictationPhase.Idle);
             try
             {
                 linked.Cancel();
@@ -419,7 +444,29 @@ public sealed class WindowsDictationRuntime
         }
 
         lastSilenceDiagnosticKey = null;
+        target = 0;
         return new DictationSession(config);
+    }
+
+    private void PublishPhase(DictationSession session, long lastLiveSpeechEnd)
+    {
+        PublishPhase(endedByUser ? DictationPhase.Ended
+            : session.IsActive ? DictationPhase.Recording
+            : session.AwaitingWakeSourceEnd is long wakeEnd ? (lastLiveSpeechEnd > wakeEnd ? DictationPhase.Recording : DictationPhase.Waiting)
+            : DictationPhase.Idle);
+    }
+
+    private void PublishPhase(DictationPhase phase)
+    {
+        endedByUser = false;
+        // Ended hides itself after a moment; the Idle that follows it is not a change.
+        if (phase == shownPhase || (shownPhase == DictationPhase.Ended && phase == DictationPhase.Idle))
+        {
+            return;
+        }
+
+        shownPhase = phase;
+        observer?.PhaseChanged(phase);
     }
 
     private bool TryFinishSilence(DictationSession session, Dictionary<long, RecognitionWork> pending)
@@ -494,6 +541,8 @@ public sealed class WindowsDictationRuntime
     // and the loop keeps listening while Superwhisper transcribes.
     private void Submit(DictationAudio audio)
     {
+        endedByUser |= audio.Reason is FinishReason.StandaloneStop or FinishReason.FinishCommand;
+        audio = audio with { Target = target };
         if (inflight is { IsCompleted: false })
         {
             Log.Info($"dictation dropped: previous one still in flight reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End}");
