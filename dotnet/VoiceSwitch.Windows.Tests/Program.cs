@@ -58,6 +58,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation phases follow lone wake, body and stop word", () => Check(DictationPhasesFollowLoneWakeBodyAndStop())),
     ("dictation phases follow one-breath dictation ended by silence", () => Check(DictationPhasesFollowOneBreathDictationEndedBySilence())),
     ("dictation phases follow lone wake ended by stop word", () => Check(DictationPhasesFollowLoneWakeEndedByStop())),
+    ("dictation phase stays recording when the wake word is repeated while waiting", () => Check(DictationPhaseStaysRecordingOnRepeatedWake())),
     ("dictation phases follow lone wake ended by start timeout", () => Check(DictationPhasesFollowLoneWakeStartTimeout())),
     ("dictation phases and foreground target across two stop-ended dictations", () => Check(DictationPhasesAndTargetAcrossTwoDictations())),
     ("dictation hotkeys parse Superwhisper shortcut names", () => Check(DictationHotkeysParseShortcutNames())),
@@ -1139,6 +1140,16 @@ static bool DictationPhasesFollowLoneWakeEndedByStop()
     var observer = new PhaseRecorder();
     var handoff = new RecordingDictationHandoff();
     var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 5000), new FixturePcmCapture(TwoUtteranceFrames(), [24, 28]), Recognizing("wake", "stop"), handoff, dryRun: true, observer);
+    return RunWithTimeout(runtime, TimeSpan.FromSeconds(5)) == 0
+        && handoff.Submissions.Count == 0
+        && observer.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Recording, DictationPhase.Ended]);
+}
+
+static bool DictationPhaseStaysRecordingOnRepeatedWake()
+{
+    var observer = new PhaseRecorder();
+    var handoff = new RecordingDictationHandoff();
+    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 5000), new FixturePcmCapture(ThreeUtteranceFrames(), [24, 28, 50]), Recognizing("wake", "wake", "stop"), handoff, dryRun: true, observer);
     return RunWithTimeout(runtime, TimeSpan.FromSeconds(5)) == 0
         && handoff.Submissions.Count == 0
         && observer.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Recording, DictationPhase.Ended]);
