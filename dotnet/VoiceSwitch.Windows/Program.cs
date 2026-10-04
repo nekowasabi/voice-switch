@@ -39,13 +39,6 @@ public static class Program
                 return SpeechPowerShell.RunDeviceDiagnostic(configPath);
             }
 
-            if (options.CompleteHandoff is Guid handoffId)
-            {
-                var result = RegisteredSuperwhisperHandoff.CompleteManual(WindowsPaths.DefaultHandoffPath(), handoffId);
-                Log.Info($"dictation handoff completion: {result.Status} {result.Id} wav={result.Path ?? "-"} {result.Message}");
-                return HandoffCompletionExitCode(result);
-            }
-
             var config = ConfigLoader.Load(configPath);
             if (options.InputWavPath is not null && config.Dictation is null)
             {
@@ -84,10 +77,10 @@ public static class Program
                     }
                     else
                     {
-                        var root = WindowsPaths.DefaultHandoffPath();
-                        RegisteredSuperwhisperHandoff.EnsureCaptureAllowed(root, effectiveDryRun);
-
-                        handoff = new RegisteredSuperwhisperHandoff(root, dryRun: effectiveDryRun);
+                        handoff = new RegisteredSuperwhisperHandoff(
+                            WindowsPaths.DefaultHandoffPath(),
+                            WindowsPaths.SuperwhisperRecordingsPath(config.Dictation),
+                            dryRun: effectiveDryRun);
                     }
 
                     IPcmCapture capture;
@@ -148,7 +141,6 @@ public static class Program
           voice-switch.exe --dry-run             listen and report decisions without running commands
           voice-switch.exe --recognizers         list installed Windows speech recognizers
           voice-switch.exe --check-device        open the default speech input once and report errors
-          voice-switch.exe --complete-handoff ID acknowledge a submitted dictation handoff and clean owned files
           voice-switch.exe --input-wav PATH      run dictation from PCM16 mono 16 kHz WAV, no microphone fallback
           voice-switch.exe --input-wav-fast      read --input-wav structurally without 30 ms pacing
           voice-switch.exe --output-dir PATH     record synthetic dictation WAV handoffs locally, no external launch
@@ -158,16 +150,12 @@ public static class Program
 
         Config: {WindowsPaths.DefaultConfigPath()}
         Default command: {PlatformDefaults.SuperwhisperToggle}
-        Dictation handoff: {RegisteredSuperwhisperHandoff.PendingSummary(WindowsPaths.DefaultHandoffPath(), DateTimeOffset.UtcNow)}
+        Dictation handoff: {WindowsPaths.DefaultHandoffPath()}
 
-        Incompatible flags: --dry-run cannot be combined with --fire or --complete-handoff.
+        Incompatible flags: --dry-run cannot be combined with --fire.
         Synthetic input: --input-wav without --output-dir is a dry-run and never launches an external app.
-        Handoff completion exits 0 only for CompletedManually; Busy, NotFound, and cleanup failures exit 1.
         """);
     }
-
-    public static int HandoffCompletionExitCode(HandoffResult result) =>
-        result.Status == HandoffStatus.CompletedManually ? 0 : 1;
 
     public static bool SyntheticInputSuppressesExternalDispatch(CliOptions options) =>
         options.InputWavPath is not null && options.OutputDir is null;

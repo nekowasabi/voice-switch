@@ -46,15 +46,11 @@ public enum FinishReason
 
 public enum HandoffStatus
 {
-    SubmittedUnconfirmed,
-    DeferredUnsent,
-    Busy,
+    Transcribed,
+    NoResult,
     FailedBeforeDispatch,
     DryRunSuppressed,
-    RecordedLocally,
-    CompletedManually,
-    CleanupFailed,
-    NotFound
+    RecordedLocally
 }
 
 public sealed record LexicalRun(string Text, SampleRange Range);
@@ -77,7 +73,7 @@ public sealed record DictationEvent(string Kind, FinishReason? Reason, SampleRan
     public static DictationEvent Error(FinishReason reason) => new("error", reason, null);
 }
 
-public sealed record DictationAudio(Guid SessionId, SampleRange Range, ImmutableArray<short> Samples, FinishReason Reason = FinishReason.Silence);
+public sealed record DictationAudio(Guid SessionId, SampleRange Range, ImmutableArray<short> Samples, FinishReason Reason = FinishReason.Silence, nint Target = 0);
 
 public sealed record HandoffResult(HandoffStatus Status, Guid Id, string? Path, string Message);
 

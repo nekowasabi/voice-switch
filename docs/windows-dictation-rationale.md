@@ -18,9 +18,9 @@ Foundational Thinking changed the data shape. The core data is `SampleRange`, `R
 
 Fix Root Causes changed the stop handling. A standalone stop trims the source audio at the absolute lexical stop start. It never removes the last N samples after capture has advanced.
 
-Boundary Discipline changed the adapters. WinMM, PowerShell JSON, WAV writing, registry dispatch, and manifest recovery validate at the boundary. The session reducer stays pure.
+Boundary Discipline changed the adapters. WinMM, PowerShell JSON, WAV writing, registry dispatch, and Superwhisper `meta.json` parsing validate at the boundary. The session reducer stays pure.
 
-Make Operations Idempotent changed handoff cleanup. A submitted handoff is retained as an owned lease until `--complete-handoff <id>` acknowledges completion or cancellation. An UNSENT body is retained as `DeferredUnsent` until the operator manually copies or discards the WAV and then acknowledges the ID. Startup refuses capture while owned manifests, orphan WAVs, temporary manifests, unsafe owned paths, or a busy synchronization gate remain. After the first external submission (or any failed handoff), the runtime stops and releases capture; an operator must recover/complete pending work before restarting. Record-only and dry-run sessions may continue.
+Make Operations Idempotent changed handoff cleanup. Windows follows the macOS model: after launch it polls Superwhisper's recordings folder for up to 30 s and deletes its WAV once a run with `llmResult` or `result` appears. With no result the WAV is kept and logged. A sweep deletes files older than 10 minutes in the owned directory when the handoff is created, so leftovers converge without an operator. One handoff runs at a time off the capture loop; a dictation that ends while one is in flight is dropped with a log line, and the runtime keeps listening.
 
 Prove It Works changed verification. Tests drive the production runtime with synthetic PCM, a delayed fake recognizer, and a recording handoff. The native SAPI path has a Windows-only synthetic probe that calls the production dictation recognizer and checks request identity, lexical ranges, and recognized text.
 
@@ -32,14 +32,8 @@ The PowerShell script no longer calls `Recognize()` in a loop. It compiles a sma
 
 ## External limitation
 
-The registered Windows file route uses the raw `superwhisper://file//` argument shape. Tests verify construction and a mocked process launch; actual Superwhisper intake, transcription, and paste are not verified. Receiver decoding for whitespace, reserved URI characters, and non-ASCII paths is HOLD. The implementation therefore reports `SubmittedUnconfirmed` only after launch, reports `DeferredUnsent` when a body is retained without launch, and does not claim transcription or auto-paste succeeded.
+The registered Windows file route uses the raw `superwhisper://file//` argument shape. Tests verify construction and a mocked process launch; actual Superwhisper intake, transcription, and paste are not verified. Receiver decoding for whitespace, reserved URI characters, and non-ASCII paths is HOLD. Paths outside plain ASCII fail before anything is written or launched. `Transcribed` means a Superwhisper run wrote a result within 30 s, not that the paste landed. `NoResult` keeps the WAV for manual recovery until the 10 minute sweep.
 
-The external file is not deleted by a timer or process exit. Manual completion is explicit:
+The default owned handoff directory is `%LOCALAPPDATA%\voice-switch\dictation-handoffs`. It stores only UUID WAV files. It does not store transcript text. `dictation.recordingsDir` defaults to `%LOCALAPPDATA%\com.superwhisper.app\recordings`.
 
-```text
-voice-switch.exe --complete-handoff <id>
-```
-
-The default owned handoff directory is `%LOCALAPPDATA%\voice-switch\dictation-handoffs`. It stores only UUID WAV files, minimal manifests, and a permanent empty synchronization file. It does not store transcript text.
-
-Windows foreground restoration, global finish/cancel shortcuts, and automatic completion are narrow remaining OS-integration gaps. They are not treated as a core dictation gap.
+Windows foreground restoration and global finish/cancel shortcuts are narrow remaining OS-integration gaps. They are not treated as a core dictation gap.

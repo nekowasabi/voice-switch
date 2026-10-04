@@ -8,7 +8,6 @@ public sealed record CliOptions(
     bool Recognizers,
     bool CheckDevice,
     int? ListenSeconds,
-    Guid? CompleteHandoff,
     string? InputWavPath,
     bool InputWavFast,
     string? OutputDir,
@@ -30,7 +29,6 @@ public sealed record CliOptions(
         var recognizers = false;
         var checkDevice = false;
         int? listenSeconds = null;
-        Guid? completeHandoff = null;
         string? inputWavPath = null;
         var inputWavFast = false;
         string? outputDir = null;
@@ -67,14 +65,6 @@ public sealed record CliOptions(
                     }
 
                     listenSeconds = seconds;
-                    break;
-                case "--complete-handoff":
-                    if (i + 1 >= args.Length || !Guid.TryParse(args[++i], out var handoffId))
-                    {
-                        throw new ArgumentException("--complete-handoff requires a handoff id.");
-                    }
-
-                    completeHandoff = handoffId;
                     break;
                 case "--input-wav":
                     if (i + 1 >= args.Length)
@@ -113,14 +103,9 @@ public sealed record CliOptions(
             throw new ArgumentException("--dry-run cannot be combined with --fire.");
         }
 
-        if (dryRun && completeHandoff is not null)
+        if (inputWavPath is not null && (fire || recognizers || checkDevice))
         {
-            throw new ArgumentException("--dry-run cannot be combined with --complete-handoff.");
-        }
-
-        if (inputWavPath is not null && (fire || recognizers || checkDevice || completeHandoff is not null))
-        {
-            throw new ArgumentException("--input-wav cannot be combined with --fire, --recognizers, --check-device, or --complete-handoff.");
+            throw new ArgumentException("--input-wav cannot be combined with --fire, --recognizers, or --check-device.");
         }
 
         if (inputWavFast && inputWavPath is null)
@@ -133,6 +118,6 @@ public sealed record CliOptions(
             throw new ArgumentException("--output-dir requires --input-wav.");
         }
 
-        return new CliOptions(help, selfTest, fire, dryRun, recognizers, checkDevice, listenSeconds, completeHandoff, inputWavPath, inputWavFast, outputDir, configPath);
+        return new CliOptions(help, selfTest, fire, dryRun, recognizers, checkDevice, listenSeconds, inputWavPath, inputWavFast, outputDir, configPath);
     }
 }

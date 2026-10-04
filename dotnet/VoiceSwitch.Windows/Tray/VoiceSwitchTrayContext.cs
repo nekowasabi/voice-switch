@@ -14,7 +14,6 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
     private readonly ToolStripMenuItem pauseItem = new("Pause");
     private readonly ToolStripMenuItem reloadItem = new("Reload");
     private readonly ToolStripMenuItem settingsItem = new("Settings");
-    private readonly ToolStripMenuItem pendingItem = new("Pending handoffs: 0");
     private readonly ToolStripMenuItem errorItem = new("Recent error");
     private readonly ToolStripMenuItem quitItem = new("Quit");
     private readonly int uiThreadId;
@@ -31,13 +30,12 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
         supervisor.SnapshotChanged += OnSnapshotChanged;
 
         menu = new ContextMenuStrip();
-        foreach (var item in new[] { statusItem, startItem, pauseItem, reloadItem, settingsItem, pendingItem, errorItem, quitItem })
+        foreach (var item in new[] { statusItem, startItem, pauseItem, reloadItem, settingsItem, errorItem, quitItem })
         {
             menu.Items.Add(item);
         }
 
         statusItem.Enabled = false;
-        pendingItem.Enabled = false;
         startItem.Click += async (_, _) => await RunCommandAsync(TrayCommand.Start);
         pauseItem.Click += async (_, _) => await RunCommandAsync(TrayCommand.Pause);
         reloadItem.Click += async (_, _) => await RunCommandAsync(TrayCommand.Reload);
@@ -175,7 +173,6 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
         pauseItem.Name = "pause";
         reloadItem.Name = "reload";
         settingsItem.Name = "settings";
-        pendingItem.Name = "pending";
         errorItem.Name = "error";
         quitItem.Name = "quit";
 
@@ -185,10 +182,9 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
         startItem.Enabled = next.State is TrayState.Paused or TrayState.Stopped or TrayState.Finished or TrayState.Error;
         pauseItem.Enabled = next.State is TrayState.Starting or TrayState.Listening;
         reloadItem.Enabled = next.State is not TrayState.Quitting and not TrayState.Starting and not TrayState.Pausing and not TrayState.Reloading;
-        pendingItem.Text = $"Pending handoffs: {next.PendingHandoffs}";
         errorItem.Text = string.IsNullOrWhiteSpace(next.LastError) ? "Recent error: none" : "Recent error: available";
         errorItem.Enabled = !string.IsNullOrWhiteSpace(next.LastError);
-        notifyIcon.Text = TruncateTooltip($"voice-switch: {state} pending={next.PendingHandoffs}");
+        notifyIcon.Text = TruncateTooltip($"voice-switch: {state}");
         PublishDiagnosticsOnUi();
     }
 
@@ -258,7 +254,6 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
         Config: {snapshot.ConfigPath}
         State: {snapshot.State}
         Synthetic input: {snapshot.SyntheticInput}
-        Pending handoffs: {snapshot.PendingHandoffs}
         Instance: {snapshot.InstanceKey ?? "-"}
         """;
         MessageBox.Show(text, "voice-switch settings", MessageBoxButtons.OK, MessageBoxIcon.Information);

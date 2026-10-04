@@ -8,7 +8,6 @@ public sealed class TrayRuntimeSupervisor : IAsyncDisposable
     private readonly string configPath;
     private readonly TrayInputSource source;
     private readonly ITrayRuntimeFactory factory;
-    private readonly Func<int> pendingHandoffs;
     private readonly string? instanceKey;
     private VoiceSwitchConfig? config;
     private ITrayRuntimeRun? run;
@@ -23,13 +22,11 @@ public sealed class TrayRuntimeSupervisor : IAsyncDisposable
         string configPath,
         TrayInputSource source,
         ITrayRuntimeFactory factory,
-        Func<int>? pendingHandoffs = null,
         string? instanceKey = null)
     {
         this.configPath = Path.GetFullPath(configPath);
         this.source = source;
         this.factory = factory;
-        this.pendingHandoffs = pendingHandoffs ?? (() => 0);
         this.instanceKey = instanceKey;
         snapshot = NewSnapshot(TrayState.Paused, null, null);
         published = new StatusView(snapshot, null);
@@ -302,7 +299,6 @@ public sealed class TrayRuntimeSupervisor : IAsyncDisposable
         new(
             state,
             configPath,
-            SafePendingCount(),
             error,
             source.SyntheticInput,
             generation,
@@ -314,18 +310,6 @@ public sealed class TrayRuntimeSupervisor : IAsyncDisposable
         if (source.SyntheticInput && config.Dictation is null)
         {
             throw new ArgumentException("--input-wav requires a config with dictation.");
-        }
-    }
-
-    private int SafePendingCount()
-    {
-        try
-        {
-            return pendingHandoffs();
-        }
-        catch
-        {
-            return 0;
         }
     }
 

@@ -18,16 +18,11 @@ public sealed class ProductionRuntimeFactory(string configPath) : ITrayRuntimeFa
             return Task.FromResult<ITrayRuntimeRun>(new ProductionRuntimeRun(commandCompletion, commandCancellation, null));
         }
 
-        if (source.RecordOnlyDir is null)
-        {
-            RegisteredSuperwhisperHandoff.EnsureCaptureAllowed(WindowsPaths.DefaultHandoffPath());
-        }
-
         IPcmCapture capture = source.WavPath is null
             ? WinMmCapture.Open()
             : new WavPcmCapture(source.WavPath, paced: true);
         IDictationHandoff handoff = source.RecordOnlyDir is null
-            ? new RegisteredSuperwhisperHandoff(WindowsPaths.DefaultHandoffPath())
+            ? new RegisteredSuperwhisperHandoff(WindowsPaths.DefaultHandoffPath(), WindowsPaths.SuperwhisperRecordingsPath(config.Dictation))
             : new LocalRecordingHandoff(source.RecordOnlyDir, source.WavPath);
 
         var observer = new TrayRuntimeObserver();
