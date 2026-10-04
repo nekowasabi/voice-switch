@@ -144,6 +144,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("tray supervisor refreshes child identity without state change", () => Check(TraySupervisorRefreshesChildIdentityWithoutStateChange())),
     ("tray supervisor rejects stale run during snapshot race", () => Check(TraySupervisorRejectsStaleRunDuringSnapshotRace())),
     ("tray command identity does not acquire lease", () => Check(TrayCommandIdentityDoesNotAcquireLease())),
+    ("tray login item round-trips the per-user Run entry", TrayLoginItemRoundTripsRunEntry),
     ("tray IPC no-server error is actionable", TrayIpcNoServerErrorIsActionable),
     ("tray IPC rejects bad client then serves status", TrayIpcRejectsBadClientThenServesStatus),
     ("tray IPC times out unread response then serves status", TrayIpcTimesOutUnreadResponseThenServesStatus)
@@ -3003,6 +3004,34 @@ static int RunWithCapturedConsole(
 static bool DictationDiagnosticsArePrivate(string output) =>
     !output.Contains("samples=", StringComparison.OrdinalIgnoreCase)
     && !output.Contains("pcm=", StringComparison.OrdinalIgnoreCase);
+
+static TestOutcome TrayLoginItemRoundTripsRunEntry()
+{
+    if (!OperatingSystem.IsWindows())
+    {
+        return TestOutcome.Skip("requires the Windows registry");
+    }
+
+    var item = new LoginItem($"voice-switch-test-{Guid.NewGuid():N}");
+    var command = LoginItem.CommandFor(@"C:\Program Files\voice-switch\voice-switch.exe", @"C:\Users\me\config.json");
+    try
+    {
+        var before = item.IsEnabled(command);
+        item.Set(command, true);
+        var on = item.IsEnabled(command);
+        var otherCopy = item.IsEnabled(LoginItem.CommandFor(@"D:\old\voice-switch.exe", @"C:\Users\me\config.json"));
+        item.Set(command, false);
+        var off = item.IsEnabled(command);
+        return !before && on && !otherCopy && !off
+            && command == "\"C:\\Program Files\\voice-switch\\voice-switch.exe\" --config \"C:\\Users\\me\\config.json\""
+            ? TestOutcome.Pass()
+            : TestOutcome.Fail($"before={before} on={on} otherCopy={otherCopy} off={off} command={command}");
+    }
+    finally
+    {
+        item.Set(command, false);
+    }
+}
 
 static TestOutcome PowerShellChildrenDieWithParent()
 {

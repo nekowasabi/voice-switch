@@ -285,7 +285,7 @@
         "file": "Sources/voice-switch/MacApp.swift",
         "markers": ["NSStatusBar.system.statusItem", "AVCaptureDevice.DiscoverySession", "SMAppService.mainApp"]
       },
-      "reason": "Windows now has a tray host, but it intentionally does not implement a device picker or login/autostart registration."
+      "reason": "The Windows tray now has the mic / mic-slash icon, open config, open log, and a login (HKCU Run) toggle, but no microphone picker yet."
     },
     {
       "id": "windows_speech_diagnostics",

@@ -16,6 +16,7 @@
     <Compile Include="..\VoiceSwitch.Windows\Tray\ProductionRuntimeFactory.cs" Link="VoiceSwitch.Windows.Tray.ProductionRuntimeFactory.cs" />
     <Compile Include="..\VoiceSwitch.Windows\Tray\TrayRuntimeSupervisor.cs" Link="VoiceSwitch.Windows.Tray.Supervisor.cs" />
     <Compile Include="..\VoiceSwitch.Windows\Tray\TraySingleInstance.cs" Link="VoiceSwitch.Windows.Tray.SingleInstance.cs" />
+    <Compile Include="..\VoiceSwitch.Windows\Tray\LoginItem.cs" Link="VoiceSwitch.Windows.Tray.LoginItem.cs" />
     <ProjectReference Include="..\VoiceSwitch.Windows.Core\VoiceSwitch.Windows.Core.csproj" />
   </ItemGroup>
 </Project>
