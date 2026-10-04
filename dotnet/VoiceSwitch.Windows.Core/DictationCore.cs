@@ -267,9 +267,10 @@ public static class DictationBoundaries
         return new WakePrefix(consumedEnd, bodyStart, byReading);
     }
 
-    // Wake readings of this many kana or fewer (おんせい) take a 1-distance match only when it is the whole closed
-    // utterance. On the 2026-10-04 live log that kept 8 of 11 recovered misses (温水 x5, 温泉, 温泉に入る, 音声にる) and
-    // dropped 温泉は / 温泉入浴 / 温泉有力を…, the shape that ordinary speech starting with 温泉 or 安静 would take.
+    // Wake readings of this many kana or fewer (おんせい) match by reading only when they are the whole closed
+    // utterance. As an exact prefix, kana おんせい opened a body on 音声メモ… and 音声認識… in 5 of 54 non-wake TTS
+    // fixtures; as a 1-distance prefix it would take ordinary speech starting with 温泉 or 安静. On the 2026-10-04 live
+    // log the rule keeps 温水 x5, 温泉 and 温泉に入る and gives up 温泉は, 温泉入浴 x3 and 温泉有力を….
     public const int ShortWakeReading = 4;
 
     // Next is the lexeme after the wake, or null when the wake ends inside a lexeme (End is then a proportional split).
@@ -295,8 +296,12 @@ public static class DictationBoundaries
                 }
 
                 var distance = TextMatching.EditDistance(all[..length], wake.Reading);
-                var fuzzy = distance == 1 && allowFuzzy && (size > ShortWakeReading || (closed && length == all.Length));
-                if ((distance == 0 || fuzzy) && (best is null || distance < best.Value.Distance))
+                if (distance > 1 || (distance == 1 && !allowFuzzy) || (size <= ShortWakeReading && !(closed && length == all.Length)))
+                {
+                    continue;
+                }
+
+                if (best is null || distance < best.Value.Distance)
                 {
                     best = (distance, length);
                 }
