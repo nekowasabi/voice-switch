@@ -241,7 +241,12 @@ public sealed class WindowsDictationRuntime
                         {
                             var leadingWake = DictationBoundaries.LeadingWake(observed, config.WakeWords) is not null;
                             var stopRange = DictationBoundaries.StandaloneStopRange(observed, config.StopWords ?? []);
-                            Log.Info($"dictation recognition: complete id={outcome.Work.Request.Id} extent={outcome.Work.Request.Extent} range={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End} rejected={observed.HadRejectedSpeech} leadingWake={leadingWake} standaloneStop={stopRange is not null} stopRange={(stopRange is null ? "-" : $"{stopRange.Value.Start}..{stopRange.Value.End}")} pendingBefore={pendingBefore}");
+                            // Mac logs "heard:" for what it transcribes while idle and never transcribes the body. Same scope here:
+                            // text while no session is open shows wake misses; body utterances are the dictation and stay private.
+                            var heard = session.IsActive || session.IsAwaitingBody
+                                ? ""
+                                : $" text=\"{observed.Text}\" conf={(observed.Confidence is double conf ? conf.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) : "-")}";
+                            Log.Info($"dictation recognition: complete id={outcome.Work.Request.Id} extent={outcome.Work.Request.Extent} range={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End} rejected={observed.HadRejectedSpeech} leadingWake={leadingWake} standaloneStop={stopRange is not null} stopRange={(stopRange is null ? "-" : $"{stopRange.Value.Start}..{stopRange.Value.End}")} pendingBefore={pendingBefore}{heard}");
                         }
                         observer?.RecognitionCompleted(outcome.Work.Request, outcome.Recognition, outcome.Error);
 
@@ -1159,7 +1164,7 @@ public sealed class SpeechPowerShellDictationRecognizer : IDictationRecognizer
             throw new InvalidOperationException("dictation recognizer returned lexical ranges outside the request.");
         }
 
-        return new RecognizedUtterance(dto.Id, request.Extent, request.Range, dto.Text ?? "", lexemes, dto.Rejected);
+        return new RecognizedUtterance(dto.Id, request.Extent, request.Range, dto.Text ?? "", lexemes, dto.Rejected, dto.Confidence >= 0 ? dto.Confidence : null);
     }
 
     internal static async Task RetainUntilProcessExitedAsync(Func<bool> hasExited, Action requestKill, TimeSpan? retryDelay = null)
@@ -1276,7 +1281,7 @@ public sealed class SpeechPowerShellDictationRecognizer : IDictationRecognizer
         return bytes;
     }
 
-    private sealed record RecognitionDto(string? Type, string? Message, long Id, string? Text, bool Rejected, LexemeDto[] Lexemes);
+    private sealed record RecognitionDto(string? Type, string? Message, long Id, string? Text, bool Rejected, LexemeDto[] Lexemes, double Confidence = -1.0);
     private sealed record LexemeDto(string? Text, long Start, long End);
 
 private const string Script = """
@@ -1311,6 +1316,7 @@ public sealed class VoiceSwitchSapiCollector
     private readonly List<VoiceSwitchLexeme> lexemes = new List<VoiceSwitchLexeme>();
     private readonly ManualResetEventSlim done = new ManualResetEventSlim(false);
     private bool rejected;
+    private double confidence = -1.0;
     private string error;
 
     public VoiceSwitchSapiCollector(long requestId, long requestStart, long requestEnd)
@@ -1323,6 +1329,8 @@ public sealed class VoiceSwitchSapiCollector
     public long Id { get { return requestId; } }
     public string Text { get { return string.Concat(texts); } }
     public bool Rejected { get { return rejected; } }
+    // Lowest confidence over the results that make up Text; -1 when SAPI returned none.
+    public double Confidence { get { return confidence; } }
     public VoiceSwitchLexeme[] Lexemes { get { return lexemes.ToArray(); } }
     public string Error { get { return error; } }
 
@@ -1362,6 +1370,7 @@ public sealed class VoiceSwitchSapiCollector
             texts.Add(result.Text);
         }
 
+        confidence = confidence < 0 ? result.Confidence : Math.Min(confidence, result.Confidence);
         foreach (RecognizedWordUnit word in result.Words)
         {
             try
@@ -1437,7 +1446,7 @@ try {
   $collector = [VoiceSwitchSapiCollector]::new($requestId, $requestStart, $requestEnd)
   $collector.Run($info, $pcm)
   if ($collector.Error) { Send-Json @{ type='error'; message=$collector.Error }; exit 3 }
-  Send-Json @{ id=$collector.Id; text=$collector.Text; rejected=$collector.Rejected; lexemes=@($collector.Lexemes | ForEach-Object { @{ text=$_.Text; start=$_.Start; end=$_.End } }) }
+  Send-Json @{ id=$collector.Id; text=$collector.Text; rejected=$collector.Rejected; confidence=$collector.Confidence; lexemes=@($collector.Lexemes | ForEach-Object { @{ text=$_.Text; start=$_.Start; end=$_.End } }) }
 } catch {
   Send-Json @{ type='error'; message=$_.Exception.Message }
   exit 3

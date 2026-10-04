@@ -62,6 +62,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation phases follow lone wake ended by start timeout", () => Check(DictationPhasesFollowLoneWakeStartTimeout())),
     ("dictation runtime end silence counts from when the body is applied", () => Check(DictationRuntimeEndSilenceCountsFromBodyApplied())),
     ("dictation runtime start timeout counts from when the wake is applied", () => Check(DictationRuntimeStartTimeoutCountsFromWakeApplied())),
+    ("dictation runtime logs idle recognition text but keeps the body private", () => Check(DictationRuntimeLogsIdleTextButKeepsBodyPrivate())),
     ("dictation phases and foreground target across two stop-ended dictations", () => Check(DictationPhasesAndTargetAcrossTwoDictations())),
     ("dictation hotkeys parse Superwhisper shortcut names", () => Check(DictationHotkeysParseShortcutNames())),
     ("dictation hotkeys load preferences with per-key fallback", () => Check(DictationHotkeysLoadPreferencesWithFallback())),
@@ -1259,6 +1260,17 @@ static bool DictationRuntimeStartTimeoutCountsFromWakeApplied()
         && audio.Reason == FinishReason.Silence
         && audio.Range == new SampleRange(66240, 77760)
         && observer.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Recording, DictationPhase.Idle]);
+}
+
+static bool DictationRuntimeLogsIdleTextButKeepsBodyPrivate()
+{
+    var handoff = new RecordingDictationHandoff();
+    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 1200), new FixturePcmCapture(TwoUtteranceFrames(), [24, 28]), Recognizing("wake", "body"), handoff, dryRun: true);
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output);
+    return code == 0
+        && handoff.Submissions.Single().Reason == FinishReason.Silence
+        && output.Contains("leadingWake=True standaloneStop=False stopRange=- pendingBefore=1 text=\"音声入力\" conf=-", StringComparison.Ordinal)
+        && !output.Contains("本文", StringComparison.Ordinal);
 }
 
 static bool DictationPhasesAndTargetAcrossTwoDictations()
@@ -2763,9 +2775,7 @@ static int RunWithCapturedConsole(
 }
 
 static bool DictationDiagnosticsArePrivate(string output) =>
-    !output.Contains("音声入力本文", StringComparison.Ordinal)
-    && !output.Contains("入力ストップ", StringComparison.Ordinal)
-    && !output.Contains("samples=", StringComparison.OrdinalIgnoreCase)
+    !output.Contains("samples=", StringComparison.OrdinalIgnoreCase)
     && !output.Contains("pcm=", StringComparison.OrdinalIgnoreCase);
 
 static TestOutcome ProductionScriptParsesWordsOnWindowsPowerShell()
