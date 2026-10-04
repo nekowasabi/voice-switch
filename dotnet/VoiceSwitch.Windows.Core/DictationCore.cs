@@ -74,7 +74,9 @@ public sealed record RecognizedUtterance(
     bool HadRejectedSpeech = false,
     double? Confidence = null,
     // What SAPI heard but rejected as too uncertain; diagnostics only, never part of Text or Lexemes.
-    string? RejectedText = null);
+    string? RejectedText = null,
+    // Every accepted result came from the constrained stop-word grammar, none from free dictation.
+    bool FromStopGrammar = false);
 
 public sealed record DictationEvent(string Kind, FinishReason? Reason, SampleRange? Range, Guid? SessionId = null)
 {
@@ -259,6 +261,11 @@ public static class DictationBoundaries
     {
         return StandaloneStopRange(recognition, stopWords) is not null;
     }
+
+    // ponytail: floor set from TTS fixtures. With both grammars loaded, real stop words scored 0.57-0.73 and no body
+    // phrase was ever answered by the stop grammar; alone, the stop grammar force-matched "ストップしないで" at 0.24.
+    // Tune from the "grammar=stop conf=" log lines once real-voice data exists.
+    public const double StopGrammarMinConfidence = 0.4;
 
     public static SampleRange? StandaloneStopRange(RecognizedUtterance recognition, IEnumerable<string> stopWords)
     {

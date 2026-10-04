@@ -33,6 +33,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("reports unsupported Windows config options", () => Check(ReportsUnsupportedOptions())),
     ("dictation wake prefix trims exact body start", () => Check(DictationWakePrefixTrimsExactBodyStart())),
     ("dictation wake and stop boundaries are explicit", () => Check(DictationWakeAndStopBoundariesAreExplicit())),
+    ("dictation stop grammar result needs the confidence floor", () => Check(DictationStopGrammarResultNeedsConfidenceFloor())),
     ("dictation lone wake waits for body", () => Check(DictationLoneWakeWaitsForBody())),
     ("dictation rejected wake hypothesis opens a wait but never a body", () => Check(DictationRejectedWakeOpensWaitOnly())),
     ("dictation lone wake body then stop submits body", () => Check(DictationLoneWakeBodyThenStopSubmitsBody())),
@@ -65,7 +66,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation phases follow lone wake ended by start timeout", () => Check(DictationPhasesFollowLoneWakeStartTimeout())),
     ("dictation runtime end silence counts from when the body is applied", () => Check(DictationRuntimeEndSilenceCountsFromBodyApplied())),
     ("dictation runtime start timeout counts from when the wake is applied", () => Check(DictationRuntimeStartTimeoutCountsFromWakeApplied())),
-    ("dictation runtime logs idle recognition text but keeps the body private", () => Check(DictationRuntimeLogsIdleTextButKeepsBodyPrivate())),
+    ("dictation runtime logs idle and short utterance text but keeps a long body private", () => Check(DictationRuntimeLogsShortUtterancesButKeepsLongBodyPrivate())),
     ("dictation runtime applies a reloaded config at the next idle utterance", () => Check(DictationRuntimeAppliesReloadedConfigWhenIdle())),
     ("dictation runtime skips a wake while Superwhisper uses the microphone", () => Check(DictationRuntimeSkipsWakeWhileMicInUse())),
     ("dictation runtime skips a wake while an excluded app is in front", () => Check(DictationRuntimeSkipsWakeForExcludedApp())),
@@ -454,6 +455,20 @@ static bool DictationWakeAndStopBoundariesAreExplicit()
         && DictationBoundaries.StandaloneStopRange(standaloneStop, ["入力ストップ"]) == new SampleRange(10500, 13500)
         && DictationBoundaries.StandaloneStopRange(embeddedStop, ["入力ストップ"]) is null
         && DictationBoundaries.StandaloneStopRange(prefixStop, ["入力ストップ"]) is null;
+}
+
+static bool DictationStopGrammarResultNeedsConfidenceFloor()
+{
+    static RecognizedUtterance FromGrammar(long id, double? confidence, RecognitionExtent extent = RecognitionExtent.ClosedUtterance) =>
+        new(id, extent, new SampleRange(10000, 14000), "入力ストップ", [Run("入力ストップ", 10500, 13500)], Confidence: confidence, FromStopGrammar: true);
+    var floor = DictationBoundaries.StopGrammarMinConfidence;
+    var dictated = new RecognizedUtterance(5, RecognitionExtent.ClosedUtterance, new SampleRange(10000, 14000), "入力ストップ", [Run("入力ストップ", 10500, 13500)], Confidence: 0.1);
+
+    return DictationBoundaries.StandaloneStopRange(FromGrammar(1, floor), ["入力ストップ"]) == new SampleRange(10500, 13500)
+        && DictationBoundaries.StandaloneStopRange(FromGrammar(2, floor - 0.01), ["入力ストップ"]) is null
+        && DictationBoundaries.StandaloneStopRange(FromGrammar(3, null), ["入力ストップ"]) is null
+        && DictationBoundaries.StandaloneStopRange(FromGrammar(4, 0.99, RecognitionExtent.PrefixHead), ["入力ストップ"]) is null
+        && DictationBoundaries.StandaloneStopRange(dictated, ["入力ストップ"]) == new SampleRange(10500, 13500);
 }
 
 static bool DictationLoneWakeWaitsForBody()
@@ -1360,15 +1375,34 @@ static bool DictationRuntimeStartTimeoutCountsFromWakeApplied()
         && observer.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Recording, DictationPhase.Idle]);
 }
 
-static bool DictationRuntimeLogsIdleTextButKeepsBodyPrivate()
+static bool DictationRuntimeLogsShortUtterancesButKeepsLongBodyPrivate()
 {
-    var handoff = new RecordingDictationHandoff();
-    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 1200), new FixturePcmCapture(TwoUtteranceFrames(), [24, 28]), Recognizing("wake", "body"), handoff, dryRun: true);
-    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output);
-    return code == 0
-        && handoff.Submissions.Single().Reason == FinishReason.Silence
-        && output.Contains("leadingWake=True standaloneStop=False stopRange=- pendingBefore=1 text=\"音声入力\" conf=-", StringComparison.Ordinal)
-        && !output.Contains("本文", StringComparison.Ordinal);
+    static string Capture(IReadOnlyList<PcmFrame> frames, out RecordingDictationHandoff handoff, out int code)
+    {
+        handoff = new RecordingDictationHandoff();
+        var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 1200), new FixturePcmCapture(frames, [24, 28]), Recognizing("wake", "body"), handoff, dryRun: true);
+        code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output);
+        return output;
+    }
+
+    // A body longer than the 2.5 s segmenter cap arrives as PrefixHead and is never written to the log.
+    var longBody = new List<PcmFrame>();
+    AddFrames(longBody, 3, loud: false);
+    AddFrames(longBody, 12, loud: true);
+    AddFrames(longBody, 12, loud: false);
+    AddFrames(longBody, 110, loud: true);
+    AddFrames(longBody, 12, loud: false);
+
+    var shortOutput = Capture(TwoUtteranceFrames(), out var shortHandoff, out var shortCode);
+    var longOutput = Capture(longBody, out var longHandoff, out var longCode);
+    return shortCode == 0 && longCode == 0
+        && shortHandoff.Submissions.Single().Reason == FinishReason.Silence
+        && longHandoff.Submissions.Single().Reason == FinishReason.Silence
+        && shortOutput.Contains("leadingWake=True standaloneStop=False stopRange=- pendingBefore=1 text=\"音声入力\" conf=- grammar=dictation", StringComparison.Ordinal)
+        && shortOutput.Contains("extent=ClosedUtterance", StringComparison.Ordinal)
+        && shortOutput.Contains("text=\"本文\" conf=- grammar=dictation", StringComparison.Ordinal)
+        && longOutput.Contains("extent=PrefixHead", StringComparison.Ordinal)
+        && !longOutput.Contains("本文", StringComparison.Ordinal);
 }
 
 static bool DictationRuntimeAppliesReloadedConfigWhenIdle()
