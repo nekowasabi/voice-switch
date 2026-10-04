@@ -60,6 +60,14 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation phases follow lone wake ended by stop word", () => Check(DictationPhasesFollowLoneWakeEndedByStop())),
     ("dictation phases follow lone wake ended by start timeout", () => Check(DictationPhasesFollowLoneWakeStartTimeout())),
     ("dictation phases and foreground target across two stop-ended dictations", () => Check(DictationPhasesAndTargetAcrossTwoDictations())),
+    ("dictation hotkeys parse Superwhisper shortcut names", () => Check(DictationHotkeysParseShortcutNames())),
+    ("dictation hotkeys load preferences with per-key fallback", () => Check(DictationHotkeysLoadPreferencesWithFallback())),
+    ("dictation hotkeys swallow armed presses and their key ups", () => Check(DictationHotkeysSwallowArmedPressesAndKeyUps())),
+    ("dictation hotkey finish while recording submits FinishCommand", () => Check(DictationHotkeyFinishWhileRecordingSubmitsFinishCommand())),
+    ("dictation hotkey cancel while recording submits nothing", () => Check(DictationHotkeyCancelWhileRecordingSubmitsNothing())),
+    ("dictation hotkey finish while waiting without speech is ignored", () => Check(DictationHotkeyFinishWhileWaitingIsIgnored())),
+    ("dictation hotkey finish after speech waits for the body recognition", () => Check(DictationHotkeyFinishAfterSpeechWaitsForBody())),
+    ("dictation hotkeys disarm when the runtime stops mid-dictation", () => Check(DictationHotkeysDisarmWhenRuntimeStopsMidDictation())),
     ("dictation WinMM native layout and callback message", () => Check(DictationWinMmNativeLayoutAndInputDataMessage())),
     ("dictation WinMM dispose waits for worker before freeing buffers", () => Check(DictationWinMmDisposeWaitsForWorkerBeforeFreeingBuffers())),
     ("dictation sample store rejects discontinuity", () => Check(DictationSampleStoreRejectsDiscontinuity())),
@@ -1169,6 +1177,209 @@ static bool DictationPhasesAndTargetAcrossTwoDictations()
         && handoff.Submissions.Select(audio => audio.Target).SequenceEqual([(nint)0x42, (nint)0x43])
         && handoff.Submissions.All(audio => audio.Reason == FinishReason.StandaloneStop)
         && observer.Phases.SequenceEqual([DictationPhase.Recording, DictationPhase.Ended, DictationPhase.Recording, DictationPhase.Ended]);
+}
+
+static bool DictationHotkeysParseShortcutNames() =>
+    DictationHotkeys.Parse("Control+Space") == new KeyChord(0x20, KeyMods.Control)
+    && DictationHotkeys.Parse("Escape") == new KeyChord(0x1B, KeyMods.None)
+    && DictationHotkeys.Parse("Control+Shift+KeyM") == new KeyChord(0x4D, KeyMods.Control | KeyMods.Shift)
+    && DictationHotkeys.Parse("Alt+KeyR") == new KeyChord(0x52, KeyMods.Alt)
+    && DictationHotkeys.Parse("Meta+Digit3") == new KeyChord(0x33, KeyMods.Win)
+    && DictationHotkeys.Parse("F12") == new KeyChord(0x7B, KeyMods.None)
+    && DictationHotkeys.Parse("Ctrl+Enter") == new KeyChord(0x0D, KeyMods.Control)
+    && DictationHotkeys.Parse("Control+Banana") is null
+    && DictationHotkeys.Parse("Hyper+Space") is null
+    && DictationHotkeys.Parse("Control") is null
+    && DictationHotkeys.Parse("F25") is null
+    && DictationHotkeys.Parse("") is null;
+
+static bool DictationHotkeysLoadPreferencesWithFallback()
+{
+    var defaults = DictationHotkeys.Load(null);
+    var custom = DictationHotkeys.Load("""{"toggleRecordingShortcut":"Alt+KeyR","pushToTalkShortcut":"F1"}""");
+    var broken = DictationHotkeys.Load("{not json");
+    return defaults == (new KeyChord(0x20, KeyMods.Control), new KeyChord(0x1B, KeyMods.None))
+        && custom == (new KeyChord(0x52, KeyMods.Alt), new KeyChord(0x1B, KeyMods.None))
+        && broken == defaults;
+}
+
+static bool DictationHotkeysSwallowArmedPressesAndKeyUps()
+{
+    var hotkeys = new DictationHotkeys();
+    var disarmed = hotkeys.OnKey(0x20, KeyMods.Control, down: true, nowMs: 0);
+    hotkeys.Begin(DictationHotkeys.Load(null));
+    var wrongChord = hotkeys.OnKey(0x20, KeyMods.Control | KeyMods.Shift, down: true, nowMs: 10);
+    var armedDown = hotkeys.OnKey(0x20, KeyMods.Control, down: true, nowMs: 20);
+    var taken = hotkeys.Take();
+    var takenAgain = hotkeys.Take();
+    hotkeys.End();
+    var repeatAfterEnd = hotkeys.OnKey(0x20, KeyMods.Control, down: true, nowMs: 500);
+    var releasableWhileOwed = hotkeys.Releasable(500);
+    var keyUp = hotkeys.OnKey(0x20, KeyMods.None, down: false, nowMs: 600);
+    var secondKeyUp = hotkeys.OnKey(0x20, KeyMods.None, down: false, nowMs: 700);
+    var releasableAfterUp = hotkeys.Releasable(700);
+
+    hotkeys.Begin(DictationHotkeys.Load(null));
+    var escape = hotkeys.OnKey(0x1B, KeyMods.None, down: true, nowMs: 1000);
+    var cancel = hotkeys.Take();
+    hotkeys.End();
+    var staleRepeat = hotkeys.OnKey(0x1B, KeyMods.None, down: true, nowMs: 3100);
+    var releasableAfterExpiry = hotkeys.Releasable(3100);
+    return !disarmed
+        && !wrongChord
+        && armedDown
+        && taken == DictationCommand.Finish
+        && takenAgain is null
+        && repeatAfterEnd
+        && !releasableWhileOwed
+        && keyUp
+        && !secondKeyUp
+        && releasableAfterUp
+        && escape
+        && cancel == DictationCommand.Cancel
+        && !staleRepeat
+        && releasableAfterExpiry;
+}
+
+static bool DictationHotkeyFinishWhileRecordingSubmitsFinishCommand()
+{
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 40, loud: false);
+    var hotkeys = new DictationHotkeys();
+    var observer = new PhaseRecorder(phase =>
+    {
+        if (phase == DictationPhase.Recording)
+        {
+            hotkeys.OnKey(0x20, KeyMods.Control, down: true, nowMs: 0);
+            hotkeys.OnKey(0x20, KeyMods.Control, down: false, nowMs: 50);
+        }
+    });
+    var handoff = new RecordingDictationHandoff();
+    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 5000), new FixturePcmCapture(frames, delayAfterFrame: 24), Recognizing("wakebody"), handoff, dryRun: true, observer, hotkeys: hotkeys, readShortcuts: () => null);
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output);
+    var audio = handoff.Submissions.SingleOrDefault();
+    return code == 0
+        && audio is not null
+        && audio.Reason == FinishReason.FinishCommand
+        && audio.Range == new SampleRange(960, 12000)
+        && output.Contains("dictation ended by hotkey after 690 ms of audio", StringComparison.Ordinal)
+        && observer.Phases.SequenceEqual([DictationPhase.Recording, DictationPhase.Ended]);
+}
+
+static bool DictationHotkeyCancelWhileRecordingSubmitsNothing()
+{
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 40, loud: false);
+    var hotkeys = new DictationHotkeys();
+    var observer = new PhaseRecorder(phase =>
+    {
+        if (phase == DictationPhase.Recording)
+        {
+            hotkeys.OnKey(0x1B, KeyMods.None, down: true, nowMs: 0);
+        }
+    });
+    var handoff = new RecordingDictationHandoff();
+    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 5000), new FixturePcmCapture(frames, delayAfterFrame: 24), Recognizing("wakebody"), handoff, dryRun: true, observer, hotkeys: hotkeys, readShortcuts: () => null);
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output);
+    return code == 0
+        && handoff.Submissions.Count == 0
+        && output.Contains("dictation cancelled", StringComparison.Ordinal)
+        && observer.Phases.SequenceEqual([DictationPhase.Recording, DictationPhase.Idle]);
+}
+
+static bool DictationHotkeyFinishWhileWaitingIsIgnored()
+{
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 40, loud: false);
+    var hotkeys = new DictationHotkeys();
+    var swallowed = false;
+    var observer = new PhaseRecorder(phase =>
+    {
+        if (phase == DictationPhase.Waiting)
+        {
+            swallowed = hotkeys.OnKey(0x20, KeyMods.Control, down: true, nowMs: 0);
+        }
+    });
+    var handoff = new RecordingDictationHandoff();
+    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(startTimeoutMs: 300), new FixturePcmCapture(frames, delayAfterFrame: 24), Recognizing("wake"), handoff, dryRun: true, observer, hotkeys: hotkeys, readShortcuts: () => null);
+    return RunWithTimeout(runtime, TimeSpan.FromSeconds(5)) == 0
+        && swallowed
+        && handoff.Submissions.Count == 0
+        && observer.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Idle]);
+}
+
+static bool DictationHotkeyFinishAfterSpeechWaitsForBody()
+{
+    var before = new List<PcmFrame>();
+    AddFrames(before, 3, loud: false);
+    AddFrames(before, 12, loud: true);
+    AddFrames(before, 12, loud: false);
+    AddFrames(before, 12, loud: true);
+    AddFrames(before, 12, loud: false);
+    var after = new List<PcmFrame>(before);
+    AddFrames(after, 12, loud: false);
+    after = after.Skip(before.Count).ToList();
+    var hotkeys = new DictationHotkeys();
+    var observer = new PhaseRecorder(phase =>
+    {
+        if (phase == DictationPhase.Recording)
+        {
+            hotkeys.OnKey(0x20, KeyMods.Control, down: true, nowMs: 0);
+        }
+    });
+    var recognizer = new ScriptedDictationRecognizer(async request =>
+    {
+        if (request.Id == 2)
+        {
+            await Task.Delay(300);
+        }
+
+        return Utterance(request, request.Id == 1 ? "wake" : "body");
+    });
+    using var bodyStarted = new ManualResetEventSlim(false);
+    var handoff = new RecordingDictationHandoff();
+    // The pause after frame 28 lets Finish arrive while the body is heard but not yet recognized (the latch path).
+    var capture = new GatedPcmCapture(before, after, bodyStarted, [24, 28]);
+    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 5000), capture, recognizer, handoff, dryRun: true, observer, hotkeys: hotkeys, readShortcuts: () => null);
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output, line =>
+    {
+        if (line.Contains("dictation session: body-start", StringComparison.Ordinal))
+        {
+            bodyStarted.Set();
+        }
+    });
+    var audio = handoff.Submissions.SingleOrDefault();
+    return code == 0
+        && capture.GateWasReached
+        && output.Contains("dictation finish requested before the body was recognized", StringComparison.Ordinal)
+        && audio is not null
+        && audio.Reason == FinishReason.FinishCommand
+        && audio.Range == new SampleRange(recognizer.Requests[1].Range.Start, recognizer.Requests[1].Range.End)
+        && observer.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Recording, DictationPhase.Ended]);
+}
+
+static bool DictationHotkeysDisarmWhenRuntimeStopsMidDictation()
+{
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 12, loud: false);
+    using var neverReleased = new ManualResetEventSlim(false);
+    var hotkeys = new DictationHotkeys();
+    var observer = new PhaseRecorder();
+    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(), new GatedPcmCapture(frames, [], neverReleased, [24]), Recognizing("wake"), new RecordingDictationHandoff(), dryRun: true, observer, hotkeys: hotkeys, readShortcuts: () => null);
+    using var pause = new CancellationTokenSource(TimeSpan.FromMilliseconds(700));
+    var code = runtime.RunAsync(pause.Token).GetAwaiter().GetResult();
+    return code == 0
+        && observer.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Idle])
+        && hotkeys.Releasable(0)
+        && !hotkeys.OnKey(0x20, KeyMods.Control, down: true, nowMs: 0);
 }
 
 static RecognizedUtterance Utterance(RecognitionRequest request, string kind) => kind switch

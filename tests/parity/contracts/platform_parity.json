@@ -260,6 +260,17 @@
         "file": "dotnet/VoiceSwitch.Windows/DictationRuntime.cs",
         "markers": ["inflight is { IsCompleted: false }", "dictation dropped: previous one still in flight"]
       }
+    },
+    {
+      "id": "dictation_finish_cancel_shortcuts",
+      "macos": {
+        "file": "Sources/voice-switch/MacApp.swift",
+        "markers": ["enum Hotkeys", "case finish, cancel", "Hotkeys.take()", "swallowUp"]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows/DictationRuntime.cs",
+        "markers": ["hotkeys.Take()", "DictationCommand.Cancel", "FinishReason.FinishCommand", "hotkeys?.End()"]
+      }
     }
   ],
   "allowed_capability_gaps": [
@@ -289,15 +300,6 @@
         "markers": ["frontmostApplication", "target?.activate()", "com.superduper.superwhisper"]
       },
       "reason": "Windows foreground restoration is not implemented until user-started validation proves Superwhisper file intake focus behavior."
-    },
-    {
-      "id": "dictation_finish_cancel_shortcuts",
-      "platform": "windows",
-      "macos": {
-        "file": "Sources/voice-switch/MacApp.swift",
-        "markers": ["enum Hotkeys", "case finish, cancel", "Hotkeys.take()"]
-      },
-      "reason": "Windows has no global shortcut adapter for dictation finish/cancel; cancellation remains console/process lifecycle only."
     },
     {
       "id": "menu_bar_device_and_login_items",

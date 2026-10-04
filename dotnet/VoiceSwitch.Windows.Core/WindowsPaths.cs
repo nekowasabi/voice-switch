@@ -29,6 +29,9 @@ public static class WindowsPaths
     public static string SuperwhisperRecordingsPath(DictationConfig? dictation) =>
         ExpandPath(dictation?.RecordingsDir ?? @"%LOCALAPPDATA%\com.superwhisper.app\recordings");
 
+    public static string SuperwhisperPreferencesPath() =>
+        ExpandPath(@"%LOCALAPPDATA%\com.superwhisper.app\preferences.json");
+
     public static string ExpandPath(string path)
     {
         var expanded = path;
