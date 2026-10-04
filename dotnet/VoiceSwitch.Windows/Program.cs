@@ -561,18 +561,24 @@ try {
     $builder.Append($choices)
     $grammar = [System.Speech.Recognition.Grammar]::new($builder)
     $engine.LoadGrammar($grammar)
-    if ($mode -ne 'device') {
-      # Why: free dictation surfaces near-miss phrases in the log so they can be added as wake words.
-      $engine.LoadGrammar([System.Speech.Recognition.DictationGrammar]::new())
-    }
   }
+  # Why: a choices-only grammar force-matches unrelated speech (e.g. while Superwhisper records) to the nearest
+  # wake word at low confidence; firing on those toggles Superwhisper off mid-dictation.
+  # ponytail: fixed threshold, calibrate from the logged conf= values.
+  $minConfidence = 0.6
   $engine.SetInputToDefaultAudioDevice()
   Send-Json @{ type='diagnostic'; message=("recognizer ready: " + $info.Culture.Name + ' ' + $info.Description) }
   if ($mode -eq 'device') { exit 0 }
   while ($true) {
     $result = $engine.Recognize([TimeSpan]::FromSeconds(1))
     if ($null -ne $result) {
-      Send-Json @{ type='recognized'; text=$result.Text; confidence=$result.Confidence }
+      $conf = [math]::Round($result.Confidence, 2)
+      if ($result.Confidence -ge $minConfidence) {
+        Send-Json @{ type='diagnostic'; message=("recognized: " + $result.Text + " conf=" + $conf) }
+        Send-Json @{ type='recognized'; text=$result.Text; confidence=$result.Confidence }
+      } else {
+        Send-Json @{ type='diagnostic'; message=("ignored low confidence: " + $result.Text + " conf=" + $conf) }
+      }
     }
   }
 } catch {
