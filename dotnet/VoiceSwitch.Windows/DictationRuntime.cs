@@ -554,6 +554,7 @@ public sealed class WindowsDictationRuntime
         }
 
         shownPhase = phase;
+        Log.Info($"dictation phase: {phase}");
         observer?.PhaseChanged(phase);
     }
 
