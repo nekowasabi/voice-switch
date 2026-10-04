@@ -274,6 +274,13 @@ public static class DictationBoundaries
             return null;
         }
 
+        // The stop grammar answers with a stop word verbatim even when it force-matched other speech, so only its
+        // confidence separates a stop from a short body phrase. Free dictation text keeps the plain equality match.
+        if (recognition.FromStopGrammar && !(recognition.Confidence >= StopGrammarMinConfidence))
+        {
+            return null;
+        }
+
         var normalized = TextMatching.Normalize(recognition.Text);
         if (normalized.Length == 0 || !stopWords.Select(TextMatching.Normalize).Contains(normalized))
         {

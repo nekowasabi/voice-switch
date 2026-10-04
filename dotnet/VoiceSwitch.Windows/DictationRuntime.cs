@@ -255,11 +255,12 @@ public sealed class WindowsDictationRuntime
                         {
                             var leadingWake = DictationBoundaries.LeadingWake(observed, config.WakeWords) is not null;
                             var stopRange = DictationBoundaries.StandaloneStopRange(observed, config.StopWords ?? []);
-                            // Mac logs "heard:" for what it transcribes while idle and never transcribes the body. Same scope here:
-                            // text while no session is open shows wake misses; body utterances are the dictation and stay private.
-                            var heard = session.IsActive || session.IsAwaitingBody
+                            // Mac logs "heard:" for what it transcribes while idle and never transcribes the body. Here a body longer
+                            // than the segmenter cap arrives as PrefixHead and stays private; a closed utterance inside a session is
+                            // a stop-word candidate, so its text, grammar and confidence are logged to make stop misses tunable.
+                            var heard = (session.IsActive || session.IsAwaitingBody) && observed.Extent != RecognitionExtent.ClosedUtterance
                                 ? ""
-                                : $" text=\"{observed.Text}\" conf={(observed.Confidence is double conf ? conf.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) : "-")}{(observed.RejectedText is { } rejectedText ? $" rejectedText=\"{rejectedText}\"" : "")}";
+                                : $" text=\"{observed.Text}\" conf={(observed.Confidence is double conf ? conf.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) : "-")}{(observed.RejectedText is { } rejectedText ? $" rejectedText=\"{rejectedText}\"" : "")} grammar={(observed.FromStopGrammar ? "stop" : "dictation")}";
                             Log.Info($"dictation recognition: complete id={outcome.Work.Request.Id} extent={outcome.Work.Request.Extent} range={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End} rejected={observed.HadRejectedSpeech} leadingWake={leadingWake} standaloneStop={stopRange is not null} stopRange={(stopRange is null ? "-" : $"{stopRange.Value.Start}..{stopRange.Value.End}")} pendingBefore={pendingBefore}{heard}");
                         }
                         observer?.RecognitionCompleted(outcome.Work.Request, outcome.Recognition, outcome.Error);
@@ -1471,7 +1472,8 @@ public sealed class SpeechPowerShellDictationRecognizer : IDictationRecognizer, 
             lexemes,
             dto.Rejected,
             dto.Confidence >= 0 ? dto.Confidence : null,
-            string.IsNullOrEmpty(dto.RejectedText) ? null : dto.RejectedText);
+            string.IsNullOrEmpty(dto.RejectedText) ? null : dto.RejectedText,
+            dto.StopGrammar);
     }
 
     internal static async Task RetainUntilProcessExitedAsync(Func<bool> hasExited, Action requestKill, TimeSpan? retryDelay = null)
@@ -1559,6 +1561,7 @@ public sealed class SpeechPowerShellDictationRecognizer : IDictationRecognizer, 
         {
             var psi = CreatePowerShell();
             psi.Environment["VOICE_SWITCH_LOCALE"] = config.EffectiveLocale;
+            psi.Environment["VOICE_SWITCH_STOP_WORDS"] = ConfigLoader.ToJsonArray(config.StopWords ?? []);
             var process = ChildProcessJob.Start(psi);
             Log.Info($"dictation recognizer: SAPI child started pid={process.Id}");
             return new SapiChild(process);
@@ -1687,7 +1690,7 @@ public sealed class SpeechPowerShellDictationRecognizer : IDictationRecognizer, 
         return bytes;
     }
 
-    private sealed record RecognitionDto(string? Type, string? Message, long Id, string? Text, bool Rejected, LexemeDto[] Lexemes, double Confidence = -1.0, string? RejectedText = null);
+    private sealed record RecognitionDto(string? Type, string? Message, long Id, string? Text, bool Rejected, LexemeDto[] Lexemes, double Confidence = -1.0, string? RejectedText = null, bool StopGrammar = false);
     private sealed record LexemeDto(string? Text, long Start, long End);
 
 // Protocol: each request is a 28-byte little-endian header (int64 id, int64 start, int64 end, int32 pcmLength) followed by
@@ -1696,6 +1699,12 @@ private const string Script = """
 $ProgressPreference = 'SilentlyContinue'
 Add-Type -AssemblyName System.Speech
 $locale = $env:VOICE_SWITCH_LOCALE
+$stopWords = [string[]]@()
+if ($env:VOICE_SWITCH_STOP_WORDS) {
+  # Assigned before enumerating: piping ConvertFrom-Json straight into ForEach-Object hands over the array as one element.
+  $parsedStopWords = $env:VOICE_SWITCH_STOP_WORDS | ConvertFrom-Json
+  $stopWords = [string[]]@($parsedStopWords | ForEach-Object { [string]$_ })
+}
 $stdout = [Console]::OpenStandardOutput()
 $reader = [System.IO.BinaryReader]::new([Console]::OpenStandardInput())
 function Send-Json($obj) {
@@ -1724,6 +1733,9 @@ public sealed class VoiceSwitchSapiCollector
     private bool rejected;
     private double confidence = -1.0;
     private string error;
+    private Grammar stopGrammar;
+    private int stopResults;
+    private int dictationResults;
 
     public VoiceSwitchSapiCollector(long requestId, long requestStart, long requestEnd)
     {
@@ -1740,13 +1752,26 @@ public sealed class VoiceSwitchSapiCollector
     public double Confidence { get { return confidence; } }
     public VoiceSwitchLexeme[] Lexemes { get { return lexemes.ToArray(); } }
     public string Error { get { return error; } }
+    // Every accepted result came from the stop-word grammar; a body phrase that also yielded a dictation result is not a stop.
+    public bool StopGrammar { get { return stopResults > 0 && dictationResults == 0; } }
 
-    public void Run(RecognizerInfo info, byte[] pcm)
+    public void Run(RecognizerInfo info, byte[] pcm, string[] stopWords)
     {
         using (var engine = new SpeechRecognitionEngine(info))
         using (var stream = new MemoryStream(pcm, false))
         {
             engine.LoadGrammar(new DictationGrammar());
+            // Free dictation spells katakana stop words phonetically ("入力しTAP"), so the stop words are also offered as
+            // a closed choice list; SAPI picks whichever grammar scores the utterance better.
+            if (stopWords.Length > 0)
+            {
+                var builder = new GrammarBuilder(new Choices(stopWords));
+                builder.Culture = info.Culture;
+                stopGrammar = new Grammar(builder);
+                stopGrammar.Name = "stop";
+                engine.LoadGrammar(stopGrammar);
+            }
+
             engine.SpeechRecognized += OnRecognized;
             engine.SpeechRecognitionRejected += OnRejected;
             engine.RecognizeCompleted += OnCompleted;
@@ -1775,6 +1800,15 @@ public sealed class VoiceSwitchSapiCollector
         if (!string.IsNullOrEmpty(result.Text))
         {
             texts.Add(result.Text);
+        }
+
+        if (stopGrammar != null && ReferenceEquals(result.Grammar, stopGrammar))
+        {
+            stopResults++;
+        }
+        else
+        {
+            dictationResults++;
         }
 
         TrackConfidence(result);
@@ -1880,9 +1914,9 @@ while ($true) {
   if ($pcm.Length -ne $length) { exit 0 }
   try {
     $collector = [VoiceSwitchSapiCollector]::new($requestId, $requestStart, $requestEnd)
-    $collector.Run($info, $pcm)
+    $collector.Run($info, $pcm, $stopWords)
     if ($collector.Error) { Send-Json @{ type='error'; id=$requestId; message=$collector.Error }; continue }
-    Send-Json @{ id=$collector.Id; text=$collector.Text; rejected=$collector.Rejected; rejectedText=$collector.RejectedText; confidence=$collector.Confidence; lexemes=@($collector.Lexemes | ForEach-Object { @{ text=$_.Text; start=$_.Start; end=$_.End } }) }
+    Send-Json @{ id=$collector.Id; text=$collector.Text; rejected=$collector.Rejected; rejectedText=$collector.RejectedText; confidence=$collector.Confidence; stopGrammar=$collector.StopGrammar; lexemes=@($collector.Lexemes | ForEach-Object { @{ text=$_.Text; start=$_.Start; end=$_.End } }) }
   } catch {
     Send-Json @{ type='error'; id=$requestId; message=$_.Exception.Message }
   }
