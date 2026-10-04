@@ -6,7 +6,7 @@ public sealed record TrayOptions(
     string ConfigPath,
     string? InputWavPath,
     string? RecordOnlyDir,
-    bool Start,
+    bool Paused,
     TrayCommand? IpcCommand)
 {
     public TrayInputSource Source => new(InputWavPath, RecordOnlyDir);
@@ -16,7 +16,7 @@ public sealed record TrayOptions(
         string? configPath = null;
         string? inputWav = null;
         string? recordOnly = null;
-        var start = false;
+        var paused = false;
         TrayCommand? command = null;
 
         for (var i = 0; i < args.Length; i++)
@@ -47,8 +47,8 @@ public sealed record TrayOptions(
 
                     recordOnly = args[++i];
                     break;
-                case "--start":
-                    start = true;
+                case "--paused":
+                    paused = true;
                     break;
                 case "--tray-command":
                     if (i + 1 >= args.Length || !TryParseCommand(args[++i], out var parsedCommand))
@@ -76,7 +76,7 @@ public sealed record TrayOptions(
         var resolvedConfig = Path.GetFullPath(configPath
             ?? Environment.GetEnvironmentVariable("VOICE_SWITCH_CONFIG")
             ?? WindowsPaths.DefaultConfigPath());
-        return new TrayOptions(resolvedConfig, inputWav is null ? null : Path.GetFullPath(inputWav), recordOnly is null ? null : Path.GetFullPath(recordOnly), start, command);
+        return new TrayOptions(resolvedConfig, inputWav is null ? null : Path.GetFullPath(inputWav), recordOnly is null ? null : Path.GetFullPath(recordOnly), paused, command);
     }
 
     private static bool TryParseCommand(string value, out TrayCommand command)

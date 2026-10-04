@@ -53,7 +53,7 @@ public sealed class TrayIpcServer : IAsyncDisposable
         }
         catch (OperationCanceledException ex) when (cts.IsCancellationRequested)
         {
-            throw new TimeoutException($"tray command '{command}' timed out after {timeout.TotalSeconds:0.#} seconds waiting for tray host '{pipeName}'. Start voice-switch-tray first, or retry after it finishes starting.", ex);
+            throw new TimeoutException($"tray command '{command}' timed out after {timeout.TotalSeconds:0.#} seconds waiting for tray host '{pipeName}'. Start voice-switch.exe first, or retry after it finishes starting.", ex);
         }
     }
 

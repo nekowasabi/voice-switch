@@ -244,7 +244,7 @@ def check_windows_cli_call_chain(result: Result, repo: SourceTree) -> None:
     cli = repo.code("dotnet/VoiceSwitch.Windows.Core/CliOptions.cs")
     program = repo.code("dotnet/VoiceSwitch.Windows/Program.cs")
     parse_body = extract_braced_body(cli, r"public\s+static\s+CliOptions\s+Parse\s*\([^)]*\)\s*\{")
-    main_body = extract_braced_body(program, r"public\s+static\s+int\s+Main\s*\([^)]*\)\s*\{")
+    main_body = extract_braced_body(program, r"public\s+static\s+int\s+Run\s*\([^)]*\)\s*\{")
     require_substrings(
         result,
         "Windows CLI --fire parse reaches Fire option",
@@ -293,7 +293,7 @@ def check_windows_runtime_call_chain(result: Result, repo: SourceTree) -> None:
             "runCommand(decision.Command)",
         ],
     )
-    main_body = extract_braced_body(program, r"public\s+static\s+int\s+Main\s*\([^)]*\)\s*\{")
+    main_body = extract_braced_body(program, r"public\s+static\s+int\s+Run\s*\([^)]*\)\s*\{")
     require_substrings(
         result,
         "Windows normal runtime injects CommandRunner",

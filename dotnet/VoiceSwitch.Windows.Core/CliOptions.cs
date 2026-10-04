@@ -14,6 +14,13 @@ public sealed record CliOptions(
     string? OutputDir,
     string? ConfigPath)
 {
+    // Why: one exe serves both the tray app and terminal diagnostics; a bare launch (double-click,
+    // shortcut, or only --config) or any tray-only flag means the tray, everything else stays CLI.
+    public static bool IsTrayLaunch(string[] args) =>
+        args.Length == 0
+        || args is ["--config", _]
+        || args.Any(arg => arg is "--paused" or "--tray-command" or "--record-only");
+
     public static CliOptions Parse(string[] args)
     {
         var help = false;

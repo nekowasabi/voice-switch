@@ -64,10 +64,10 @@ voice-switch.exe --fire
 voice-switch.exe --complete-handoff ID
 voice-switch.exe --config config.dictation.json --input-wav PATH
 voice-switch.exe --config config.dictation.json --input-wav PATH --input-wav-fast --output-dir PATH
-voice-switch-tray.exe --config PATH
+voice-switch.exe --tray-command status|start|pause|reload|quit
 ```
 
-`--self-test`, `--input-wav`, and record-only `--output-dir` runs do not require a live microphone. `--check-device`, `--dry-run --listen-seconds`, bounded resident runs, and the tray after Start/Resume can open the live microphone. Treat those as separate native checks, not synthetic validation.
+`--self-test`, `--input-wav`, and record-only `--output-dir` runs do not require a live microphone. `--check-device`, `--dry-run --listen-seconds`, bounded resident runs, and the tray app (which listens on launch unless `--paused`) can open the live microphone. Treat those as separate native checks, not synthetic validation.
 
 ## Synthetic fixtures and harnesses
 
@@ -105,7 +105,7 @@ Native Windows noise comparison uses the same published folder and generated fix
 pwsh -File tests\windows\run-noise-matrix.ps1 -ReleaseDir C:\temp\voice-switch-validation -OutputRoot C:\temp\voice-switch-noise-runs -PerCaseTimeoutSeconds 45 -OverallTimeoutMinutes 90
 ```
 
-Tray validation starts Paused, then drives Start, Pause, Resume, and Quit through IPC. Requires PowerShell 7+:
+Tray validation launches with `--paused`, then drives Start, Pause, Resume, and Quit through IPC. Requires PowerShell 7+:
 
 ```powershell
 pwsh -File tests\windows\run-tray-host.ps1 -ReleaseDir C:\temp\voice-switch-validation -OutputRoot C:\temp\voice-switch-tray-runs
@@ -117,16 +117,16 @@ For a small manual record-only tray check, start the host in one PowerShell wind
 $build='C:\temp\voice-switch-validation'
 $fixtures='C:\temp\voice-switch-fixtures'
 $out='C:\temp\voice-switch-tray-record-only'
-& "$build\voice-switch-tray.exe" --config "$build\config.dictation.json" --input-wav "$fixtures\consecutive-sessions-clean.wav" --record-only $out
+& "$build\voice-switch.exe" --config "$build\config.dictation.json" --paused --input-wav "$fixtures\consecutive-sessions-clean.wav" --record-only $out
 ```
 
 ```powershell
 $build='C:\temp\voice-switch-validation'
-& "$build\voice-switch-tray.exe" --config "$build\config.dictation.json" --tray-command status
-& "$build\voice-switch-tray.exe" --config "$build\config.dictation.json" --tray-command start
-& "$build\voice-switch-tray.exe" --config "$build\config.dictation.json" --tray-command pause
-& "$build\voice-switch-tray.exe" --config "$build\config.dictation.json" --tray-command start
-& "$build\voice-switch-tray.exe" --config "$build\config.dictation.json" --tray-command quit
+& "$build\voice-switch.exe" --config "$build\config.dictation.json" --tray-command status
+& "$build\voice-switch.exe" --config "$build\config.dictation.json" --tray-command start
+& "$build\voice-switch.exe" --config "$build\config.dictation.json" --tray-command pause
+& "$build\voice-switch.exe" --config "$build\config.dictation.json" --tray-command start
+& "$build\voice-switch.exe" --config "$build\config.dictation.json" --tray-command quit
 ```
 
 ## Verified Windows coverage
@@ -136,7 +136,7 @@ $build='C:\temp\voice-switch-validation'
 - Package-free behavior tests for wake, stop word, path expansion, config validation, CLI parsing, child recognizer lifecycle, portable VAD fixtures, dictation core, and tray lifecycle.
 - Resident wake-word recognition through Windows SAPI with a constrained grammar of configured wake and stop words.
 - `--fire` dispatches the configured command. The sample command is `superwhisper://record`; it requires Superwhisper for Windows to be installed if you actually run it.
-- `voice-switch-tray.exe` is a WinForms tray host. It starts Paused, supports Status, Start/Resume, Pause, Reload, Settings, Recent error, and Quit, prevents duplicate instances per Windows user plus canonical config path, and does not register login/autostart.
+- `voice-switch.exe` with no diagnostic flag is a WinForms tray app. It listens on launch in command or dictation mode (`--paused` opts out), supports Status, Start/Resume, Pause, Reload, Settings, Recent error, and Quit, prevents duplicate instances per Windows user plus canonical config path, and does not register login/autostart.
 
 ## Limits
 

@@ -44,6 +44,21 @@
   ],
   "allowed_cli_gaps": [
     {
+      "flag": "--paused",
+      "platform": "macos",
+      "reason": "The Windows exe is also its tray app; --paused starts it without opening the microphone, which the macOS menu bar app does from its 一時停止 item instead."
+    },
+    {
+      "flag": "--record-only",
+      "platform": "macos",
+      "reason": "The Windows tray app accepts synthetic WAV input recorded to a local directory so its harness never launches Superwhisper; macOS has no tray harness."
+    },
+    {
+      "flag": "--tray-command",
+      "platform": "macos",
+      "reason": "The Windows tray app is controlled over a per-user named pipe for scripted status, start, pause, reload, and quit; the macOS menu bar app has no IPC surface."
+    },
+    {
       "flag": "--help",
       "platform": "macos",
       "reason": "The macOS first-run surface is the menu bar app; the current command-line help exists only in the Windows runtime."
@@ -258,7 +273,7 @@
         "file": "Sources/voice-switch/MacApp.swift",
         "markers": ["micInUse(by:", "stop word, nothing is recording", "stopCommand ?? Platform.defaultSuperwhisperToggle"]
       },
-      "reason": "Windows legacy command mode, when dictation is absent, dispatches configured stop words directly instead of using the macOS session/mic-in-use guard; the Windows dictation runtime has its own session-gated stop handling."
+      "reason": "Windows command mode, when dictation is absent, dispatches configured stop words directly instead of using the macOS session/mic-in-use guard; the Windows dictation runtime has its own session-gated stop handling."
     },
     {
       "id": "dictation_target_restoration",

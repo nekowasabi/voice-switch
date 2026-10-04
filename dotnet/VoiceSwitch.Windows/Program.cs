@@ -7,7 +7,7 @@ namespace VoiceSwitch.Windows;
 
 public static class Program
 {
-    public static int Main(string[] args)
+    public static int Run(string[] args)
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         try
@@ -141,8 +141,10 @@ public static class Program
         Console.WriteLine($"""
         voice-switch (Windows)
 
-          voice-switch.exe                       stay resident and listen for configured wake words
-          voice-switch.exe --listen-seconds 5    bounded listener run for diagnostics
+          voice-switch.exe                       start the tray app and listen for configured wake words
+          voice-switch.exe --paused              start the tray app without opening the microphone
+          voice-switch.exe --tray-command CMD    send status, start, pause, reload, or quit to the running tray app
+          voice-switch.exe --listen-seconds 5    bounded console listener run for diagnostics
           voice-switch.exe --dry-run             listen and report decisions without running commands
           voice-switch.exe --recognizers         list installed Windows speech recognizers
           voice-switch.exe --check-device        open the default speech input once and report errors
@@ -282,7 +284,7 @@ public sealed class ResidentRuntime
 
         if (IsCancelled(interrupt.Token))
         {
-            Log.Info("stopped by Ctrl+C");
+            Log.Info(interrupt.IsCancellationRequested ? "stopped by Ctrl+C" : "stopped");
             return 130;
         }
 
@@ -714,7 +716,19 @@ public static class Log
     {
         var line = $"{DateTimeOffset.Now:O} {message}";
         Console.WriteLine(line);
-        // Why: the tray host has no console, so wake-word misses are only diagnosable from a file.
+        AppendToFile(line);
+    }
+
+    public static void Fatal(string message)
+    {
+        var line = $"{DateTimeOffset.Now:O} fatal: {message}";
+        Console.Error.WriteLine(line);
+        AppendToFile(line);
+    }
+
+    private static void AppendToFile(string line)
+    {
+        // Why: the tray app has no console, so wake-word misses and startup failures are only diagnosable from a file.
         if (!OperatingSystem.IsWindows())
         {
             return;
@@ -732,9 +746,6 @@ public static class Log
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
     }
-
-    public static void Fatal(string message) =>
-        Console.Error.WriteLine($"{DateTimeOffset.Now:O} fatal: {message}");
 }
 
 public static class SelfTest
