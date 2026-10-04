@@ -78,6 +78,8 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation hotkeys disarm when the runtime stops mid-dictation", () => Check(DictationHotkeysDisarmWhenRuntimeStopsMidDictation())),
     ("dictation wake sound deafens the VAD for 600 ms", () => Check(DictationWakeSoundDeafensVad())),
     ("dictation WinMM native layout and callback message", () => Check(DictationWinMmNativeLayoutAndInputDataMessage())),
+    ("dictation capture follows a pinned microphone only while it is connected", () => Check(DictationCaptureFollowsPinnedMicrophoneWhileConnected())),
+    ("dictation capture lists input devices and the default on Windows", DictationCaptureListsInputDevicesOnWindows),
     ("dictation WinMM dispose waits for worker before freeing buffers", () => Check(DictationWinMmDisposeWaitsForWorkerBeforeFreeingBuffers())),
     ("dictation sample store rejects discontinuity", () => Check(DictationSampleStoreRejectsDiscontinuity())),
     ("dictation stale recognition is safe error", () => Check(DictationStaleRecognitionIsSafeError())),
@@ -1661,6 +1663,36 @@ static RecognizedUtterance Utterance(RecognitionRequest request, string kind) =>
 // kinds[i] answers request i+1; the last kind repeats for any later request.
 static ScriptedDictationRecognizer Recognizing(params string[] kinds) =>
     new(request => Task.FromResult(Utterance(request, kinds[Math.Min((int)request.Id, kinds.Length) - 1])));
+
+static bool DictationCaptureFollowsPinnedMicrophoneWhileConnected()
+{
+    string[] devices = ["マイク (Yeti Nano)", "ヘッドセット (USB Audio)"];
+    return WinMmCapture.EffectiveDevice(null, devices, "マイク (Yeti Nano)") == "マイク (Yeti Nano)"
+        && WinMmCapture.EffectiveDevice("ヘッドセット (USB Audio)", devices, "マイク (Yeti Nano)") == "ヘッドセット (USB Audio)"
+        && WinMmCapture.EffectiveDevice("ヘッドセット (USB Audio)", ["マイク (Yeti Nano)"], "マイク (Yeti Nano)") == "マイク (Yeti Nano)"
+        && WinMmCapture.EffectiveDevice(null, [], null) is null;
+}
+
+static TestOutcome DictationCaptureListsInputDevicesOnWindows()
+{
+    if (!OperatingSystem.IsWindows())
+    {
+        return TestOutcome.Skip("requires WinMM");
+    }
+
+    var devices = WinMmCapture.InputDevices();
+    if (devices.Count == 0)
+    {
+        return TestOutcome.Skip("no input device is connected");
+    }
+
+    var effective = WinMmCapture.EffectiveDevice(null);
+    var pinned = WinMmCapture.EffectiveDevice(devices[^1]);
+    var missing = WinMmCapture.EffectiveDevice("voice-switch test device that is not connected");
+    return effective is not null && devices.Contains(effective) && pinned == devices[^1] && missing == effective
+        ? TestOutcome.Pass()
+        : TestOutcome.Fail($"devices=[{string.Join(", ", devices)}] default={effective} pinned={pinned} missing={missing}");
+}
 
 static bool DictationWinMmNativeLayoutAndInputDataMessage() =>
     DictationWinMmUsesInputDataCallbackMessage()
