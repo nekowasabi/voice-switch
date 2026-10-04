@@ -17,6 +17,7 @@ if (args is ["--child", var mode])
 var tests = new (string Name, Func<TestOutcome> Test)[]
 {
     ("normalizes punctuation and spaces", () => Check(Normalizes())),
+    ("reading normalization folds katakana and width", () => Check(ReadingNormalizationFoldsKatakanaAndWidth())),
     ("decides wake and stop commands", () => Check(DecidesCommands())),
     ("segments one utterance from synthetic frames", () => Check(SegmentsSyntheticUtterance())),
     ("expands Windows environment paths", () => Check(ExpandsPaths())),
@@ -30,6 +31,8 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("validates config boundary", () => Check(ValidatesConfig())),
     ("rejects numeric noise reduction mode", () => Check(RejectsNumericNoiseReductionMode())),
     ("recognition key changes only for recognizer inputs", () => Check(ComparesRecognitionKey())),
+    ("config wake words carry readings with the word as fallback", () => Check(ConfigWakeWordsCarryReadings())),
+    ("MS-IME gives kana readings for kanji wake words", ImeGivesKanaReadings),
     ("reports unsupported Windows config options", () => Check(ReportsUnsupportedOptions())),
     ("dictation wake prefix trims exact body start", () => Check(DictationWakePrefixTrimsExactBodyStart())),
     ("dictation wake and stop boundaries are explicit", () => Check(DictationWakeAndStopBoundariesAreExplicit())),
@@ -68,6 +71,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation runtime start timeout counts from when the wake is applied", () => Check(DictationRuntimeStartTimeoutCountsFromWakeApplied())),
     ("dictation runtime logs idle and short utterance text but keeps a long body private", () => Check(DictationRuntimeLogsShortUtterancesButKeepsLongBodyPrivate())),
     ("dictation runtime applies a reloaded config at the next idle utterance", () => Check(DictationRuntimeAppliesReloadedConfigWhenIdle())),
+    ("dictation runtime logs wake readings in the timing line", () => Check(DictationRuntimeLogsWakeReadings())),
     ("dictation runtime skips a wake while Superwhisper uses the microphone", () => Check(DictationRuntimeSkipsWakeWhileMicInUse())),
     ("dictation runtime skips a wake while an excluded app is in front", () => Check(DictationRuntimeSkipsWakeForExcludedApp())),
     ("resident skips the wake command while Superwhisper uses the microphone", () => Check(ResidentSkipsWakeWhileMicInUse())),
@@ -196,6 +200,16 @@ static TestOutcome Check(bool ok) => ok ? TestOutcome.Pass() : TestOutcome.Fail(
 
 static bool Normalizes() =>
     TextMatching.Normalize(" 音声 入力。") == "音声入力";
+
+static bool ReadingNormalizationFoldsKatakanaAndWidth() =>
+    TextMatching.NormalizeReading("オンセイ") == "おんせい"
+    && TextMatching.NormalizeReading("ニュース、") == "にゅーす"
+    && TextMatching.NormalizeReading("５０００") == "5000"
+    && TextMatching.NormalizeReading("おんせい にゅうりょく") == "おんせいにゅうりょく"
+    && TextMatching.EditDistance("おんせい", "おんせん") == 1
+    && TextMatching.EditDistance("おんせいにゅうりょく", "おんせんにゅうよく") == 3
+    && TextMatching.EditDistance("", "あ") == 1
+    && TextMatching.EditDistance("おんせい", "おんせい") == 0;
 
 static bool DecidesCommands()
 {
@@ -385,6 +399,25 @@ static bool ComparesRecognitionKey()
     var wakeChanged = baseConfig with { WakeWords = ["別"] };
     return baseConfig.RecognitionKey() == commandOnly.RecognitionKey()
         && baseConfig.RecognitionKey() != wakeChanged.RecognitionKey();
+}
+
+static bool ConfigWakeWordsCarryReadings()
+{
+    var plain = new VoiceSwitchConfig(["音声入力", "おんせい"], "ja_JP", "wake");
+    var read = plain with { WakeReadings = ["おんせいにゅうりょく", null] };
+    return read.Wakes().SequenceEqual([new WakeWord("音声入力", "おんせいにゅうりょく"), new WakeWord("おんせい", "おんせい")])
+        && plain.Wakes()[0] == new WakeWord("音声入力", "音声入力")
+        && plain.RecognitionKey() == read.RecognitionKey();
+}
+
+static TestOutcome ImeGivesKanaReadings()
+{
+    if (!OperatingSystem.IsWindows())
+    {
+        return TestOutcome.Skip("requires MS-IME");
+    }
+
+    return Check(ImeReadings.Of("音声入力") == "おんせいにゅうりょく" && ImeReadings.Of("おんせい") == "おんせい");
 }
 
 static bool ReportsUnsupportedOptions()
@@ -1433,6 +1466,22 @@ static bool DictationRuntimeAppliesReloadedConfigWhenIdle()
         && audio.Reason == FinishReason.Silence
         && audio.Range.Start == recognizer.Requests[1].Range.Start + 2400
         && output.Contains("dictation timing: startTimeoutMs=3000 endSilenceMs=600", StringComparison.Ordinal);
+}
+
+static bool DictationRuntimeLogsWakeReadings()
+{
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 60, loud: false);
+    var recognizer = new ScriptedDictationRecognizer(request => Task.FromResult(
+        new RecognizedUtterance(request.Id, request.Extent, request.Range, "雑音", [Run("雑音", request.Range.Start, request.Range.End)])));
+    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(), new FixturePcmCapture(frames, [24]), recognizer, new RecordingDictationHandoff(), dryRun: true,
+        wakeReading: word => word == "音声入力" ? "おんせいにゅうりょく" : null);
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output);
+    return code == 0
+        && output.Contains("dictation timing: startTimeoutMs=3000 endSilenceMs=1200", StringComparison.Ordinal)
+        && output.Contains("wakeReadings=\"音声入力=おんせいにゅうりょく\"", StringComparison.Ordinal);
 }
 
 static bool DictationRuntimeSkipsWakeWhileMicInUse()

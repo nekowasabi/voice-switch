@@ -39,6 +39,13 @@ public sealed record VoiceSwitchConfig(
     DictationConfig? Dictation = null,
     NoiseReductionOptions? NoiseReduction = null)
 {
+    // Parallel to WakeWords by index. The Windows runtime fills it from MS-IME; config files never carry it.
+    [JsonIgnore]
+    public string?[]? WakeReadings { get; init; }
+
+    public WakeWord[] Wakes() =>
+        WakeWords.Select((word, i) => WakeWord.From(word, WakeReadings is { } r && i < r.Length ? r[i] : null)).ToArray();
+
     public string EffectiveLocale => string.IsNullOrWhiteSpace(Locale) ? "ja-JP" : Locale.Replace('_', '-');
 
     public RecognitionKey RecognitionKey() =>
@@ -65,6 +72,13 @@ public sealed record VoiceSwitchConfig(
 
     private static string Signature(IEnumerable<string> words) =>
         string.Join('\u001f', words.Select(TextMatching.Normalize).Order());
+}
+
+public sealed record WakeWord(string Text, string Reading)
+{
+    // Without a computed reading the word itself stands in, so a kana wake word still compares with SAPI's lexical forms.
+    public static WakeWord From(string word, string? reading = null) =>
+        new(TextMatching.Normalize(word), TextMatching.NormalizeReading(string.IsNullOrEmpty(reading) ? word : reading));
 }
 
 public sealed record RecognitionKey(string Locale, string WakeWords, string StopWords);
