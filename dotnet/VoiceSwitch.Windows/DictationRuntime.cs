@@ -37,17 +37,6 @@ public interface IDictationRuntimeObserver
     void NoiseProcessorCompleted(NoiseProcessorStatus status);
 }
 
-public sealed class HandoffAdmissionBlockedException : InvalidOperationException
-{
-    public HandoffAdmissionBlockedException(HandoffResult result)
-        : base($"{result.Status}: {result.Id}; {result.Message}")
-    {
-        Result = result;
-    }
-
-    public HandoffResult Result { get; }
-}
-
 public sealed record HandoffAdmission(bool CanCapture, string Message);
 
 public sealed class WindowsDictationRuntime
@@ -65,7 +54,7 @@ public sealed class WindowsDictationRuntime
     private readonly long idleRetainSamples;
     private long nextRecognitionId;
     private long eligibleRecognitionStart;
-    private bool busy;
+    private Task? inflight;
     private bool lastVadSpeech;
     private string? lastSilenceDiagnosticKey;
 
@@ -197,13 +186,13 @@ public sealed class WindowsDictationRuntime
 
                         if (pending.Count == 0 && session.AdvanceSpeechTo(lastLiveSpeechEnd, originalStore.Copy) is { } advanced)
                         {
-                            await SubmitAsync(advanced, linked.Token);
+                            Submit(advanced);
                             session = ResetSession(pending, advanced.Range.End);
                             TrimStore(session, pending);
                             continue;
                         }
 
-                        if (await TryFinishSilenceAsync(session, pending, linked.Token))
+                        if (TryFinishSilence(session, pending))
                         {
                             session = ResetSession(pending, eligibleRecognitionStart);
                             TrimStore(session, pending);
@@ -276,7 +265,7 @@ public sealed class WindowsDictationRuntime
                                 Log.Info($"dictation session: standalone-stop id={outcome.Work.Request.Id} trimExcluded={audio.Range.End}..{stop.End}");
                             }
 
-                            await SubmitAsync(audio, linked.Token);
+                            Submit(audio);
                             session = ResetSession(pending, outcome.Recognition!.Source.End);
                         }
 
@@ -290,10 +279,10 @@ public sealed class WindowsDictationRuntime
                             var advanced = session.AdvanceSpeechTo(lastLiveSpeechEnd, originalStore.Copy);
                             if (advanced is not null)
                             {
-                                await SubmitAsync(advanced, linked.Token);
+                                Submit(advanced);
                                 session = ResetSession(pending, advanced.Range.End);
                             }
-                            else if (await TryFinishSilenceAsync(session, pending, linked.Token))
+                            else if (TryFinishSilence(session, pending))
                             {
                                 session = ResetSession(pending, eligibleRecognitionStart);
                             }
@@ -312,9 +301,14 @@ public sealed class WindowsDictationRuntime
                 {
                     if (pending.Count == 0 && session.Finish(FinishReason.Silence, originalStore.Copy) is { } eof)
                     {
-                        await SubmitAsync(eof, linked.Token);
+                        Submit(eof);
                         session = ResetSession(pending, eof.Range.End);
                         TrimStore(session, pending);
+                    }
+
+                    if (inflight is not null)
+                    {
+                        await inflight.WaitAsync(linked.Token);
                     }
 
                     break;
@@ -431,10 +425,7 @@ public sealed class WindowsDictationRuntime
         return new DictationSession(config);
     }
 
-    private async Task<bool> TryFinishSilenceAsync(
-        DictationSession session,
-        Dictionary<long, RecognitionWork> pending,
-        CancellationToken cancellation)
+    private bool TryFinishSilence(DictationSession session, Dictionary<long, RecognitionWork> pending)
     {
         if (session.PendingBody is not { } body || segmenter.LastWasSpeech)
         {
@@ -461,7 +452,7 @@ public sealed class WindowsDictationRuntime
             return false;
         }
 
-        await SubmitAsync(silence, cancellation);
+        Submit(silence);
         eligibleRecognitionStart = Math.Max(eligibleRecognitionStart, silence.Range.End);
         return true;
     }
@@ -502,28 +493,31 @@ public sealed class WindowsDictationRuntime
         observer?.RetentionObserved(analysisStore.Start, analysisStore.Next, pending.Count);
     }
 
-    private async Task SubmitAsync(DictationAudio audio, CancellationToken cancellation)
+    // Mac parity: one handoff at a time so a recordings-folder result is never attributed to the wrong dictation,
+    // and the loop keeps listening while Superwhisper transcribes.
+    private void Submit(DictationAudio audio)
     {
-        if (busy)
+        if (inflight is { IsCompleted: false })
         {
-            Log.Info("dictation handoff busy; external submission refused");
+            Log.Info($"dictation dropped: previous one still in flight reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End}");
             return;
         }
 
-        busy = true;
+        inflight = RunHandoffAsync(audio);
+    }
+
+    // Not tied to the loop token: pausing or quitting must not abort a handoff Superwhisper is already reading.
+    private async Task RunHandoffAsync(DictationAudio audio)
+    {
         try
         {
-            var result = await handoff.SubmitAsync(audio, cancellation);
+            var result = await handoff.SubmitAsync(audio, CancellationToken.None);
             observer?.HandoffSubmitted(audio, result);
             Log.Info($"dictation handoff: {result.Status} {result.Id} wav={result.Path ?? "-"} reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End} {result.Message}");
-            if (result.Status is not (HandoffStatus.DryRunSuppressed or HandoffStatus.RecordedLocally))
-            {
-                throw new HandoffAdmissionBlockedException(result);
-            }
         }
-        finally
+        catch (Exception ex)
         {
-            busy = false;
+            Log.Info($"dictation handoff failed: {ex.Message} reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End}");
         }
     }
 
