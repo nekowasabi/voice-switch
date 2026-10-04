@@ -137,6 +137,7 @@ $build='C:\temp\voice-switch-validation'
 ## Limits
 
 - `--recognizers` reports installed recognizers. If `ja-JP` is missing, resident mode exits with a direct diagnostic.
+- `--check A.wav [B.wav ...]` runs each PCM16 mono 16 kHz WAV through the VAD and the warm SAPI recognizer and prints one line per file in the macOS format, for example `a.wav	["wake", "dictate:今日は晴れです", "入力ストップ"]`. It never opens the microphone or launches an app.
 - `--check-device` opens the default speech input once and reports device or recognizer errors without entering an indefinite microphone loop.
 - `--input-wav PATH` uses the Windows dictation runtime, segmenter, SAPI recognizer, session trimming, and WAV encoder, but reads strict PCM16 mono 16 kHz WAV instead of WinMM.
 - `--input-wav PATH` without `--output-dir` is a dry run and does not launch an external app. With `--output-dir`, it writes record-only body WAV files and JSON source range/hash metadata. It is not an actual Superwhisper integration.

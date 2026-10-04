@@ -22,6 +22,8 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("expands Windows environment paths", () => Check(ExpandsPaths())),
     ("parses CLI diagnostics mode", () => Check(ParsesCli())),
     ("rejects fire with dry-run", () => Check(RejectsFireDryRun())),
+    ("parses --check with one or more WAV paths", () => Check(ParsesCheckPaths())),
+    ("check mode prints one verdict per utterance like Mac", () => Check(CheckModePrintsVerdictPerUtterance())),
     ("rejects conflicting synthetic WAV flags", () => Check(RejectsConflictingSyntheticWavFlags())),
     ("program rejects synthetic WAV without dictation config", () => Check(ProgramRejectsSyntheticWavWithoutDictationConfig())),
     ("synthetic WAV without output dir suppresses external dispatch", () => Check(SyntheticWavWithoutOutputDirSuppressesExternalDispatch())),
@@ -252,6 +254,52 @@ static bool ParsesCli()
     {
         return options.ConfigPath == "c.json" && options.ListenSeconds == 5 && options.DryRun && options.Recognizers;
     }
+}
+
+static bool ParsesCheckPaths()
+{
+    var many = CliOptions.Parse(["--check", "a.wav", "b.wav", "--config", "c.json"]);
+    var one = CliOptions.Parse(["--config", "c.json", "--check", "a.wav"]);
+    bool Rejects(string[] args)
+    {
+        try
+        {
+            CliOptions.Parse(args);
+            return false;
+        }
+        catch (ArgumentException)
+        {
+            return true;
+        }
+    }
+
+    return many.CheckPaths.SequenceEqual(["a.wav", "b.wav"]) && many.ConfigPath == "c.json"
+        && one.CheckPaths.SequenceEqual(["a.wav"])
+        && CliOptions.Parse(["--recognizers"]).CheckPaths.Count == 0
+        && Rejects(["--check"])
+        && Rejects(["--check", "--config", "c.json"])
+        && Rejects(["--check", "a.wav", "--input-wav", "b.wav"]);
+}
+
+static bool CheckModePrintsVerdictPerUtterance()
+{
+    using var temp = RuntimeTemp();
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 12, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 12, loud: false);
+    AddFrames(frames, 12, loud: true);
+    var wav = Path.Combine(temp.Dir, "check.wav");
+    File.WriteAllBytes(wav, Pcm16Wav.Encode(frames.SelectMany(frame => frame.Samples).ToArray()));
+    var recognizer = Recognizing("wake", "wakebody", "stop");
+    using var output = new StringWriter();
+    var code = CheckMode.RunAsync([wav], DictationRuntimeTestConfig(), recognizer, output).GetAwaiter().GetResult();
+    // The last utterance runs to the end of the file; the second of silence Mac appends closes it.
+    return code == 0
+        && recognizer.Requests.Count == 3
+        && output.ToString() == $"{wav}\t[\"wake\", \"dictate:本文\", \"入力ストップ\"]{Environment.NewLine}";
 }
 
 static bool RejectsFireDryRun()

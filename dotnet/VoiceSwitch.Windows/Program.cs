@@ -40,6 +40,19 @@ public static class Program
             }
 
             var config = ConfigLoader.Load(configPath);
+            if (options.CheckPaths.Count > 0)
+            {
+                var recognizer = new SpeechPowerShellDictationRecognizer(config);
+                try
+                {
+                    return CheckMode.RunAsync(options.CheckPaths, config, recognizer, Console.Out).GetAwaiter().GetResult();
+                }
+                finally
+                {
+                    recognizer.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                }
+            }
+
             if (options.InputWavPath is not null && config.Dictation is null)
             {
                 throw new ArgumentException("--input-wav requires a config with dictation.");
@@ -142,6 +155,7 @@ public static class Program
           voice-switch.exe --dry-run             listen and report decisions without running commands
           voice-switch.exe --recognizers         list installed Windows speech recognizers
           voice-switch.exe --check-device        open the default speech input once and report errors
+          voice-switch.exe --check A.wav [B.wav]  print a VAD + recognizer verdict per utterance (PCM16 mono 16 kHz)
           voice-switch.exe --input-wav PATH      run dictation from PCM16 mono 16 kHz WAV, no microphone fallback
           voice-switch.exe --input-wav-fast      read --input-wav structurally without 30 ms pacing
           voice-switch.exe --output-dir PATH     record synthetic dictation WAV handoffs locally, no external launch
@@ -160,6 +174,68 @@ public static class Program
 
     public static bool SyntheticInputSuppressesExternalDispatch(CliOptions options) =>
         options.InputWavPath is not null && options.OutputDir is null;
+}
+
+// Mac check(_:cfg:): each file through the VAD and the recognizer, one verdict per utterance: "wake" for a wake word
+// on its own, "dictate:<text after the wake word>" for a one-breath dictation, else the normalized text heard.
+public static class CheckMode
+{
+    public static async Task<int> RunAsync(IReadOnlyList<string> paths, VoiceSwitchConfig config, IDictationRecognizer recognizer, TextWriter output)
+    {
+        long id = 0;
+        foreach (var path in paths)
+        {
+            // A second of trailing silence closes the last utterance, as on Mac.
+            var samples = Pcm16Wav.DecodeStrict(new FileInfo(path), maxSamples: 16000 * 600).AddRange(new short[16000]);
+            var segmenter = new Segmenter(config);
+            var verdicts = new List<string>();
+            for (var end = Segmenter.FrameLength; end <= samples.Length; end += Segmenter.FrameLength)
+            {
+                var frame = new float[Segmenter.FrameLength];
+                for (var i = 0; i < frame.Length; i++)
+                {
+                    frame[i] = samples[end - Segmenter.FrameLength + i] / 32768f;
+                }
+
+                if (segmenter.Push(frame) is not { } ev)
+                {
+                    continue;
+                }
+
+                var range = new SampleRange(end - ev.Samples.Length, end);
+                var extent = ev.Kind == "head" ? RecognitionExtent.PrefixHead : RecognitionExtent.ClosedUtterance;
+                var heard = await recognizer.RecognizeAsync(new RecognitionRequest(++id, extent, range, samples[(int)range.Start..(int)range.End]), CancellationToken.None);
+                verdicts.Add(Verdict(heard, config));
+            }
+
+            output.WriteLine($"{path}\t[{string.Join(", ", verdicts.Select(verdict => $"\"{verdict}\""))}]");
+        }
+
+        return 0;
+    }
+
+    private static string Verdict(RecognizedUtterance heard, VoiceSwitchConfig config)
+    {
+        var wakes = config.WakeWords.Select(TextMatching.Normalize).OrderByDescending(wake => wake.Length).ToArray();
+        var text = TextMatching.Normalize(heard.Text);
+        if ((heard.Extent == RecognitionExtent.ClosedUtterance && wakes.Contains(text)) || DictationBoundaries.RejectedWake(heard, config.WakeWords) is not null)
+        {
+            return "wake";
+        }
+
+        if (DictationBoundaries.LeadingWake(heard, config.WakeWords) is not { BodyStart: not null })
+        {
+            return text;
+        }
+
+        var rest = text;
+        while (wakes.FirstOrDefault(wake => rest.StartsWith(wake, StringComparison.Ordinal)) is { } wake)
+        {
+            rest = rest[wake.Length..];
+        }
+
+        return "dictate:" + rest;
+    }
 }
 
 public sealed class ResidentRuntime
