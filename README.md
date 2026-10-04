@@ -54,7 +54,7 @@ The menu items are 一時停止 (releases the microphone), マイク, 設定フ�
 
 ## CLI
 
-- `voice-switch --check a.wav` feeds files through the VAD and transcriber and prints a verdict per utterance.
+- `voice-switch --check a.wav` feeds files through the VAD and transcriber and prints a verdict per utterance. Windows has the same mode with SAPI; it reads PCM16 mono 16 kHz WAV only.
 - `voice-switch --simulate a.wav` feeds one file through the live path instead of the microphone.
 
 ## Not on main
@@ -94,6 +94,7 @@ Windows diagnostics that do not require external app launch:
 voice-switch.exe --self-test
 voice-switch.exe --recognizers
 voice-switch.exe --check-device
+voice-switch.exe --check a.wav b.wav
 voice-switch.exe --config config.dictation.json --input-wav fixture.wav
 voice-switch.exe --config config.dictation.json --input-wav fixture.wav --output-dir out --input-wav-fast
 ```

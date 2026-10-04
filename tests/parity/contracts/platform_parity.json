@@ -1,5 +1,5 @@
 {
-  "shared_cli_flags": ["--fire", "--vad-selftest"],
+  "shared_cli_flags": ["--fire", "--vad-selftest", "--check"],
   "allowed_sample_config_gaps": [
     {
       "key": "stopCommand",
@@ -82,11 +82,6 @@
       "flag": "--output-dir",
       "platform": "macos",
       "reason": "The record-only handoff directory is a Windows synthetic validation adapter and does not represent a macOS Superwhisper integration."
-    },
-    {
-      "flag": "--check",
-      "platform": "windows",
-      "reason": "The macOS check mode is a public Apple Speech audio-file CLI; Windows finite PCM dictation coverage exists as test probes, not an equivalent public CLI mode."
     },
     {
       "flag": "--simulate",

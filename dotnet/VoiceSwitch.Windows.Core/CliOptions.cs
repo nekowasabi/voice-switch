@@ -11,7 +11,8 @@ public sealed record CliOptions(
     string? InputWavPath,
     bool InputWavFast,
     string? OutputDir,
-    string? ConfigPath)
+    string? ConfigPath,
+    IReadOnlyList<string> CheckPaths)
 {
     // Why: one exe serves both the tray app and terminal diagnostics; a bare launch (double-click,
     // shortcut, or only --config) or any tray-only flag means the tray, everything else stays CLI.
@@ -33,6 +34,7 @@ public sealed record CliOptions(
         var inputWavFast = false;
         string? outputDir = null;
         string? configPath = null;
+        var checkPaths = new List<string>();
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -85,6 +87,20 @@ public sealed record CliOptions(
 
                     outputDir = args[++i];
                     break;
+                case "--check":
+                    // Mac --check a.wav b.wav: every following argument up to the next flag is a file.
+                    var first = checkPaths.Count;
+                    while (i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal))
+                    {
+                        checkPaths.Add(args[++i]);
+                    }
+
+                    if (checkPaths.Count == first)
+                    {
+                        throw new ArgumentException("--check requires one or more WAV paths.");
+                    }
+
+                    break;
                 case "--config":
                     if (i + 1 >= args.Length)
                     {
@@ -118,6 +134,11 @@ public sealed record CliOptions(
             throw new ArgumentException("--output-dir requires --input-wav.");
         }
 
-        return new CliOptions(help, selfTest, fire, dryRun, recognizers, checkDevice, listenSeconds, inputWavPath, inputWavFast, outputDir, configPath);
+        if (checkPaths.Count > 0 && (inputWavPath is not null || fire))
+        {
+            throw new ArgumentException("--check cannot be combined with --input-wav or --fire.");
+        }
+
+        return new CliOptions(help, selfTest, fire, dryRun, recognizers, checkDevice, listenSeconds, inputWavPath, inputWavFast, outputDir, configPath, checkPaths);
     }
 }

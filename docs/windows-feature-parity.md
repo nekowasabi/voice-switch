@@ -2,7 +2,7 @@
 
 This document summarizes the repository-visible Windows parity review for the current branch. It cites committed source, tests, and contracts rather than uncommitted execution notes.
 
-Required dictation experience means one spoken wake prefix plus body, removal of only the wake prefix and a standalone terminal stop, automatic transcription and paste into the original target, and safe continuation. The current Windows implementation has every step in code and tests, but live microphone, real Superwhisper paste, and focus behavior are not yet hand-tested on Windows. A passing parity gate accepts 21 declared differences. It does not prove full user-experience parity.
+Required dictation experience means one spoken wake prefix plus body, removal of only the wake prefix and a standalone terminal stop, automatic transcription and paste into the original target, and safe continuation. The current Windows implementation has every step in code and tests, but live microphone, real Superwhisper paste, and focus behavior are not yet hand-tested on Windows. A passing parity gate accepts 20 declared differences. It does not prove full user-experience parity.
 
 Evidence terms:
 
@@ -57,15 +57,15 @@ The inventory source is `tests/parity/contracts/platform_parity.json`. "Allowed"
 | Sample config gaps (3) | `stopCommand` | Intentional safety difference: the default sample omits the record toggle as a stop command. Operators may provide an idempotent custom stop. |
 | | `dictation.excludeBundleIDs` | macOS key; Windows uses `dictation.excludeProcessNames`. |
 | | `dictation.excludeProcessNames` | Windows key; macOS parses and ignores it. |
-| CLI gaps (16) | `--paused`, `--record-only`, `--tray-command` | Windows tray surfaces with no macOS counterpart. |
+| CLI gaps (15) | `--paused`, `--record-only`, `--tray-command` | Windows tray surfaces with no macOS counterpart. |
 | | `--help`, `--self-test`, `--recognizers`, `--check-device`, `--listen-seconds`, `--dry-run`, `--config` | Windows diagnostic and configuration entry points. `--check-device` does not implement a device picker. `--dry-run` can still open the microphone. |
 | | `--input-wav`, `--input-wav-fast`, `--output-dir` | Synthetic WAV ingress and the record-only sink. They do not prove real-time behavior or external intake and paste. |
-| | `--check`, `--simulate` | Mac file diagnostics absent by this name. Windows `--input-wav` and probes cover file ingress. |
+| | `--simulate` | Mac live-path file driver. Windows `--input-wav` covers it under another name. `--check` is now shared. |
 | | `--hotkey-test` | Mac hotkey test tool. Windows has the hook itself but no standalone test mode. |
 | Capability gaps (2) | `stop_word_session_gating` | Command mode has safe defaults but does not yet gate custom stop commands on the mic-in-use check that now exists. Dictation stop is session-gated. |
 | | `windows_speech_diagnostics` | Intentional System.Speech-specific diagnostics. |
 
-Total: 3 + 16 + 2 = 21 entries, not unique missing features. `menu_bar_device_and_login_items` and `skip_while_mic_in_use_guard` are now shared capabilities.
+Total: 3 + 15 + 2 = 20 entries, not unique missing features. `menu_bar_device_and_login_items` and `skip_while_mic_in_use_guard` are now shared capabilities.
 
 ## Known Windows deviations
 
