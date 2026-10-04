@@ -101,7 +101,7 @@ public interface IDictationHandoff
 public sealed class SampleStore
 {
     private readonly List<short> samples = new();
-    private readonly long maxRetainedSamples;
+    private long maxRetainedSamples;
     private long start;
     private long next;
 
@@ -114,6 +114,9 @@ public sealed class SampleStore
 
     public long Start => start;
     public long Next => next;
+
+    // Grow only: a smaller budget could already be exceeded by audio a reload must not drop.
+    public void EnsureCapacity(long samples) => maxRetainedSamples = Math.Max(maxRetainedSamples, samples);
 
     public void Append(long rangeStart, ReadOnlySpan<short> block)
     {

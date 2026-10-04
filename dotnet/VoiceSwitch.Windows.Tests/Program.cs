@@ -64,6 +64,9 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation runtime end silence counts from when the body is applied", () => Check(DictationRuntimeEndSilenceCountsFromBodyApplied())),
     ("dictation runtime start timeout counts from when the wake is applied", () => Check(DictationRuntimeStartTimeoutCountsFromWakeApplied())),
     ("dictation runtime logs idle recognition text but keeps the body private", () => Check(DictationRuntimeLogsIdleTextButKeepsBodyPrivate())),
+    ("dictation runtime applies a reloaded config at the next idle utterance", () => Check(DictationRuntimeAppliesReloadedConfigWhenIdle())),
+    ("dictation runtime does not reload while a dictation is open", () => Check(DictationRuntimeDoesNotReloadWhileDictating())),
+    ("config file reload keeps the previous config when the new one is invalid", () => Check(ConfigFileReloadKeepsPreviousOnError())),
     ("dictation phases and foreground target across two stop-ended dictations", () => Check(DictationPhasesAndTargetAcrossTwoDictations())),
     ("dictation hotkeys parse Superwhisper shortcut names", () => Check(DictationHotkeysParseShortcutNames())),
     ("dictation hotkeys load preferences with per-key fallback", () => Check(DictationHotkeysLoadPreferencesWithFallback())),
@@ -1308,6 +1311,79 @@ static bool DictationRuntimeLogsIdleTextButKeepsBodyPrivate()
         && handoff.Submissions.Single().Reason == FinishReason.Silence
         && output.Contains("leadingWake=True standaloneStop=False stopRange=- pendingBefore=1 text=\"音声入力\" conf=-", StringComparison.Ordinal)
         && !output.Contains("本文", StringComparison.Ordinal);
+}
+
+static bool DictationRuntimeAppliesReloadedConfigWhenIdle()
+{
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 12, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 60, loud: false);
+    var edited = DictationRuntimeTestConfig(endSilenceMs: 600) with { WakeWords = ["テスト"] };
+    var reloads = 0;
+    var recognizer = new ScriptedDictationRecognizer(request => Task.FromResult(request.Id == 1
+        ? new RecognizedUtterance(1, request.Extent, request.Range, "雑音", [Run("雑音", request.Range.Start, request.Range.End)])
+        : new RecognizedUtterance(request.Id, request.Extent, request.Range, "テスト本文",
+            [Run("テスト", request.Range.Start, request.Range.Start + 2400), Run("本文", request.Range.Start + 2400, request.Range.End)])));
+    var handoff = new RecordingDictationHandoff();
+    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 5000), new FixturePcmCapture(frames, [24, 48]), recognizer, handoff, dryRun: true,
+        reloadConfig: () => ++reloads == 1 ? edited : null);
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output);
+    var audio = handoff.Submissions.SingleOrDefault();
+    return code == 0
+        && reloads == 2
+        && audio is not null
+        && audio.Reason == FinishReason.Silence
+        && audio.Range.Start == recognizer.Requests[1].Range.Start + 2400
+        && output.Contains("dictation timing: startTimeoutMs=3000 endSilenceMs=600", StringComparison.Ordinal);
+}
+
+static bool DictationRuntimeDoesNotReloadWhileDictating()
+{
+    var frames = ThreeUtteranceFrames().ToList();
+    var reloads = new List<string>();
+    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 5000), new FixturePcmCapture(frames, [24, 48, 72]),
+        Recognizing("wakebody", "body", "stop"), new RecordingDictationHandoff(), dryRun: true, new PhaseRecorder(),
+        reloadConfig: () =>
+        {
+            reloads.Add("asked");
+            return null;
+        });
+    return RunWithTimeout(runtime, TimeSpan.FromSeconds(5)) == 0
+        && reloads.Count == 1;
+}
+
+static bool ConfigFileReloadKeepsPreviousOnError()
+{
+    var dir = Directory.CreateTempSubdirectory("voice-switch-config-reload-");
+    try
+    {
+        var path = Path.Combine(dir.FullName, "config.json");
+        var stamp = DateTime.UtcNow.AddMinutes(-10);
+        void Write(string json)
+        {
+            File.WriteAllText(path, json);
+            stamp = stamp.AddSeconds(5);
+            File.SetLastWriteTimeUtc(path, stamp);
+        }
+
+        Write("""{"wakeWords":["音声入力"],"command":"wake","dictation":{}}""");
+        var file = new ConfigFile(path);
+        var unchanged = file.ReloadIfChanged();
+        Write("""{"wakeWords":[],"command":"wake","dictation":{}}""");
+        var invalid = file.ReloadIfChanged();
+        Write("""{"wakeWords":["テスト"],"command":"wake","dictation":{"endSilenceMs":900}}""");
+        var valid = file.ReloadIfChanged();
+        return unchanged is null
+            && invalid is null
+            && valid is { WakeWords: ["テスト"], Dictation.EndSilenceMs: 900 };
+    }
+    finally
+    {
+        dir.Delete(recursive: true);
+    }
 }
 
 static bool DictationPhasesAndTargetAcrossTwoDictations()

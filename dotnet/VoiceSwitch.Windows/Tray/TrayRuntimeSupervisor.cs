@@ -72,7 +72,18 @@ public sealed class TrayRuntimeSupervisor : IAsyncDisposable
             }
 
             SetSnapshot(TrayState.Starting, null, null);
-            var nextConfig = config ?? ConfigLoader.Load(configPath);
+            // Read again: the dictation runtime reloads the file on its own, so the copy cached at the last start can be stale.
+            VoiceSwitchConfig nextConfig;
+            try
+            {
+                nextConfig = ConfigLoader.Load(configPath);
+            }
+            catch (Exception ex) when (config is not null)
+            {
+                Log.Info($"config reload failed, keeping previous: {ex.Message}");
+                nextConfig = config;
+            }
+
             ValidateTrayConfig(nextConfig, source);
 
             runCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellation);

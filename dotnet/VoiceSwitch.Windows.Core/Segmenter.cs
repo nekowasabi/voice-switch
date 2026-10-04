@@ -23,6 +23,8 @@ public sealed class Segmenter
         this.config = config;
     }
 
+    // Mac seg.cfg = config.cfg: a reloaded config takes effect from the next frame.
+    public VoiceSwitchConfig Config { set => config = value; }
     public bool LastWasSpeech { get; private set; }
     public bool AdaptFloor { get; set; } = true;
     public bool HasOpenUtterance => utterance.Count > 0;

@@ -43,7 +43,7 @@ public interface IDictationRuntimeObserver
 public sealed class WindowsDictationRuntime
 {
     private const int MaxPendingRecognition = 8;
-    private readonly VoiceSwitchConfig config;
+    private VoiceSwitchConfig config;
     private readonly IPcmCapture capture;
     private readonly IDictationRecognizer recognizer;
     private readonly IDictationHandoff handoff;
@@ -52,10 +52,12 @@ public sealed class WindowsDictationRuntime
     private readonly Func<nint> foregroundWindow;
     private readonly DictationHotkeys? hotkeys;
     private readonly Func<string?> readShortcuts;
+    // Mac ConfigFile.reloadIfChanged: a new valid config, or null when the file is unchanged or invalid.
+    private readonly Func<VoiceSwitchConfig?> reloadConfig;
     private readonly SampleStore originalStore;
     private readonly SampleStore analysisStore;
     private readonly Segmenter segmenter;
-    private readonly long idleRetainSamples;
+    private long idleRetainSamples;
     private long nextRecognitionId;
     private long eligibleRecognitionStart;
     private Task? inflight;
@@ -80,7 +82,8 @@ public sealed class WindowsDictationRuntime
         IDictationRuntimeObserver? observer = null,
         Func<nint>? foregroundWindow = null,
         DictationHotkeys? hotkeys = null,
-        Func<string?>? readShortcuts = null)
+        Func<string?>? readShortcuts = null,
+        Func<VoiceSwitchConfig?>? reloadConfig = null)
     {
         this.config = config;
         this.capture = capture;
@@ -91,14 +94,17 @@ public sealed class WindowsDictationRuntime
         this.foregroundWindow = foregroundWindow ?? (() => 0);
         this.hotkeys = hotkeys;
         this.readShortcuts = readShortcuts ?? ReadSuperwhisperPreferences;
-        var retainedSamples = checked((long)((config.Dictation?.MaxSeconds ?? config.MaxSeconds ?? 60) + 10) * (long)Segmenter.Rate);
-        originalStore = new SampleStore(retainedSamples);
-        analysisStore = new SampleStore(retainedSamples);
+        this.reloadConfig = reloadConfig ?? (() => null);
+        originalStore = new SampleStore(RetainedSamples(config, 10));
+        analysisStore = new SampleStore(RetainedSamples(config, 10));
         // Mac parity: the segmenter caps at the top-level maxSeconds (2.5 s) so steady room noise is judged within seconds;
         // the body length is the session's dictation.maxSeconds. Capping here at 60 s left the VAD deaf for a minute per lock.
         segmenter = new Segmenter(config) { AdaptFloor = true };
-        idleRetainSamples = checked((long)((config.Dictation?.MaxSeconds ?? config.MaxSeconds ?? 60) + 2) * (long)Segmenter.Rate);
+        idleRetainSamples = RetainedSamples(config, 2);
     }
+
+    private static long RetainedSamples(VoiceSwitchConfig config, double extraSeconds) =>
+        checked((long)((config.Dictation?.MaxSeconds ?? config.MaxSeconds ?? 60) + extraSeconds) * (long)Segmenter.Rate);
 
     public async Task<int> RunAsync(CancellationToken cancellation)
     {
@@ -129,7 +135,7 @@ public sealed class WindowsDictationRuntime
         try
         {
             Log.Info("dictation: Windows PCM capture, finite SAPI recognition, and Superwhisper file handoff are enabled");
-            Log.Info($"dictation timing: startTimeoutMs={config.Dictation?.StartTimeoutMs ?? 3000} endSilenceMs={config.Dictation?.EndSilenceMs ?? 1200} hangoverMs={config.HangoverMs ?? 300} minSpeechMs={config.MinSpeechMs ?? 300} maxSeconds={config.Dictation?.MaxSeconds ?? config.MaxSeconds ?? 60}");
+            LogTiming();
             if (dryRun)
             {
                 Log.Info("dictation dry-run: WAV creation and external app launch are suppressed");
@@ -182,7 +188,7 @@ public sealed class WindowsDictationRuntime
                 {
                     while (frames.Reader.TryRead(out var frame))
                     {
-                        if (!ProcessFrame(frame, session, requests.Writer, pending, ref lastLiveSpeechEnd))
+                        if (!ProcessFrame(frame, ref session, requests.Writer, pending, ref lastLiveSpeechEnd))
                         {
                             session.Cancel(FinishReason.Overflow);
                             return 1;
@@ -402,7 +408,7 @@ public sealed class WindowsDictationRuntime
 
     private bool ProcessFrame(
         AnalysisFrame frame,
-        DictationSession session,
+        ref DictationSession session,
         ChannelWriter<RecognitionWork> requests,
         Dictionary<long, RecognitionWork> pending,
         ref long lastLiveSpeechEnd)
@@ -451,8 +457,34 @@ public sealed class WindowsDictationRuntime
             Log.Info($"dictation vad: cap reached at={frame.Start} samples={ev.Samples.Length} rms={segmenter.LastRms:0.0000} floor={segmenter.Floor:0.0000} threshold={segmenter.Threshold:0.0000}");
         }
 
+        // Mac checks between utterances: only here, with nothing open, can wake words and timings change under no one.
+        if (!session.IsActive && !session.IsAwaitingBody && pending.Count == 0 && reloadConfig() is { } next)
+        {
+            ApplyConfig(next);
+            session = new DictationSession(config);
+        }
+
         return QueueRecognition(ev, frame.Start + frame.Analysis.Length, requests, pending);
     }
+
+    private void ApplyConfig(VoiceSwitchConfig next)
+    {
+        // The SAPI child and the noise processor were built from the old config; they change only on a restart.
+        if (next.EffectiveLocale != config.EffectiveLocale || next.NoiseReduction != config.NoiseReduction)
+        {
+            Log.Info("dictation config: locale and noiseReduction changes apply after Reload or a restart");
+        }
+
+        config = next;
+        segmenter.Config = next;
+        originalStore.EnsureCapacity(RetainedSamples(next, 10));
+        analysisStore.EnsureCapacity(RetainedSamples(next, 10));
+        idleRetainSamples = RetainedSamples(next, 2);
+        LogTiming();
+    }
+
+    private void LogTiming() =>
+        Log.Info($"dictation timing: startTimeoutMs={config.Dictation?.StartTimeoutMs ?? 3000} endSilenceMs={config.Dictation?.EndSilenceMs ?? 1200} hangoverMs={config.HangoverMs ?? 300} minSpeechMs={config.MinSpeechMs ?? 300} maxSeconds={config.Dictation?.MaxSeconds ?? config.MaxSeconds ?? 60}");
 
     private bool FlushOpenUtterance(
         ChannelWriter<RecognitionWork> requests,
