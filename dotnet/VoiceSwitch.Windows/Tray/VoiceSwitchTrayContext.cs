@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using VoiceSwitch.Windows.Core;
 
 namespace VoiceSwitch.Windows.Tray;
 
@@ -9,14 +11,18 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
     private readonly TrayRuntimeSupervisor supervisor;
     private readonly NotifyIcon notifyIcon;
     private readonly ContextMenuStrip menu;
-    private readonly ToolStripMenuItem statusItem = new("Status");
-    private readonly ToolStripMenuItem startItem = new("Start");
-    private readonly ToolStripMenuItem pauseItem = new("Pause");
-    private readonly ToolStripMenuItem reloadItem = new("Reload");
-    private readonly ToolStripMenuItem settingsItem = new("Settings");
-    private readonly ToolStripMenuItem soundItem = new("効果音") { CheckOnClick = true };
-    private readonly ToolStripMenuItem errorItem = new("Recent error");
-    private readonly ToolStripMenuItem quitItem = new("Quit");
+    // Japanese labels as on Mac; Name stays the stable id that scripts and diagnostics match.
+    private readonly ToolStripMenuItem statusItem = new("状態") { Name = "status" };
+    private readonly ToolStripMenuItem startItem = new("再開") { Name = "start" };
+    private readonly ToolStripMenuItem pauseItem = new("一時停止") { Name = "pause" };
+    private readonly ToolStripMenuItem openConfigItem = new("設定ファイルを開く") { Name = "open-config" };
+    private readonly ToolStripMenuItem reloadItem = new("設定を再読み込み") { Name = "reload" };
+    private readonly ToolStripMenuItem openLogItem = new("ログを開く") { Name = "open-log" };
+    private readonly ToolStripMenuItem soundItem = new("効果音") { Name = "sound", CheckOnClick = true };
+    private readonly ToolStripMenuItem loginItem = new("ログイン時に起動") { Name = "login" };
+    private readonly ToolStripMenuItem errorItem = new("直近のエラー") { Name = "error" };
+    private readonly ToolStripMenuItem quitItem = new("終了") { Name = "quit" };
+    private readonly LoginItem login = new();
     private readonly int uiThreadId;
     private readonly System.Windows.Forms.Timer diagnosticsTimer;
     private TraySnapshot snapshot;
@@ -31,18 +37,20 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
         supervisor.SnapshotChanged += OnSnapshotChanged;
 
         menu = new ContextMenuStrip();
-        foreach (var item in new[] { statusItem, startItem, pauseItem, reloadItem, settingsItem, soundItem, errorItem, quitItem })
-        {
-            menu.Items.Add(item);
-        }
+        menu.Items.AddRange([statusItem, startItem, pauseItem, new ToolStripSeparator(), openConfigItem, reloadItem, openLogItem, soundItem, loginItem, errorItem, new ToolStripSeparator(), quitItem]);
 
         statusItem.Enabled = false;
         soundItem.Checked = TraySettings.ConfirmationSound;
         soundItem.CheckedChanged += (_, _) => TraySettings.ConfirmationSound = soundItem.Checked;
+        loginItem.Checked = login.IsEnabled(LoginCommand);
+        // Read again on every open: the Run entry can change outside voice-switch.
+        menu.Opening += (_, _) => loginItem.Checked = login.IsEnabled(LoginCommand);
         startItem.Click += async (_, _) => await RunCommandAsync(TrayCommand.Start);
         pauseItem.Click += async (_, _) => await RunCommandAsync(TrayCommand.Pause);
         reloadItem.Click += async (_, _) => await RunCommandAsync(TrayCommand.Reload);
-        settingsItem.Click += (_, _) => ShowSettings();
+        openConfigItem.Click += (_, _) => Open(snapshot.ConfigPath);
+        openLogItem.Click += (_, _) => Open(WindowsPaths.DefaultLogPath());
+        loginItem.Click += (_, _) => ToggleLogin();
         errorItem.Click += (_, _) => ShowError();
         quitItem.Click += async (_, _) =>
         {
@@ -58,9 +66,9 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
 
         notifyIcon = new NotifyIcon
         {
-            Icon = System.Drawing.SystemIcons.Application,
+            Icon = TrayIcons.Stopped,
             ContextMenuStrip = menu,
-            Text = "voice-switch tray: paused",
+            Text = "voice-switch: 停止中",
             Visible = true
         };
         notifyIcon.DoubleClick += (_, _) => ShowSettings();
@@ -117,11 +125,12 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
         new(
             snapshot,
             menu.Items.OfType<ToolStripMenuItem>()
-                .Select(item => new TrayMenuDiagnostic(item.Name ?? "", item.Text ?? "", item.Enabled))
+                .Select(item => new TrayMenuDiagnostic(item.Name ?? "", item.Text ?? "", item.Enabled, item.Checked))
                 .ToArray(),
             notifyIcon.Visible,
             ShellNotifyIconRegistration(),
-            Environment.ProcessId);
+            Environment.ProcessId,
+            notifyIcon.Icon == TrayIcons.Listening ? "mic" : "mic-slash");
 
     private void PublishDiagnosticsOnUi() =>
         Volatile.Write(ref cachedDiagnostics, BuildDiagnostics());
@@ -171,23 +180,19 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
         }
 
         snapshot = next;
-        statusItem.Name = "status";
-        startItem.Name = "start";
-        pauseItem.Name = "pause";
-        reloadItem.Name = "reload";
-        settingsItem.Name = "settings";
-        soundItem.Name = "sound";
-        errorItem.Name = "error";
-        quitItem.Name = "quit";
-
-        var state = next.State.ToString();
-        statusItem.Text = $"Status: {state}";
-        startItem.Text = next.State is TrayState.Paused or TrayState.Stopped or TrayState.Finished or TrayState.Error ? "Start / Resume" : "Start / Resume";
+        var state = StateLabel(next.State);
+        statusItem.Text = $"状態: {state}";
         startItem.Enabled = next.State is TrayState.Paused or TrayState.Stopped or TrayState.Finished or TrayState.Error;
         pauseItem.Enabled = next.State is TrayState.Starting or TrayState.Listening;
         reloadItem.Enabled = next.State is not TrayState.Quitting and not TrayState.Starting and not TrayState.Pausing and not TrayState.Reloading;
-        errorItem.Text = string.IsNullOrWhiteSpace(next.LastError) ? "Recent error: none" : "Recent error: available";
+        errorItem.Text = string.IsNullOrWhiteSpace(next.LastError) ? "直近のエラー: なし" : "直近のエラーを表示";
         errorItem.Enabled = !string.IsNullOrWhiteSpace(next.LastError);
+        var icon = next.State == TrayState.Listening ? TrayIcons.Listening : TrayIcons.Stopped;
+        if (notifyIcon.Icon != icon)
+        {
+            notifyIcon.Icon = icon;
+        }
+
         notifyIcon.Text = TruncateTooltip($"voice-switch: {state}");
         PublishDiagnosticsOnUi();
     }
@@ -250,6 +255,55 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
         }
 
         return done.Task;
+    }
+
+    private static string StateLabel(TrayState state) => state switch
+    {
+        TrayState.Listening => "待ち受け中",
+        TrayState.Paused or TrayState.Stopped or TrayState.Finished => "停止中",
+        TrayState.Starting => "開始中",
+        TrayState.Pausing or TrayState.Stopping => "停止しています",
+        TrayState.Reloading => "再読み込み中",
+        TrayState.Error => "エラー",
+        TrayState.Quitting => "終了しています",
+        _ => state.ToString()
+    };
+
+    private string LoginCommand => LoginItem.CommandFor(Environment.ProcessPath ?? Application.ExecutablePath, snapshot.ConfigPath);
+
+    private void ToggleLogin()
+    {
+        try
+        {
+            var enable = !login.IsEnabled(LoginCommand);
+            login.Set(LoginCommand, enable);
+            loginItem.Checked = login.IsEnabled(LoginCommand);
+            Log.Info($"tray: launch at sign-in {(enable ? "on" : "off")}: {LoginCommand}");
+            if (enable && LoginCommand.StartsWith("\"\\\\", StringComparison.Ordinal))
+            {
+                MessageBox.Show("voice-switch.exe がネットワーク上（WSL など）にあるため、サインイン時にはまだ開けない場合があります。ローカルのフォルダに置くと確実です。",
+                    "voice-switch", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or IOException)
+        {
+            MessageBox.Show($"ログイン項目の変更に失敗しました: {ex.Message}", "voice-switch", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+
+        PublishDiagnosticsOnUi();
+    }
+
+    // Mac NSWorkspace.open: the file opens in whatever app Windows associates with it.
+    private static void Open(string path)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true })?.Dispose();
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or FileNotFoundException)
+        {
+            MessageBox.Show($"開けませんでした: {path}\n{ex.Message}", "voice-switch", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private void ShowSettings()

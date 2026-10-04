@@ -132,7 +132,7 @@ $build='C:\temp\voice-switch-validation'
 - Package-free behavior tests for wake, stop word, path expansion, config validation, CLI parsing, child recognizer lifecycle, portable VAD fixtures, dictation core, and tray lifecycle.
 - Resident wake-word recognition through Windows SAPI with a constrained grammar of configured wake and stop words.
 - `--fire` dispatches the configured command. The sample command is `superwhisper://record`; it requires Superwhisper for Windows to be installed if you actually run it.
-- `voice-switch.exe` with no diagnostic flag is a WinForms tray app. It listens on launch in command or dictation mode (`--paused` opts out), supports Status, Start/Resume, Pause, Reload, Settings, Recent error, and Quit, prevents duplicate instances per Windows user plus canonical config path, and does not register login/autostart.
+- `voice-switch.exe` with no diagnostic flag is a WinForms tray app. It listens on launch in command or dictation mode (`--paused` opts out), shows a microphone icon while listening and a struck-through one otherwise, has a Japanese menu like Mac (状態, 再開, 一時停止, 設定ファイルを開く, 設定を再読み込み, ログを開く, 効果音, ログイン時に起動, 直近のエラー, 終了), and prevents duplicate instances per Windows user plus canonical config path. ログイン時に起動 writes `HKCU\...\CurrentVersion\Run` `voice-switch`; an exe under `\\wsl.localhost` may not be reachable at sign-in.
 
 ## Limits
 

@@ -211,6 +211,7 @@ public sealed record TrayDiagnostics(
     TrayMenuDiagnostic[] MenuItems,
     bool NotifyIconVisible,
     string ShellRegistration,
-    int ProcessId);
+    int ProcessId,
+    string Icon = "");
 
-public sealed record TrayMenuDiagnostic(string Name, string Text, bool Enabled);
+public sealed record TrayMenuDiagnostic(string Name, string Text, bool Enabled, bool Checked = false);
