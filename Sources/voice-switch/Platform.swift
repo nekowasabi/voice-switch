@@ -7,7 +7,7 @@ enum Platform {
     /// Default config `command` / `stopCommand` when examples are installed.
     static var defaultSuperwhisperToggle: String {
         #if os(Windows)
-        #"cmd /c start "" superwhisper://record"#
+        #"rundll32 url.dll,FileProtocolHandler superwhisper://record"#
         #else
         "open -g superwhisper://record"
         #endif

@@ -49,5 +49,5 @@ public sealed record RuntimeDecision(string Kind, string Text, string? Command, 
 
 public static class PlatformDefaults
 {
-    public const string SuperwhisperToggle = "cmd /c start \"\" superwhisper://record";
+    public const string SuperwhisperToggle = "rundll32 url.dll,FileProtocolHandler superwhisper://record";
 }
