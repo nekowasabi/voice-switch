@@ -53,6 +53,14 @@ public enum HandoffStatus
     RecordedLocally
 }
 
+public enum DictationPhase
+{
+    Idle,
+    Waiting,
+    Recording,
+    Ended
+}
+
 public sealed record LexicalRun(string Text, SampleRange Range);
 
 public sealed record RecognitionRequest(long Id, RecognitionExtent Extent, SampleRange Range, ImmutableArray<short> Samples);
