@@ -8,5 +8,10 @@
   "prerollMs": 300,
   "minSpeechMs": 300,
   "vadRatio": 3.0,
-  "vadMinRMS": 0.005
+  "vadMinRMS": 0.005,
+  "dictation": {
+    "recordingsDir": "%LOCALAPPDATA%\\com.superwhisper.app\\recordings",
+    "endSilenceMs": 1200, "startTimeoutMs": 3000,
+    "maxSeconds": 60
+  }
 }

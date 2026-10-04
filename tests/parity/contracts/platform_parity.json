@@ -7,34 +7,9 @@
       "reason": "Windows cannot observe external recording state, so the default sample omits the unsafe recording toggle as a stop command."
     },
     {
-      "key": "dictation",
-      "platform": "windows",
-      "reason": "The default Windows sample stays in command mode; config.example.windows-dictation.json is the explicit dictation sample."
-    },
-    {
-      "key": "dictation.recordingsDir",
-      "platform": "windows",
-      "reason": "The default Windows sample stays in command mode; dictation defaults to %LOCALAPPDATA%\\com.superwhisper.app\\recordings when recordingsDir is unset."
-    },
-    {
-      "key": "dictation.endSilenceMs",
-      "platform": "windows",
-      "reason": "The default Windows sample stays in command mode; dictation silence is configured in config.example.windows-dictation.json."
-    },
-    {
-      "key": "dictation.maxSeconds",
-      "platform": "windows",
-      "reason": "The default Windows sample stays in command mode; dictation maximum duration is configured in config.example.windows-dictation.json."
-    },
-    {
       "key": "dictation.excludeBundleIDs",
       "platform": "windows",
       "reason": "Windows has no frontmost bundle exclusion model."
-    },
-    {
-      "key": "dictation.startTimeoutMs",
-      "platform": "windows",
-      "reason": "The default Windows sample stays in command mode; dictation start timeout is configured in config.example.windows-dictation.json."
     },
     {
       "key": "skipWhileMicInUseBy",

@@ -53,7 +53,7 @@ function Get-Cer([string]$Expected, [string]$Actual) {
 }
 
 function Write-Config($Path, $Mode) {
-  $base = Get-Content (Join-Path $repo "config.example.windows-dictation.json") -Raw | ConvertFrom-Json
+  $base = Get-Content (Join-Path $repo "config.example.windows.json") -Raw | ConvertFrom-Json
   $base | Add-Member -Force -NotePropertyName noiseReduction -NotePropertyValue ([pscustomobject]@{
     mode = $Mode
     maxAttenuationDb = 6

@@ -11,7 +11,7 @@ Evidence terms:
 - Unsupported means no current Windows adapter implements the feature.
 - HOLD means external behavior or safety is still unverified.
 
-Command mode and dictation mode are separate. The default Windows sample remains command mode. `config.example.windows-dictation.json` is the explicit optional dictation sample.
+Command mode and dictation mode are separate. The default Windows sample `config.example.windows.json` is dictation mode, like macOS; removing its `dictation` block selects command mode.
 
 ## Experience matrix
 
