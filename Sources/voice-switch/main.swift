@@ -562,7 +562,7 @@ final class Listener {
         var deafFrames = 0
     }
 
-    enum Phase { case idle, waiting, recording }
+    enum Phase { case idle, waiting, recording, ended }
 
     /// Called on the main thread whenever the dictation phase changes.
     var onPhase: ((Phase) -> Void)?
@@ -572,10 +572,13 @@ final class Listener {
         var dictation: Dictation?
         var shown = Phase.idle
         for await f in stream {
+            // Set where the user ended it on purpose (stop word or superwhisper's shortcut), so the HUD confirms it.
+            var endedByUser = false
             // Derived from `dictation` after every frame (defer covers each `continue`) instead of at each place that sets it.
             defer {
-                let phase: Phase = dictation.map { $0.heardSpeech ? .recording : .waiting } ?? .idle
-                if phase != shown {
+                let phase: Phase = endedByUser ? .ended : dictation.map { $0.heardSpeech ? .recording : .waiting } ?? .idle
+                // .ended hides itself after a moment; the idle that follows it is not a change.
+                if phase != shown, !(shown == .ended && phase == .idle) {
                     shown = phase
                     DispatchQueue.main.async { self.onPhase?(phase) }
                 }
@@ -595,7 +598,7 @@ final class Listener {
                 if case let .utterance(u)? = event, await isStopWord(u) {
                     // The stop word arrived as its own utterance; its audio is the tail of the buffer.
                     d.samples.removeLast(min(u.count, d.samples.count))
-                    dictation = nil; Hotkeys.end()
+                    dictation = nil; Hotkeys.end(); endedByUser = true
                     log("dictation finished by stop word")
                     if d.heardSpeech, !d.samples.isEmpty { submit(d, cfg: dc) }
                     continue
@@ -618,7 +621,7 @@ final class Listener {
                 let reason = key == .finish ? "hotkey" : d.samples.count > Int((dc.maxSeconds ?? 60) * rate) ? "maxSeconds"
                     : "\(d.silentFrames * frameLen * 1000 / Int(rate)) ms silence"
                 d.samples.removeLast(d.silentFrames * frameLen)
-                dictation = nil; Hotkeys.end()
+                dictation = nil; Hotkeys.end(); endedByUser = key == .finish
                 log("dictation ended by \(reason) after \(d.samples.count * 1000 / Int(rate)) ms of audio")
                 submit(d, cfg: dc)
                 continue
@@ -767,11 +770,20 @@ final class HUD {
         return p
     }()
 
+    private var shown = 0
+
     func show(_ phase: Listener.Phase) {
+        shown += 1
         switch phase {
         case .idle: panel.orderOut(nil); return
         case .waiting: label.stringValue = "🎙 どうぞ"; label.textColor = .labelColor
         case .recording: label.stringValue = "● 録音中"; label.textColor = .systemRed
+        case .ended:
+            label.stringValue = "■ 録音終了"; label.textColor = .labelColor
+            let mine = shown
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [self] in
+                if shown == mine { panel.orderOut(nil) }
+            }
         }
         // The screen with the mouse, so it shows where the user is looking on multi-monitor setups.
         let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
