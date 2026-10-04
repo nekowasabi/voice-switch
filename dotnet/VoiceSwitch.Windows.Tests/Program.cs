@@ -60,6 +60,8 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation phases follow lone wake ended by stop word", () => Check(DictationPhasesFollowLoneWakeEndedByStop())),
     ("dictation phase stays recording when the wake word is repeated while waiting", () => Check(DictationPhaseStaysRecordingOnRepeatedWake())),
     ("dictation phases follow lone wake ended by start timeout", () => Check(DictationPhasesFollowLoneWakeStartTimeout())),
+    ("dictation runtime end silence counts from when the body is applied", () => Check(DictationRuntimeEndSilenceCountsFromBodyApplied())),
+    ("dictation runtime start timeout counts from when the wake is applied", () => Check(DictationRuntimeStartTimeoutCountsFromWakeApplied())),
     ("dictation phases and foreground target across two stop-ended dictations", () => Check(DictationPhasesAndTargetAcrossTwoDictations())),
     ("dictation hotkeys parse Superwhisper shortcut names", () => Check(DictationHotkeysParseShortcutNames())),
     ("dictation hotkeys load preferences with per-key fallback", () => Check(DictationHotkeysLoadPreferencesWithFallback())),
@@ -1167,6 +1169,96 @@ static bool DictationPhasesFollowLoneWakeStartTimeout()
     return RunWithTimeout(runtime, TimeSpan.FromSeconds(5)) == 0
         && handoff.Submissions.Count == 0
         && observer.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Idle]);
+}
+
+// SAPI answers 0.8-2 s after an utterance closes, so the session opens when the audio-anchored deadlines are mostly spent.
+// The recognizer here answers the first request only once the capture has delivered 0.9 s of post-utterance audio.
+static ScriptedDictationRecognizer LateRecognizer(Func<bool> gateReached, string firstKind) =>
+    new(async request =>
+    {
+        while (request.Id == 1 && !gateReached())
+        {
+            await Task.Delay(5);
+        }
+
+        return Utterance(request, request.Id == 1 ? firstKind : "body");
+    });
+
+static bool DictationRuntimeEndSilenceCountsFromBodyApplied()
+{
+    var before = new List<PcmFrame>();
+    AddFrames(before, 3, loud: false);
+    AddFrames(before, 12, loud: true);
+    AddFrames(before, 42, loud: false);
+    var after = new List<PcmFrame>(before);
+    AddFrames(after, 20, loud: false);
+    AddFrames(after, 12, loud: true);
+    AddFrames(after, 60, loud: false);
+    after = after.Skip(before.Count).ToList();
+    using var bodyStarted = new ManualResetEventSlim(false);
+    GatedPcmCapture? capture = null;
+    var recognizer = LateRecognizer(() => capture?.GateWasReached == true, "wakebody");
+    capture = new GatedPcmCapture(before, after, bodyStarted, [before.Count - 1]);
+    var hotkeys = new DictationHotkeys();
+    var swallowed = false;
+    var observer = new PhaseRecorder();
+    var handoff = new RecordingDictationHandoff();
+    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 1200), capture, recognizer, handoff, dryRun: true, observer, hotkeys: hotkeys, readShortcuts: () => null);
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output, line =>
+    {
+        if (line.Contains("dictation session: body-start", StringComparison.Ordinal))
+        {
+            bodyStarted.Set();
+        }
+
+        // Ctrl+Space 0.96 s after the HUD appeared: 0.6 s of silence, then the user spoke 0.36 s more.
+        if (line.Contains("dictation vad: speech-end at=42720", StringComparison.Ordinal))
+        {
+            swallowed = hotkeys.OnKey(0x20, KeyMods.Control, down: true, nowMs: 0);
+        }
+    });
+    var audio = handoff.Submissions.SingleOrDefault();
+    return code == 0
+        && swallowed
+        && audio is not null
+        && audio.Reason == FinishReason.FinishCommand
+        && audio.Range == new SampleRange(960, 42720)
+        && output.Contains("dictation ended by hotkey after 2610 ms of audio", StringComparison.Ordinal)
+        && observer.Phases.SequenceEqual([DictationPhase.Recording, DictationPhase.Ended]);
+}
+
+static bool DictationRuntimeStartTimeoutCountsFromWakeApplied()
+{
+    var before = new List<PcmFrame>();
+    AddFrames(before, 3, loud: false);
+    AddFrames(before, 12, loud: true);
+    AddFrames(before, 42, loud: false);
+    var after = new List<PcmFrame>(before);
+    // The body starts 3.84 s after the wake audio ended but 2.49 s after the wake was applied.
+    AddFrames(after, 83, loud: false);
+    AddFrames(after, 12, loud: true);
+    AddFrames(after, 80, loud: false);
+    after = after.Skip(before.Count).ToList();
+    using var wakeApplied = new ManualResetEventSlim(false);
+    GatedPcmCapture? capture = null;
+    var recognizer = LateRecognizer(() => capture?.GateWasReached == true, "wake");
+    capture = new GatedPcmCapture(before, after, wakeApplied, [before.Count - 1]);
+    var observer = new PhaseRecorder();
+    var handoff = new RecordingDictationHandoff();
+    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(startTimeoutMs: 3000, endSilenceMs: 1200), capture, recognizer, handoff, dryRun: true, observer);
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out _, line =>
+    {
+        if (line.Contains("dictation session: wake-only", StringComparison.Ordinal))
+        {
+            wakeApplied.Set();
+        }
+    });
+    var audio = handoff.Submissions.SingleOrDefault();
+    return code == 0
+        && audio is not null
+        && audio.Reason == FinishReason.Silence
+        && audio.Range == new SampleRange(66240, 77760)
+        && observer.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Recording, DictationPhase.Idle]);
 }
 
 static bool DictationPhasesAndTargetAcrossTwoDictations()
