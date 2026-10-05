@@ -462,6 +462,9 @@ def check_mac_superwhisper_mode_handoff(result: Result, repo: SourceTree) -> Non
             "route == .sendFailed",
             "extractSendBody(result)",
             "dictation not delivered: send failed and no body to paste",
+            # B2: modeRequested only after post-switch activeMode == key (failed poll → no paste).
+            "guard readSuperwhisperActiveMode() == key else",
+            "return (false, nil)",
         ],
     )
 

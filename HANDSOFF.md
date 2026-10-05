@@ -50,6 +50,7 @@ superwhisper の自動ペーストと pane への送信の両方が届き、同�
 - **本文なし（pane は当たったが `ExtractSendBody` / `extractSendBody` が null）は paste しない**（`RouteDisposition.SkippedNoBody` / `.skippedNoBody`）。全文フォールバック禁止。
 - **SendFailed（mode 設定時）**: paste するのは抽出本文だけ。mode 未設定時は従来どおり Superwhisper が全文を自動ペーストしうる。
 - Mac: `SuperwhisperModes.swift` + `MacApp.handoff` に配線済み。mode パスは `~/Documents/superwhisper/{preferences.json,modes}`。**Mac 実機の mode 切替・paste は未検証**（この box に swiftc / Apple Speech なし）。
+- **mode 切替の 3 s poll が失敗したら `modeRequested` は false**（Mac `enterSuperwhisperMode` / Windows `EnterModeAsync`）。Decide は paste せず Superwhisper / unset 経路のまま（autoPaste mode 残留での二重配信を防ぐ）。
 - Windows 実機での mode 切替・paste の再確認は未実施（box のみ）。
 
 ### 3. Jev が `jev=off` のまま
@@ -61,7 +62,7 @@ superwhisper の自動ペーストと pane への送信の両方が届き、同�
 ### 4. RESEARCH hyp 2/3（Slice C/D）— コード反映済み・Mac 実機未検証
 
 - Slice C: Mac VAD に `rebaseFloor`（Windows `RebaseFloor`）を移植。`vad-selftest` / parity 静的検査。
-- Slice D: Mac `transcribe` に期限 `max(10, audioSeconds + 20)`（`transcribeDeadlineSeconds` / `TranscribeDeadline`）。タイムアウトは既存 `transcribe failed` 経路。Windows.Tests で式を検証。
+- Slice D: Mac `transcribe` に期限 `max(10, audioSeconds + 20)`（`transcribeDeadlineSeconds` / `TranscribeDeadline`）。タイムアウトは既存 `transcribe failed` 経路。期限に加え `cancelAndFinishNow` hard-stop（deadline-only ではない；Slice C / hyp 3 RebaseFloor とは別）。Windows.Tests で式を検証。
 - **この box では Apple Speech を実行できない。Mac 実機ランタイムは未検証。ライブ Speech を主張しないこと。**
 
 ### 5. その他

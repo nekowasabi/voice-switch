@@ -173,8 +173,9 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         return new HandoffResult(HandoffStatus.Transcribed, audio.SessionId, null, "Superwhisper result found; WAV deleted");
     }
 
-    // Requested is true when the configured mode is (or now should be) active; Previous is the mode to switch back to.
+    // Requested is true only when the configured mode is confirmed active; Previous is the mode to switch back to.
     // Without a readable activeMode there would be nothing to switch back to, so the mode is left alone.
+    // A failed 3 s poll must leave Requested false so Decide stays on Superwhisper (no paste) — B2 double-delivery guard.
     private async Task<(bool Requested, string? Previous)> EnterModeAsync(nint target)
     {
         if (superwhisperMode is null)
@@ -203,6 +204,12 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
 
         Log.Info($"superwhisper mode: {key} (was {active})");
         await SwitchModeAsync(key, target);
+        // Mirror Mac enterSuperwhisperMode: only claim Requested when activeMode actually matches.
+        if (ReadActiveMode() != key)
+        {
+            return (false, null);
+        }
+
         return (true, active);
     }
 

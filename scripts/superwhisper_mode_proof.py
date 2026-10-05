@@ -71,6 +71,7 @@ def main() -> int:
     check(decide(True, "notRouted") == "paste", "notRouted+mode")
     check(decide(True, "sendFailed") == "paste", "sendFailed+mode")
     check(decide(False, "notRouted") == "superwhisper", "legacy")
+    check(decide(False, "sendFailed") == "superwhisper", "sendFailed legacy no paste")
     check(decide(False, "sent") == "pane", "sent legacy")
     check(decide(True, "skippedNoBody") == "pane", "no body never paste")
     check(decide(False, "skippedNoBody") == "pane", "no body never paste unset")
@@ -90,8 +91,16 @@ def main() -> int:
         "decideDictationDelivery(modeRequested:",
         "pasteDictation(payload, target:",
         "superwhisper mode restored:",
+        "guard readSuperwhisperActiveMode() == key else",
     ):
         check(needle in mac, f"missing in MacApp.swift: {needle}")
+    # Windows EnterModeAsync mirrors the same post-switch activeMode gate.
+    win = (ROOT / "dotnet/VoiceSwitch.Windows/SuperwhisperHandoff.cs").read_text(encoding="utf-8")
+    for needle in (
+        "if (ReadActiveMode() != key)",
+        "return (false, null);",
+    ):
+        check(needle in win, f"missing in SuperwhisperHandoff.cs: {needle}")
     for needle in (
         "func routeDictation(_ text: String) async -> RouteDisposition",
         "func sendKeysToPane",

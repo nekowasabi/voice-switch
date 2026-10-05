@@ -216,7 +216,9 @@ func switchSuperwhisperMode(_ key: String, target: NSRunningApplication?) async 
     return false
 }
 
-/// Requested is true when the configured mode is (or should be) active; Previous is what to restore.
+/// Requested is true only when the configured mode is confirmed active; Previous is what to restore.
+/// A failed 3 s poll must leave requested false so Decide stays on the Superwhisper path (no paste):
+/// otherwise Superwhisper may still be on an autoPaste mode → double delivery (B2).
 func enterSuperwhisperMode(_ wanted: String?, target: NSRunningApplication?) async -> (requested: Bool, previous: String?) {
     guard let wanted, !wanted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
         return (false, nil)
@@ -233,6 +235,10 @@ func enterSuperwhisperMode(_ wanted: String?, target: NSRunningApplication?) asy
     if active == key { return (true, nil) }
     log("superwhisper mode: \(key) (was \(active))")
     _ = await switchSuperwhisperMode(key, target: target)
+    // Gate on the post-switch read, not switchSuperwhisperMode's Bool alone — same contract as Windows EnterModeAsync.
+    guard readSuperwhisperActiveMode() == key else {
+        return (false, nil)
+    }
     return (true, active)
 }
 

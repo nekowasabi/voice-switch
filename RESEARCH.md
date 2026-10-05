@@ -57,7 +57,7 @@
 ### 疑っている箇所（仮説）
 
 1. **再起動が 1 回失敗すると、二度と試さない（Windows と同じ形）。** `MacApp.swift:300-305` では、`AVAudioEngineConfigurationChange` を受けると `stop()` してから `start()` する。`start()` が投げると `restart failed` がログに出て、`running` は false のまま残る。observer は `guard … self.running` で始まるので、以後の通知はすべて無視され、二度と再起動しない。
-2. **`transcribe` がハングすると止まる。** かつては `transcribe`（SpeechAnalyzer）に期限が無く、consume ループが直列に待つため 1 回でも戻らないとループが止まった。**コード上の修正済み**（`transcribeDeadlineSeconds` / `TranscribeDeadline`、期限 `max(10, audioSeconds + 20)`、タイムアウトは既存の `transcribe failed` 経路）。**Mac 実機ランタイムは未検証**（この box では Apple Speech を実行できない）。
+2. **`transcribe` がハングすると止まる。** かつては `transcribe`（SpeechAnalyzer）に期限が無く、consume ループが直列に待つため 1 回でも戻らないとループが止まった。**コード上の修正済み**（`transcribeDeadlineSeconds` / `TranscribeDeadline`、期限 `max(10, audioSeconds + 20)`、タイムアウトは既存の `transcribe failed` 経路。期限だけでは足りず、`cancelAndFinishNow` による hard-stop が必要 — `withThrowingTaskGroup.cancelAll` は子の完了を待つため）。**Mac 実機ランタイムは未検証**（この box では Apple Speech を実行できない）。仮説 3（RebaseFloor）とは別件。
 3. **定常音で VAD が発話中のまま抜けない。** かつては Mac の `Segmenter.swift` は無音のときにしか floor が追従せず、閾値を超える定常音で `skipping` から抜けられなかった。**コード上の修正済み**（Windows `RebaseFloor` を `rebaseFloor` / `rebaseFloorAfterNoWake` として移植）。**Mac 実機ランタイムは未検証**。
 
 ### 止まったときに見るもの
@@ -81,7 +81,7 @@
 ### 仮説ごとの直し方の案（計測で確定してから入れる）
 
 - 仮説 1: `start()` が失敗したら、Windows と同じく間隔を空けて再試行する。observer の `running` ガードで再試行が潰れないようにする。
-- 仮説 2: **コード反映済み。** Mac `transcribe` に Windows と同じ式の期限（`max(10, 秒数 + 20)` 秒 = `transcribeDeadlineSeconds` / `TranscribeDeadline`）を付け、超えたら既存の `transcribe failed` の経路へ流す。box では Apple Speech を実行できないため **Mac 実機ランタイムは未検証**。
+- 仮説 2: **コード反映済み。** Mac `transcribe` に Windows と同じ式の期限（`max(10, 秒数 + 20)` 秒 = `transcribeDeadlineSeconds` / `TranscribeDeadline`）を付け、超えたら既存の `transcribe failed` の経路へ流す。期限タイマーに加え、キャンセル時は `cancelAndFinishNow` で SpeechAnalyzer を hard-stop する（deadline-only ではない。仮説 3 の RebaseFloor とは別）。box では Apple Speech を実行できないため **Mac 実機ランタイムは未検証**。
 - 仮説 3: **コード反映済み。** Windows の `RebaseFloor` を Mac `Segmenter.rebaseFloor` に移植し、over-cap head で wake が無いときに呼ぶ。**Mac 実機ランタイムは未検証**。
 
 ## 最新研究・OSS との比較

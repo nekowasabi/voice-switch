@@ -128,6 +128,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("config loads optional dictation.superwhisperMode", () => Check(ConfigLoadsOptionalSuperwhisperMode())),
     ("dictation handoff switches mode before launch and restores after", () => Check(DictationHandoffSwitchesModeBeforeLaunchAndRestoresAfter())),
     ("dictation handoff pastes only when mode requested and not routed", () => Check(DictationHandoffPastesOnlyWhenModeRequestedAndNotRouted())),
+    ("dictation handoff does not paste when mode switch fails", () => Check(DictationHandoffDoesNotPasteWhenModeSwitchFails())),
     ("dictation handoff does not paste full text after no-body skip", () => Check(DictationHandoffDoesNotPasteFullTextAfterNoBodySkip())),
     ("dictation handoff pastes extracted body when send-keys failed", () => Check(DictationHandoffPastesExtractedBodyWhenSendKeysFailed())),
     ("dictation handoff keeps WAV when Superwhisper writes no result", () => Check(DictationHandoffKeepsWavWithoutResult())),
@@ -3249,6 +3250,7 @@ static bool SuperwhisperModeDecidePastesOnlyWhenNotRouted() =>
     && SuperwhisperModes.Decide(modeRequested: true, RouteDisposition.NotRouted) == DictationDelivery.Paste
     && SuperwhisperModes.Decide(modeRequested: true, RouteDisposition.SendFailed) == DictationDelivery.Paste
     && SuperwhisperModes.Decide(modeRequested: false, RouteDisposition.NotRouted) == DictationDelivery.Superwhisper
+    && SuperwhisperModes.Decide(modeRequested: false, RouteDisposition.SendFailed) == DictationDelivery.Superwhisper
     && SuperwhisperModes.Decide(modeRequested: false, RouteDisposition.Sent) == DictationDelivery.Pane;
 
 static bool SuperwhisperModeDecideDoesNotPasteAfterNoBodySkip()
@@ -3394,6 +3396,55 @@ static bool DictationHandoffPastesOnlyWhenModeRequestedAndNotRouted()
     }
 
     return true;
+}
+
+static bool DictationHandoffDoesNotPasteWhenModeSwitchFails()
+{
+    // B2: if the 3 s poll never sees the dedicated mode, modeRequested stays false and Decide must not Paste
+    // (Superwhisper may still be on an autoPaste mode → double delivery).
+    using var temp = RuntimeTemp();
+    var root = Path.Combine(temp.Dir, "handoff");
+    var recordings = Path.Combine(temp.Dir, "recordings");
+    var modes = Path.Combine(temp.Dir, "modes");
+    var preferences = Path.Combine(temp.Dir, "preferences.json");
+    Directory.CreateDirectory(modes);
+    File.WriteAllText(Path.Combine(modes, "dedicated.json"), """{"key":"new-mode-1","name":"voice_switch"}""");
+    File.WriteAllText(Path.Combine(modes, "default.json"), """{"key":"default","name":"Default"}""");
+    File.WriteAllText(preferences, """{"activeMode":"default"}""");
+    var pastes = new List<(string Text, nint Target)>();
+    var modeLaunches = 0;
+    Func<ProcessStartInfo, Process?> start = psi =>
+    {
+        var argument = psi.ArgumentList[0];
+        if (argument.StartsWith("superwhisper://mode?key=", StringComparison.Ordinal))
+        {
+            modeLaunches++;
+            // Leave preferences on default — simulates poll failure after switch attempt.
+            return Process.GetCurrentProcess();
+        }
+
+        WriteSuperwhisperMeta(recordings, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(), """{"llmResult":"must not paste"}""");
+        return Process.GetCurrentProcess();
+    };
+    var handoff = new RegisteredSuperwhisperHandoff(root, recordings, start, delay: _ => Task.CompletedTask,
+        onTranscribed: _ => Task.FromResult(RouteDisposition.NotRouted),
+        superwhisperMode: "voice_switch",
+        paste: (text, target) => { pastes.Add((text, target)); return true; },
+        preferencesPath: preferences,
+        modesDir: modes);
+    HandoffResult? result = null;
+    var (_, output) = CaptureConsole(() =>
+    {
+        result = SubmitHandoff(handoff, new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2), Target: 0x55));
+        return 0;
+    });
+    return result!.Status == HandoffStatus.Transcribed
+        && modeLaunches == 1
+        && pastes.Count == 0
+        && !output.Contains("dictation delivered: paste", StringComparison.Ordinal)
+        && output.Contains("dictation delivered: superwhisper", StringComparison.Ordinal)
+        && SuperwhisperModes.ActiveMode(File.ReadAllText(preferences)) == "default"
+        && SuperwhisperModes.Decide(modeRequested: false, RouteDisposition.NotRouted) == DictationDelivery.Superwhisper;
 }
 
 static bool DictationHandoffDoesNotPasteFullTextAfterNoBodySkip()
