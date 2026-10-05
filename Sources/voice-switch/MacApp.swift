@@ -285,6 +285,12 @@ final class Listener {
     private let cont: AsyncStream<[Float]>.Continuation
     private var pending: [Float] = []
     private(set) var running = false
+    /// The user wants input on; stays true while a failed restart is being retried, unlike `running`.
+    private(set) var wanted = false
+    /// Called on the main thread after each restart attempt so the menu bar can follow `running`.
+    var onRestart: (() -> Void)?
+    private var restartError: String?
+    private var retryScheduled = false
     /// CoreAudio device UID; nil follows the system default input. Set only while stopped.
     var deviceUID: String? {
         // A pinned input unit never follows the system default again, so start over with a fresh engine.
@@ -298,10 +304,9 @@ final class Listener {
         Task { await self.consume(stream) }
         // Input device switches stop the tap silently; restart on the engine's own signal.
         NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: .main) { [weak self] note in
-            guard let self, self.running, note.object as? AVAudioEngine === self.engine else { return }
+            guard let self, self.wanted, note.object as? AVAudioEngine === self.engine else { return }
             log("audio configuration changed, restarting input")
-            self.stop()
-            do { try self.start() } catch { log("restart failed: \(error)") }
+            self.restart()
         }
     }
 
@@ -328,7 +333,9 @@ final class Listener {
         // outputFormat stays at the previous device's rate after CurrentDevice is switched
         // (48 kHz vs the webcam's 16 kHz), and a tap with that format gets no buffers at all.
         let fmt = node.inputFormat(forBus: 0)
-        guard let conv = AVAudioConverter(from: fmt, to: work) else { throw NSError(domain: "convert", code: 1) }
+        guard let conv = AVAudioConverter(from: fmt, to: work) else {
+            throw NSError(domain: "convert", code: 1, userInfo: [NSLocalizedDescriptionKey: "input format \(fmt.sampleRate) Hz, \(fmt.channelCount) ch"])
+        }
         pending = []
         node.removeTap(onBus: 0)
         node.installTap(onBus: 0, bufferSize: 4096, format: fmt) { [self] buf, _ in
@@ -342,6 +349,7 @@ final class Listener {
         engine.prepare()
         try engine.start()
         running = true
+        wanted = true
         log("listening on \(deviceName) at \(fmt.sampleRate) Hz for \(config.cfg.wakeWords)")
     }
 
@@ -353,7 +361,9 @@ final class Listener {
         }
     }
 
-    func stop() {
+    func stop() { wanted = false; halt() }
+
+    private func halt() {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         running = false
@@ -498,6 +508,26 @@ final class Listener {
         return words.contains(t)
     }
 
+    private func restart() { halt(); attemptStart() }
+
+    private func attemptStart() {
+        do { try start(); restartError = nil } catch {
+            // One log line per distinct error, the retry repeats every 10 s while the device is away.
+            if restartError != "\(error)" { restartError = "\(error)"; log("restart failed, retrying every 10 s: \(error)") }
+            // The one recovery seen in the field (2026-10-03 log) went through a fresh engine.
+            engine = AVAudioEngine()
+            if !retryScheduled {
+                retryScheduled = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+                    guard let self else { return }
+                    self.retryScheduled = false
+                    if self.wanted, !self.running { self.attemptStart() }
+                }
+            }
+        }
+        onRestart?()
+    }
+
     private func submit(_ d: Dictation, cfg: DictationConfig) {
         let claimed = handoffBusy.withLock { busy in
             defer { busy = true }
@@ -632,6 +662,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         listener = Listener(config: config)
         listener.onPhase = { [hud] in hud.show($0) }
+        listener.onRestart = { [weak self] in self?.refresh() }
         listener.deviceUID = UserDefaults.standard.string(forKey: deviceKey)
         Task { @MainActor in
             do {
@@ -652,9 +683,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func refresh() {
         let on = listener?.running ?? false
+        let wanted = listener?.wanted ?? false
         item.button?.image = NSImage(systemSymbolName: on ? "mic.fill" : "mic.slash",
                                      accessibilityDescription: on ? "voice-switch: 待ち受け中" : "voice-switch: 停止中")
-        toggle.title = on ? "一時停止" : "再開"
+        toggle.title = wanted ? "一時停止" : "再開"
         toggle.isEnabled = listener != nil
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         sound.state = UserDefaults.standard.bool(forKey: soundKey) ? .on : .off
@@ -674,7 +706,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc func togglePause() {
-        if listener.running { listener.stop() } else {
+        if listener.wanted { listener.stop() } else {
             do { try listener.start() } catch { fail("再開に失敗しました: \(error)") }
         }
         refresh()
@@ -698,10 +730,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let uid = sender.representedObject as? String
         UserDefaults.standard.set(uid, forKey: deviceKey)
         guard let listener else { return }
-        let wasRunning = listener.running
-        if wasRunning { listener.stop() }
+        let wanted = listener.wanted
+        if wanted { listener.stop() }
         listener.deviceUID = uid
-        if wasRunning {
+        if wanted {
             do { try listener.start() } catch { fail("マイクの切り替えに失敗しました: \(error)") }
         }
         refresh()
