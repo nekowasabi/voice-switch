@@ -153,12 +153,24 @@ def send_body_candidates(dictation, labels):
 def check_body_jev_and_resolve_present():
     src_swift = (ROOT / "Sources/voice-switch/PaneRoute.swift").read_text()
     src_cs = (ROOT / "dotnet/VoiceSwitch.Windows.Core/PaneRoute.cs").read_text()
-    for needle in ("func parseJevBodyPick", "func jevBodyRequestBody", "func resolveSendBody"):
+    router = (ROOT / "dotnet/VoiceSwitch.Windows/TmuxPaneRouter.cs").read_text()
+    for needle in (
+        "func parseJevBodyPick",
+        "func jevBodyRequestBody",
+        "func resolveSendBody",
+        "func beginBodyResolve",
+        "func completeBodyResolve",
+        "func jevBodyPick",
+        r"body=\(bodySource)",
+    ):
         if needle not in src_swift:
             return fail(f"swift missing {needle}")
-    for needle in ("ParseJevBodyPick", "JevBodyRequestBody", "ResolveSendBody"):
+    for needle in ("ParseJevBodyPick", "JevBodyRequestBody", "ResolveSendBody", "BeginBodyResolve", "CompleteBodyResolve", "LabelsForHits"):
         if needle not in src_cs:
             return fail(f"csharp missing {needle}")
+    for needle in ("AskJevBodyAsync", "BeginBodyResolve", "CompleteBodyResolve", "bodySource"):
+        if needle not in router:
+            return fail(f"TmuxPaneRouter missing {needle}")
     return 0
 
 

@@ -443,6 +443,9 @@ def check_mac_superwhisper_mode_handoff(result: Result, repo: SourceTree) -> Non
             "func sendKeysToPane(_ id: String, _ body: String) -> Bool",
             "p.waitUntilExit()",
             "func routeDictation(_ text: String) async -> RouteDisposition",
+            "func beginBodyResolve(",
+            "await jevBodyPick(",
+            r"body=\(bodySource)",
             "return routeDisposition(pane:",
         ],
     )

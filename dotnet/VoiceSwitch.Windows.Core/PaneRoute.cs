@@ -449,6 +449,76 @@ public static class PaneRoute
         return new SendBodyResult(candidates[index], "jev body");
     }
 
+
+    // Non-empty title / window / command / agent tokens from panes that already hit.
+    public static IReadOnlyList<string> LabelsForHits(IReadOnlyList<PaneLabel> hits, IReadOnlyDictionary<string, string[]>? agents = null)
+    {
+        var labels = new List<string>();
+        foreach (var pane in hits)
+        {
+            foreach (var label in new[] { pane.Title, pane.Window, pane.Command })
+            {
+                if (label.Length > 0)
+                {
+                    labels.Add(label);
+                }
+            }
+
+            if (agents is not null && agents.TryGetValue(pane.Id, out var names))
+            {
+                foreach (var name in names)
+                {
+                    if (!string.IsNullOrEmpty(name))
+                    {
+                        labels.Add(name);
+                    }
+                }
+            }
+        }
+
+        return labels;
+    }
+
+    // Early body resolve for a chosen pane: quoted or no-candidates finish without HTTP.
+    // NeedJev means the router must call body Choice, then CompleteBodyResolve.
+    public static (bool NeedJev, SendBodyResult? Early, IReadOnlyList<string> Candidates) BeginBodyResolve(
+        string dictation,
+        IReadOnlyList<string> labels)
+    {
+        if (ExtractSendBody(dictation) is { } quoted)
+        {
+            return (false, new SendBodyResult(quoted, "quoted"), []);
+        }
+
+        var candidates = SendBodyCandidates(dictation, labels);
+        if (candidates.Count == 0)
+        {
+            return (false, new SendBodyResult(null, "no candidates"), candidates);
+        }
+
+        return (true, null, candidates);
+    }
+
+    // After body Jev HTTP: status is ok / off / error. Never returns the full dictation.
+    public static SendBodyResult CompleteBodyResolve(
+        string dictation,
+        IReadOnlyList<string> labels,
+        JevBodyPick? pick,
+        string status)
+    {
+        if (status == "off")
+        {
+            return new SendBodyResult(null, "no body pick");
+        }
+
+        if (status == "error")
+        {
+            return new SendBodyResult(null, "jev body error");
+        }
+
+        return ResolveSendBody(dictation, labels, pick);
+    }
+
     // A chosen pane without a send body is skipped; the full dictation is never sent or pasted instead.
     public static RouteDecision RequireSendBody(RouteDecision decision, string? body) =>
         decision.Pane is { } pane && body is null
@@ -466,9 +536,9 @@ public static class PaneRoute
     public static string JevField(JevPick pick) =>
         $"{pick.Pane ?? "none"}@{pick.Confidence.ToString("0.00", CultureInfo.InvariantCulture)}";
 
-    // One log line per dictation, e.g. `tmux: hits=2 jev=%2@0.87 -> send %2 (jev narrowed)`.
-    public static string LogLine(int hits, string jevField, RouteDecision decision) =>
+    // One log line per dictation, e.g. `tmux: hits=2 jev=%2@0.87 body=quoted -> send %2 (jev narrowed)`.
+    public static string LogLine(int hits, string jevField, RouteDecision decision, string bodySource = "-") =>
         decision.Pane is { } pane
-            ? $"tmux: hits={hits} jev={jevField} -> send {pane} ({decision.Reason})"
-            : $"tmux: hits={hits} jev={jevField} -> skip ({decision.Reason})";
+            ? $"tmux: hits={hits} jev={jevField} body={bodySource} -> send {pane} ({decision.Reason})"
+            : $"tmux: hits={hits} jev={jevField} body={bodySource} -> skip ({decision.Reason})";
 }

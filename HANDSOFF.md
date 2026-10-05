@@ -6,7 +6,7 @@
 
 ## ブランチと状態
 
-- ブランチは `feat/pane-route-jev`（先端 `7350cb2`）。Overnight A–D / B2 に加え、本文 F1 candidates・F2 resolve/parse まで入り、F3（route+HTTP）が残。
+- ブランチは `feat/pane-route-jev`（先端 `c501e28`）。Overnight A–D / B2 に加え、本文 F1–F3（candidates / resolve / route+HTTP）まで入り。
 - PR #4（`feat/tmux-pane-route`）は触っていない。PR #4 は 63 コミット古い main から分かれていて、main と衝突している。このブランチで新しく PR を作り、PR #4 を閉じる想定。
 - `b612216`（RESEARCH.md の研究比較）は別の話題の変更。PR を作る前に別ブランチへ分けるか決める。
 
@@ -39,7 +39,7 @@ Jev が使えないとき（キーなし、5 秒のタイムアウト、HTTP エ
 
 ### 1. 指示の部分まで送られる — **対応済み（Slice A）**
 
-`extractSendBody` / `ExtractSendBody` が、最初の空でない `「…」`、なければ `『…』` の中身だけを返す。照合と Jev は全文のまま。send-keys は切り出した本文だけ。切り出し失敗時は全文を送らず、`tmux: … -> skip (no send body for %N; not sending)` で終える。fixture `pane_route.json` の `extract` と Windows / parity / `pane_route_proof.py` で確認済み。 鉤括弧なしは F1 `sendBodyCandidates`（`231c171`）と F2 `resolveSendBody` / body Choice parse・request（`7350cb2`）まで純関数＋fixture 済み。 route / HTTP 配線は F3。候補の右端 particle や mid-token label 食い込みは既知のヒューリスティック限界（quote 優先で緩和）。
+`extractSendBody` / `ExtractSendBody` が、最初の空でない `「…」`、なければ `『…』` の中身だけを返す。照合と Jev は全文のまま。send-keys は切り出した本文だけ。切り出し失敗時は全文を送らず、`tmux: … -> skip (no send body for %N; not sending)` で終える。fixture `pane_route.json` の `extract` と Windows / parity / `pane_route_proof.py` で確認済み。 鉤括弧なしは F1 `sendBodyCandidates`（`231c171`）と F2 `resolveSendBody` / body Choice parse・request（`7350cb2`）まで純関数＋fixture 済み。 route は Mac `routeDictation` と Win `TmuxPaneRouter` で body Jev まで配線済み。候補の右端 particle や mid-token label 食い込みは既知のヒューリスティック限界（quote 優先で緩和）。
 
 ### 2. 二重表示 — Mac / Windows ともソース配線済み（実機の mode 切替・paste は未検証）
 

@@ -51,10 +51,29 @@ public static class TmuxPaneRouter
             decision = new RouteDecision(null, "pane id rejected");
         }
 
-        // Matching and Jev saw the full dictation; only the quoted body is typed. No body, no send and no paste.
-        var body = PaneRoute.ExtractSendBody(text);
+        // Matching and pane Jev saw the full dictation. Body is quoted extract, else body Jev Choice, never the full text.
+        var body = (string?)null;
+        var bodySource = "-";
+        if (decision.Pane is not null)
+        {
+            var labels = PaneRoute.LabelsForHits(hits);
+            var (needJev, early, candidates) = PaneRoute.BeginBodyResolve(text, labels);
+            if (!needJev)
+            {
+                body = early!.Body;
+                bodySource = early.Reason;
+            }
+            else
+            {
+                var (bodyPick, bodyStatus) = await AskJevBodyAsync(text, candidates);
+                var resolved = PaneRoute.CompleteBodyResolve(text, labels, bodyPick, bodyStatus);
+                body = resolved.Body;
+                bodySource = resolved.Reason;
+            }
+        }
+
         decision = PaneRoute.RequireSendBody(decision, body);
-        Log.Info(PaneRoute.LogLine(hits.Count, jevField, decision));
+        Log.Info(PaneRoute.LogLine(hits.Count, jevField, decision, bodySource));
         var sent = decision.Pane is { } pane && body is not null && await SendKeysAsync(server, pane, body);
         return PaneRoute.Disposition(decision, sent);
     }
@@ -152,6 +171,47 @@ public static class TmuxPaneRouter
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
             Log.Info("jev: request failed or timed out");
+            return (null, "error");
+        }
+    }
+
+
+    // Body Choice after a pane is chosen and quotes missed. Same keys / timeout as pane Jev. Never logs the key.
+    private static async Task<(JevBodyPick? Pick, string Status)> AskJevBodyAsync(string dictation, IReadOnlyList<string> candidates)
+    {
+        var key = new[] { "TYPESAFE_API_KEY", "JEV_API_KEY" }
+            .Select(Environment.GetEnvironmentVariable)
+            .FirstOrDefault(value => !string.IsNullOrEmpty(value));
+        if (key is null)
+        {
+            return (null, "off");
+        }
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, PaneRoute.JevEndpoint);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+            request.Content = new StringContent(PaneRoute.JevBodyRequestBody(dictation, candidates), Encoding.UTF8, "application/json");
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                Log.Info($"jev body: http {(int)response.StatusCode}");
+                return (null, "error");
+            }
+
+            var catalog = Enumerable.Range(0, candidates.Count).Select(i => $"c{i}").ToList();
+            var pick = PaneRoute.ParseJevBodyPick(await response.Content.ReadAsStringAsync(), catalog);
+            if (pick is null)
+            {
+                Log.Info("jev body: answer was not a catalog choice");
+                return (null, "error");
+            }
+
+            return (pick, "ok");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            Log.Info("jev body: request failed or timed out");
             return (null, "error");
         }
     }

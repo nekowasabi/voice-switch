@@ -432,6 +432,74 @@ func resolveSendBody(_ dictation: String, labels: [String], bodyPick: JevBodyPic
     return (candidates[index], "jev body")
 }
 
+
+/// Non-empty title / window / command / agent tokens from panes that already hit.
+func labelsForHits(_ hits: [PaneLabel], agents: [String: [String]] = [:]) -> [String] {
+    var labels: [String] = []
+    for pane in hits {
+        for label in [pane.title, pane.window, pane.command] + (agents[pane.id] ?? []) where !label.isEmpty {
+            labels.append(label)
+        }
+    }
+    return labels
+}
+
+/// Early body resolve for a chosen pane. needJev means call body Choice then completeBodyResolve.
+func beginBodyResolve(_ dictation: String, labels: [String]) -> (needJev: Bool, early: (body: String?, reason: String)?, candidates: [String]) {
+    if let quoted = extractSendBody(dictation) {
+        return (false, (quoted, "quoted"), [])
+    }
+    let candidates = sendBodyCandidates(dictation, labels: labels)
+    if candidates.isEmpty {
+        return (false, (nil, "no candidates"), candidates)
+    }
+    return (true, nil, candidates)
+}
+
+func completeBodyResolve(_ dictation: String, labels: [String], pick: JevBodyPick?, status: String) -> (body: String?, reason: String) {
+    if status == "off" { return (nil, "no body pick") }
+    if status == "error" { return (nil, "jev body error") }
+    return resolveSendBody(dictation, labels: labels, bodyPick: pick)
+}
+
+enum JevBodyOutcome {
+    case off
+    case error
+    case pick(JevBodyPick)
+}
+
+/// Key from TYPESAFE_API_KEY, else JEV_API_KEY. Only called when a pane is chosen and quotes missed.
+func jevBodyPick(_ dictation: String, candidates: [String]) async -> JevBodyOutcome {
+    let env = ProcessInfo.processInfo.environment
+    guard let key = ["TYPESAFE_API_KEY", "JEV_API_KEY"].compactMap({ env[$0] }).first(where: { !$0.isEmpty }) else { return .off }
+    guard let body = jevBodyRequestBody(dictation, candidates) else { return .error }
+    var request = URLRequest(url: URL(string: "https://api.typesafe.ai/v1/systemone")!)
+    request.httpMethod = "POST"
+    request.timeoutInterval = 5
+    request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = body
+    let reply: (Data, URLResponse)
+    do {
+        reply = try await URLSession.shared.data(for: request)
+    } catch {
+        log("jev body: request failed or timed out")
+        return .error
+    }
+    let (data, response) = reply
+    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+    guard status == 200 else {
+        log("jev body: http \(status)")
+        return .error
+    }
+    let catalog = candidates.indices.map { "c\($0)" }
+    guard let pick = parseJevBodyPick(data, catalog: catalog) else {
+        log("jev body: answer was not a catalog choice")
+        return .error
+    }
+    return .pick(pick)
+}
+
 /// After decideRoute: a chosen pane with no body is skipped (SuppressFallback / SkippedNoBody).
 func requireSendBody(pane: String?, reason: String, body: String?) -> (pane: String?, reason: String, suppressFallback: Bool) {
     if let pane, body == nil {
@@ -487,9 +555,35 @@ func routeDictation(_ text: String) async -> RouteDisposition {
     if let id = decision.pane, !isPaneID(id) {
         decision = (nil, "pane id rejected")
     }
-    let body = extractSendBody(text)
+    var body: String? = nil
+    var bodySource = "-"
+    if decision.pane != nil {
+        let labels = labelsForHits(hits, agents: agents)
+        let began = beginBodyResolve(text, labels: labels)
+        if !began.needJev, let early = began.early {
+            body = early.body
+            bodySource = early.reason
+        } else {
+            let status: String
+            let bodyPick: JevBodyPick?
+            switch await jevBodyPick(text, candidates: began.candidates) {
+            case .off:
+                status = "off"
+                bodyPick = nil
+            case .error:
+                status = "error"
+                bodyPick = nil
+            case .pick(let found):
+                status = "ok"
+                bodyPick = found
+            }
+            let resolved = completeBodyResolve(text, labels: labels, pick: bodyPick, status: status)
+            body = resolved.body
+            bodySource = resolved.reason
+        }
+    }
     let required = requireSendBody(pane: decision.pane, reason: decision.reason, body: body)
-    let prefix = "tmux: hits=\(hits.count) jev=\(jevField)"
+    let prefix = "tmux: hits=\(hits.count) jev=\(jevField) body=\(bodySource)"
     if let id = required.pane, let body {
         log("\(prefix) -> send \(id) (\(required.reason))")
         let sent = sendKeysToPane(id, body)

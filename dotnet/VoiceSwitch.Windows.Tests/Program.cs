@@ -188,6 +188,9 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("pane route parses body jev answers like the shared fixture", PaneRouteParsesBodyJevAnswersLikeFixture),
     ("pane route resolves send body like the shared fixture", PaneRouteResolvesSendBodyLikeFixture),
     ("pane route body request carries candidates and none", () => Check(PaneRouteBodyRequestCarriesCandidates())),
+    ("pane route body resolve short-circuits quotes without jev", () => Check(PaneRouteBodyResolveShortCircuitsQuotes())),
+    ("pane route body resolve accepts injected jev body", () => Check(PaneRouteBodyResolveAcceptsInjectedJevBody())),
+    ("pane route body resolve skips when body jev is off", () => Check(PaneRouteBodyResolveSkipsWhenBodyJevOff())),
     ("pane route skips send when the body is missing", () => Check(PaneRouteSkipsWhenSendBodyMissing())),
     ("transcribe deadline is max(10, audioSeconds + 20)", () => Check(TranscribeDeadlineMatchesFormula()))
 };
@@ -340,9 +343,9 @@ static bool PaneRouteRequestBodyCarriesCatalog()
 }
 
 static bool PaneRouteLogLineNamesHitsPickAndReason() =>
-    PaneRoute.LogLine(2, PaneRoute.JevField(new JevPick("%2", 0.87)), new RouteDecision("%2", "jev narrowed")) == "tmux: hits=2 jev=%2@0.87 -> send %2 (jev narrowed)"
-    && PaneRoute.LogLine(1, PaneRoute.JevField(new JevPick(null, 0.9)), new RouteDecision(null, "jev rejected")) == "tmux: hits=1 jev=none@0.90 -> skip (jev rejected)"
-    && PaneRoute.LogLine(0, "off", new RouteDecision(null, "no pane matched")) == "tmux: hits=0 jev=off -> skip (no pane matched)";
+    PaneRoute.LogLine(2, PaneRoute.JevField(new JevPick("%2", 0.87)), new RouteDecision("%2", "jev narrowed"), "quoted") == "tmux: hits=2 jev=%2@0.87 body=quoted -> send %2 (jev narrowed)"
+    && PaneRoute.LogLine(1, PaneRoute.JevField(new JevPick(null, 0.9)), new RouteDecision(null, "jev rejected")) == "tmux: hits=1 jev=none@0.90 body=- -> skip (jev rejected)"
+    && PaneRoute.LogLine(0, "off", new RouteDecision(null, "no pane matched")) == "tmux: hits=0 jev=off body=- -> skip (no pane matched)";
 
 static TestOutcome PaneRouteExtractsSendBodyLikeFixture()
 {
@@ -441,6 +444,44 @@ static JevBodyPick? FixtureBodyPick(JsonElement row)
         pick.GetProperty("confidence").GetDouble());
 }
 
+
+static bool PaneRouteBodyResolveShortCircuitsQuotes()
+{
+    var labels = new[] { "dotfiles" };
+    var (needJev, early, candidates) = PaneRoute.BeginBodyResolve("dotfiles に「テスト」を送って", labels);
+    return !needJev
+        && early == new SendBodyResult("テスト", "quoted")
+        && candidates.Count == 0;
+}
+
+static bool PaneRouteBodyResolveAcceptsInjectedJevBody()
+{
+    var labels = new[] { "dotfiles" };
+    var dictation = "dotfiles にテストを送って";
+    var (needJev, early, candidates) = PaneRoute.BeginBodyResolve(dictation, labels);
+    if (!needJev || early is not null || candidates.Count == 0)
+    {
+        return false;
+    }
+
+    var resolved = PaneRoute.CompleteBodyResolve(dictation, labels, new JevBodyPick("c2", 0.9), "ok");
+    return resolved == new SendBodyResult("テスト", "jev body");
+}
+
+static bool PaneRouteBodyResolveSkipsWhenBodyJevOff()
+{
+    var labels = new[] { "dotfiles" };
+    var dictation = "dotfiles にテストを送って";
+    var (needJev, _, candidates) = PaneRoute.BeginBodyResolve(dictation, labels);
+    var resolved = PaneRoute.CompleteBodyResolve(dictation, labels, null, "off");
+    var decision = PaneRoute.RequireSendBody(new RouteDecision("%2", "unique hit"), resolved.Body);
+    return needJev
+        && candidates.Count > 0
+        && resolved == new SendBodyResult(null, "no body pick")
+        && decision.SuppressFallback
+        && PaneRoute.Disposition(decision, sent: false) == RouteDisposition.SkippedNoBody;
+}
+
 static bool PaneRouteSkipsWhenSendBodyMissing()
 {
     var withBody = PaneRoute.RequireSendBody(new RouteDecision("%2", "unique hit"), "ハローワールド");
@@ -455,7 +496,7 @@ static bool PaneRouteSkipsWhenSendBodyMissing()
         && PaneRoute.Disposition(withBody, sent: true) == RouteDisposition.Sent
         && PaneRoute.Disposition(withBody, sent: false) == RouteDisposition.SendFailed
         && PaneRoute.Disposition(alreadySkipped, sent: false) == RouteDisposition.NotRouted
-        && PaneRoute.LogLine(1, "off", without) == "tmux: hits=1 jev=off -> skip (no send body for %2; not sending)";
+        && PaneRoute.LogLine(1, "off", without, "no candidates") == "tmux: hits=1 jev=off body=no candidates -> skip (no send body for %2; not sending)";
 }
 
 static bool TranscribeDeadlineMatchesFormula()
@@ -3558,8 +3599,12 @@ static bool DictationHandoffDoesNotPasteFullTextAfterNoBodySkip()
             var panes = new[] { new PaneLabel("%2", "voice-switch", "Claude Code", "node") };
             var hits = PaneRoute.MatchingPanes(text, panes);
             var decision = PaneRoute.Decide(hits, null);
-            var body = PaneRoute.ExtractSendBody(text);
-            decision = PaneRoute.RequireSendBody(decision, body);
+            var labels = PaneRoute.LabelsForHits(hits);
+            var (needJev, early, candidates) = PaneRoute.BeginBodyResolve(text, labels);
+            var resolved = !needJev
+                ? early!
+                : PaneRoute.CompleteBodyResolve(text, labels, null, "off");
+            decision = PaneRoute.RequireSendBody(decision, resolved.Body);
             return Task.FromResult(PaneRoute.Disposition(decision, sent: false));
         },
         superwhisperMode: "voice_switch",
