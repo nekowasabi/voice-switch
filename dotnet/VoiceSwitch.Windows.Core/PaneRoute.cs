@@ -173,6 +173,55 @@ public static class PaneRoute
         }
     }
 
+    // Quote pairs tried in order: every 「…」 first, then every 『…』.
+    private static readonly (char Open, char Close)[] SendBodyQuotes = [('「', '」'), ('『', '』')];
+
+    // The text that goes to the pane: the interior of the first balanced, non-empty 「…」,
+    // else of the first balanced, non-empty 『…』, trimmed. Null when there is none.
+    // Callers must not fall back to the full dictation on null. Same rule as extractSendBody (Swift)
+    // and the `extract` rows of tests/parity/fixtures/pane_route.json.
+    public static string? ExtractSendBody(string dictation)
+    {
+        foreach (var (open, close) in SendBodyQuotes)
+        {
+            var depth = 0;
+            var start = 0;
+            for (var index = 0; index < dictation.Length; index++)
+            {
+                var ch = dictation[index];
+                if (ch == open)
+                {
+                    if (depth == 0)
+                    {
+                        start = index + 1;
+                    }
+
+                    depth++;
+                }
+                else if (ch == close && depth > 0)
+                {
+                    depth--;
+                    if (depth == 0)
+                    {
+                        var body = dictation[start..index].Trim();
+                        if (body.Length > 0)
+                        {
+                            return body;
+                        }
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    // A chosen pane without a send body is skipped; the full dictation is never sent instead.
+    public static RouteDecision RequireSendBody(RouteDecision decision, string? body) =>
+        decision.Pane is { } pane && body is null
+            ? new RouteDecision(null, $"no send body for {pane}; not sending")
+            : decision;
+
     // `%2@0.87`, `none@0.91`; the adapter writes `off` or `error` itself.
     public static string JevField(JevPick pick) =>
         $"{pick.Pane ?? "none"}@{pick.Confidence.ToString("0.00", CultureInfo.InvariantCulture)}";

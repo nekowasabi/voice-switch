@@ -173,7 +173,9 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("pane route policy table matches the shared fixture", PaneRoutePolicyMatchesFixture),
     ("pane route parses jev answers like the shared fixture", PaneRouteParsesJevAnswersLikeFixture),
     ("pane route request body carries the catalog and none", () => Check(PaneRouteRequestBodyCarriesCatalog())),
-    ("pane route log line names hits, pick, and reason", () => Check(PaneRouteLogLineNamesHitsPickAndReason()))
+    ("pane route log line names hits, pick, and reason", () => Check(PaneRouteLogLineNamesHitsPickAndReason())),
+    ("pane route extracts the quoted send body like the shared fixture", PaneRouteExtractsSendBodyLikeFixture),
+    ("pane route skips send when the body is missing", () => Check(PaneRouteSkipsWhenSendBodyMissing()))
 };
 
 var failed = 0;
@@ -327,6 +329,32 @@ static bool PaneRouteLogLineNamesHitsPickAndReason() =>
     PaneRoute.LogLine(2, PaneRoute.JevField(new JevPick("%2", 0.87)), new RouteDecision("%2", "jev narrowed")) == "tmux: hits=2 jev=%2@0.87 -> send %2 (jev narrowed)"
     && PaneRoute.LogLine(1, PaneRoute.JevField(new JevPick(null, 0.9)), new RouteDecision(null, "jev rejected")) == "tmux: hits=1 jev=none@0.90 -> skip (jev rejected)"
     && PaneRoute.LogLine(0, "off", new RouteDecision(null, "no pane matched")) == "tmux: hits=0 jev=off -> skip (no pane matched)";
+
+static TestOutcome PaneRouteExtractsSendBodyLikeFixture()
+{
+    foreach (var row in PaneRouteFixture().GetProperty("extract").EnumerateArray())
+    {
+        var actual = PaneRoute.ExtractSendBody(row.GetProperty("dictation").GetString()!);
+        var expected = NullableString(row, "body");
+        if (actual != expected)
+        {
+            return TestOutcome.Fail($"{row.GetProperty("name").GetString()}: got {actual ?? "null"}");
+        }
+    }
+
+    return TestOutcome.Pass();
+}
+
+static bool PaneRouteSkipsWhenSendBodyMissing()
+{
+    var withBody = PaneRoute.RequireSendBody(new RouteDecision("%2", "unique hit"), "ハローワールド");
+    var without = PaneRoute.RequireSendBody(new RouteDecision("%2", "unique hit"), null);
+    var alreadySkipped = PaneRoute.RequireSendBody(new RouteDecision(null, "no pane matched"), null);
+    return withBody == new RouteDecision("%2", "unique hit")
+        && without == new RouteDecision(null, "no send body for %2; not sending")
+        && alreadySkipped == new RouteDecision(null, "no pane matched")
+        && PaneRoute.LogLine(1, "off", without) == "tmux: hits=1 jev=off -> skip (no send body for %2; not sending)";
+}
 
 static bool Normalizes() =>
     TextMatching.Normalize(" 音声 入力。") == "音声入力";
@@ -2985,7 +3013,7 @@ static bool DictationHandoffRoutesResultText()
     };
     var routed = new List<string>();
     var recording = new RegisteredSuperwhisperHandoff(root, recordings, start, delay: _ => Task.CompletedTask,
-        onTranscribed: text => { routed.Add(text); return Task.CompletedTask; });
+        onTranscribed: text => { routed.Add(text); return Task.FromResult(true); });
     var throwing = new RegisteredSuperwhisperHandoff(root, recordings, start, delay: _ => Task.CompletedTask,
         onTranscribed: _ => throw new InvalidOperationException("wsl.exe is missing"));
     var audio = new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2));

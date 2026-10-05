@@ -49,8 +49,11 @@ public static class TmuxPaneRouter
             decision = new RouteDecision(null, "pane id rejected");
         }
 
+        // Matching and Jev saw the full dictation; only the quoted body is typed. No body, no send.
+        var body = PaneRoute.ExtractSendBody(text);
+        decision = PaneRoute.RequireSendBody(decision, body);
         Log.Info(PaneRoute.LogLine(hits.Count, jevField, decision));
-        return decision.Pane is { } pane && await SendKeysAsync(server, pane, text);
+        return decision.Pane is { } pane && body is not null && await SendKeysAsync(server, pane, body);
     }
 
     private static async Task<TmuxServer?> FindServerAsync()
@@ -150,9 +153,9 @@ public static class TmuxPaneRouter
         }
     }
 
-    private static async Task<bool> SendKeysAsync(TmuxServer server, string pane, string text)
+    private static async Task<bool> SendKeysAsync(TmuxServer server, string pane, string body)
     {
-        var psi = Wsl(server.Binary, ["-S", server.Socket, "send-keys", "-t", pane, "-l", "--", text]);
+        var psi = Wsl(server.Binary, ["-S", server.Socket, "send-keys", "-t", pane, "-l", "--", body]);
         try
         {
             using var process = Process.Start(psi) ?? throw new InvalidOperationException("Process.Start returned null");

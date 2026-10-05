@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Closed-catalog pane route. Unique label substring wins. No Jev.
 
+Only the quoted send body is typed (first non-empty 「…」, else 『…』); no body, no send.
+
 Agent names come from /proc/*/environ TMUX_PANE plus comm/argv0, allowlisted.
 The Swift app keeps the same rule. Mac has no /proc; this Linux proof is the contract.
 """
+import json
 import os
 import re
 import shutil
@@ -50,6 +53,37 @@ BASE_CASES = [
     ("bash", "ambiguous", None),
 ]
 CLAUDE_UTTERANCE = "claudeへ送って"
+FIXTURE = ROOT / "tests/parity/fixtures/pane_route.json"
+QUOTES = (("「", "」"), ("『", "』"))
+
+
+def extract_send_body(dictation):
+    """Mirror of extractSendBody / ExtractSendBody. None means: send nothing."""
+    for open_q, close_q in QUOTES:
+        depth = 0
+        start = 0
+        for index, ch in enumerate(dictation):
+            if ch == open_q:
+                if depth == 0:
+                    start = index + 1
+                depth += 1
+            elif ch == close_q and depth > 0:
+                depth -= 1
+                if depth == 0:
+                    body = dictation[start:index].strip()
+                    if body:
+                        return body
+    return None
+
+
+def check_extract_fixture():
+    rows = json.loads(FIXTURE.read_text(encoding="utf-8"))["extract"]
+    for row in rows:
+        got = extract_send_body(row["dictation"])
+        if got != row["body"]:
+            return fail(f"extract {row['name']!r} got {got!r} want {row['body']!r}")
+    print(f"EXTRACT {len(rows)}/{len(rows)}")
+    return 0
 
 
 def fail(msg):
@@ -173,9 +207,15 @@ def choose(utterance, panes, agents):
 
 def check_swift():
     src = (ROOT / "Sources/voice-switch/PaneRoute.swift").read_text()
-    needle = 'p.arguments = ["tmux", "send-keys", "-t", id, "-l", "--", text]'
+    needle = 'p.arguments = ["tmux", "send-keys", "-t", id, "-l", "--", body]'
     if needle not in src:
         return fail("swift send-keys argv missing")
+    if "extractSendBody" not in src:
+        return fail("swift extractSendBody missing")
+    if '["tmux", "send-keys", "-t", id, "-l", "--", text]' in src:
+        return fail("swift send-keys still uses the full dictation")
+    if "no send body" not in src:
+        return fail("swift does not skip when the send body is missing")
     if 'URL(fileURLWithPath: "/usr/bin/env")' not in src:
         return fail("swift executable is not /usr/bin/env")
     swift_fmt = '"#{pane_id}\\t#{window_name}\\t#{pane_title}\\t#{pane_current_command}"'
@@ -240,14 +280,19 @@ def list_panes():
 
 
 def send_marker(panes, agents, utterance, pane_id, prefix):
-    status, got = choose(utterance, panes, agents)
+    marker = f"{prefix}_{uuid.uuid4().hex}"
+    # Match on the full dictation; type only the quoted body.
+    dictation = f"{utterance}「{marker}」を送って"
+    status, got = choose(dictation, panes, agents)
     if status != "exact" or got != pane_id:
         return fail(f"winner {status} {got}")
     if not PANE_ID.fullmatch(pane_id):
         return fail(f"pane id {pane_id}")
-    marker = f"{prefix}_{uuid.uuid4().hex}"
+    body = extract_send_body(dictation)
+    if body != marker:
+        return fail(f"send body {body!r}")
     sent = subprocess.run(
-        ["tmux", "-S", SOCK, "send-keys", "-t", pane_id, "-l", "--", marker],
+        ["tmux", "-S", SOCK, "send-keys", "-t", pane_id, "-l", "--", body],
         capture_output=True,
         text=True,
     )
@@ -264,12 +309,31 @@ def send_marker(panes, agents, utterance, pane_id, prefix):
             if marker in cap.stdout:
                 found.append(pane["id"])
         if found == [pane_id]:
+            cap = tmux(["capture-pane", "-p", "-t", pane_id])
+            if "送って" in cap.stdout or "「" in cap.stdout:
+                return fail(f"wrapper reached {pane_id}")
             print(f"MARKER_ONLY {pane_id} {marker}")
             return 0
         if any(hit != pane_id for hit in found):
             return fail(f"marker in {found}")
         time.sleep(0.1)
     return fail(f"marker panes {found}")
+
+
+def send_nothing_without_body(panes, agents, utterance, pane_id):
+    status, got = choose(utterance, panes, agents)
+    if status != "exact" or got != pane_id:
+        return fail(f"no-body winner {status} {got}")
+    if extract_send_body(utterance) is not None:
+        return fail(f"no-body utterance had a body {utterance!r}")
+    before = tmux(["capture-pane", "-p", "-t", pane_id]).stdout
+    # The route found a pane but has no send body, so nothing is typed (never the full dictation).
+    time.sleep(0.2)
+    after = tmux(["capture-pane", "-p", "-t", pane_id]).stdout
+    if before != after or utterance in after:
+        return fail(f"pane {pane_id} changed without a send body")
+    print(f"NO_BODY {pane_id} SENT_NOTHING")
+    return 0
 
 
 def send_nothing(panes, agents, utterance):
@@ -354,6 +418,9 @@ def main():
     code = check_normalizer()
     if code:
         return code
+    code = check_extract_fixture()
+    if code:
+        return code
     if os.path.exists(SOCK):
         return fail(f"socket already present {SOCK}")
     work = Path(tempfile.mkdtemp(prefix="voice-switch-claude-"))
@@ -434,6 +501,9 @@ def main():
         if code:
             return code
         code = send_marker(panes, agents, CLAUDE_UTTERANCE, node_id, "VS_CLAUDE_ONLY")
+        if code:
+            return code
+        code = send_nothing_without_body(panes, agents, "nvimに移動", "%0")
         if code:
             return code
         extra = tmux(["new-window", "-d", "-n", "claude", "bash", "--noprofile", "--norc"])

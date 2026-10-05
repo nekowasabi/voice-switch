@@ -1,4 +1,4 @@
-// tmux pane route: the dictation string goes to one tmux pane only when a closed catalog label hits.
+// tmux pane route: the quoted body of the dictation goes to one tmux pane only when a closed catalog label hits.
 // Jev (TypeSafe) may confirm, narrow, or veto that hit; it never names a pane the catalog did not.
 import Foundation
 #if canImport(FoundationNetworking)
@@ -261,6 +261,36 @@ func jevPick(_ dictation: String, _ panes: [PaneLabel], agents: [String: [String
     return .pick(pick)
 }
 
+// MARK: send body
+
+/// Quote pairs tried in order: every 「…」 first, then every 『…』.
+let sendBodyQuotes: [(open: Character, close: Character)] = [("「", "」"), ("『", "』")]
+
+/// The text that goes to the pane: the interior of the first balanced, non-empty `「…」`,
+/// else of the first balanced, non-empty `『…』`, trimmed. nil when there is none.
+/// Callers must not fall back to the full dictation on nil. Same rule as
+/// `PaneRoute.ExtractSendBody` (Windows) and the `extract` rows of tests/parity/fixtures/pane_route.json.
+func extractSendBody(_ dictation: String) -> String? {
+    let chars = Array(dictation)
+    for quote in sendBodyQuotes {
+        var depth = 0
+        var start = 0
+        for (index, ch) in chars.enumerated() {
+            if ch == quote.open {
+                if depth == 0 { start = index + 1 }
+                depth += 1
+            } else if ch == quote.close, depth > 0 {
+                depth -= 1
+                if depth == 0 {
+                    let body = String(chars[start..<index]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !body.isEmpty { return body }
+                }
+            }
+        }
+    }
+    return nil
+}
+
 /// One log line per dictation, e.g. `tmux: hits=2 jev=%2@0.87 -> send %2 (jev narrowed)`.
 func routeDictation(_ text: String) async {
     guard let panes = fetchPanes() else { return }
@@ -289,10 +319,15 @@ func routeDictation(_ text: String) async {
         log("\(prefix) -> skip (pane id rejected)")
         return
     }
+    // Matching and Jev saw the full dictation; only the quoted body is typed. No body, no send.
+    guard let body = extractSendBody(text) else {
+        log("\(prefix) -> skip (no send body for \(id); not sending)")
+        return
+    }
     log("\(prefix) -> send \(id) (\(decision.reason))")
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    p.arguments = ["tmux", "send-keys", "-t", id, "-l", "--", text]
+    p.arguments = ["tmux", "send-keys", "-t", id, "-l", "--", body]
     p.terminationHandler = { proc in
         if proc.terminationStatus != 0 { log("tmux: send-keys exited \(proc.terminationStatus)") }
     }

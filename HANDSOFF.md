@@ -6,7 +6,7 @@
 
 ## ブランチと状態
 
-- ブランチは `feat/pane-route-jev` で、origin/main から 11 コミット進んでいる。まだ push していない。
+- ブランチは `feat/pane-route-jev`。Slice A（本文切り出し）まで入れた。
 - PR #4（`feat/tmux-pane-route`）は触っていない。PR #4 は 63 コミット古い main から分かれていて、main と衝突している。このブランチで新しく PR を作り、PR #4 を閉じる想定。
 - `b612216`（RESEARCH.md の研究比較）は別の話題の変更。PR を作る前に別ブランチへ分けるか決める。
 
@@ -37,17 +37,9 @@ Jev が使えないとき（キーなし、5 秒のタイムアウト、HTTP エ
 
 ## 未解決（優先順）
 
-### 1. 指示の部分まで送られる（今日の最後に見つけた問題）
+### 1. 指示の部分まで送られる — **対応済み（Slice A）**
 
-「〜に『ハローワールド』を送信して」と話すと、発話の全文が pane に入る。送りたいのは「ハローワールド」だけ。
-
-方針案は次の三つ。
-
-1. まず決定論で処理する。本文に `「…」` があれば、その中身だけを送る。superwhisper の LLM が鉤括弧を付けるかどうかは、実際の `llmResult` で確認すること。
-2. 鉤括弧がないときは、コードで本文の候補を切り出す。たとえば pane 名の後ろの部分、「を送信して」「と入力して」の前の部分など。そのうえで Jev の Choice にどれが本文かを選ばせる。Jev は文章を作るモデルではなく、候補から選ぶモデルなので、この形が合う（typesafe-ai skill の「Select instead of generate」）。
-3. 切り出しに失敗したときは、全文を送るか送らないか。これは方針の判断なので、ユーザーに決めてもらう。
-
-Mac（`PaneRoute.swift`）と Windows（`PaneRoute.cs`）の両方に入れる。fixture `pane_route.json` に、切り出しの例も足す。
+`extractSendBody` / `ExtractSendBody` が、最初の空でない `「…」`、なければ `『…』` の中身だけを返す。照合と Jev は全文のまま。send-keys は切り出した本文だけ。切り出し失敗時は全文を送らず、`tmux: … -> skip (no send body for %N; not sending)` で終える。fixture `pane_route.json` の `extract` と Windows / parity / `pane_route_proof.py` で確認済み。鉤括弧なしのヒューリスティック＋Jev Choice は未着手（後続スライス）。
 
 ### 2. 二重表示（作業途中・未コミット）
 

@@ -58,10 +58,17 @@ struct PaneRouteFixture: Decodable {
         var pick: Pick?
     }
 
+    struct Extract: Decodable {
+        var name: String
+        var dictation: String
+        var body: String?
+    }
+
     var catalog: [Pane]
     var match: [Match]
     var policy: [Policy]
     var jev_responses: [Response]
+    var extract: [Extract]
 }
 
 var failures: [String] = []
@@ -111,10 +118,15 @@ for item in paneFixture.jev_responses {
     let expected = item.pick.map { JevPick(pane: $0.pane, confidence: $0.confidence) }
     check(actual == expected, "jev parse \(item.name)")
 }
+for item in paneFixture.extract {
+    let actual = extractSendBody(item.dictation)
+    check(actual == item.body, "pane extract \(item.name) expected=\(item.body ?? "nil") actual=\(actual ?? "nil")")
+}
 
 if failures.isEmpty {
     print("PASS behavior fixtures")
     print("PASS pane route fixtures")
+    print("PASS pane extract fixtures")
 } else {
     for failure in failures {
         FileHandle.standardError.write(Data("FAIL \(failure)\n".utf8))
