@@ -300,9 +300,13 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
             Log.Info($"tray: microphone changed from {current} to {effective ?? "none"}; restarting");
             _ = RunCommandAsync(TrayCommand.Reload, quiet: true);
         }
-        else if (snapshot.State == TrayState.Error && changed && effective is not null)
+        else if (TrayRuntimeSupervisor.ShouldRetryStart(snapshot.State, changed, effective, deviceTicks))
         {
-            Log.Info($"tray: microphone {effective} is available; starting");
+            if (changed)
+            {
+                Log.Info($"tray: microphone {effective} is available; starting");
+            }
+
             _ = RunCommandAsync(TrayCommand.Start, quiet: true);
         }
     }

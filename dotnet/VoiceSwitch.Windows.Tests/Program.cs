@@ -156,6 +156,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("tray supervisor reload switches dictation to command mode", () => Check(TraySupervisorReloadSwitchesToCommandMode())),
     ("tray supervisor valid reload stops old before new", () => Check(TraySupervisorValidReloadStopsOldBeforeNew())),
     ("tray supervisor retains run after stop failure", () => Check(TraySupervisorRetainsRunAfterStopFailure())),
+    ("tray retries start while in error with a microphone present", () => Check(TrayRetriesStartWhileErrorWithMic())),
     ("tray supervisor retries quit after stop failure", () => Check(TraySupervisorRetriesQuitAfterStopFailure())),
     ("tray supervisor disposes faulted completion and restarts", () => Check(TraySupervisorDisposesFaultedCompletionAndRestarts())),
     ("tray supervisor refreshes child identity without state change", () => Check(TraySupervisorRefreshesChildIdentityWithoutStateChange())),
@@ -3909,6 +3910,18 @@ static bool TraySupervisorRetainsRunAfterStopFailure()
         && supervisor.Snapshot.OwnedChildProcessId == 1234
         && factory.Started.Count == 1
         && factory.Started.Single().StopCount == 1;
+}
+
+static bool TrayRetriesStartWhileErrorWithMic()
+{
+    // 2026-10-05: the Yeti came back 10 s after vanishing, the one start on its return failed, and the tray stayed
+    // deaf for 31 and 13 minutes because nothing retried until the device flickered again.
+    var retriesWithin10s = Enumerable.Range(1, 5).Select(i => i * 4)
+        .Any(ticks => TrayRuntimeSupervisor.ShouldRetryStart(TrayState.Error, changed: false, "マイク (Yeti Nano)", ticks));
+    return TrayRuntimeSupervisor.ShouldRetryStart(TrayState.Error, changed: true, "マイク (Yeti Nano)", 4)
+        && retriesWithin10s
+        && !Enumerable.Range(1, 50).Any(i => TrayRuntimeSupervisor.ShouldRetryStart(TrayState.Error, changed: false, null, i * 4))
+        && !Enumerable.Range(1, 50).Any(i => TrayRuntimeSupervisor.ShouldRetryStart(TrayState.Paused, changed: false, "マイク (Yeti Nano)", i * 4));
 }
 
 static bool TraySupervisorRetriesQuitAfterStopFailure()

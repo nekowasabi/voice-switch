@@ -16,6 +16,7 @@ public sealed class TrayRuntimeSupervisor : IAsyncDisposable
     private long generation;
     private bool quitRequested;
     private Task? completionObserver;
+    private string? loggedStop;
     private StatusView published = null!;
 
     public TrayRuntimeSupervisor(
@@ -301,6 +302,17 @@ public sealed class TrayRuntimeSupervisor : IAsyncDisposable
 
     private void SetSnapshot(TrayState state, string? error, int? exitCode)
     {
+        // The listener stops in these states, so without a line the log just goes quiet; a repeated retry failure logs once.
+        var stopped = state is TrayState.Error or TrayState.Finished
+            ? $"tray: {state}{(exitCode is null ? "" : $" exit={exitCode}")}{(error is null ? "" : $": {error}")}"
+            : state == TrayState.Listening ? null : loggedStop;
+        if (stopped is not null && stopped != loggedStop)
+        {
+            Log.Info(stopped);
+        }
+
+        loggedStop = stopped;
+
         snapshot = NewSnapshot(state, error, exitCode);
         Volatile.Write(ref published, new StatusView(snapshot, run));
         SnapshotChanged?.Invoke(Snapshot);
@@ -315,6 +327,11 @@ public sealed class TrayRuntimeSupervisor : IAsyncDisposable
             generation,
             exitCode,
             instanceKey);
+
+    // Not only on the device's return: a USB mic is listed a moment before it can be opened, so the start made on
+    // its return can fail, and nothing else would try again until the device flickered.
+    public static bool ShouldRetryStart(TrayState state, bool changed, string? effective, int ticks) =>
+        state == TrayState.Error && effective is not null && (changed || ticks % 20 == 0);
 
     private static void ValidateTrayConfig(VoiceSwitchConfig config, TrayInputSource source)
     {
