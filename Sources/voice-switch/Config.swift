@@ -66,7 +66,8 @@ struct DictationConfig: Decodable {
     var startTimeoutMs: Int?
     /// Windows only (executable names); one config file can serve both platforms, and macOS ignores it.
     var excludeProcessNames: [String]?
-    /// Windows only (Superwhisper mode key or name for voice-switch dictations); macOS ignores it.
+    /// Superwhisper mode key or display name for voice-switch dictations (Mac + Windows).
+    /// Unset keeps auto-paste behavior; set switches mode around handoff and pastes when not routed.
     var superwhisperMode: String?
 
     init(recordingsDir: String? = nil, endSilenceMs: Int? = nil, maxSeconds: Double? = nil,

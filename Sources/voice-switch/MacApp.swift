@@ -160,13 +160,128 @@ func loadSamples(_ path: String) throws -> [Float] {
 /// One file at a time, so a result in the recordings folder is never attributed to the wrong handoff.
 let handoffBusy = OSAllocatedUnfairLock(initialState: false)
 
-/// superwhisper transcribes the file and auto-pastes into the frontmost app. After the result string is read,
-/// it is also routed to one tmux pane when the closed catalog has a unique hit.
+/// Superwhisper modes / preferences sit next to `Documents/superwhisper/recordings`.
+func superwhisperPreferencesPath() -> String {
+    Platform.expandPath("~/Documents/superwhisper/preferences.json")
+}
+
+func superwhisperModesDir() -> String {
+    Platform.expandPath("~/Documents/superwhisper/modes")
+}
+
+func openSuperwhisperURL(_ url: String) throws {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+    p.arguments = ["-g", url]
+    try p.run()
+}
+
+func readSuperwhisperActiveMode(preferencesPath: String = superwhisperPreferencesPath()) -> String? {
+    guard let data = FileManager.default.contents(atPath: preferencesPath),
+          let text = String(data: data, encoding: .utf8) else { return nil }
+    return activeSuperwhisperMode(text)
+}
+
+func readSuperwhisperModeJsons(modesDir: String = superwhisperModesDir()) -> [String] {
+    let fm = FileManager.default
+    guard let names = try? fm.contentsOfDirectory(atPath: modesDir) else { return [] }
+    return names.filter { $0.hasSuffix(".json") }.sorted().compactMap { name in
+        guard let data = fm.contents(atPath: (modesDir as NSString).appendingPathComponent(name)) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+}
+
+/// Restore focus while Superwhisper is frontmost (mode URL and file URL both may steal it).
+func restoreFocusIfSuperwhisper(_ target: NSRunningApplication?) async {
+    if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.superduper.superwhisper" {
+        await MainActor.run { _ = target?.activate() }
+    }
+}
+
+/// Switches Superwhisper mode via `superwhisper://mode?key=` and polls activeMode up to ~3 s.
+func switchSuperwhisperMode(_ key: String, target: NSRunningApplication?) async -> Bool {
+    let encoded = key.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? key
+    do {
+        try openSuperwhisperURL("superwhisper://mode?key=\(encoded)")
+    } catch {
+        log("superwhisper mode: switch to \(key) failed to start: \(error)")
+        return false
+    }
+    for _ in 0 ..< 30 {
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await restoreFocusIfSuperwhisper(target)
+        if readSuperwhisperActiveMode() == key { return true }
+    }
+    log("superwhisper mode: \(key) not active after 3 s; continuing")
+    return false
+}
+
+/// Requested is true when the configured mode is (or should be) active; Previous is what to restore.
+func enterSuperwhisperMode(_ wanted: String?, target: NSRunningApplication?) async -> (requested: Bool, previous: String?) {
+    guard let wanted, !wanted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        return (false, nil)
+    }
+    let trimmed = wanted.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let key = resolveSuperwhisperModeKey(trimmed, modeJsons: readSuperwhisperModeJsons()) else {
+        log("superwhisper mode \"\(trimmed)\" not found; using the active mode")
+        return (false, nil)
+    }
+    guard let active = readSuperwhisperActiveMode() else {
+        log("superwhisper mode: activeMode is unreadable; using the active mode")
+        return (false, nil)
+    }
+    if active == key { return (true, nil) }
+    log("superwhisper mode: \(key) (was \(active))")
+    _ = await switchSuperwhisperMode(key, target: target)
+    return (true, active)
+}
+
+/// Clipboard + Cmd+V into the wake-time app. Used when mode auto-paste is off and pane did not take it.
+func pasteDictation(_ text: String, target: NSRunningApplication?) -> Bool {
+    guard let target else { return false }
+    let pb = NSPasteboard.general
+    let previous = pb.string(forType: .string)
+    pb.clearContents()
+    guard pb.setString(text, forType: .string) else {
+        log("dictation paste: clipboard failed")
+        return false
+    }
+    let ok = target.activate()
+    if !ok {
+        log("dictation paste: could not bring target to the front")
+    }
+    let source = CGEventSource(stateID: .hidSystemState)
+    let keyV: CGKeyCode = 0x09 // kVK_ANSI_V
+    if let down = CGEvent(keyboardEventSource: source, virtualKey: keyV, keyDown: true),
+       let up = CGEvent(keyboardEventSource: source, virtualKey: keyV, keyDown: false) {
+        down.flags = .maskCommand
+        up.flags = .maskCommand
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
+    }
+    if let previous {
+        Task {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            if pb.string(forType: .string) == text {
+                pb.clearContents()
+                _ = pb.setString(previous, forType: .string)
+            }
+        }
+    }
+    return true
+}
+
+/// superwhisper transcribes the file. With `dictation.superwhisperMode` set, switches to that mode
+/// (auto-paste off), restores after, and voice-switch pastes only when the pane route did not deliver.
+/// Unset keeps the old behavior (Superwhisper may auto-paste).
 func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplication?) async {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("voice-switch")
     let wav = dir.appendingPathComponent("\(UUID().uuidString).wav")
     defer { try? FileManager.default.removeItem(at: wav) }
     let submitted = Date()
+    let (modeRequested, previousMode) = await enterSuperwhisperMode(cfg.superwhisperMode, target: target)
+    var result: String?
+    var launched = false
     do {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try writeWAV(samples, to: wav)
@@ -174,23 +289,50 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
         p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         p.arguments = ["-g", "-a", "superwhisper", wav.path]
         try p.run()
-    } catch {
-        log("dictation: handing off to superwhisper failed: \(error)"); return
-    }
-    // Opening a file brings superwhisper to the front despite -g, and it skips auto-paste when it is
-    // still frontmost at the end, so hand focus back to where the user was dictating.
-    for _ in 0 ..< 20 {
-        try? await Task.sleep(nanoseconds: 100_000_000)
-        if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.superduper.superwhisper" {
-            await MainActor.run { _ = target?.activate() }
+        launched = true
+        // Opening a file brings superwhisper to the front despite -g, and it skips auto-paste when it is
+        // still frontmost at the end, so hand focus back to where the user was dictating.
+        for _ in 0 ..< 20 {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            await restoreFocusIfSuperwhisper(target)
         }
+        let recordings = Platform.expandPath(cfg.recordingsDir ?? Platform.defaultRecordingsDir)
+        result = await awaitResult(in: recordings, since: Int(submitted.timeIntervalSince1970) - 2)
+    } catch {
+        log("dictation: handing off to superwhisper failed: \(error)")
     }
-    let recordings = Platform.expandPath(cfg.recordingsDir ?? Platform.defaultRecordingsDir)
-    guard let result = await awaitResult(in: recordings, since: Int(submitted.timeIntervalSince1970) - 2) else {
+    if let previousMode, await switchSuperwhisperMode(previousMode, target: target) {
+        log("superwhisper mode restored: \(previousMode)")
+    }
+    guard launched else { return }
+    guard let result else {
         log("dictation: no superwhisper result within 30 s"); return
     }
     log("dictation: \(result.count) chars in \(Int(Date().timeIntervalSince(submitted) * 1000)) ms")
-    await routeDictation(result)
+    let route = await routeDictation(result)
+    switch decideDictationDelivery(modeRequested: modeRequested, route: route) {
+    case .pane:
+        break
+    case .paste:
+        // SendFailed already chose a pane body; paste that, never the full dictation wrapper.
+        let payload: String?
+        if route == .sendFailed {
+            payload = extractSendBody(result)
+            if payload == nil {
+                log("dictation not delivered: send failed and no body to paste")
+                break
+            }
+        } else {
+            payload = result
+        }
+        if let payload {
+            log(pasteDictation(payload, target: target)
+                ? "dictation delivered: paste"
+                : "dictation not delivered: no target window to paste into")
+        }
+    case .superwhisper:
+        log("dictation delivered: superwhisper")
+    }
 }
 
 /// Polls superwhisper's recordings folder for the run that started at or after `since` (unix seconds).

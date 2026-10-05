@@ -226,6 +226,7 @@ def check_static_call_chains(result: Result, repo: SourceTree) -> None:
     check_swift_runtime_call_chain(result, repo)
     check_swift_segmenter_rebase(result, repo)
     check_transcribe_deadline(result, repo)
+    check_mac_superwhisper_mode_handoff(result, repo)
 
 
 def check_dictation_test_markers(result: Result, repo: SourceTree) -> None:
@@ -408,6 +409,59 @@ def check_transcribe_deadline(result: Result, repo: SourceTree) -> None:
         [
             "transcribe deadline is max(10, audioSeconds + 20)",
             "TranscribeDeadlineMatchesFormula",
+        ],
+    )
+
+
+def check_mac_superwhisper_mode_handoff(result: Result, repo: SourceTree) -> None:
+    modes = repo.code("Sources/voice-switch/SuperwhisperModes.swift")
+    pane = repo.code("Sources/voice-switch/PaneRoute.swift")
+    mac = repo.code("Sources/voice-switch/MacApp.swift")
+    require_substrings(
+        result,
+        "Swift SuperwhisperModes mirrors Windows ResolveKey/ActiveMode/Decide",
+        modes,
+        [
+            "enum RouteDisposition",
+            "case skippedNoBody",
+            "case sendFailed",
+            "case notRouted",
+            "func resolveSuperwhisperModeKey",
+            "func activeSuperwhisperMode",
+            "func decideDictationDelivery(modeRequested: Bool, route: RouteDisposition)",
+            "case .sent, .skippedNoBody:",
+            "return modeRequested ? .paste : .superwhisper",
+        ],
+    )
+    require_substrings(
+        result,
+        "Swift routeDictation returns RouteDisposition and waits for send-keys",
+        pane,
+        [
+            "func requireSendBody(pane: String?, reason: String, body: String?)",
+            "func routeDisposition(pane: String?, suppressFallback: Bool, sent: Bool)",
+            "func sendKeysToPane(_ id: String, _ body: String) -> Bool",
+            "p.waitUntilExit()",
+            "func routeDictation(_ text: String) async -> RouteDisposition",
+            "return routeDisposition(pane:",
+        ],
+    )
+    require_substrings(
+        result,
+        "Swift MacApp handoff switches mode, restores, and pastes on Decide",
+        mac,
+        [
+            "enterSuperwhisperMode(cfg.superwhisperMode, target: target)",
+            "superwhisper://mode?key=",
+            "superwhisper mode restored:",
+            "let route = await routeDictation(result)",
+            "decideDictationDelivery(modeRequested: modeRequested, route: route)",
+            "pasteDictation(payload, target: target)",
+            "dictation delivered: paste",
+            "dictation delivered: superwhisper",
+            "route == .sendFailed",
+            "extractSendBody(result)",
+            "dictation not delivered: send failed and no body to paste",
         ],
     )
 

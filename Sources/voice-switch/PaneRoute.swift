@@ -291,9 +291,42 @@ func extractSendBody(_ dictation: String) -> String? {
     return nil
 }
 
+/// After decideRoute: a chosen pane with no body is skipped (SuppressFallback / SkippedNoBody).
+func requireSendBody(pane: String?, reason: String, body: String?) -> (pane: String?, reason: String, suppressFallback: Bool) {
+    if let pane, body == nil {
+        return (nil, "no send body for \(pane); not sending", true)
+    }
+    return (pane, reason, false)
+}
+
+func routeDisposition(pane: String?, suppressFallback: Bool, sent: Bool) -> RouteDisposition {
+    if sent { return .sent }
+    if suppressFallback { return .skippedNoBody }
+    if pane != nil { return .sendFailed }
+    return .notRouted
+}
+
+/// Waits for tmux send-keys. false when start fails or exit status is non-zero.
+func sendKeysToPane(_ id: String, _ body: String) -> Bool {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    p.arguments = ["tmux", "send-keys", "-t", id, "-l", "--", body]
+    do { try p.run() } catch {
+        log("tmux: send-keys failed to start: \(error)")
+        return false
+    }
+    p.waitUntilExit()
+    if p.terminationStatus != 0 {
+        log("tmux: send-keys exited \(p.terminationStatus)")
+        return false
+    }
+    return true
+}
+
 /// One log line per dictation, e.g. `tmux: hits=2 jev=%2@0.87 -> send %2 (jev narrowed)`.
-func routeDictation(_ text: String) async {
-    guard let panes = fetchPanes() else { return }
+/// Returns the same disposition Windows `TmuxPaneRouter.RouteAsync` uses for paste Decide.
+func routeDictation(_ text: String) async -> RouteDisposition {
+    guard let panes = fetchPanes() else { return .notRouted }
     let agents = discoverAgentNames()
     let hits = matchingPanes(text, panes, agents: agents)
     let pick: JevPick?
@@ -309,27 +342,18 @@ func routeDictation(_ text: String) async {
         pick = found
         jevField = "\(found.pane ?? "none")@\(String(format: "%.2f", found.confidence))"
     }
-    let decision = decideRoute(hits, pick)
+    var decision = decideRoute(hits, pick)
+    if let id = decision.pane, !isPaneID(id) {
+        decision = (nil, "pane id rejected")
+    }
+    let body = extractSendBody(text)
+    let required = requireSendBody(pane: decision.pane, reason: decision.reason, body: body)
     let prefix = "tmux: hits=\(hits.count) jev=\(jevField)"
-    guard let id = decision.pane else {
-        log("\(prefix) -> skip (\(decision.reason))")
-        return
+    if let id = required.pane, let body {
+        log("\(prefix) -> send \(id) (\(required.reason))")
+        let sent = sendKeysToPane(id, body)
+        return routeDisposition(pane: id, suppressFallback: false, sent: sent)
     }
-    guard isPaneID(id) else {
-        log("\(prefix) -> skip (pane id rejected)")
-        return
-    }
-    // Matching and Jev saw the full dictation; only the quoted body is typed. No body, no send.
-    guard let body = extractSendBody(text) else {
-        log("\(prefix) -> skip (no send body for \(id); not sending)")
-        return
-    }
-    log("\(prefix) -> send \(id) (\(decision.reason))")
-    let p = Process()
-    p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    p.arguments = ["tmux", "send-keys", "-t", id, "-l", "--", body]
-    p.terminationHandler = { proc in
-        if proc.terminationStatus != 0 { log("tmux: send-keys exited \(proc.terminationStatus)") }
-    }
-    do { try p.run() } catch { log("tmux: send-keys failed to start: \(error)") }
+    log("\(prefix) -> skip (\(required.reason))")
+    return routeDisposition(pane: required.pane, suppressFallback: required.suppressFallback, sent: false)
 }

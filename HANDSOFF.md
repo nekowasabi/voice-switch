@@ -6,7 +6,7 @@
 
 ## ブランチと状態
 
-- ブランチは `feat/pane-route-jev`。Overnight Slice A–D まで入れた（B2 Mac superwhisperMode 配線は未着手）。
+- ブランチは `feat/pane-route-jev`。Overnight Slice A–D と B2（Mac superwhisperMode 配線）まで入れた。
 - PR #4（`feat/tmux-pane-route`）は触っていない。PR #4 は 63 コミット古い main から分かれていて、main と衝突している。このブランチで新しく PR を作り、PR #4 を閉じる想定。
 - `b612216`（RESEARCH.md の研究比較）は別の話題の変更。PR を作る前に別ブランチへ分けるか決める。
 
@@ -41,15 +41,15 @@ Jev が使えないとき（キーなし、5 秒のタイムアウト、HTTP エ
 
 `extractSendBody` / `ExtractSendBody` が、最初の空でない `「…」`、なければ `『…』` の中身だけを返す。照合と Jev は全文のまま。send-keys は切り出した本文だけ。切り出し失敗時は全文を送らず、`tmux: … -> skip (no send body for %N; not sending)` で終える。fixture `pane_route.json` の `extract` と Windows / parity / `pane_route_proof.py` で確認済み。鉤括弧なしのヒューリスティック＋Jev Choice は未着手（後続スライス）。
 
-### 2. 二重表示 — Windows は対応済み（Mac は Slice B2）
+### 2. 二重表示 — Mac / Windows ともソース配線済み（実機の mode 切替・paste は未検証）
 
 superwhisper の自動ペーストと pane への送信の両方が届き、同じ文が二か所に出る問題。
 
 - ユーザー作成の専用 mode: key `new-mode-1`、表示名 `voice_switch`、`autoPaste: false`。
-- Windows: `dictation.superwhisperMode`（表示名か key）。未設定は従来どおり。設定時は handoff 前に mode 切替・後に復帰。pane に送れたら終わり。送れなければ voice-switch がクリップボード経由で一度ペースト。
-- **本文なし（pane は当たったが `ExtractSendBody` が null）は paste しない**（`RouteDisposition.SkippedNoBody`）。全文フォールバック禁止。
+- `dictation.superwhisperMode`（表示名か key）。未設定は従来どおり。設定時は handoff 前に mode 切替・後に復帰。pane に送れたら終わり。送れなければ voice-switch がクリップボード経由で一度ペースト。
+- **本文なし（pane は当たったが `ExtractSendBody` / `extractSendBody` が null）は paste しない**（`RouteDisposition.SkippedNoBody` / `.skippedNoBody`）。全文フォールバック禁止。
 - **SendFailed（mode 設定時）**: paste するのは抽出本文だけ。mode 未設定時は従来どおり Superwhisper が全文を自動ペーストしうる。
-- Mac: Config にフィールドはあるが handoff 配線は未着手（Slice B2）。
+- Mac: `SuperwhisperModes.swift` + `MacApp.handoff` に配線済み。mode パスは `~/Documents/superwhisper/{preferences.json,modes}`。**Mac 実機の mode 切替・paste は未検証**（この box に swiftc / Apple Speech なし）。
 - Windows 実機での mode 切替・paste の再確認は未実施（box のみ）。
 
 ### 3. Jev が `jev=off` のまま
