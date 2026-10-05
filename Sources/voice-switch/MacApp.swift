@@ -111,7 +111,8 @@ func loadSamples(_ path: String) throws -> [Float] {
 /// One file at a time, so a result in the recordings folder is never attributed to the wrong handoff.
 let handoffBusy = OSAllocatedUnfairLock(initialState: false)
 
-/// superwhisper transcribes the file and auto-pastes into the frontmost app; we only wait to clean up and log.
+/// superwhisper transcribes the file and auto-pastes into the frontmost app. After the result string is read,
+/// it is also routed to one tmux pane when the closed catalog has a unique hit.
 func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplication?) async {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("voice-switch")
     let wav = dir.appendingPathComponent("\(UUID().uuidString).wav")
@@ -140,6 +141,7 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
         log("dictation: no superwhisper result within 30 s"); return
     }
     log("dictation: \(result.count) chars in \(Int(Date().timeIntervalSince(submitted) * 1000)) ms")
+    routeDictation(result)
 }
 
 /// Polls superwhisper's recordings folder for the run that started at or after `since` (unix seconds).
