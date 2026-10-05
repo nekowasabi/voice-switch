@@ -184,6 +184,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("pane route request body carries the catalog and none", () => Check(PaneRouteRequestBodyCarriesCatalog())),
     ("pane route log line names hits, pick, and reason", () => Check(PaneRouteLogLineNamesHitsPickAndReason())),
     ("pane route extracts the quoted send body like the shared fixture", PaneRouteExtractsSendBodyLikeFixture),
+    ("pane route builds send-body candidates like the shared fixture", PaneRouteBuildsSendBodyCandidatesLikeFixture),
     ("pane route skips send when the body is missing", () => Check(PaneRouteSkipsWhenSendBodyMissing())),
     ("transcribe deadline is max(10, audioSeconds + 20)", () => Check(TranscribeDeadlineMatchesFormula()))
 };
@@ -349,6 +350,23 @@ static TestOutcome PaneRouteExtractsSendBodyLikeFixture()
         if (actual != expected)
         {
             return TestOutcome.Fail($"{row.GetProperty("name").GetString()}: got {actual ?? "null"}");
+        }
+    }
+
+    return TestOutcome.Pass();
+}
+
+
+static TestOutcome PaneRouteBuildsSendBodyCandidatesLikeFixture()
+{
+    foreach (var row in PaneRouteFixture().GetProperty("candidates").EnumerateArray())
+    {
+        var labels = row.GetProperty("labels").EnumerateArray().Select(v => v.GetString()!).ToList();
+        var actual = PaneRoute.SendBodyCandidates(row.GetProperty("dictation").GetString()!, labels);
+        var expected = row.GetProperty("candidates").EnumerateArray().Select(v => v.GetString()!).ToList();
+        if (!actual.SequenceEqual(expected))
+        {
+            return TestOutcome.Fail($"{row.GetProperty("name").GetString()}: got [{string.Join(", ", actual)}] want [{string.Join(", ", expected)}]");
         }
     }
 

@@ -52,5 +52,140 @@
     {"name": "no quotes is no body, never the full dictation", "dictation": "ボイススイッチの Claude Code の pane にハローワールドを送信して", "body": null},
     {"name": "an unbalanced open quote is no body", "dictation": "「ハローワールドを送って", "body": null},
     {"name": "a stray close quote is no body", "dictation": "ハローワールド」を送って", "body": null}
+  ],
+"candidates": [
+    {
+      "name": "label, cue, and routing particle yield the body last",
+      "dictation": "ボイススイッチの Claude Code の pane にハローワールドを送信して",
+      "labels": [
+        "Claude Code"
+      ],
+      "candidates": [
+        "の pane にハローワールドを送信して",
+        "ボイススイッチの Claude Code の pane にハローワールド",
+        "ハローワールド"
+      ]
+    },
+    {
+      "name": "window label plus を送って",
+      "dictation": "dotfiles にテストを送って",
+      "labels": [
+        "dotfiles"
+      ],
+      "candidates": [
+        "にテストを送って",
+        "dotfiles にテスト",
+        "テスト"
+      ]
+    },
+    {
+      "name": "cue only, no labels",
+      "dictation": "ハローワールドを送信して",
+      "labels": [],
+      "candidates": [
+        "ハローワールド"
+      ]
+    },
+    {
+      "name": "no cue and no label is empty",
+      "dictation": "ただの独り言",
+      "labels": [],
+      "candidates": []
+    },
+    {
+      "name": "label alone is empty, never the full string",
+      "dictation": "claude",
+      "labels": [
+        "claude"
+      ],
+      "candidates": []
+    },
+    {
+      "name": "と入力して with label and に",
+      "dictation": "claude にハローと入力して",
+      "labels": [
+        "claude"
+      ],
+      "candidates": [
+        "にハローと入力して",
+        "claude にハロー",
+        "ハロー"
+      ]
+    },
+    {
+      "name": "へ particle after latin label",
+      "dictation": "claudeへハローを送って",
+      "labels": [
+        "claude"
+      ],
+      "candidates": [
+        "へハローを送って",
+        "claudeへハロー",
+        "ハロー"
+      ]
+    },
+    {
+      "name": "を貼って",
+      "dictation": "editor にメモを貼って",
+      "labels": [
+        "editor"
+      ],
+      "candidates": [
+        "にメモを貼って",
+        "editor にメモ",
+        "メモ"
+      ]
+    },
+    {
+      "name": "と送信して",
+      "dictation": "dotfiles にOKと送信して",
+      "labels": [
+        "dotfiles"
+      ],
+      "candidates": [
+        "にOKと送信して",
+        "dotfiles にOK",
+        "OK"
+      ]
+    },
+    {
+      "name": "outer whitespace is trimmed before cutting",
+      "dictation": "  Claude Code に  hi  を送って  ",
+      "labels": [
+        "Claude Code"
+      ],
+      "candidates": [
+        "に  hi  を送って",
+        "Claude Code に  hi",
+        "hi"
+      ]
+    },
+    {
+      "name": "label match is case-insensitive",
+      "dictation": "CLAUDE code にxを送って",
+      "labels": [
+        "Claude Code"
+      ],
+      "candidates": [
+        "にxを送って",
+        "CLAUDE code にx",
+        "x"
+      ]
+    },
+    {
+      "name": "cue without labels still strips routing",
+      "dictation": "dotfiles にテストを送って",
+      "labels": [],
+      "candidates": [
+        "dotfiles にテスト",
+        "テスト"
+      ]
+    },
+    {
+      "name": "full dictation is never a candidate",
+      "dictation": "を送って",
+      "labels": [],
+      "candidates": []
+    }
   ]
 }

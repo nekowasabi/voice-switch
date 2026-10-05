@@ -217,6 +217,113 @@ public static class PaneRoute
         return null;
     }
 
+    // Trailing cues for unquoted body candidates (longest first).
+    private static readonly string[] SendBodyCues =
+    [
+        "を送信して", "と送信して", "を入力して", "と入力して",
+        "を送って", "と送って", "に送って", "を貼って", "と貼って",
+    ];
+
+    private static readonly string[] SendBodyParticles = ["の pane に", "に", "へ"];
+
+    // Deterministic unquoted body candidates. Never includes the full (trimmed) dictation.
+    // Labels are hit / catalog strings present in the dictation. No Jev. Same rule as
+    // sendBodyCandidates (Swift) and the `candidates` rows of pane_route.json.
+    public static IReadOnlyList<string> SendBodyCandidates(string dictation, IReadOnlyList<string> labels)
+    {
+        var full = dictation.Trim();
+        if (full.Length == 0)
+        {
+            return [];
+        }
+
+        var outList = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        void Add(string raw)
+        {
+            var t = raw.Trim();
+            if (t.Length == 0 || t == full || !seen.Add(t))
+            {
+                return;
+            }
+
+            outList.Add(t);
+        }
+
+        var bestStart = -1;
+        var bestLen = 0;
+        foreach (var label in labels)
+        {
+            if (string.IsNullOrEmpty(label))
+            {
+                continue;
+            }
+
+            var index = dictation.IndexOf(label, StringComparison.OrdinalIgnoreCase);
+            if (index < 0)
+            {
+                continue;
+            }
+
+            if (bestStart < 0 || index < bestStart || (index == bestStart && label.Length > bestLen))
+            {
+                bestStart = index;
+                bestLen = label.Length;
+            }
+        }
+
+        if (bestStart >= 0)
+        {
+            Add(dictation[(bestStart + bestLen)..]);
+        }
+
+        string? cueStripped = null;
+        foreach (var cue in SendBodyCues.OrderByDescending(c => c.Length))
+        {
+            if (!full.EndsWith(cue, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            cueStripped = full[..^cue.Length].Trim();
+            Add(cueStripped);
+            break;
+        }
+
+        if (cueStripped is not null)
+        {
+            var bestEnd = -1;
+            foreach (var particle in SendBodyParticles)
+            {
+                var start = 0;
+                while (true)
+                {
+                    var index = cueStripped.IndexOf(particle, start, StringComparison.Ordinal);
+                    if (index < 0)
+                    {
+                        break;
+                    }
+
+                    var end = index + particle.Length;
+                    if (end > bestEnd)
+                    {
+                        bestEnd = end;
+                    }
+
+                    start = index + 1;
+                }
+            }
+
+            if (bestEnd > 0)
+            {
+                Add(cueStripped[bestEnd..]);
+            }
+        }
+
+        return outList;
+    }
+
     // A chosen pane without a send body is skipped; the full dictation is never sent or pasted instead.
     public static RouteDecision RequireSendBody(RouteDecision decision, string? body) =>
         decision.Pane is { } pane && body is null

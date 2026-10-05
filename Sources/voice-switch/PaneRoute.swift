@@ -291,6 +291,76 @@ func extractSendBody(_ dictation: String) -> String? {
     return nil
 }
 
+/// Trailing cues stripped before building unquoted body candidates (longest first).
+let sendBodyCues: [String] = [
+    "を送信して", "と送信して", "を入力して", "と入力して",
+    "を送って", "と送って", "に送って", "を貼って", "と貼って",
+].sorted { $0.count > $1.count }
+
+/// Routing particles looked for on the cue-stripped string (longest first when scanning ends).
+let sendBodyParticles: [String] = ["の pane に", "に", "へ"]
+
+/// Deterministic unquoted body candidates. Never includes the full (trimmed) dictation.
+/// Labels are hit / catalog strings present in the dictation. No Jev. Same rule as
+/// `PaneRoute.SendBodyCandidates` (Windows) and the `candidates` rows of pane_route.json.
+func sendBodyCandidates(_ dictation: String, labels: [String]) -> [String] {
+    let full = dictation.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !full.isEmpty else { return [] }
+    var out: [String] = []
+    var seen = Set<String>()
+    func add(_ raw: String) {
+        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, t != full, !seen.contains(t) else { return }
+        seen.insert(t)
+        out.append(t)
+    }
+
+    var bestRange: Range<String.Index>?
+    for label in labels where !label.isEmpty {
+        guard let range = dictation.range(of: label, options: .caseInsensitive) else { continue }
+        if let best = bestRange {
+            if range.lowerBound < best.lowerBound
+                || (range.lowerBound == best.lowerBound && range.upperBound > best.upperBound)
+            {
+                bestRange = range
+            }
+        } else {
+            bestRange = range
+        }
+    }
+    if let range = bestRange {
+        add(String(dictation[range.upperBound...]))
+    }
+
+    var cueStripped: String?
+    for cue in sendBodyCues where full.hasSuffix(cue) {
+        let cut = String(full.dropLast(cue.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        cueStripped = cut
+        add(cut)
+        break
+    }
+
+    if let stripped = cueStripped {
+        var bestEnd: String.Index?
+        for particle in sendBodyParticles {
+            var search = stripped.startIndex
+            while search < stripped.endIndex,
+                  let range = stripped.range(of: particle, range: search..<stripped.endIndex)
+            {
+                if bestEnd == nil || range.upperBound > bestEnd! {
+                    bestEnd = range.upperBound
+                }
+                search = stripped.index(after: range.lowerBound)
+            }
+        }
+        if let end = bestEnd, end > stripped.startIndex {
+            add(String(stripped[end...]))
+        }
+    }
+
+    return out
+}
+
 /// After decideRoute: a chosen pane with no body is skipped (SuppressFallback / SkippedNoBody).
 func requireSendBody(pane: String?, reason: String, body: String?) -> (pane: String?, reason: String, suppressFallback: Bool) {
     if let pane, body == nil {

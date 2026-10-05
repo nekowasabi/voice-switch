@@ -64,11 +64,19 @@ struct PaneRouteFixture: Decodable {
         var body: String?
     }
 
+    struct Candidates: Decodable {
+        var name: String
+        var dictation: String
+        var labels: [String]
+        var candidates: [String]
+    }
+
     var catalog: [Pane]
     var match: [Match]
     var policy: [Policy]
     var jev_responses: [Response]
     var extract: [Extract]
+    var candidates: [Candidates]
 }
 
 var failures: [String] = []
@@ -122,11 +130,16 @@ for item in paneFixture.extract {
     let actual = extractSendBody(item.dictation)
     check(actual == item.body, "pane extract \(item.name) expected=\(item.body ?? "nil") actual=\(actual ?? "nil")")
 }
+for item in paneFixture.candidates {
+    let actual = sendBodyCandidates(item.dictation, labels: item.labels)
+    check(actual == item.candidates, "pane candidates \(item.name) expected=\(item.candidates) actual=\(actual)")
+}
 
 if failures.isEmpty {
     print("PASS behavior fixtures")
     print("PASS pane route fixtures")
     print("PASS pane extract fixtures")
+    print("PASS pane candidates fixtures")
 } else {
     for failure in failures {
         FileHandle.standardError.write(Data("FAIL \(failure)\n".utf8))

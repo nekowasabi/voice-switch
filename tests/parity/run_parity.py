@@ -915,6 +915,14 @@ def harness_program(text_fixture: dict, segmenter_fixture: dict, pane_route_fixt
             Check(actual == expected, $"pane extract {{item.GetProperty("name").GetString()}} expected={{expected}} actual={{actual}}");
         }}
 
+        foreach (var item in paneFixture.GetProperty("candidates").EnumerateArray())
+        {{
+            var labels = item.GetProperty("labels").EnumerateArray().Select(v => v.GetString()!).ToList();
+            var actual = PaneRoute.SendBodyCandidates(item.GetProperty("dictation").GetString()!, labels);
+            var expected = item.GetProperty("candidates").EnumerateArray().Select(v => v.GetString()!).ToList();
+            Check(actual.SequenceEqual(expected), $"pane candidates {{item.GetProperty("name").GetString()}} expected=[{{string.Join(",", expected)}}] actual=[{{string.Join(",", actual)}}]");
+        }}
+
         if (failures.Count > 0)
         {{
             foreach (var failure in failures) Console.Error.WriteLine("FAIL " + failure);
@@ -924,6 +932,7 @@ def harness_program(text_fixture: dict, segmenter_fixture: dict, pane_route_fixt
         Console.WriteLine("PASS behavior fixtures");
         Console.WriteLine("PASS pane route fixtures");
         Console.WriteLine("PASS pane extract fixtures");
+        Console.WriteLine("PASS pane candidates fixtures");
         return 0;
 
         void Check(bool condition, string message)

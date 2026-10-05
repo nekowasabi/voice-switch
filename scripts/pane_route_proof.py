@@ -76,6 +76,89 @@ def extract_send_body(dictation):
     return None
 
 
+
+CUES = sorted(
+    [
+        "を送信して",
+        "と送信して",
+        "を入力して",
+        "と入力して",
+        "を送って",
+        "と送って",
+        "に送って",
+        "を貼って",
+        "と貼って",
+    ],
+    key=len,
+    reverse=True,
+)
+PARTICLES = ["の pane に", "に", "へ"]
+
+
+def send_body_candidates(dictation, labels):
+    """Mirror of sendBodyCandidates / SendBodyCandidates."""
+    full = dictation.strip()
+    if not full:
+        return []
+    out = []
+    seen = set()
+
+    def add(raw):
+        t = (raw or "").strip()
+        if not t or t == full or t in seen:
+            return
+        seen.add(t)
+        out.append(t)
+
+    best = None  # (start, length)
+    folded = dictation.lower()
+    for label in labels:
+        if not label:
+            continue
+        i = folded.find(label.lower())
+        if i < 0:
+            continue
+        ln = len(label)
+        if best is None or i < best[0] or (i == best[0] and ln > best[1]):
+            best = (i, ln)
+    if best is not None:
+        add(dictation[best[0] + best[1] :])
+
+    cue_stripped = None
+    for cue in CUES:
+        if full.endswith(cue):
+            cue_stripped = full[: -len(cue)].strip()
+            add(cue_stripped)
+            break
+
+    if cue_stripped is not None:
+        best_end = -1
+        for particle in PARTICLES:
+            start = 0
+            while True:
+                i = cue_stripped.find(particle, start)
+                if i < 0:
+                    break
+                end = i + len(particle)
+                if end > best_end:
+                    best_end = end
+                start = i + 1
+        if best_end > 0:
+            add(cue_stripped[best_end:])
+
+    return out
+
+
+def check_candidates_fixture():
+    rows = json.loads(FIXTURE.read_text(encoding="utf-8"))["candidates"]
+    for row in rows:
+        got = send_body_candidates(row["dictation"], row["labels"])
+        if got != row["candidates"]:
+            return fail(f"candidates {row['name']!r} got {got!r} want {row['candidates']!r}")
+    print(f"CANDIDATES {len(rows)}/{len(rows)}")
+    return 0
+
+
 def check_extract_fixture():
     rows = json.loads(FIXTURE.read_text(encoding="utf-8"))["extract"]
     for row in rows:
@@ -239,6 +322,8 @@ def check_swift():
         return fail("swift send-keys argv missing")
     if "extractSendBody" not in src:
         return fail("swift extractSendBody missing")
+    if "func sendBodyCandidates" not in src:
+        return fail("swift sendBodyCandidates missing")
     if '["tmux", "send-keys", "-t", id, "-l", "--", text]' in src:
         return fail("swift send-keys still uses the full dictation")
     if "no send body" not in src:
@@ -449,6 +534,9 @@ def main():
     if code:
         return code
     code = check_extract_fixture()
+    if code:
+        return code
+    code = check_candidates_fixture()
     if code:
         return code
     if os.path.exists(SOCK):
