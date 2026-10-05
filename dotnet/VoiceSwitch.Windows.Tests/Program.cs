@@ -165,7 +165,14 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("tray login item round-trips the per-user Run entry", TrayLoginItemRoundTripsRunEntry),
     ("tray IPC no-server error is actionable", TrayIpcNoServerErrorIsActionable),
     ("tray IPC rejects bad client then serves status", TrayIpcRejectsBadClientThenServesStatus),
-    ("tray IPC times out unread response then serves status", TrayIpcTimesOutUnreadResponseThenServesStatus)
+    ("tray IPC times out unread response then serves status", TrayIpcTimesOutUnreadResponseThenServesStatus),
+    ("pane route parses the four-field catalog", () => Check(PaneRouteParsesCatalog())),
+    ("pane route accepts only percent-digit pane ids", () => Check(PaneRouteAcceptsOnlyPaneIds())),
+    ("pane route matches labels like the shared fixture", PaneRouteMatchesFixtureLabels),
+    ("pane route policy table matches the shared fixture", PaneRoutePolicyMatchesFixture),
+    ("pane route parses jev answers like the shared fixture", PaneRouteParsesJevAnswersLikeFixture),
+    ("pane route request body carries the catalog and none", () => Check(PaneRouteRequestBodyCarriesCatalog())),
+    ("pane route log line names hits, pick, and reason", () => Check(PaneRouteLogLineNamesHitsPickAndReason()))
 };
 
 var failed = 0;
@@ -202,6 +209,123 @@ foreach (var (name, test) in tests)
 return failed == 0 ? 0 : 1;
 
 static TestOutcome Check(bool ok) => ok ? TestOutcome.Pass() : TestOutcome.Fail();
+
+static bool PaneRouteParsesCatalog()
+{
+    var panes = PaneRoute.ParsePanes("%0\tdev\tnvim\tbash\r\n%3\tagent\t\tnode\n");
+    return panes is [{ Id: "%0", Window: "dev", Title: "nvim", Command: "bash" }, { Id: "%3", Window: "agent", Title: "", Command: "node" }]
+        && PaneRoute.ParsePanes("%0\tdev\tnvim") is null;
+}
+
+static bool PaneRouteAcceptsOnlyPaneIds() =>
+    PaneRoute.IsPaneId("%0") && PaneRoute.IsPaneId("%12")
+    && !PaneRoute.IsPaneId("0") && !PaneRoute.IsPaneId("%") && !PaneRoute.IsPaneId("%1a")
+    && !PaneRoute.IsPaneId("dev:0.1") && !PaneRoute.IsPaneId("%１");
+
+// The same file drives the Swift parity harness, so both platforms assert the same literal rows.
+static JsonElement PaneRouteFixture()
+{
+    var relative = Path.Combine("tests", "parity", "fixtures", "pane_route.json");
+    var dir = new DirectoryInfo(AppContext.BaseDirectory);
+    while (dir is not null && !File.Exists(Path.Combine(dir.FullName, relative)))
+    {
+        dir = dir.Parent;
+    }
+
+    if (dir is null)
+    {
+        throw new FileNotFoundException($"{relative} above {AppContext.BaseDirectory}");
+    }
+
+    return JsonDocument.Parse(File.ReadAllBytes(Path.Combine(dir.FullName, relative))).RootElement;
+}
+
+static string? NullableString(JsonElement item, string name)
+{
+    var value = item.GetProperty(name);
+    return value.ValueKind == JsonValueKind.Null ? null : value.GetString();
+}
+
+static JevPick? FixturePick(JsonElement row)
+{
+    var pick = row.GetProperty("pick");
+    return pick.ValueKind == JsonValueKind.Null ? null : new JevPick(NullableString(pick, "pane"), pick.GetProperty("confidence").GetDouble());
+}
+
+static TestOutcome PaneRouteMatchesFixtureLabels()
+{
+    var fixture = PaneRouteFixture();
+    var catalog = fixture.GetProperty("catalog").EnumerateArray()
+        .Select(p => new PaneLabel(p.GetProperty("id").GetString()!, p.GetProperty("window").GetString()!, p.GetProperty("title").GetString()!, p.GetProperty("command").GetString()!))
+        .ToList();
+    foreach (var row in fixture.GetProperty("match").EnumerateArray())
+    {
+        var agents = row.GetProperty("agents").EnumerateObject()
+            .ToDictionary(a => a.Name, a => a.Value.EnumerateArray().Select(v => v.GetString()!).ToArray());
+        var actual = PaneRoute.MatchingPanes(row.GetProperty("dictation").GetString()!, catalog, agents).Select(p => p.Id).ToList();
+        var expected = row.GetProperty("hits").EnumerateArray().Select(v => v.GetString()!).ToList();
+        if (!actual.SequenceEqual(expected))
+        {
+            return TestOutcome.Fail($"{row.GetProperty("name").GetString()}: got [{string.Join(", ", actual)}]");
+        }
+    }
+
+    return TestOutcome.Pass();
+}
+
+static TestOutcome PaneRoutePolicyMatchesFixture()
+{
+    foreach (var row in PaneRouteFixture().GetProperty("policy").EnumerateArray())
+    {
+        var hits = row.GetProperty("hits").EnumerateArray().Select(v => new PaneLabel(v.GetString()!, "", "", "")).ToList();
+        var decision = PaneRoute.Decide(hits, FixturePick(row));
+        var expected = new RouteDecision(NullableString(row, "send"), row.GetProperty("reason").GetString()!);
+        if (decision != expected)
+        {
+            return TestOutcome.Fail($"{row.GetProperty("name").GetString()}: got {decision}");
+        }
+    }
+
+    return TestOutcome.Pass();
+}
+
+static TestOutcome PaneRouteParsesJevAnswersLikeFixture()
+{
+    foreach (var row in PaneRouteFixture().GetProperty("jev_responses").EnumerateArray())
+    {
+        var catalog = row.GetProperty("catalog").EnumerateArray().Select(v => v.GetString()!).ToList();
+        var actual = PaneRoute.ParseJevPick(row.GetProperty("body").GetString()!, catalog);
+        if (actual != FixturePick(row))
+        {
+            return TestOutcome.Fail($"{row.GetProperty("name").GetString()}: got {actual?.ToString() ?? "null"}");
+        }
+    }
+
+    return TestOutcome.Pass();
+}
+
+static bool PaneRouteRequestBodyCarriesCatalog()
+{
+    var panes = new List<PaneLabel> { new("%0", "voice-switch", "editor", "nvim"), new("%1", "dotfiles", "", "node") };
+    var agents = new Dictionary<string, string[]> { ["%1"] = ["claude"] };
+    using var body = JsonDocument.Parse(PaneRoute.JevRequestBody("dotfiles の claude で、コミットして", panes, agents));
+    var root = body.RootElement;
+    var question = root.GetProperty("questions").GetProperty("pane");
+    var criteria = question.GetProperty("criteria");
+    return root.GetProperty("state").GetProperty("dictation").GetString() == "dotfiles の claude で、コミットして"
+        && root.GetProperty("model").GetString() == "jev-latest"
+        && question.GetProperty("type").GetString() == "choice"
+        && criteria.GetProperty("%0").GetProperty("title").GetString() == "editor"
+        && criteria.GetProperty("%0").GetProperty("agents").GetArrayLength() == 0
+        && criteria.GetProperty("%1").GetProperty("agents")[0].GetString() == "claude"
+        && criteria.GetProperty("none").ValueKind == JsonValueKind.String
+        && criteria.EnumerateObject().Count() == 3;
+}
+
+static bool PaneRouteLogLineNamesHitsPickAndReason() =>
+    PaneRoute.LogLine(2, PaneRoute.JevField(new JevPick("%2", 0.87)), new RouteDecision("%2", "jev narrowed")) == "tmux: hits=2 jev=%2@0.87 -> send %2 (jev narrowed)"
+    && PaneRoute.LogLine(1, PaneRoute.JevField(new JevPick(null, 0.9)), new RouteDecision(null, "jev rejected")) == "tmux: hits=1 jev=none@0.90 -> skip (jev rejected)"
+    && PaneRoute.LogLine(0, "off", new RouteDecision(null, "no pane matched")) == "tmux: hits=0 jev=off -> skip (no pane matched)";
 
 static bool Normalizes() =>
     TextMatching.Normalize(" 音声 入力。") == "音声入力";

@@ -31,6 +31,7 @@ def main() -> int:
     text_fixture = load_json(TEXT_FIXTURE)
     segmenter_fixture = load_json(SEGMENTER_FIXTURE)
     cli_fixture = load_json(CLI_FIXTURE)
+    pane_route_fixture = load_json(PANE_ROUTE_FIXTURE)
     repo = SourceTree(ROOT)
     result = Result()
 
@@ -41,7 +42,7 @@ def main() -> int:
     check_config_fields(result, repo)
     check_example_config_fields(result, contract)
     check_cli_contract(result, repo, contract, cli_fixture)
-    check_windows_core_behavior(result, text_fixture, segmenter_fixture)
+    check_windows_core_behavior(result, text_fixture, segmenter_fixture, pane_route_fixture)
     check_swift_core_behavior(result, args.require_swift)
     check_mutation_gate(result, repo, contract)
 
@@ -528,7 +529,7 @@ def windows_cs_files() -> list[str]:
     ]
 
 
-def check_windows_core_behavior(result: Result, text_fixture: dict, segmenter_fixture: dict) -> None:
+def check_windows_core_behavior(result: Result, text_fixture: dict, segmenter_fixture: dict, pane_route_fixture: dict) -> None:
     dotnet = shutil.which("dotnet") or str(Path.home() / ".local/share/mise/shims/dotnet")
     if not Path(dotnet).exists() and shutil.which("dotnet") is None:
         result.fail("dotnet not found; cannot execute Windows C# core behavior harness")
@@ -542,7 +543,7 @@ def check_windows_core_behavior(result: Result, text_fixture: dict, segmenter_fi
             shutil.copy2(source, core_tmp / source.name)
         (core_tmp / "VoiceSwitch.Windows.Core.csproj").write_text(core_project(), encoding="utf-8")
         (tmp_path / "Harness.csproj").write_text(harness_project(core_tmp / "VoiceSwitch.Windows.Core.csproj"), encoding="utf-8")
-        (tmp_path / "Program.cs").write_text(harness_program(text_fixture, segmenter_fixture), encoding="utf-8")
+        (tmp_path / "Program.cs").write_text(harness_program(text_fixture, segmenter_fixture, pane_route_fixture), encoding="utf-8")
         completed = subprocess.run(
             [
                 dotnet,
@@ -654,9 +655,10 @@ def harness_project(core: Path) -> str:
     )
 
 
-def harness_program(text_fixture: dict, segmenter_fixture: dict) -> str:
+def harness_program(text_fixture: dict, segmenter_fixture: dict, pane_route_fixture: dict) -> str:
     text_json = json.dumps(text_fixture, ensure_ascii=False)
     segmenter_json = json.dumps(segmenter_fixture, ensure_ascii=False)
+    pane_route_json = json.dumps(pane_route_fixture, ensure_ascii=False)
     return textwrap.dedent(
         f"""\
         using System.Text.Json;
@@ -664,6 +666,7 @@ def harness_program(text_fixture: dict, segmenter_fixture: dict) -> str:
 
         var textFixture = JsonDocument.Parse({cs_string(text_json)}).RootElement;
         var segmenterFixture = JsonDocument.Parse({cs_string(segmenter_json)}).RootElement;
+        var paneFixture = JsonDocument.Parse({cs_string(pane_route_json)}).RootElement;
         var failures = new List<string>();
 
         foreach (var item in textFixture.GetProperty("normalization").EnumerateArray())
@@ -706,6 +709,32 @@ def harness_program(text_fixture: dict, segmenter_fixture: dict) -> str:
         CheckSegmenter(segmenterFixture.GetProperty("selftest"), segmenterConfig);
         CheckSegmenter(segmenterFixture.GetProperty("head"), segmenterConfig);
 
+        var paneCatalog = paneFixture.GetProperty("catalog").EnumerateArray()
+            .Select(p => new PaneLabel(p.GetProperty("id").GetString()!, p.GetProperty("window").GetString()!, p.GetProperty("title").GetString()!, p.GetProperty("command").GetString()!))
+            .ToList();
+        foreach (var item in paneFixture.GetProperty("match").EnumerateArray())
+        {{
+            var agents = item.GetProperty("agents").EnumerateObject().ToDictionary(a => a.Name, a => a.Value.EnumerateArray().Select(v => v.GetString()!).ToArray());
+            var actual = PaneRoute.MatchingPanes(item.GetProperty("dictation").GetString()!, paneCatalog, agents).Select(p => p.Id).ToList();
+            var expected = item.GetProperty("hits").EnumerateArray().Select(v => v.GetString()!).ToList();
+            Check(actual.SequenceEqual(expected), $"pane match {{item.GetProperty("name").GetString()}} expected=[{{string.Join(",", expected)}}] actual=[{{string.Join(",", actual)}}]");
+        }}
+
+        foreach (var item in paneFixture.GetProperty("policy").EnumerateArray())
+        {{
+            var hits = item.GetProperty("hits").EnumerateArray().Select(v => new PaneLabel(v.GetString()!, "", "", "")).ToList();
+            var decision = PaneRoute.Decide(hits, FixturePick(item));
+            var expected = new RouteDecision(OptionalString(item, "send"), item.GetProperty("reason").GetString()!);
+            Check(decision == expected, $"pane policy {{item.GetProperty("name").GetString()}} expected={{expected}} actual={{decision}}");
+        }}
+
+        foreach (var item in paneFixture.GetProperty("jev_responses").EnumerateArray())
+        {{
+            var catalog = item.GetProperty("catalog").EnumerateArray().Select(v => v.GetString()!).ToList();
+            var actual = PaneRoute.ParseJevPick(item.GetProperty("body").GetString()!, catalog);
+            Check(actual == FixturePick(item), $"jev parse {{item.GetProperty("name").GetString()}}");
+        }}
+
         if (failures.Count > 0)
         {{
             foreach (var failure in failures) Console.Error.WriteLine("FAIL " + failure);
@@ -713,6 +742,7 @@ def harness_program(text_fixture: dict, segmenter_fixture: dict) -> str:
         }}
 
         Console.WriteLine("PASS behavior fixtures");
+        Console.WriteLine("PASS pane route fixtures");
         return 0;
 
         void Check(bool condition, string message)
@@ -724,6 +754,12 @@ def harness_program(text_fixture: dict, segmenter_fixture: dict) -> str:
         {{
             var value = item.GetProperty(name);
             return value.ValueKind == JsonValueKind.Null ? null : value.GetString();
+        }}
+
+        static JevPick? FixturePick(JsonElement item)
+        {{
+            var pick = item.GetProperty("pick");
+            return pick.ValueKind == JsonValueKind.Null ? null : new JevPick(OptionalString(pick, "pane"), pick.GetProperty("confidence").GetDouble());
         }}
 
         void CheckSegmenter(JsonElement spec, VoiceSwitchConfig segmenterConfig)
