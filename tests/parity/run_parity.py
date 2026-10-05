@@ -21,6 +21,7 @@ CONTRACT = HERE / "contracts" / "platform_parity.json"
 TEXT_FIXTURE = HERE / "fixtures" / "text_matching.json"
 SEGMENTER_FIXTURE = HERE / "fixtures" / "segmenter.json"
 CLI_FIXTURE = HERE / "fixtures" / "cli.json"
+PANE_ROUTE_FIXTURE = HERE / "fixtures" / "pane_route.json"
 SWIFT_HARNESS = HERE / "swift" / "main.swift"
 
 
@@ -583,6 +584,7 @@ def check_swift_core_behavior(result: Result, require_swift: bool) -> None:
                 str(ROOT / "Sources/voice-switch/Config.swift"),
                 str(ROOT / "Sources/voice-switch/Transcript.swift"),
                 str(ROOT / "Sources/voice-switch/Segmenter.swift"),
+                str(ROOT / "Sources/voice-switch/PaneRoute.swift"),
                 str(SWIFT_HARNESS),
                 "-o",
                 str(binary),
@@ -597,7 +599,7 @@ def check_swift_core_behavior(result: Result, require_swift: bool) -> None:
             result.fail("Swift pure harness failed to compile:\n" + completed.stdout + completed.stderr)
             return
         completed = subprocess.run(
-            [str(binary), str(TEXT_FIXTURE), str(SEGMENTER_FIXTURE)],
+            [str(binary), str(TEXT_FIXTURE), str(SEGMENTER_FIXTURE), str(PANE_ROUTE_FIXTURE)],
             cwd=ROOT,
             text=True,
             stdout=subprocess.PIPE,

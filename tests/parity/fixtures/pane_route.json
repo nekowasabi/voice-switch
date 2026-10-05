@@ -1,0 +1,41 @@
+{
+  "catalog": [
+    {"id": "%0", "window": "voice-switch", "title": "editor", "command": "nvim"},
+    {"id": "%1", "window": "voice-switch", "title": "", "command": "node"},
+    {"id": "%2", "window": "dotfiles", "title": "", "command": "node"},
+    {"id": "%3", "window": "shell", "title": "", "command": "zsh"}
+  ],
+  "match": [
+    {"name": "window name is a label", "dictation": "dotfiles で変更をコミットして", "agents": {}, "hits": ["%2"]},
+    {"name": "title is a label", "dictation": "Editor を開いて", "agents": {}, "hits": ["%0"]},
+    {"name": "command is a label and matches twice", "dictation": "node のバージョンを上げて", "agents": {}, "hits": ["%1", "%2"]},
+    {"name": "agent names are labels only through the injected map", "dictation": "claude にログを見てもらって", "agents": {"%1": ["claude"]}, "hits": ["%1"]},
+    {"name": "empty title never matches", "dictation": "", "agents": {}, "hits": []},
+    {"name": "no label in the text", "dictation": "今日はいい天気ですね", "agents": {}, "hits": []}
+  ],
+  "policy": [
+    {"name": "one hit without jev sends it", "hits": ["%0"], "pick": null, "send": "%0", "reason": "unique hit"},
+    {"name": "one hit agreed by jev sends it", "hits": ["%0"], "pick": {"pane": "%0", "confidence": 0.9}, "send": "%0", "reason": "unique hit"},
+    {"name": "one hit contradicted confidently is rejected", "hits": ["%0"], "pick": {"pane": "%2", "confidence": 0.8}, "send": null, "reason": "jev rejected"},
+    {"name": "one hit with a confident none is rejected", "hits": ["%0"], "pick": {"pane": null, "confidence": 0.9}, "send": null, "reason": "jev rejected"},
+    {"name": "one hit contradicted below the floor still sends", "hits": ["%0"], "pick": {"pane": "%2", "confidence": 0.79}, "send": "%0", "reason": "unique hit"},
+    {"name": "two hits without jev send nothing", "hits": ["%1", "%2"], "pick": null, "send": null, "reason": "2 panes matched"},
+    {"name": "two hits narrowed at the floor send the pick", "hits": ["%1", "%2"], "pick": {"pane": "%2", "confidence": 0.8}, "send": "%2", "reason": "jev narrowed"},
+    {"name": "two hits narrowed below the floor send nothing", "hits": ["%1", "%2"], "pick": {"pane": "%2", "confidence": 0.79}, "send": null, "reason": "2 panes matched"},
+    {"name": "two hits with a confident pick outside the hits send nothing", "hits": ["%1", "%2"], "pick": {"pane": "%0", "confidence": 0.95}, "send": null, "reason": "2 panes matched"},
+    {"name": "two hits with a confident none send nothing", "hits": ["%1", "%2"], "pick": {"pane": null, "confidence": 0.9}, "send": null, "reason": "2 panes matched"},
+    {"name": "no hit without jev sends nothing", "hits": [], "pick": null, "send": null, "reason": "no pane matched"},
+    {"name": "no hit with a confident pick only suggests", "hits": [], "pick": {"pane": "%7", "confidence": 0.9}, "send": null, "reason": "no pane matched; jev suggests %7"},
+    {"name": "no hit with a weak pick stays silent", "hits": [], "pick": {"pane": "%7", "confidence": 0.5}, "send": null, "reason": "no pane matched"},
+    {"name": "no hit with a confident none sends nothing", "hits": [], "pick": {"pane": null, "confidence": 0.9}, "send": null, "reason": "no pane matched"}
+  ],
+  "jev_responses": [
+    {"name": "a catalog choice becomes a pick", "catalog": ["%0", "%1"], "body": "{\"answers\":{\"pane\":{\"type\":\"choice\",\"choice\":\"%1\",\"confidence\":0.87,\"probabilities\":{\"%0\":0.1,\"%1\":0.87,\"none\":0.03}}},\"model\":\"jev-latest\",\"usage\":{}}", "pick": {"pane": "%1", "confidence": 0.87}},
+    {"name": "none keeps its confidence", "catalog": ["%0", "%1"], "body": "{\"answers\":{\"pane\":{\"type\":\"choice\",\"choice\":\"none\",\"confidence\":0.91}}}", "pick": {"pane": null, "confidence": 0.91}},
+    {"name": "a choice outside the catalog is dropped", "catalog": ["%0", "%1"], "body": "{\"answers\":{\"pane\":{\"type\":\"choice\",\"choice\":\"%9\",\"confidence\":0.99}}}", "pick": null},
+    {"name": "a non-choice answer is dropped", "catalog": ["%0", "%1"], "body": "{\"answers\":{\"pane\":{\"type\":\"score\",\"score\":0.9,\"confidence\":0.9}}}", "pick": null},
+    {"name": "a missing confidence is dropped", "catalog": ["%0", "%1"], "body": "{\"answers\":{\"pane\":{\"type\":\"choice\",\"choice\":\"%0\"}}}", "pick": null},
+    {"name": "a missing pane answer is dropped", "catalog": ["%0", "%1"], "body": "{\"answers\":{}}", "pick": null},
+    {"name": "malformed json is dropped", "catalog": ["%0", "%1"], "body": "{\"answers\":", "pick": null}
+  ]
+}

@@ -1,5 +1,9 @@
 // tmux pane route: the dictation string goes to one tmux pane only when a closed catalog label hits.
+// Jev (TypeSafe) may confirm, narrow, or veto that hit; it never names a pane the catalog did not.
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// Closed catalog row from `tmux list-panes`. Addressed only by pane id (`%0`), never by index.
 struct PaneLabel {
@@ -160,20 +164,132 @@ func fetchPanes() -> [PaneLabel]? {
     return panes
 }
 
-/// Unique label hit sends the dictation text literally. Miss, ambiguity, or a bad id sends nothing.
-func routeDictation(_ text: String) {
+// MARK: jev correction
+
+/// Jev's answer to "which listed pane does the speaker address". `pane` nil is the "none" choice.
+struct JevPick: Equatable {
+    var pane: String?
+    var confidence: Double
+}
+
+/// Probe (scripts/pane_jev_probe.py, 8 cases): wrong answers came back at 0.49 and 0.52, right ones at
+/// 0.80 to 1.00. Recalibrate from the `tmux:` log lines once real dictations accumulate.
+let jevConfidenceFloor = 0.8
+
+/// Same table on Windows (PaneRoute.cs) and in tests/parity/fixtures/pane_route.json.
+/// Without a confident pick the PR #4 rule stands: send iff exactly one label hit.
+func decideRoute(_ hits: [PaneLabel], _ pick: JevPick?) -> (pane: String?, reason: String) {
+    let confident = pick.map { $0.confidence >= jevConfidenceFloor } ?? false
+    switch hits.count {
+    case 0:
+        if confident, let suggested = pick?.pane { return (nil, "no pane matched; jev suggests \(suggested)") }
+        return (nil, "no pane matched")
+    case 1:
+        if confident, pick?.pane != hits[0].id { return (nil, "jev rejected") }
+        return (hits[0].id, "unique hit")
+    default:
+        if confident, let chosen = pick?.pane, hits.contains(where: { $0.id == chosen }) { return (chosen, "jev narrowed") }
+        return (nil, "\(hits.count) panes matched")
+    }
+}
+
+/// Question shape shared with scripts/pane_jev_probe.py: criteria keyed by pane id plus "none".
+func jevRequestBody(_ dictation: String, _ panes: [PaneLabel], agents: [String: [String]]) -> Data? {
+    var criteria: [String: Any] = [:]
+    for pane in panes {
+        let row: [String: Any] = ["window": pane.window, "title": pane.title, "command": pane.command, "agents": agents[pane.id] ?? []]
+        criteria[pane.id] = row
+    }
+    criteria["none"] = "The dictation does not name or clearly address any one of the listed panes."
+    let question: [String: Any] = [
+        "type": "choice",
+        "instructions": "`dictation` is speech-to-text output, so pane names may be misheard or written in katakana. "
+            + "Which listed tmux pane does the speaker address by name (window, title, command, or agent)?",
+        "criteria": criteria,
+    ]
+    let body: [String: Any] = ["state": ["dictation": dictation], "model": "jev-latest", "questions": ["pane": question]]
+    return try? JSONSerialization.data(withJSONObject: body)
+}
+
+/// `answers.pane` must be a choice answer naming a catalog id or "none"; anything else is nil (treated as no pick).
+func parseJevPick(_ data: Data, catalog: [String]) -> JevPick? {
+    guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let answers = root["answers"] as? [String: Any],
+          let answer = answers["pane"] as? [String: Any],
+          answer["type"] as? String == "choice",
+          let choice = answer["choice"] as? String,
+          let confidence = answer["confidence"] as? Double else { return nil }
+    if choice == "none" { return JevPick(pane: nil, confidence: confidence) }
+    guard catalog.contains(choice) else { return nil }
+    return JevPick(pane: choice, confidence: confidence)
+}
+
+enum JevOutcome {
+    case off
+    case error
+    case pick(JevPick)
+}
+
+/// Key from TYPESAFE_API_KEY, else JEV_API_KEY. No key means no request. The key and the dictation are never logged.
+func jevPick(_ dictation: String, _ panes: [PaneLabel], agents: [String: [String]]) async -> JevOutcome {
+    let env = ProcessInfo.processInfo.environment
+    guard let key = ["TYPESAFE_API_KEY", "JEV_API_KEY"].compactMap({ env[$0] }).first(where: { !$0.isEmpty }) else { return .off }
+    guard let body = jevRequestBody(dictation, panes, agents: agents) else { return .error }
+    var request = URLRequest(url: URL(string: "https://api.typesafe.ai/v1/systemone")!)
+    request.httpMethod = "POST"
+    request.timeoutInterval = 5
+    request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = body
+    let reply: (Data, URLResponse)
+    do {
+        reply = try await URLSession.shared.data(for: request)
+    } catch {
+        log("jev: request failed or timed out")
+        return .error
+    }
+    let (data, response) = reply
+    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+    guard status == 200 else {
+        log("jev: http \(status)")
+        return .error
+    }
+    guard let pick = parseJevPick(data, catalog: panes.map { $0.id }) else {
+        log("jev: answer was not a catalog choice")
+        return .error
+    }
+    return .pick(pick)
+}
+
+/// One log line per dictation, e.g. `tmux: hits=2 jev=%2@0.87 -> send %2 (jev narrowed)`.
+func routeDictation(_ text: String) async {
     guard let panes = fetchPanes() else { return }
     let agents = discoverAgentNames()
     let hits = matchingPanes(text, panes, agents: agents)
-    guard hits.count == 1 else {
-        log(hits.isEmpty ? "tmux: no pane matched; nothing sent" : "tmux: \(hits.count) panes matched; nothing sent")
+    let pick: JevPick?
+    let jevField: String
+    switch await jevPick(text, panes, agents: agents) {
+    case .off:
+        pick = nil
+        jevField = "off"
+    case .error:
+        pick = nil
+        jevField = "error"
+    case .pick(let found):
+        pick = found
+        jevField = "\(found.pane ?? "none")@\(String(format: "%.2f", found.confidence))"
+    }
+    let decision = decideRoute(hits, pick)
+    let prefix = "tmux: hits=\(hits.count) jev=\(jevField)"
+    guard let id = decision.pane else {
+        log("\(prefix) -> skip (\(decision.reason))")
         return
     }
-    let id = hits[0].id
     guard isPaneID(id) else {
-        log("tmux: pane id rejected; nothing sent")
+        log("\(prefix) -> skip (pane id rejected)")
         return
     }
+    log("\(prefix) -> send \(id) (\(decision.reason))")
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     p.arguments = ["tmux", "send-keys", "-t", id, "-l", "--", text]

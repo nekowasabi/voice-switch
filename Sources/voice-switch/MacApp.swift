@@ -141,7 +141,7 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
         log("dictation: no superwhisper result within 30 s"); return
     }
     log("dictation: \(result.count) chars in \(Int(Date().timeIntervalSince(submitted) * 1000)) ms")
-    routeDictation(result)
+    await routeDictation(result)
 }
 
 /// Polls superwhisper's recordings folder for the run that started at or after `since` (unix seconds).
