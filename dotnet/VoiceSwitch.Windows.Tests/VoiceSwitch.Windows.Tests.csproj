@@ -10,6 +10,7 @@
     <Compile Include="..\VoiceSwitch.Windows\ImeReadings.cs" Link="VoiceSwitch.Windows.ImeReadings.cs" />
     <Compile Include="..\VoiceSwitch.Windows\MicInUse.cs" Link="VoiceSwitch.Windows.MicInUse.cs" />
     <Compile Include="..\VoiceSwitch.Windows\SuperwhisperHandoff.cs" Link="VoiceSwitch.Windows.SuperwhisperHandoff.cs" />
+    <Compile Include="..\VoiceSwitch.Windows\TmuxPaneRouter.cs" Link="VoiceSwitch.Windows.TmuxPaneRouter.cs" />
     <Compile Include="..\VoiceSwitch.Windows\NoiseReduction.cs" Link="VoiceSwitch.Windows.NoiseReduction.cs" />
     <Compile Include="..\VoiceSwitch.Windows\SyntheticIngress.cs" Link="VoiceSwitch.Windows.SyntheticIngress.cs" />
     <Compile Include="..\VoiceSwitch.Windows\Tray\TrayContracts.cs" Link="VoiceSwitch.Windows.Tray.Contracts.cs" />

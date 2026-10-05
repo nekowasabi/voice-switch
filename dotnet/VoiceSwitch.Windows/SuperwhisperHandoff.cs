@@ -23,6 +23,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
     private readonly bool dryRun;
     private readonly Action<nint> restoreFocus;
     private readonly Func<TimeSpan, Task> delay;
+    private readonly Func<string, Task>? onTranscribed;
 
     public RegisteredSuperwhisperHandoff(
         string root,
@@ -30,7 +31,8 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         Func<ProcessStartInfo, Process?>? startProcess = null,
         bool dryRun = false,
         Action<nint>? restoreFocus = null,
-        Func<TimeSpan, Task>? delay = null)
+        Func<TimeSpan, Task>? delay = null,
+        Func<string, Task>? onTranscribed = null)
     {
         this.root = root;
         this.recordingsDir = recordingsDir;
@@ -38,6 +40,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         this.dryRun = dryRun;
         this.restoreFocus = restoreFocus ?? (_ => { });
         this.delay = delay ?? (span => Task.Delay(span));
+        this.onTranscribed = onTranscribed;
         if (!dryRun)
         {
             Sweep();
@@ -101,6 +104,19 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
             {
                 Log.Info($"dictation: {text.Length} chars in {clock.ElapsedMilliseconds} ms");
                 TryDelete(wavPath);
+                if (onTranscribed is not null)
+                {
+                    // The route is a side effect on the result; whatever it throws must not change the handoff status.
+                    try
+                    {
+                        await onTranscribed(text);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Info($"tmux: route failed: {ex.Message}");
+                    }
+                }
+
                 return new HandoffResult(HandoffStatus.Transcribed, audio.SessionId, null, "Superwhisper result found; WAV deleted");
             }
 

@@ -121,6 +121,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation noise analysis never replaces handoff source", () => Check(DictationNoiseAnalysisNeverReplacesHandoffSource())),
     ("dictation noise-on local recording is byte exact", () => Check(DictationNoiseOnLocalRecordingIsByteExact())),
     ("dictation handoff launches Superwhisper and deletes WAV after its result", () => Check(DictationHandoffTranscribesAndDeletesWav())),
+    ("dictation handoff routes the result text and survives a failing route", () => Check(DictationHandoffRoutesResultText())),
     ("dictation handoff keeps WAV when Superwhisper writes no result", () => Check(DictationHandoffKeepsWavWithoutResult())),
     ("dictation handoff restores focus 20 times before polling", () => Check(DictationHandoffRestoresFocusBeforePolling())),
     ("superwhisper result lookup picks newest non-empty run", () => Check(SuperwhisperFindResultPicksNewestNonEmpty())),
@@ -2970,6 +2971,36 @@ static bool DictationHandoffTranscribesAndDeletesWav()
         && output.Contains("dictation: 5 chars in ", StringComparison.Ordinal)
         && !File.Exists(wav)
         && seen!.ArgumentList.SequenceEqual(["superwhisper://file//" + Path.GetFullPath(wav)]);
+}
+
+static bool DictationHandoffRoutesResultText()
+{
+    using var temp = RuntimeTemp();
+    var root = Path.Combine(temp.Dir, "handoff");
+    var recordings = Path.Combine(temp.Dir, "recordings");
+    Func<ProcessStartInfo, Process?> start = _ =>
+    {
+        WriteSuperwhisperMeta(recordings, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(), """{"llmResult":"dotfiles で変更をコミットして"}""");
+        return Process.GetCurrentProcess();
+    };
+    var routed = new List<string>();
+    var recording = new RegisteredSuperwhisperHandoff(root, recordings, start, delay: _ => Task.CompletedTask,
+        onTranscribed: text => { routed.Add(text); return Task.CompletedTask; });
+    var throwing = new RegisteredSuperwhisperHandoff(root, recordings, start, delay: _ => Task.CompletedTask,
+        onTranscribed: _ => throw new InvalidOperationException("wsl.exe is missing"));
+    var audio = new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2));
+    HandoffResult? first = null;
+    HandoffResult? second = null;
+    var (_, output) = CaptureConsole(() =>
+    {
+        first = SubmitHandoff(recording, audio);
+        second = SubmitHandoff(throwing, audio);
+        return 0;
+    });
+    return routed.SequenceEqual(["dotfiles で変更をコミットして"])
+        && first!.Status == HandoffStatus.Transcribed
+        && second!.Status == HandoffStatus.Transcribed
+        && output.Contains("tmux: route failed: wsl.exe is missing", StringComparison.Ordinal);
 }
 
 static bool DictationHandoffKeepsWavWithoutResult()
