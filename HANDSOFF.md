@@ -6,7 +6,7 @@
 
 ## ブランチと状態
 
-- ブランチは `feat/pane-route-jev`（先端 `c501e28`）。Overnight A–D / B2 に加え、本文 F1–F3（candidates / resolve / route+HTTP）まで入り。
+- ブランチは `feat/pane-route-jev`（先端 `414fd9d`）。Overnight A–D / B2 に加え、本文 F1–F3（candidates / resolve / route+HTTP）まで入り。
 - PR #4（`feat/tmux-pane-route`）は触っていない。PR #4 は 63 コミット古い main から分かれていて、main と衝突している。このブランチで新しく PR を作り、PR #4 を閉じる想定。
 - `b612216`（RESEARCH.md の研究比較）は別の話題の変更。PR を作る前に別ブランチへ分けるか決める。
 
