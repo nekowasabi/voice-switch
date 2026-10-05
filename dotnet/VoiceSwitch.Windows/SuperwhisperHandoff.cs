@@ -23,7 +23,11 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
     private readonly bool dryRun;
     private readonly Action<nint> restoreFocus;
     private readonly Func<TimeSpan, Task> delay;
-    private readonly Func<string, Task>? onTranscribed;
+    private readonly Func<string, Task<bool>>? onTranscribed;
+    private readonly string? superwhisperMode;
+    private readonly Func<string, nint, bool> paste;
+    private readonly string preferencesPath;
+    private readonly string modesDir;
 
     public RegisteredSuperwhisperHandoff(
         string root,
@@ -32,7 +36,11 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         bool dryRun = false,
         Action<nint>? restoreFocus = null,
         Func<TimeSpan, Task>? delay = null,
-        Func<string, Task>? onTranscribed = null)
+        Func<string, Task<bool>>? onTranscribed = null,
+        string? superwhisperMode = null,
+        Func<string, nint, bool>? paste = null,
+        string? preferencesPath = null,
+        string? modesDir = null)
     {
         this.root = root;
         this.recordingsDir = recordingsDir;
@@ -41,6 +49,10 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         this.restoreFocus = restoreFocus ?? (_ => { });
         this.delay = delay ?? (span => Task.Delay(span));
         this.onTranscribed = onTranscribed;
+        this.superwhisperMode = string.IsNullOrWhiteSpace(superwhisperMode) ? null : superwhisperMode.Trim();
+        this.paste = paste ?? ((_, _) => false);
+        this.preferencesPath = preferencesPath ?? WindowsPaths.SuperwhisperPreferencesPath();
+        this.modesDir = modesDir ?? WindowsPaths.SuperwhisperModesPath();
         if (!dryRun)
         {
             Sweep();
@@ -63,68 +75,190 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
                 $"Superwhisper file intake needs an ASCII path without spaces; nothing was written or sent: {Path.GetFullPath(wavPath)}");
         }
 
-        var ownsWav = false;
+        var (modeRequested, previousMode) = await EnterModeAsync(audio.Target);
+        string? text = null;
         try
         {
-            ValidateOwnedState(root);
-            Directory.CreateDirectory(root);
-            ValidateOwnedState(root);
-            ownsWav = true;
-            await File.WriteAllBytesAsync(wavPath, Pcm16Wav.Encode(audio.Samples.AsSpan()), cancellation);
-            var psi = new ProcessStartInfo(ResolveSuperwhisperExecutable())
+            var ownsWav = false;
+            try
             {
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            psi.ArgumentList.Add(argument);
-            (startProcess(psi) ?? throw new InvalidOperationException("Process.Start returned null")).Dispose();
+                ValidateOwnedState(root);
+                Directory.CreateDirectory(root);
+                ValidateOwnedState(root);
+                ownsWav = true;
+                await File.WriteAllBytesAsync(wavPath, Pcm16Wav.Encode(audio.Samples.AsSpan()), cancellation);
+                Launch(argument);
+            }
+            catch (Exception ex)
+            {
+                if (ownsWav)
+                {
+                    TryDelete(wavPath);
+                }
+
+                return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, ex.Message);
+            }
+
+            var since = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 2;
+            var clock = Stopwatch.StartNew();
+            // Opening a file brings Superwhisper to the front, and it skips auto-paste while it is still frontmost.
+            for (var i = 0; i < 20; i++)
+            {
+                await delay(Tick);
+                restoreFocus(audio.Target);
+            }
+
+            for (var i = 0; i < 300 && text is null; i++)
+            {
+                text = FindResult(recordingsDir, since);
+                if (text is null)
+                {
+                    await delay(Tick);
+                }
+            }
+
+            if (text is not null)
+            {
+                Log.Info($"dictation: {text.Length} chars in {clock.ElapsedMilliseconds} ms");
+            }
+        }
+        finally
+        {
+            if (previousMode is not null && await SwitchModeAsync(previousMode, audio.Target))
+            {
+                Log.Info($"superwhisper mode restored: {previousMode}");
+            }
+        }
+
+        if (text is null)
+        {
+            Log.Info($"dictation: no superwhisper result within 30 s, kept {wavPath}");
+            return new HandoffResult(HandoffStatus.NoResult, audio.SessionId, wavPath, "no Superwhisper result within 30 s; WAV kept");
+        }
+
+        TryDelete(wavPath);
+        var routed = false;
+        if (onTranscribed is not null)
+        {
+            // The route is a side effect on the result; whatever it throws must not change the handoff status.
+            try
+            {
+                routed = await onTranscribed(text);
+            }
+            catch (Exception ex)
+            {
+                Log.Info($"tmux: route failed: {ex.Message}");
+            }
+        }
+
+        switch (SuperwhisperModes.Decide(modeRequested, routed))
+        {
+            case DictationDelivery.Paste:
+                Log.Info(paste(text, audio.Target) ? "dictation delivered: paste" : "dictation not delivered: no target window to paste into");
+                break;
+            case DictationDelivery.Superwhisper:
+                Log.Info("dictation delivered: superwhisper");
+                break;
+        }
+
+        return new HandoffResult(HandoffStatus.Transcribed, audio.SessionId, null, "Superwhisper result found; WAV deleted");
+    }
+
+    // Requested is true when the configured mode is (or now should be) active; Previous is the mode to switch back to.
+    // Without a readable activeMode there would be nothing to switch back to, so the mode is left alone.
+    private async Task<(bool Requested, string? Previous)> EnterModeAsync(nint target)
+    {
+        if (superwhisperMode is null)
+        {
+            return (false, null);
+        }
+
+        var key = SuperwhisperModes.ResolveKey(superwhisperMode, ReadModes());
+        if (key is null)
+        {
+            Log.Info($"superwhisper mode \"{superwhisperMode}\" not found; using the active mode");
+            return (false, null);
+        }
+
+        var active = ReadActiveMode();
+        if (active is null)
+        {
+            Log.Info("superwhisper mode: activeMode is unreadable; using the active mode");
+            return (false, null);
+        }
+
+        if (active == key)
+        {
+            return (true, null);
+        }
+
+        Log.Info($"superwhisper mode: {key} (was {active})");
+        await SwitchModeAsync(key, target);
+        return (true, active);
+    }
+
+    private async Task<bool> SwitchModeAsync(string key, nint target)
+    {
+        try
+        {
+            Launch("superwhisper://mode?key=" + Uri.EscapeDataString(key));
         }
         catch (Exception ex)
         {
-            if (ownsWav)
-            {
-                TryDelete(wavPath);
-            }
-
-            return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, ex.Message);
+            Log.Info($"superwhisper mode: switch to {key} failed to start: {ex.Message}");
+            return false;
         }
 
-        var since = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 2;
-        var clock = Stopwatch.StartNew();
-        // Opening a file brings Superwhisper to the front, and it skips auto-paste while it is still frontmost.
-        for (var i = 0; i < 20; i++)
+        for (var i = 0; i < 30; i++)
         {
             await delay(Tick);
-            restoreFocus(audio.Target);
-        }
-
-        for (var i = 0; i < 300; i++)
-        {
-            if (FindResult(recordingsDir, since) is { } text)
+            // A Superwhisper URL may bring it to the front, as the file URL does.
+            restoreFocus(target);
+            if (ReadActiveMode() == key)
             {
-                Log.Info($"dictation: {text.Length} chars in {clock.ElapsedMilliseconds} ms");
-                TryDelete(wavPath);
-                if (onTranscribed is not null)
-                {
-                    // The route is a side effect on the result; whatever it throws must not change the handoff status.
-                    try
-                    {
-                        await onTranscribed(text);
-                    }
-                    catch (Exception ex)
-                    {
-                        Log.Info($"tmux: route failed: {ex.Message}");
-                    }
-                }
-
-                return new HandoffResult(HandoffStatus.Transcribed, audio.SessionId, null, "Superwhisper result found; WAV deleted");
+                return true;
             }
-
-            await delay(Tick);
         }
 
-        Log.Info($"dictation: no superwhisper result within 30 s, kept {wavPath}");
-        return new HandoffResult(HandoffStatus.NoResult, audio.SessionId, wavPath, "no Superwhisper result within 30 s; WAV kept");
+        Log.Info($"superwhisper mode: {key} not active after 3 s; continuing");
+        return false;
+    }
+
+    private string? ReadActiveMode()
+    {
+        try
+        {
+            return SuperwhisperModes.ActiveMode(File.Exists(preferencesPath) ? File.ReadAllText(preferencesPath) : null);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    private IEnumerable<string> ReadModes()
+    {
+        try
+        {
+            return Directory.Exists(modesDir)
+                ? Directory.EnumerateFiles(modesDir, "*.json").Order(StringComparer.Ordinal).Select(File.ReadAllText).ToList()
+                : [];
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return [];
+        }
+    }
+
+    private void Launch(string argument)
+    {
+        var psi = new ProcessStartInfo(ResolveSuperwhisperExecutable())
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        psi.ArgumentList.Add(argument);
+        (startProcess(psi) ?? throw new InvalidOperationException("Process.Start returned null")).Dispose();
     }
 
     // The production root, decided once per run start and logged.

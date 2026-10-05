@@ -94,7 +94,9 @@ public static class Program
                             RegisteredSuperwhisperHandoff.DefaultRoot(),
                             WindowsPaths.SuperwhisperRecordingsPath(config.Dictation),
                             dryRun: effectiveDryRun,
-                            onTranscribed: TmuxPaneRouter.RouteAsync);
+                            onTranscribed: TmuxPaneRouter.RouteAsync,
+                            superwhisperMode: config.Dictation.SuperwhisperMode,
+                            paste: Tray.WindowFocus.Paste);
                     }
 
                     IPcmCapture capture;

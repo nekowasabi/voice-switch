@@ -25,19 +25,20 @@ public static class TmuxPaneRouter
         "for s in /run/user/*/tmux-*/* /tmp/tmux-*/*; do [ -S \"$s\" ] && \"$b\" -S \"$s\" list-sessions >/dev/null 2>&1 " +
         "&& { printf '%s\\n%s' \"$b\" \"$s\"; exit 0; }; done; done; exit 1";
 
-    public static async Task RouteAsync(string text)
+    // True only when send-keys ran and exited 0.
+    public static async Task<bool> RouteAsync(string text)
     {
         var server = await FindServerAsync();
         if (server is null)
         {
             Log.Info("tmux: no running server reachable from wsl.exe; nothing sent");
-            return;
+            return false;
         }
 
         var panes = await ListPanesAsync(server);
         if (panes is null)
         {
-            return;
+            return false;
         }
 
         var hits = PaneRoute.MatchingPanes(text, panes);
@@ -49,10 +50,7 @@ public static class TmuxPaneRouter
         }
 
         Log.Info(PaneRoute.LogLine(hits.Count, jevField, decision));
-        if (decision.Pane is { } pane)
-        {
-            await SendKeysAsync(server, pane, text);
-        }
+        return decision.Pane is { } pane && await SendKeysAsync(server, pane, text);
     }
 
     private static async Task<TmuxServer?> FindServerAsync()
@@ -152,7 +150,7 @@ public static class TmuxPaneRouter
         }
     }
 
-    private static async Task SendKeysAsync(TmuxServer server, string pane, string text)
+    private static async Task<bool> SendKeysAsync(TmuxServer server, string pane, string text)
     {
         var psi = Wsl(server.Binary, ["-S", server.Socket, "send-keys", "-t", pane, "-l", "--", text]);
         try
@@ -162,11 +160,16 @@ public static class TmuxPaneRouter
             if (process.ExitCode != 0)
             {
                 Log.Info($"tmux: send-keys exited {process.ExitCode}");
+                return false;
             }
+
+            Log.Info($"dictation delivered: pane {pane}");
+            return true;
         }
         catch (Exception ex) when (ex is Win32Exception or InvalidOperationException or IOException)
         {
             Log.Info($"tmux: send-keys failed to start: {ex.Message}");
+            return false;
         }
     }
 

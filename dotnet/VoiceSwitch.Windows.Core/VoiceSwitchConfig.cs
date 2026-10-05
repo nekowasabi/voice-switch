@@ -11,7 +11,9 @@ public sealed record DictationConfig(
     string[]? ExcludeBundleIDs = null,
     int? StartTimeoutMs = null,
     // Windows twin of excludeBundleIDs: executable names (with or without .exe) whose window in front stops a wake.
-    string[]? ExcludeProcessNames = null);
+    string[]? ExcludeProcessNames = null,
+    // Superwhisper mode key or name used for voice-switch dictations; meant to be a mode with auto-paste off.
+    string? SuperwhisperMode = null);
 
 public enum NoiseReductionMode
 {
