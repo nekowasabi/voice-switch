@@ -525,12 +525,13 @@ public static class PaneRoute
             ? new RouteDecision(null, $"no send body for {pane}; not sending", SuppressFallback: true)
             : decision;
 
-    // Pane still set means RequireSendBody kept a body; send-keys failed → paste body only, not the full text.
-    public static RouteDisposition Disposition(RouteDecision decision, bool sent) =>
-        sent ? RouteDisposition.Sent
-        : decision.SuppressFallback ? RouteDisposition.SkippedNoBody
-        : decision.Pane is not null ? RouteDisposition.SendFailed
-        : RouteDisposition.NotRouted;
+    // Pane still set means RequireSendBody kept a body; send-keys failed → SendFailed carries that same body
+    // so the handoff pastes it (quoted or body-Jev), never the full text and never a re-extract.
+    public static RouteResult Disposition(RouteDecision decision, bool sent, string? body = null) =>
+        sent ? RouteResult.Sent
+        : decision.SuppressFallback ? RouteResult.SkippedNoBody
+        : decision.Pane is not null ? RouteResult.SendFailed(body)
+        : RouteResult.NotRouted;
 
     // `%2@0.87`, `none@0.91`; the adapter writes `off` or `error` itself.
     public static string JevField(JevPick pick) =>

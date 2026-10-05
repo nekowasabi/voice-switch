@@ -316,14 +316,15 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     }
     log("dictation: \(result.count) chars in \(Int(Date().timeIntervalSince(submitted) * 1000)) ms")
     let route = await routeDictation(result)
-    switch decideDictationDelivery(modeRequested: modeRequested, route: route) {
+    switch decideDictationDelivery(modeRequested: modeRequested, route: route.disposition) {
     case .pane:
         break
     case .paste:
-        // SendFailed already chose a pane body; paste that, never the full dictation wrapper.
+        // SendFailed pastes the exact body send-keys tried (quoted or body Jev), never the full dictation
+        // wrapper and never a quote-only re-extract. NotRouted pastes the full text.
         let payload: String?
-        if route == .sendFailed {
-            payload = extractSendBody(result)
+        if route.disposition == .sendFailed {
+            payload = route.body
             if payload == nil {
                 log("dictation not delivered: send failed and no body to paste")
                 break

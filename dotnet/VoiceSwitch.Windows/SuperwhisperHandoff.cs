@@ -23,7 +23,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
     private readonly bool dryRun;
     private readonly Action<nint> restoreFocus;
     private readonly Func<TimeSpan, Task> delay;
-    private readonly Func<string, Task<RouteDisposition>>? onTranscribed;
+    private readonly Func<string, Task<RouteResult>>? onTranscribed;
     private readonly string? superwhisperMode;
     private readonly Func<string, nint, bool> paste;
     private readonly string preferencesPath;
@@ -36,7 +36,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         bool dryRun = false,
         Action<nint>? restoreFocus = null,
         Func<TimeSpan, Task>? delay = null,
-        Func<string, Task<RouteDisposition>>? onTranscribed = null,
+        Func<string, Task<RouteResult>>? onTranscribed = null,
         string? superwhisperMode = null,
         Func<string, nint, bool>? paste = null,
         string? preferencesPath = null,
@@ -137,7 +137,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         }
 
         TryDelete(wavPath);
-        var route = RouteDisposition.NotRouted;
+        var route = RouteResult.NotRouted;
         if (onTranscribed is not null)
         {
             // The route is a side effect on the result; whatever it throws must not change the handoff status.
@@ -148,15 +148,16 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
             catch (Exception ex)
             {
                 Log.Info($"tmux: route failed: {ex.Message}");
-                route = RouteDisposition.NotRouted;
+                route = RouteResult.NotRouted;
             }
         }
 
-        switch (SuperwhisperModes.Decide(modeRequested, route))
+        switch (SuperwhisperModes.Decide(modeRequested, route.Disposition))
         {
             case DictationDelivery.Paste:
-                // SendFailed already chose a pane body; paste that, never the full dictation wrapper.
-                var payload = route == RouteDisposition.SendFailed ? PaneRoute.ExtractSendBody(text) : text;
+                // SendFailed pastes the exact body send-keys tried (quoted or body Jev), never the full dictation
+                // wrapper and never a quote-only re-extract. NotRouted pastes the full text.
+                var payload = route.Disposition == RouteDisposition.SendFailed ? route.Body : text;
                 if (payload is null)
                 {
                     Log.Info("dictation not delivered: send failed and no body to paste");

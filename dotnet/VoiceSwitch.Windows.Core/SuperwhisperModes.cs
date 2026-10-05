@@ -11,13 +11,23 @@ public enum DictationDelivery
 
 // How the pane router disposed of a dictation. SkippedNoBody is not "unrouted":
 // a pane was chosen but had no extractable body, so paste must not fall back to the full text.
-// SendFailed: pane and body were known but send-keys failed; paste the extracted body only.
+// SendFailed: pane and body were known but send-keys failed; paste the resolved body only (RouteResult.Body).
 public enum RouteDisposition
 {
     Sent,
     SkippedNoBody,
     SendFailed,
     NotRouted
+}
+
+// What the router did, plus for SendFailed the exact body send-keys tried. The handoff pastes that body
+// instead of re-extracting: an unquoted (body Jev) body would otherwise be lost on send-keys failure.
+public readonly record struct RouteResult(RouteDisposition Disposition, string? Body = null)
+{
+    public static RouteResult Sent => new(RouteDisposition.Sent);
+    public static RouteResult SkippedNoBody => new(RouteDisposition.SkippedNoBody);
+    public static RouteResult NotRouted => new(RouteDisposition.NotRouted);
+    public static RouteResult SendFailed(string? body) => new(RouteDisposition.SendFailed, body);
 }
 
 // Superwhisper keeps one modes\<file>.json per mode ({"key", "name", ...}) and the current one in preferences.json "activeMode".
@@ -38,7 +48,7 @@ public static class SuperwhisperModes
 
     // With a no-auto-paste mode in use, a dictation no pane took would otherwise land nowhere.
     // SkippedNoBody must not Paste: that would be a full-text fallback after extract failure.
-    // SendFailed pastes via DictationDelivery.Paste; handoff uses the extracted body, not the full text.
+    // SendFailed pastes via DictationDelivery.Paste; handoff uses RouteResult.Body (the body send-keys tried), not the full text.
     public static DictationDelivery Decide(bool modeRequested, RouteDisposition route) =>
         route is RouteDisposition.Sent or RouteDisposition.SkippedNoBody ? DictationDelivery.Pane
         : modeRequested ? DictationDelivery.Paste

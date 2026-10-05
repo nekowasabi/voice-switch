@@ -508,10 +508,11 @@ func requireSendBody(pane: String?, reason: String, body: String?) -> (pane: Str
     return (pane, reason, false)
 }
 
-func routeDisposition(pane: String?, suppressFallback: Bool, sent: Bool) -> RouteDisposition {
+/// SendFailed carries the same body send-keys tried so the handoff pastes it (quoted or body Jev), never a re-extract.
+func routeDisposition(pane: String?, suppressFallback: Bool, sent: Bool, body: String? = nil) -> RouteResult {
     if sent { return .sent }
     if suppressFallback { return .skippedNoBody }
-    if pane != nil { return .sendFailed }
+    if pane != nil { return .sendFailed(body) }
     return .notRouted
 }
 
@@ -533,8 +534,8 @@ func sendKeysToPane(_ id: String, _ body: String) -> Bool {
 }
 
 /// One log line per dictation, e.g. `tmux: hits=2 jev=%2@0.87 -> send %2 (jev narrowed)`.
-/// Returns the same disposition Windows `TmuxPaneRouter.RouteAsync` uses for paste Decide.
-func routeDictation(_ text: String) async -> RouteDisposition {
+/// Returns the same RouteResult Windows `TmuxPaneRouter.RouteAsync` does (disposition for Decide, body for SendFailed paste).
+func routeDictation(_ text: String) async -> RouteResult {
     guard let panes = fetchPanes() else { return .notRouted }
     let agents = discoverAgentNames()
     let hits = matchingPanes(text, panes, agents: agents)
@@ -587,7 +588,7 @@ func routeDictation(_ text: String) async -> RouteDisposition {
     if let id = required.pane, let body {
         log("\(prefix) -> send \(id) (\(required.reason))")
         let sent = sendKeysToPane(id, body)
-        return routeDisposition(pane: id, suppressFallback: false, sent: sent)
+        return routeDisposition(pane: id, suppressFallback: false, sent: sent, body: body)
     }
     log("\(prefix) -> skip (\(required.reason))")
     return routeDisposition(pane: required.pane, suppressFallback: required.suppressFallback, sent: false)

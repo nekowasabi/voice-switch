@@ -337,7 +337,8 @@ def choose(utterance, panes, agents):
 
 def check_windows_no_body_no_paste():
     """Pane hit + null body must not become a paste of the full dictation (critique fix).
-    Pane+body with send-keys failure must paste the extracted body only, not the full text."""
+    Pane+body with send-keys failure must paste the body send-keys tried (RouteResult.Body), not the full text
+    and not a quote-only ExtractSendBody re-run (that loses a body-Jev body)."""
     modes = (ROOT / "dotnet/VoiceSwitch.Windows.Core/SuperwhisperModes.cs").read_text()
     pane = (ROOT / "dotnet/VoiceSwitch.Windows.Core/PaneRoute.cs").read_text()
     router = (ROOT / "dotnet/VoiceSwitch.Windows/TmuxPaneRouter.cs").read_text()
@@ -350,14 +351,24 @@ def check_windows_no_body_no_paste():
         return fail("Decide does not treat SkippedNoBody as non-paste")
     if "SuppressFallback: true" not in pane:
         return fail("RequireSendBody must set SuppressFallback")
-    if "RouteDisposition.SendFailed" not in pane:
-        return fail("Disposition must return SendFailed when pane set and send failed")
+    if "RouteResult.SendFailed(body)" not in pane:
+        return fail("Disposition must return SendFailed carrying the send body when pane set and send failed")
+    if "readonly record struct RouteResult(RouteDisposition Disposition, string? Body" not in modes:
+        return fail("RouteResult must carry Disposition and Body")
     if "PaneRoute.Disposition" not in router:
         return fail("TmuxPaneRouter must return Disposition (not bare bool)")
     if "Task<bool> RouteAsync" in router:
         return fail("RouteAsync still returns bool (loses no-body vs unrouted)")
-    if "route == RouteDisposition.SendFailed ? PaneRoute.ExtractSendBody(text)" not in handoff:
-        return fail("handoff must paste ExtractSendBody on SendFailed, not the full text")
+    if "Task<RouteResult> RouteAsync" not in router:
+        return fail("RouteAsync must return RouteResult (disposition + SendFailed body)")
+    if "PaneRoute.Disposition(decision, sent, body)" not in router:
+        return fail("RouteAsync must pass the send-keys body into Disposition")
+    if "Func<string, Task<RouteResult>>" not in handoff:
+        return fail("handoff onTranscribed must return RouteResult")
+    if "route.Disposition == RouteDisposition.SendFailed ? route.Body : text" not in handoff:
+        return fail("handoff must paste RouteResult.Body on SendFailed, not the full text")
+    if "ExtractSendBody" in handoff:
+        return fail("handoff must not re-run ExtractSendBody for the SendFailed paste")
     return 0
 
 
@@ -368,6 +379,13 @@ def check_swift():
         return fail("swift send-keys argv missing")
     if "extractSendBody" not in src:
         return fail("swift extractSendBody missing")
+    if "func routeDictation(_ text: String) async -> RouteResult" not in src:
+        return fail("swift routeDictation must return RouteResult")
+    if "sent: sent, body: body)" not in src:
+        return fail("swift routeDictation must pass the send-keys body into routeDisposition")
+    mac = (ROOT / "Sources/voice-switch/MacApp.swift").read_text()
+    if "payload = route.body" not in mac or "extractSendBody" in mac:
+        return fail("MacApp must paste route.body on SendFailed, not re-run extractSendBody")
     if "func sendBodyCandidates" not in src:
         return fail("swift sendBodyCandidates missing")
     if '["tmux", "send-keys", "-t", id, "-l", "--", text]' in src:

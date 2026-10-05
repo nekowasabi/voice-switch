@@ -48,7 +48,7 @@ superwhisper の自動ペーストと pane への送信の両方が届き、同�
 - ユーザー作成の専用 mode: key `new-mode-1`、表示名 `voice_switch`、`autoPaste: false`。
 - `dictation.superwhisperMode`（表示名か key）。未設定は従来どおり。設定時は handoff 前に mode 切替・後に復帰。pane に送れたら終わり。送れなければ voice-switch がクリップボード経由で一度ペースト。
 - **本文なし（pane は当たったが `ExtractSendBody` / `extractSendBody` が null）は paste しない**（`RouteDisposition.SkippedNoBody` / `.skippedNoBody`）。全文フォールバック禁止。
-- **SendFailed（mode 設定時）**: paste するのは抽出本文だけ。mode 未設定時は従来どおり Superwhisper が全文を自動ペーストしうる。
+- **SendFailed（mode 設定時）**: paste するのは send-keys に渡したのと同じ解決済み本文だけ（`RouteResult.Body` / `.body`。鉤括弧でも body Jev でも同じ。handoff で `ExtractSendBody` / `extractSendBody` を再実行しない）。mode 未設定時は従来どおり Superwhisper が全文を自動ペーストしうる。
 - Mac: `SuperwhisperModes.swift` + `MacApp.handoff` に配線済み。mode パスは `~/Documents/superwhisper/{preferences.json,modes}`。**Mac 実機の mode 切替・paste は未検証**（この box に swiftc / Apple Speech なし）。
 - **mode 切替の 3 s poll が失敗したら `modeRequested` は false**（Mac `enterSuperwhisperMode` / Windows `EnterModeAsync`）。Decide は paste せず Superwhisper / unset 経路のまま（autoPaste mode 残留での二重配信を防ぐ）。
 - Windows 実機での mode 切替・paste の再確認は未実施（box のみ）。

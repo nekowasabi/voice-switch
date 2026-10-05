@@ -102,7 +102,7 @@ def main() -> int:
     ):
         check(needle in win, f"missing in SuperwhisperHandoff.cs: {needle}")
     for needle in (
-        "func routeDictation(_ text: String) async -> RouteDisposition",
+        "func routeDictation(_ text: String) async -> RouteResult",
         "func sendKeysToPane",
         "p.waitUntilExit()",
     ):

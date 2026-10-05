@@ -26,21 +26,21 @@ public static class TmuxPaneRouter
         "&& { printf '%s\\n%s' \"$b\" \"$s\"; exit 0; }; done; done; exit 1";
 
     // Sent when send-keys ran and exited 0. SkippedNoBody when a pane was chosen but had no extractable body
-    // (must not fall through to paste). SendFailed when pane+body were known but send-keys failed (paste body only).
-    // NotRouted when nothing took the dictation.
-    public static async Task<RouteDisposition> RouteAsync(string text)
+    // (must not fall through to paste). SendFailed when pane+body were known but send-keys failed; it carries the
+    // exact body send-keys tried so the handoff pastes that. NotRouted when nothing took the dictation.
+    public static async Task<RouteResult> RouteAsync(string text)
     {
         var server = await FindServerAsync();
         if (server is null)
         {
             Log.Info("tmux: no running server reachable from wsl.exe; nothing sent");
-            return RouteDisposition.NotRouted;
+            return RouteResult.NotRouted;
         }
 
         var panes = await ListPanesAsync(server);
         if (panes is null)
         {
-            return RouteDisposition.NotRouted;
+            return RouteResult.NotRouted;
         }
 
         var hits = PaneRoute.MatchingPanes(text, panes);
@@ -75,7 +75,7 @@ public static class TmuxPaneRouter
         decision = PaneRoute.RequireSendBody(decision, body);
         Log.Info(PaneRoute.LogLine(hits.Count, jevField, decision, bodySource));
         var sent = decision.Pane is { } pane && body is not null && await SendKeysAsync(server, pane, body);
-        return PaneRoute.Disposition(decision, sent);
+        return PaneRoute.Disposition(decision, sent, body);
     }
 
     private static async Task<TmuxServer?> FindServerAsync()

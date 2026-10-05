@@ -131,6 +131,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation handoff does not paste when mode switch fails", () => Check(DictationHandoffDoesNotPasteWhenModeSwitchFails())),
     ("dictation handoff does not paste full text after no-body skip", () => Check(DictationHandoffDoesNotPasteFullTextAfterNoBodySkip())),
     ("dictation handoff pastes extracted body when send-keys failed", () => Check(DictationHandoffPastesExtractedBodyWhenSendKeysFailed())),
+    ("dictation handoff pastes unquoted resolved body when send-keys failed", () => Check(DictationHandoffPastesUnquotedResolvedBodyWhenSendKeysFailed())),
     ("dictation handoff keeps WAV when Superwhisper writes no result", () => Check(DictationHandoffKeepsWavWithoutResult())),
     ("dictation handoff restores focus 20 times before polling", () => Check(DictationHandoffRestoresFocusBeforePolling())),
     ("superwhisper result lookup picks newest non-empty run", () => Check(SuperwhisperFindResultPicksNewestNonEmpty())),
@@ -479,7 +480,7 @@ static bool PaneRouteBodyResolveSkipsWhenBodyJevOff()
         && candidates.Count > 0
         && resolved == new SendBodyResult(null, "no body pick")
         && decision.SuppressFallback
-        && PaneRoute.Disposition(decision, sent: false) == RouteDisposition.SkippedNoBody;
+        && PaneRoute.Disposition(decision, sent: false) == RouteResult.SkippedNoBody;
 }
 
 static bool PaneRouteSkipsWhenSendBodyMissing()
@@ -492,10 +493,12 @@ static bool PaneRouteSkipsWhenSendBodyMissing()
         && alreadySkipped == new RouteDecision(null, "no pane matched")
         && without.SuppressFallback
         && !withBody.SuppressFallback
-        && PaneRoute.Disposition(without, sent: false) == RouteDisposition.SkippedNoBody
-        && PaneRoute.Disposition(withBody, sent: true) == RouteDisposition.Sent
-        && PaneRoute.Disposition(withBody, sent: false) == RouteDisposition.SendFailed
-        && PaneRoute.Disposition(alreadySkipped, sent: false) == RouteDisposition.NotRouted
+        && PaneRoute.Disposition(without, sent: false) == RouteResult.SkippedNoBody
+        && PaneRoute.Disposition(withBody, sent: true, "ハローワールド") == RouteResult.Sent
+        && PaneRoute.Disposition(withBody, sent: false, "ハローワールド") == RouteResult.SendFailed("ハローワールド")
+        && PaneRoute.Disposition(withBody, sent: false, "ハローワールド").Disposition == RouteDisposition.SendFailed
+        && PaneRoute.Disposition(withBody, sent: false, "ハローワールド").Body == "ハローワールド"
+        && PaneRoute.Disposition(alreadySkipped, sent: false) == RouteResult.NotRouted
         && PaneRoute.LogLine(1, "off", without, "no candidates") == "tmux: hits=1 jev=off body=no candidates -> skip (no send body for %2; not sending)";
 }
 
@@ -3174,7 +3177,7 @@ static bool DictationHandoffRoutesResultText()
     };
     var routed = new List<string>();
     var recording = new RegisteredSuperwhisperHandoff(root, recordings, start, delay: _ => Task.CompletedTask,
-        onTranscribed: text => { routed.Add(text); return Task.FromResult(RouteDisposition.Sent); });
+        onTranscribed: text => { routed.Add(text); return Task.FromResult(RouteResult.Sent); });
     var throwing = new RegisteredSuperwhisperHandoff(root, recordings, start, delay: _ => Task.CompletedTask,
         onTranscribed: _ => throw new InvalidOperationException("wsl.exe is missing"));
     var audio = new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2));
@@ -3384,7 +3387,7 @@ static bool SuperwhisperModeDecideDoesNotPasteAfterNoBodySkip()
 {
     // Pane matched + null body must not become Paste of the full dictation.
     var skipped = PaneRoute.RequireSendBody(new RouteDecision("%2", "unique hit"), null);
-    var disposition = PaneRoute.Disposition(skipped, sent: false);
+    var disposition = PaneRoute.Disposition(skipped, sent: false).Disposition;
     return disposition == RouteDisposition.SkippedNoBody
         && SuperwhisperModes.Decide(modeRequested: true, disposition) == DictationDelivery.Pane
         && SuperwhisperModes.Decide(modeRequested: false, disposition) == DictationDelivery.Pane;
@@ -3452,7 +3455,7 @@ static bool DictationHandoffSwitchesModeBeforeLaunchAndRestoresAfter()
         return Process.GetCurrentProcess();
     };
     var handoff = new RegisteredSuperwhisperHandoff(root, recordings, start, delay: _ => Task.CompletedTask,
-        onTranscribed: _ => Task.FromResult(RouteDisposition.Sent),
+        onTranscribed: _ => Task.FromResult(RouteResult.Sent),
         superwhisperMode: "voice_switch",
         preferencesPath: preferences,
         modesDir: modes);
@@ -3481,7 +3484,7 @@ static bool DictationHandoffPastesOnlyWhenModeRequestedAndNotRouted()
         WriteSuperwhisperMeta(recordings, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(), """{"llmResult":"paste me"}""");
         return Process.GetCurrentProcess();
     };
-    bool Run(string? mode, RouteDisposition route, out string output)
+    bool Run(string? mode, RouteResult route, out string output)
     {
         pastes.Clear();
         var handoff = new RegisteredSuperwhisperHandoff(root, recordings, start, delay: _ => Task.CompletedTask,
@@ -3499,7 +3502,7 @@ static bool DictationHandoffPastesOnlyWhenModeRequestedAndNotRouted()
         return result!.Status == HandoffStatus.Transcribed;
     }
 
-    if (!Run("voice_switch", RouteDisposition.NotRouted, out var pasteOut)
+    if (!Run("voice_switch", RouteResult.NotRouted, out var pasteOut)
         || pastes.Count != 1
         || pastes[0] != ("paste me", 0x99)
         || !pasteOut.Contains("dictation delivered: paste", StringComparison.Ordinal))
@@ -3507,7 +3510,7 @@ static bool DictationHandoffPastesOnlyWhenModeRequestedAndNotRouted()
         return false;
     }
 
-    if (!Run("voice_switch", RouteDisposition.Sent, out var routedOut)
+    if (!Run("voice_switch", RouteResult.Sent, out var routedOut)
         || pastes.Count != 0
         || routedOut.Contains("dictation delivered: paste", StringComparison.Ordinal)
         || routedOut.Contains("dictation delivered: superwhisper", StringComparison.Ordinal))
@@ -3515,7 +3518,7 @@ static bool DictationHandoffPastesOnlyWhenModeRequestedAndNotRouted()
         return false;
     }
 
-    if (!Run(null, RouteDisposition.NotRouted, out var legacyOut)
+    if (!Run(null, RouteResult.NotRouted, out var legacyOut)
         || pastes.Count != 0
         || !legacyOut.Contains("dictation delivered: superwhisper", StringComparison.Ordinal))
     {
@@ -3554,7 +3557,7 @@ static bool DictationHandoffDoesNotPasteWhenModeSwitchFails()
         return Process.GetCurrentProcess();
     };
     var handoff = new RegisteredSuperwhisperHandoff(root, recordings, start, delay: _ => Task.CompletedTask,
-        onTranscribed: _ => Task.FromResult(RouteDisposition.NotRouted),
+        onTranscribed: _ => Task.FromResult(RouteResult.NotRouted),
         superwhisperMode: "voice_switch",
         paste: (text, target) => { pastes.Add((text, target)); return true; },
         preferencesPath: preferences,
@@ -3652,8 +3655,8 @@ static bool DictationHandoffPastesExtractedBodyWhenSendKeysFailed()
             var decision = PaneRoute.Decide(hits, null);
             var extracted = PaneRoute.ExtractSendBody(text);
             decision = PaneRoute.RequireSendBody(decision, extracted);
-            // sent:false mirrors SendKeysAsync returning false.
-            return Task.FromResult(PaneRoute.Disposition(decision, sent: false));
+            // sent:false mirrors SendKeysAsync returning false; the body send-keys tried rides on the result.
+            return Task.FromResult(PaneRoute.Disposition(decision, sent: false, extracted));
         },
         superwhisperMode: "voice_switch",
         paste: (text, _) => { pastes.Add(text); return true; },
@@ -3667,11 +3670,61 @@ static bool DictationHandoffPastesExtractedBodyWhenSendKeysFailed()
     });
     return result!.Status == HandoffStatus.Transcribed
         && PaneRoute.ExtractSendBody(full) == body
-        && PaneRoute.Disposition(PaneRoute.RequireSendBody(new RouteDecision("%2", "unique hit"), body), sent: false) == RouteDisposition.SendFailed
+        && PaneRoute.Disposition(PaneRoute.RequireSendBody(new RouteDecision("%2", "unique hit"), body), sent: false, body) == RouteResult.SendFailed(body)
         && pastes.Count == 1
         && pastes[0] == body
         && pastes[0] != full
         && output.Contains("dictation delivered: paste", StringComparison.Ordinal);
+}
+
+static bool DictationHandoffPastesUnquotedResolvedBodyWhenSendKeysFailed()
+{
+    using var temp = RuntimeTemp();
+    var root = Path.Combine(temp.Dir, "handoff");
+    var recordings = Path.Combine(temp.Dir, "recordings");
+    var modes = Path.Combine(temp.Dir, "modes");
+    var preferences = Path.Combine(temp.Dir, "preferences.json");
+    Directory.CreateDirectory(modes);
+    File.WriteAllText(Path.Combine(modes, "dedicated.json"), """{"key":"new-mode-1","name":"voice_switch"}""");
+    File.WriteAllText(preferences, """{"activeMode":"new-mode-1"}""");
+    // Pane hit, no quotes: body Jev chose the body, then send-keys failed. A quote-only re-extract would give
+    // null and paste nothing (critique bug); the handoff must paste the body send-keys tried.
+    const string full = "ボイススイッチの Claude Code の pane にハローワールドを送信して";
+    const string body = "ハローワールド";
+    var pastes = new List<string>();
+    var handoff = new RegisteredSuperwhisperHandoff(root, recordings,
+        _ =>
+        {
+            WriteSuperwhisperMeta(recordings, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(), $$"""{"llmResult":"{{full}}"}""");
+            return Process.GetCurrentProcess();
+        },
+        delay: _ => Task.CompletedTask,
+        onTranscribed: text =>
+        {
+            var panes = new[] { new PaneLabel("%2", "voice-switch", "Claude Code", "node") };
+            var hits = PaneRoute.MatchingPanes(text, panes);
+            var decision = PaneRoute.Decide(hits, null);
+            // Simulates a body Jev Choice resolving the unquoted body (no quote extract available).
+            decision = PaneRoute.RequireSendBody(decision, body);
+            return Task.FromResult(PaneRoute.Disposition(decision, sent: false, body));
+        },
+        superwhisperMode: "voice_switch",
+        paste: (text, _) => { pastes.Add(text); return true; },
+        preferencesPath: preferences,
+        modesDir: modes);
+    HandoffResult? result = null;
+    var (_, output) = CaptureConsole(() =>
+    {
+        result = SubmitHandoff(handoff, new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2), Target: 0x77));
+        return 0;
+    });
+    return result!.Status == HandoffStatus.Transcribed
+        && PaneRoute.ExtractSendBody(full) is null
+        && pastes.Count == 1
+        && pastes[0] == body
+        && pastes[0] != full
+        && output.Contains("dictation delivered: paste", StringComparison.Ordinal)
+        && !output.Contains("send failed and no body to paste", StringComparison.Ordinal);
 }
 
 static RegisteredSuperwhisperHandoff FakeSuperwhisper(string root, string recordings, Func<ProcessStartInfo, Process?> start, Action<nint>? restoreFocus = null) =>

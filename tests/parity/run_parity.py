@@ -426,6 +426,9 @@ def check_mac_superwhisper_mode_handoff(result: Result, repo: SourceTree) -> Non
             "case skippedNoBody",
             "case sendFailed",
             "case notRouted",
+            "struct RouteResult: Equatable",
+            "let body: String?",
+            "static func sendFailed(_ body: String?) -> RouteResult",
             "func resolveSuperwhisperModeKey",
             "func activeSuperwhisperMode",
             "func decideDictationDelivery(modeRequested: Bool, route: RouteDisposition)",
@@ -435,18 +438,19 @@ def check_mac_superwhisper_mode_handoff(result: Result, repo: SourceTree) -> Non
     )
     require_substrings(
         result,
-        "Swift routeDictation returns RouteDisposition and waits for send-keys",
+        "Swift routeDictation returns RouteResult and waits for send-keys",
         pane,
         [
             "func requireSendBody(pane: String?, reason: String, body: String?)",
-            "func routeDisposition(pane: String?, suppressFallback: Bool, sent: Bool)",
+            "func routeDisposition(pane: String?, suppressFallback: Bool, sent: Bool, body: String? = nil) -> RouteResult",
             "func sendKeysToPane(_ id: String, _ body: String) -> Bool",
             "p.waitUntilExit()",
-            "func routeDictation(_ text: String) async -> RouteDisposition",
+            "func routeDictation(_ text: String) async -> RouteResult",
             "func beginBodyResolve(",
             "await jevBodyPick(",
             r"body=\(bodySource)",
             "return routeDisposition(pane:",
+            "sent: sent, body: body)",
         ],
     )
     require_substrings(
@@ -458,18 +462,34 @@ def check_mac_superwhisper_mode_handoff(result: Result, repo: SourceTree) -> Non
             "superwhisper://mode?key=",
             "superwhisper mode restored:",
             "let route = await routeDictation(result)",
-            "decideDictationDelivery(modeRequested: modeRequested, route: route)",
+            "decideDictationDelivery(modeRequested: modeRequested, route: route.disposition)",
             "pasteDictation(payload, target: target)",
             "dictation delivered: paste",
             "dictation delivered: superwhisper",
-            "route == .sendFailed",
-            "extractSendBody(result)",
+            "route.disposition == .sendFailed",
+            "payload = route.body",
             "dictation not delivered: send failed and no body to paste",
             # B2: modeRequested only after post-switch activeMode == key (failed poll → no paste).
             "guard readSuperwhisperActiveMode() == key else",
             "return (false, nil)",
         ],
     )
+    # SendFailed paste must use the body send-keys tried (RouteResult), never a quote-only re-extract.
+    win_handoff = repo.code("dotnet/VoiceSwitch.Windows/SuperwhisperHandoff.cs")
+    label = "SendFailed paste uses RouteResult body, not extractSendBody / ExtractSendBody"
+    if "extractSendBody" in mac or "ExtractSendBody" in win_handoff:
+        result.fail(f"{label}: handoff still re-runs the quote-only extract")
+    else:
+        require_substrings(
+            result,
+            label,
+            win_handoff,
+            [
+                "Func<string, Task<RouteResult>>",
+                "route.Disposition == RouteDisposition.SendFailed ? route.Body : text",
+                "SuperwhisperModes.Decide(modeRequested, route.Disposition)",
+            ],
+        )
 
 
 def check_swift_runtime_call_chain(result: Result, repo: SourceTree) -> None:
