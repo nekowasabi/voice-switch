@@ -10,7 +10,8 @@ public sealed record PaneLabel(string Id, string Window, string Title, string Co
 // Jev's answer to "which listed pane does the speaker address". Pane null is the "none" choice.
 public sealed record JevPick(string? Pane, double Confidence);
 
-public sealed record RouteDecision(string? Pane, string Reason);
+// SuppressFallback is true when a pane was chosen but ExtractSendBody failed: do not paste the full dictation.
+public sealed record RouteDecision(string? Pane, string Reason, bool SuppressFallback = false);
 
 // Mirrors PaneRoute.swift. The policy table and the response parser share tests/parity/fixtures/pane_route.json.
 public static class PaneRoute
@@ -216,11 +217,16 @@ public static class PaneRoute
         return null;
     }
 
-    // A chosen pane without a send body is skipped; the full dictation is never sent instead.
+    // A chosen pane without a send body is skipped; the full dictation is never sent or pasted instead.
     public static RouteDecision RequireSendBody(RouteDecision decision, string? body) =>
         decision.Pane is { } pane && body is null
-            ? new RouteDecision(null, $"no send body for {pane}; not sending")
+            ? new RouteDecision(null, $"no send body for {pane}; not sending", SuppressFallback: true)
             : decision;
+
+    public static RouteDisposition Disposition(RouteDecision decision, bool sent) =>
+        sent ? RouteDisposition.Sent
+        : decision.SuppressFallback ? RouteDisposition.SkippedNoBody
+        : RouteDisposition.NotRouted;
 
     // `%2@0.87`, `none@0.91`; the adapter writes `off` or `error` itself.
     public static string JevField(JevPick pick) =>

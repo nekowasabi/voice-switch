@@ -205,6 +205,25 @@ def choose(utterance, panes, agents):
     return "miss", None
 
 
+
+def check_windows_no_body_no_paste():
+    """Pane hit + null body must not become a paste of the full dictation (critique fix)."""
+    modes = (ROOT / "dotnet/VoiceSwitch.Windows.Core/SuperwhisperModes.cs").read_text()
+    pane = (ROOT / "dotnet/VoiceSwitch.Windows.Core/PaneRoute.cs").read_text()
+    router = (ROOT / "dotnet/VoiceSwitch.Windows/TmuxPaneRouter.cs").read_text()
+    if "SkippedNoBody" not in modes:
+        return fail("SuperwhisperModes missing SkippedNoBody")
+    if "route is RouteDisposition.Sent or RouteDisposition.SkippedNoBody ? DictationDelivery.Pane" not in modes:
+        return fail("Decide does not treat SkippedNoBody as non-paste")
+    if "SuppressFallback: true" not in pane:
+        return fail("RequireSendBody must set SuppressFallback")
+    if "PaneRoute.Disposition" not in router:
+        return fail("TmuxPaneRouter must return Disposition (not bare bool)")
+    if "Task<bool> RouteAsync" in router:
+        return fail("RouteAsync still returns bool (loses no-body vs unrouted)")
+    return 0
+
+
 def check_swift():
     src = (ROOT / "Sources/voice-switch/PaneRoute.swift").read_text()
     needle = 'p.arguments = ["tmux", "send-keys", "-t", id, "-l", "--", body]'
@@ -412,6 +431,9 @@ def wait_node_pane():
 
 
 def main():
+    code = check_windows_no_body_no_paste()
+    if code:
+        return code
     code = check_swift()
     if code:
         return code

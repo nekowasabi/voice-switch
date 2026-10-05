@@ -25,20 +25,21 @@ public static class TmuxPaneRouter
         "for s in /run/user/*/tmux-*/* /tmp/tmux-*/*; do [ -S \"$s\" ] && \"$b\" -S \"$s\" list-sessions >/dev/null 2>&1 " +
         "&& { printf '%s\\n%s' \"$b\" \"$s\"; exit 0; }; done; done; exit 1";
 
-    // True only when send-keys ran and exited 0.
-    public static async Task<bool> RouteAsync(string text)
+    // Sent when send-keys ran and exited 0. SkippedNoBody when a pane was chosen but had no extractable body
+    // (must not fall through to paste). NotRouted when nothing took the dictation.
+    public static async Task<RouteDisposition> RouteAsync(string text)
     {
         var server = await FindServerAsync();
         if (server is null)
         {
             Log.Info("tmux: no running server reachable from wsl.exe; nothing sent");
-            return false;
+            return RouteDisposition.NotRouted;
         }
 
         var panes = await ListPanesAsync(server);
         if (panes is null)
         {
-            return false;
+            return RouteDisposition.NotRouted;
         }
 
         var hits = PaneRoute.MatchingPanes(text, panes);
@@ -49,11 +50,12 @@ public static class TmuxPaneRouter
             decision = new RouteDecision(null, "pane id rejected");
         }
 
-        // Matching and Jev saw the full dictation; only the quoted body is typed. No body, no send.
+        // Matching and Jev saw the full dictation; only the quoted body is typed. No body, no send and no paste.
         var body = PaneRoute.ExtractSendBody(text);
         decision = PaneRoute.RequireSendBody(decision, body);
         Log.Info(PaneRoute.LogLine(hits.Count, jevField, decision));
-        return decision.Pane is { } pane && body is not null && await SendKeysAsync(server, pane, body);
+        var sent = decision.Pane is { } pane && body is not null && await SendKeysAsync(server, pane, body);
+        return PaneRoute.Disposition(decision, sent);
     }
 
     private static async Task<TmuxServer?> FindServerAsync()

@@ -36,6 +36,8 @@
 
 `skipWhileMicInUseBy` のアプリがマイクを開いているあいだ、ウェイクワードは無視する。前面アプリのバンドル ID が `dictation.excludeBundleIDs` にあるときは入力しない。
 
+任意の `dictation.superwhisperMode`（Windows。key または表示名）は、voice-switch の入力用に自動ペーストを切った Superwhisper の mode を選ぶ。未設定なら従来どおり（Superwhisper が自動ペーストしてもよい）。設定すると、handoff の前にその mode へ切り替え、結果のあと元の mode に戻す。pane へ送れなかったときだけ、voice-switch がウェイク時点のウィンドウへ一度ペーストする。pane は当たったが送信本文を切り出せなかったときは、全文をペーストしない。このフィールドの Mac 側配線はこのブランチにはまだ無い。
+
 トップレベルの `maxSeconds`（見本は 2.5）は、短いウェイクワード発話の上限。入力の上限ではない。
 
 メニューは、一時停止（マイクを放す）、マイク、設定ファイルを開く、ログを開く、ログイン時に起動、終了。

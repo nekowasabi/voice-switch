@@ -9,6 +9,15 @@ public enum DictationDelivery
     Superwhisper
 }
 
+// How the pane router disposed of a dictation. SkippedNoBody is not "unrouted":
+// a pane was chosen but had no extractable body, so paste must not fall back to the full text.
+public enum RouteDisposition
+{
+    Sent,
+    SkippedNoBody,
+    NotRouted
+}
+
 // Superwhisper keeps one modes\<file>.json per mode ({"key", "name", ...}) and the current one in preferences.json "activeMode".
 public static class SuperwhisperModes
 {
@@ -26,8 +35,9 @@ public static class SuperwhisperModes
         preferencesJson is null ? null : Field(preferencesJson, "activeMode");
 
     // With a no-auto-paste mode in use, a dictation no pane took would otherwise land nowhere.
-    public static DictationDelivery Decide(bool modeRequested, bool routed) =>
-        routed ? DictationDelivery.Pane
+    // SkippedNoBody must not Paste: that would be a full-text fallback after extract failure.
+    public static DictationDelivery Decide(bool modeRequested, RouteDisposition route) =>
+        route is RouteDisposition.Sent or RouteDisposition.SkippedNoBody ? DictationDelivery.Pane
         : modeRequested ? DictationDelivery.Paste
         : DictationDelivery.Superwhisper;
 

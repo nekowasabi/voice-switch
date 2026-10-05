@@ -14,6 +14,7 @@
     "recordingsDir": "%LOCALAPPDATA%\\com.superwhisper.app\\recordings",
     "endSilenceMs": 2400, "startTimeoutMs": 3000,
     "maxSeconds": 60,
-    "excludeProcessNames": []
+    "excludeProcessNames": [],
+    "superwhisperMode": "voice_switch"
   }
 }

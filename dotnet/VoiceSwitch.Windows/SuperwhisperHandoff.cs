@@ -23,7 +23,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
     private readonly bool dryRun;
     private readonly Action<nint> restoreFocus;
     private readonly Func<TimeSpan, Task> delay;
-    private readonly Func<string, Task<bool>>? onTranscribed;
+    private readonly Func<string, Task<RouteDisposition>>? onTranscribed;
     private readonly string? superwhisperMode;
     private readonly Func<string, nint, bool> paste;
     private readonly string preferencesPath;
@@ -36,7 +36,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         bool dryRun = false,
         Action<nint>? restoreFocus = null,
         Func<TimeSpan, Task>? delay = null,
-        Func<string, Task<bool>>? onTranscribed = null,
+        Func<string, Task<RouteDisposition>>? onTranscribed = null,
         string? superwhisperMode = null,
         Func<string, nint, bool>? paste = null,
         string? preferencesPath = null,
@@ -137,21 +137,22 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         }
 
         TryDelete(wavPath);
-        var routed = false;
+        var route = RouteDisposition.NotRouted;
         if (onTranscribed is not null)
         {
             // The route is a side effect on the result; whatever it throws must not change the handoff status.
             try
             {
-                routed = await onTranscribed(text);
+                route = await onTranscribed(text);
             }
             catch (Exception ex)
             {
                 Log.Info($"tmux: route failed: {ex.Message}");
+                route = RouteDisposition.NotRouted;
             }
         }
 
-        switch (SuperwhisperModes.Decide(modeRequested, routed))
+        switch (SuperwhisperModes.Decide(modeRequested, route))
         {
             case DictationDelivery.Paste:
                 Log.Info(paste(text, audio.Target) ? "dictation delivered: paste" : "dictation not delivered: no target window to paste into");
