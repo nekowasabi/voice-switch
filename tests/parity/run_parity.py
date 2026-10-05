@@ -923,6 +923,21 @@ def harness_program(text_fixture: dict, segmenter_fixture: dict, pane_route_fixt
             Check(actual.SequenceEqual(expected), $"pane candidates {{item.GetProperty("name").GetString()}} expected=[{{string.Join(",", expected)}}] actual=[{{string.Join(",", actual)}}]");
         }}
 
+        foreach (var item in paneFixture.GetProperty("body_jev_responses").EnumerateArray())
+        {{
+            var catalog = item.GetProperty("catalog").EnumerateArray().Select(v => v.GetString()!).ToList();
+            var actual = PaneRoute.ParseJevBodyPick(item.GetProperty("body").GetString()!, catalog);
+            Check(actual == FixtureBodyPick(item), $"body jev parse {{item.GetProperty("name").GetString()}}");
+        }}
+
+        foreach (var item in paneFixture.GetProperty("resolve_body").EnumerateArray())
+        {{
+            var labels = item.GetProperty("labels").EnumerateArray().Select(v => v.GetString()!).ToList();
+            var actual = PaneRoute.ResolveSendBody(item.GetProperty("dictation").GetString()!, labels, FixtureBodyPick(item));
+            var expected = new SendBodyResult(OptionalString(item, "body"), item.GetProperty("reason").GetString()!);
+            Check(actual == expected, $"resolve body {{item.GetProperty("name").GetString()}} expected={{expected}} actual={{actual}}");
+        }}
+
         if (failures.Count > 0)
         {{
             foreach (var failure in failures) Console.Error.WriteLine("FAIL " + failure);
@@ -933,6 +948,7 @@ def harness_program(text_fixture: dict, segmenter_fixture: dict, pane_route_fixt
         Console.WriteLine("PASS pane route fixtures");
         Console.WriteLine("PASS pane extract fixtures");
         Console.WriteLine("PASS pane candidates fixtures");
+        Console.WriteLine("PASS pane body resolve fixtures");
         return 0;
 
         void Check(bool condition, string message)
@@ -950,6 +966,19 @@ def harness_program(text_fixture: dict, segmenter_fixture: dict, pane_route_fixt
         {{
             var pick = item.GetProperty("pick");
             return pick.ValueKind == JsonValueKind.Null ? null : new JevPick(OptionalString(pick, "pane"), pick.GetProperty("confidence").GetDouble());
+        }}
+
+        static JevBodyPick? FixtureBodyPick(JsonElement item)
+        {{
+            if (!item.TryGetProperty("pick", out var pick) || pick.ValueKind == JsonValueKind.Null)
+            {{
+                return null;
+            }}
+
+            var choice = pick.GetProperty("choice");
+            return new JevBodyPick(
+                choice.ValueKind == JsonValueKind.Null ? null : choice.GetString(),
+                pick.GetProperty("confidence").GetDouble());
         }}
 
         void CheckSegmenter(JsonElement spec, VoiceSwitchConfig segmenterConfig)

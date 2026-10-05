@@ -10,6 +10,11 @@ public sealed record PaneLabel(string Id, string Window, string Title, string Co
 // Jev's answer to "which listed pane does the speaker address". Pane null is the "none" choice.
 public sealed record JevPick(string? Pane, double Confidence);
 
+// Jev's answer to which candidate is the literal pane payload. Choice null is "none".
+public sealed record JevBodyPick(string? Choice, double Confidence);
+
+public sealed record SendBodyResult(string? Body, string Reason);
+
 // SuppressFallback is true when a pane was chosen but ExtractSendBody failed: do not paste the full dictation.
 public sealed record RouteDecision(string? Pane, string Reason, bool SuppressFallback = false);
 
@@ -322,6 +327,126 @@ public static class PaneRoute
         }
 
         return outList;
+    }
+
+    // Question shape for body Choice: criteria keyed by c0..cN-1 (candidate text) plus "none".
+    public static string JevBodyRequestBody(string dictation, IReadOnlyList<string> candidates)
+    {
+        var buffer = new MemoryStream();
+        using (var json = new Utf8JsonWriter(buffer))
+        {
+            json.WriteStartObject();
+            json.WriteStartObject("state");
+            json.WriteString("dictation", dictation);
+            json.WriteStartObject("candidates");
+            for (var i = 0; i < candidates.Count; i++)
+            {
+                json.WriteString($"c{i}", candidates[i]);
+            }
+
+            json.WriteEndObject();
+            json.WriteEndObject();
+            json.WriteString("model", "jev-latest");
+            json.WriteStartObject("questions");
+            json.WriteStartObject("body");
+            json.WriteString("type", "choice");
+            json.WriteString("instructions",
+                "`dictation` is speech-to-text. Pick which listed candidate is the literal text to type into the pane. "
+                + "Do not invent wording; choose only from the candidates, or none.");
+            json.WriteStartObject("criteria");
+            for (var i = 0; i < candidates.Count; i++)
+            {
+                json.WriteString($"c{i}", candidates[i]);
+            }
+
+            json.WriteString("none", "None of these candidates is the literal text to type into the pane.");
+            json.WriteEndObject();
+            json.WriteEndObject();
+            json.WriteEndObject();
+            json.WriteEndObject();
+        }
+
+        return Encoding.UTF8.GetString(buffer.ToArray());
+    }
+
+    // `answers.body` must be a choice naming cK in catalog or "none"; anything else is null.
+    public static JevBodyPick? ParseJevBodyPick(string body, IEnumerable<string> catalog)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            if (document.RootElement.ValueKind != JsonValueKind.Object
+                || !document.RootElement.TryGetProperty("answers", out var answers)
+                || answers.ValueKind != JsonValueKind.Object
+                || !answers.TryGetProperty("body", out var answer)
+                || answer.ValueKind != JsonValueKind.Object
+                || !answer.TryGetProperty("type", out var type)
+                || type.ValueKind != JsonValueKind.String
+                || type.GetString() != "choice"
+                || !answer.TryGetProperty("choice", out var choice)
+                || choice.ValueKind != JsonValueKind.String
+                || !answer.TryGetProperty("confidence", out var confidence)
+                || confidence.ValueKind != JsonValueKind.Number)
+            {
+                return null;
+            }
+
+            var chosen = choice.GetString()!;
+            if (chosen == "none")
+            {
+                return new JevBodyPick(null, confidence.GetDouble());
+            }
+
+            return catalog.Contains(chosen) ? new JevBodyPick(chosen, confidence.GetDouble()) : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    // Quote extract first; else candidates + injected body pick (no HTTP).
+    public static SendBodyResult ResolveSendBody(string dictation, IReadOnlyList<string> labels, JevBodyPick? bodyPick)
+    {
+        var quoted = ExtractSendBody(dictation);
+        if (quoted is not null)
+        {
+            return new SendBodyResult(quoted, "quoted");
+        }
+
+        var candidates = SendBodyCandidates(dictation, labels);
+        if (candidates.Count == 0)
+        {
+            return new SendBodyResult(null, "no candidates");
+        }
+
+        if (bodyPick is null)
+        {
+            return new SendBodyResult(null, "no body pick");
+        }
+
+        if (bodyPick.Confidence < JevConfidenceFloor)
+        {
+            return new SendBodyResult(null, "jev body low confidence");
+        }
+
+        if (bodyPick.Choice is null)
+        {
+            return new SendBodyResult(null, "jev body none");
+        }
+
+        var choice = bodyPick.Choice;
+        if (choice.Length < 2
+            || choice[0] != 'c'
+            || !int.TryParse(choice.AsSpan(1), out var index)
+            || index < 0
+            || index >= candidates.Count
+            || choice != $"c{index}")
+        {
+            return new SendBodyResult(null, "jev body rejected");
+        }
+
+        return new SendBodyResult(candidates[index], "jev body");
     }
 
     // A chosen pane without a send body is skipped; the full dictation is never sent or pasted instead.

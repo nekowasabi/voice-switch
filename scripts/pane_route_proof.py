@@ -149,6 +149,40 @@ def send_body_candidates(dictation, labels):
     return out
 
 
+
+def check_body_jev_and_resolve_present():
+    src_swift = (ROOT / "Sources/voice-switch/PaneRoute.swift").read_text()
+    src_cs = (ROOT / "dotnet/VoiceSwitch.Windows.Core/PaneRoute.cs").read_text()
+    for needle in ("func parseJevBodyPick", "func jevBodyRequestBody", "func resolveSendBody"):
+        if needle not in src_swift:
+            return fail(f"swift missing {needle}")
+    for needle in ("ParseJevBodyPick", "JevBodyRequestBody", "ResolveSendBody"):
+        if needle not in src_cs:
+            return fail(f"csharp missing {needle}")
+    return 0
+
+
+def check_resolve_body_fixture():
+    data = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    # Structural only for parse/resolve on the Python side: ensure rows exist and quoted short-circuit still extracts.
+    rows = data["resolve_body"]
+    for row in rows:
+        if row["reason"] == "quoted":
+            got = extract_send_body(row["dictation"])
+            if got != row["body"]:
+                return fail(f"resolve quoted {row['name']!r} extract {got!r} want {row['body']!r}")
+        if row["reason"] == "jev body":
+            cands = send_body_candidates(row["dictation"], row["labels"])
+            choice = row["pick"]["choice"]
+            idx = int(choice[1:])
+            if cands[idx] != row["body"]:
+                return fail(f"resolve jev {row['name']!r} cands[{idx}]={cands[idx]!r} want {row['body']!r}")
+    if not data.get("body_jev_responses"):
+        return fail("body_jev_responses missing")
+    print(f"RESOLVE_BODY {len(rows)}/{len(rows)}")
+    return 0
+
+
 def check_candidates_fixture():
     rows = json.loads(FIXTURE.read_text(encoding="utf-8"))["candidates"]
     for row in rows:
@@ -537,6 +571,12 @@ def main():
     if code:
         return code
     code = check_candidates_fixture()
+    if code:
+        return code
+    code = check_body_jev_and_resolve_present()
+    if code:
+        return code
+    code = check_resolve_body_fixture()
     if code:
         return code
     if os.path.exists(SOCK):

@@ -187,5 +187,145 @@
       "labels": [],
       "candidates": []
     }
+  ],
+"body_jev_responses": [
+    {
+      "name": "a catalog body choice becomes a pick",
+      "catalog": [
+        "c0",
+        "c1"
+      ],
+      "body": "{\"answers\":{\"body\":{\"type\":\"choice\",\"choice\":\"c1\",\"confidence\":0.88}}}",
+      "pick": {
+        "choice": "c1",
+        "confidence": 0.88
+      }
+    },
+    {
+      "name": "none keeps its confidence",
+      "catalog": [
+        "c0"
+      ],
+      "body": "{\"answers\":{\"body\":{\"type\":\"choice\",\"choice\":\"none\",\"confidence\":0.93}}}",
+      "pick": {
+        "choice": null,
+        "confidence": 0.93
+      }
+    },
+    {
+      "name": "out of catalog is no pick",
+      "catalog": [
+        "c0"
+      ],
+      "body": "{\"answers\":{\"body\":{\"type\":\"choice\",\"choice\":\"c9\",\"confidence\":0.99}}}",
+      "pick": null
+    },
+    {
+      "name": "wrong answer key is no pick",
+      "catalog": [
+        "c0"
+      ],
+      "body": "{\"answers\":{\"pane\":{\"type\":\"choice\",\"choice\":\"c0\",\"confidence\":0.99}}}",
+      "pick": null
+    },
+    {
+      "name": "non-choice type is no pick",
+      "catalog": [
+        "c0"
+      ],
+      "body": "{\"answers\":{\"body\":{\"type\":\"text\",\"choice\":\"c0\",\"confidence\":0.99}}}",
+      "pick": null
+    }
+  ],
+"resolve_body": [
+    {
+      "name": "quoted short-circuits without looking at pick",
+      "dictation": "dotfiles に「テスト」を送って",
+      "labels": [
+        "dotfiles"
+      ],
+      "pick": {
+        "choice": "c0",
+        "confidence": 0.99
+      },
+      "body": "テスト",
+      "reason": "quoted"
+    },
+    {
+      "name": "one candidate accepted as jev body",
+      "dictation": "ハローワールドを送信して",
+      "labels": [],
+      "pick": {
+        "choice": "c0",
+        "confidence": 0.9
+      },
+      "body": "ハローワールド",
+      "reason": "jev body"
+    },
+    {
+      "name": "two candidates: c2 is the body",
+      "dictation": "dotfiles にテストを送って",
+      "labels": [
+        "dotfiles"
+      ],
+      "pick": {
+        "choice": "c2",
+        "confidence": 0.85
+      },
+      "body": "テスト",
+      "reason": "jev body"
+    },
+    {
+      "name": "low confidence refuses",
+      "dictation": "ハローワールドを送信して",
+      "labels": [],
+      "pick": {
+        "choice": "c0",
+        "confidence": 0.79
+      },
+      "body": null,
+      "reason": "jev body low confidence"
+    },
+    {
+      "name": "none refuses",
+      "dictation": "ハローワールドを送信して",
+      "labels": [],
+      "pick": {
+        "choice": null,
+        "confidence": 0.95
+      },
+      "body": null,
+      "reason": "jev body none"
+    },
+    {
+      "name": "missing pick refuses",
+      "dictation": "ハローワールドを送信して",
+      "labels": [],
+      "pick": null,
+      "body": null,
+      "reason": "no body pick"
+    },
+    {
+      "name": "no candidates",
+      "dictation": "ただの独り言",
+      "labels": [],
+      "pick": {
+        "choice": "c0",
+        "confidence": 0.99
+      },
+      "body": null,
+      "reason": "no candidates"
+    },
+    {
+      "name": "out of range choice rejects",
+      "dictation": "ハローワールドを送信して",
+      "labels": [],
+      "pick": {
+        "choice": "c3",
+        "confidence": 0.99
+      },
+      "body": null,
+      "reason": "jev body rejected"
+    }
   ]
 }

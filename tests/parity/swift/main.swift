@@ -71,12 +71,35 @@ struct PaneRouteFixture: Decodable {
         var candidates: [String]
     }
 
+    struct BodyPick: Decodable {
+        var choice: String?
+        var confidence: Double
+    }
+
+    struct BodyResponse: Decodable {
+        var name: String
+        var catalog: [String]
+        var body: String
+        var pick: BodyPick?
+    }
+
+    struct ResolveBody: Decodable {
+        var name: String
+        var dictation: String
+        var labels: [String]
+        var pick: BodyPick?
+        var body: String?
+        var reason: String
+    }
+
     var catalog: [Pane]
     var match: [Match]
     var policy: [Policy]
     var jev_responses: [Response]
     var extract: [Extract]
     var candidates: [Candidates]
+    var body_jev_responses: [BodyResponse]
+    var resolve_body: [ResolveBody]
 }
 
 var failures: [String] = []
@@ -134,12 +157,24 @@ for item in paneFixture.candidates {
     let actual = sendBodyCandidates(item.dictation, labels: item.labels)
     check(actual == item.candidates, "pane candidates \(item.name) expected=\(item.candidates) actual=\(actual)")
 }
+for item in paneFixture.body_jev_responses {
+    let actual = parseJevBodyPick(Data(item.body.utf8), catalog: item.catalog)
+    let expected = item.pick.map { JevBodyPick(choice: $0.choice, confidence: $0.confidence) }
+    check(actual == expected, "body jev parse \(item.name)")
+}
+for item in paneFixture.resolve_body {
+    let pick = item.pick.map { JevBodyPick(choice: $0.choice, confidence: $0.confidence) }
+    let actual = resolveSendBody(item.dictation, labels: item.labels, bodyPick: pick)
+    check(actual.body == item.body && actual.reason == item.reason,
+          "resolve body \(item.name) expected=\(item.body ?? "nil") (\(item.reason)) actual=\(actual.body ?? "nil") (\(actual.reason))")
+}
 
 if failures.isEmpty {
     print("PASS behavior fixtures")
     print("PASS pane route fixtures")
     print("PASS pane extract fixtures")
     print("PASS pane candidates fixtures")
+    print("PASS pane body resolve fixtures")
 } else {
     for failure in failures {
         FileHandle.standardError.write(Data("FAIL \(failure)\n".utf8))

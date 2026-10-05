@@ -185,6 +185,9 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("pane route log line names hits, pick, and reason", () => Check(PaneRouteLogLineNamesHitsPickAndReason())),
     ("pane route extracts the quoted send body like the shared fixture", PaneRouteExtractsSendBodyLikeFixture),
     ("pane route builds send-body candidates like the shared fixture", PaneRouteBuildsSendBodyCandidatesLikeFixture),
+    ("pane route parses body jev answers like the shared fixture", PaneRouteParsesBodyJevAnswersLikeFixture),
+    ("pane route resolves send body like the shared fixture", PaneRouteResolvesSendBodyLikeFixture),
+    ("pane route body request carries candidates and none", () => Check(PaneRouteBodyRequestCarriesCandidates())),
     ("pane route skips send when the body is missing", () => Check(PaneRouteSkipsWhenSendBodyMissing())),
     ("transcribe deadline is max(10, audioSeconds + 20)", () => Check(TranscribeDeadlineMatchesFormula()))
 };
@@ -371,6 +374,71 @@ static TestOutcome PaneRouteBuildsSendBodyCandidatesLikeFixture()
     }
 
     return TestOutcome.Pass();
+}
+
+
+static TestOutcome PaneRouteParsesBodyJevAnswersLikeFixture()
+{
+    foreach (var row in PaneRouteFixture().GetProperty("body_jev_responses").EnumerateArray())
+    {
+        var catalog = row.GetProperty("catalog").EnumerateArray().Select(v => v.GetString()!).ToList();
+        var actual = PaneRoute.ParseJevBodyPick(row.GetProperty("body").GetString()!, catalog);
+        var expected = FixtureBodyPick(row);
+        if (actual != expected)
+        {
+            return TestOutcome.Fail($"{row.GetProperty("name").GetString()}: got {actual} want {expected}");
+        }
+    }
+
+    return TestOutcome.Pass();
+}
+
+static TestOutcome PaneRouteResolvesSendBodyLikeFixture()
+{
+    foreach (var row in PaneRouteFixture().GetProperty("resolve_body").EnumerateArray())
+    {
+        var labels = row.GetProperty("labels").EnumerateArray().Select(v => v.GetString()!).ToList();
+        var actual = PaneRoute.ResolveSendBody(row.GetProperty("dictation").GetString()!, labels, FixtureBodyPick(row));
+        var expected = new SendBodyResult(NullableString(row, "body"), row.GetProperty("reason").GetString()!);
+        if (actual != expected)
+        {
+            return TestOutcome.Fail($"{row.GetProperty("name").GetString()}: got {actual} want {expected}");
+        }
+    }
+
+    return TestOutcome.Pass();
+}
+
+static bool PaneRouteBodyRequestCarriesCandidates()
+{
+    var candidates = new[] { "ハロー", "テスト" };
+    using var body = JsonDocument.Parse(PaneRoute.JevBodyRequestBody("dotfiles にハローを送って", candidates));
+    var root = body.RootElement;
+    var question = root.GetProperty("questions").GetProperty("body");
+    var criteria = question.GetProperty("criteria");
+    var stateCandidates = root.GetProperty("state").GetProperty("candidates");
+    return root.GetProperty("state").GetProperty("dictation").GetString() == "dotfiles にハローを送って"
+        && root.GetProperty("model").GetString() == "jev-latest"
+        && question.GetProperty("type").GetString() == "choice"
+        && criteria.GetProperty("c0").GetString() == "ハロー"
+        && criteria.GetProperty("c1").GetString() == "テスト"
+        && criteria.GetProperty("none").ValueKind == JsonValueKind.String
+        && stateCandidates.GetProperty("c0").GetString() == "ハロー"
+        && stateCandidates.GetProperty("c1").GetString() == "テスト"
+        && criteria.EnumerateObject().Count() == 3;
+}
+
+static JevBodyPick? FixtureBodyPick(JsonElement row)
+{
+    if (!row.TryGetProperty("pick", out var pick) || pick.ValueKind == JsonValueKind.Null)
+    {
+        return null;
+    }
+
+    var choice = pick.GetProperty("choice");
+    return new JevBodyPick(
+        choice.ValueKind == JsonValueKind.Null ? null : choice.GetString(),
+        pick.GetProperty("confidence").GetDouble());
 }
 
 static bool PaneRouteSkipsWhenSendBodyMissing()

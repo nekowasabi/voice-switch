@@ -361,6 +361,77 @@ func sendBodyCandidates(_ dictation: String, labels: [String]) -> [String] {
     return out
 }
 
+/// Jev's answer to "which candidate is the literal pane payload". `choice` nil is "none".
+struct JevBodyPick: Equatable {
+    var choice: String?
+    var confidence: Double
+}
+
+/// Quote extract first; else candidates + injected body pick (no HTTP). Same rule as
+/// `PaneRoute.ResolveSendBody` / `ParseJevBodyPick` / `JevBodyRequestBody` and the
+/// `body_jev_responses` / `resolve_body` rows of pane_route.json.
+func jevBodyRequestBody(_ dictation: String, _ candidates: [String]) -> Data? {
+    var criteria: [String: Any] = [:]
+    var candidateMap: [String: String] = [:]
+    for (index, text) in candidates.enumerated() {
+        let key = "c\(index)"
+        criteria[key] = text
+        candidateMap[key] = text
+    }
+    criteria["none"] = "None of these candidates is the literal text to type into the pane."
+    let question: [String: Any] = [
+        "type": "choice",
+        "instructions": "`dictation` is speech-to-text. Pick which listed candidate is the literal text to type into the pane. "
+            + "Do not invent wording; choose only from the candidates, or none.",
+        "criteria": criteria,
+    ]
+    let body: [String: Any] = [
+        "state": ["dictation": dictation, "candidates": candidateMap],
+        "model": "jev-latest",
+        "questions": ["body": question],
+    ]
+    return try? JSONSerialization.data(withJSONObject: body)
+}
+
+/// `answers.body` must be a choice naming `cK` in catalog or "none"; anything else is nil.
+func parseJevBodyPick(_ data: Data, catalog: [String]) -> JevBodyPick? {
+    guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let answers = root["answers"] as? [String: Any],
+          let answer = answers["body"] as? [String: Any],
+          answer["type"] as? String == "choice",
+          let choice = answer["choice"] as? String,
+          let confidence = answer["confidence"] as? Double else { return nil }
+    if choice == "none" { return JevBodyPick(choice: nil, confidence: confidence) }
+    guard catalog.contains(choice) else { return nil }
+    return JevBodyPick(choice: choice, confidence: confidence)
+}
+
+func resolveSendBody(_ dictation: String, labels: [String], bodyPick: JevBodyPick?) -> (body: String?, reason: String) {
+    if let quoted = extractSendBody(dictation) {
+        return (quoted, "quoted")
+    }
+    let candidates = sendBodyCandidates(dictation, labels: labels)
+    if candidates.isEmpty {
+        return (nil, "no candidates")
+    }
+    guard let pick = bodyPick else {
+        return (nil, "no body pick")
+    }
+    if pick.confidence < jevConfidenceFloor {
+        return (nil, "jev body low confidence")
+    }
+    guard let choice = pick.choice else {
+        return (nil, "jev body none")
+    }
+    guard choice.hasPrefix("c"),
+          let index = Int(choice.dropFirst()),
+          index >= 0, index < candidates.count,
+          choice == "c\(index)" else {
+        return (nil, "jev body rejected")
+    }
+    return (candidates[index], "jev body")
+}
+
 /// After decideRoute: a chosen pane with no body is skipped (SuppressFallback / SkippedNoBody).
 func requireSendBody(pane: String?, reason: String, body: String?) -> (pane: String?, reason: String, suppressFallback: Bool) {
     if let pane, body == nil {
