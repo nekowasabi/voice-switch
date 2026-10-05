@@ -224,6 +224,7 @@ def check_static_call_chains(result: Result, repo: SourceTree) -> None:
     check_windows_runtime_call_chain(result, repo)
     check_swift_cli_call_chain(result, repo)
     check_swift_runtime_call_chain(result, repo)
+    check_swift_segmenter_rebase(result, repo)
 
 
 def check_dictation_test_markers(result: Result, repo: SourceTree) -> None:
@@ -321,6 +322,35 @@ def check_swift_cli_call_chain(result: Result, repo: SourceTree) -> None:
     )
 
 
+
+def check_swift_segmenter_rebase(result: Result, repo: SourceTree) -> None:
+    segmenter = repo.code("Sources/voice-switch/Segmenter.swift")
+    mac = repo.code("Sources/voice-switch/MacApp.swift")
+    require_substrings(
+        result,
+        "Swift Segmenter ports Windows RebaseFloor with level accounting",
+        segmenter,
+        [
+            "mutating func rebaseFloor()",
+            "levelSum",
+            "levelCount",
+            "if skipping && levelCount > 0",
+            "seg.rebaseFloor()",
+        ],
+    )
+    require_substrings(
+        result,
+        "Swift MacApp calls rebase after over-cap head with no wake",
+        mac,
+        [
+            "func rebaseFloorAfterNoWake(_ seg: inout Segmenter)",
+            "dictation vad: floor rebased",
+            "if isHead { rebaseFloorAfterNoWake(&seg) }",
+            "if isHead && start == nil",
+        ],
+    )
+
+
 def check_swift_runtime_call_chain(result: Result, repo: SourceTree) -> None:
     mac = repo.code("Sources/voice-switch/MacApp.swift")
     body = extract_braced_body(mac, r"private\s+func\s+consume\s*\([^)]*\)\s+async\s*\{")
@@ -345,6 +375,15 @@ def check_swift_runtime_call_chain(result: Result, repo: SourceTree) -> None:
             "micInUse(by: config.cfg.skipWhileMicInUseBy ?? [])",
             "Platform.runCommand(config.cfg.stopCommand ?? Platform.defaultSuperwhisperToggle)",
             "stop word, nothing is recording",
+        ],
+    )
+    require_substrings(
+        result,
+        "Swift runtime rebases floor after over-cap head with no wake",
+        body,
+        [
+            "if isHead && start == nil",
+            "rebaseFloorAfterNoWake(&seg)",
         ],
     )
 

@@ -169,6 +169,13 @@ func writeWAV(_ samples: [Float], to url: URL) throws {
 }
 
 /// The samples from `cutAt` seconds on.
+/// After an over-cap head with no wake, adopt the mean level while skipping as the new floor (Windows Segmenter.RebaseFloor).
+func rebaseFloorAfterNoWake(_ seg: inout Segmenter) {
+    let before = seg.noiseFloor
+    seg.rebaseFloor()
+    log(String(format: "dictation vad: floor rebased floor=%.4f->%.4f threshold=%.4f", before, seg.noiseFloor, seg.threshold))
+}
+
 func trimmed(_ samples: [Float], cutAt: Double) -> [Float] {
     Array(samples.dropFirst(min(samples.count, Int(cutAt * rate))))
 }
@@ -459,7 +466,12 @@ final class Listener {
             }
             let t = transcript.text
             // Logged too, so misses that transcribe to nothing are visible when tuning.
-            guard !t.isEmpty else { log("heard: (empty, \(u.count * 1000 / Int(rate)) ms)"); continue }
+            guard !t.isEmpty else {
+                log("heard: (empty, \(u.count * 1000 / Int(rate)) ms)")
+                // Over-cap head with no text: same trap as steady noise; lift the floor (Windows RebaseFloor).
+                if isHead { rebaseFloorAfterNoWake(&seg) }
+                continue
+            }
             if !isHead, (config.cfg.stopWords ?? []).map(normalize).contains(t) {
                 if let busy = micInUse(by: config.cfg.skipWhileMicInUseBy ?? []) {
                     // Only while it records: superwhisper://record toggles, so this cannot start a recording.
@@ -474,6 +486,11 @@ final class Listener {
             // Utterance length shows whether the VAD holds on past the word; stt is recognizer time.
             log("heard: \(t)\(hit ? "  -> wake" : "")  [utt \(u.count * 1000 / Int(rate)) ms, stt \(Int(Date().timeIntervalSince(began) * 1000)) ms]")
             let start = hit || config.cfg.dictation == nil ? nil : dictationStart(transcript, wakeWords: config.cfg.wakeWords)
+            // Over-cap head and recognizer found no wake: steady noise must not keep skipping forever (Windows RebaseFloor).
+            if isHead && start == nil {
+                rebaseFloorAfterNoWake(&seg)
+                continue
+            }
             guard hit || start != nil else { continue }
             if let busy = micInUse(by: config.cfg.skipWhileMicInUseBy ?? []) {
                 // superwhisper://record toggles, so firing while it records would stop it; a dictation

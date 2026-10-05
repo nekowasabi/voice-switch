@@ -135,11 +135,11 @@
       "id": "energy_segmenter_events",
       "macos": {
         "file": "Sources/voice-switch/Segmenter.swift",
-        "markers": ["case utterance", "case head", "vadRatio", "vadMinRMS"]
+        "markers": ["case utterance", "case head", "vadRatio", "vadMinRMS", "rebaseFloor", "levelSum", "levelCount"]
       },
       "windows": {
         "file": "dotnet/VoiceSwitch.Windows.Core/Segmenter.cs",
-        "markers": ["SegmenterEvent.Utterance", "SegmenterEvent.Head", "config.VadRatio", "config.VadMinRMS"]
+        "markers": ["SegmenterEvent.Utterance", "SegmenterEvent.Head", "config.VadRatio", "config.VadMinRMS", "RebaseFloor", "levelSum", "levelCount"]
       },
       "fixture": "segmenter"
     },

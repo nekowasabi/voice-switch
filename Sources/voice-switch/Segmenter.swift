@@ -14,6 +14,9 @@ struct Segmenter {
     private var utt: [[Float]] = []
     private var silent = 0
     private var skipping = false
+    private var lastRms: Float = 0
+    private var levelSum: Double = 0
+    private var levelCount = 0
     private(set) var lastWasSpeech = false
     /// Off while dictating: quiet syllables classed as non-speech would otherwise pull the floor up toward
     /// the voice itself, so after ~2-3 s of talking the threshold passes the speech and it reads as silence.
@@ -27,9 +30,23 @@ struct Segmenter {
 
     init(cfg: Config) { self.cfg = cfg }
 
+    var noiseFloor: Float { floor }
+    var threshold: Float { max(floor * (cfg.vadRatio ?? 3), cfg.vadMinRMS ?? 0.005) }
+    var isSkipping: Bool { skipping }
+
+    // The floor only adapts while quiet, so steady sound above the threshold reads as speech forever. Once the
+    // recognizer heard no wake word in the over-cap head, that sound is the room, and its mean level becomes the floor.
+    // Mirrors VoiceSwitch.Windows.Core.Segmenter.RebaseFloor.
+    mutating func rebaseFloor() {
+        if skipping && levelCount > 0 {
+            floor = max(floor, Float(levelSum / Double(levelCount)))
+        }
+    }
+
     private mutating func isSpeech(_ f: [Float]) -> Bool {
         let rms = (f.reduce(0) { $0 + $1 * $1 } / Float(f.count)).squareRoot()
-        let speech = rms > max(floor * (cfg.vadRatio ?? 3), cfg.vadMinRMS ?? 0.005)
+        lastRms = rms
+        let speech = rms > threshold
         // Track the noise floor only while quiet, so speech does not raise it.
         if !speech && adaptFloor { floor = floor * 0.95 + rms * 0.05 }
         return speech
@@ -45,10 +62,17 @@ struct Segmenter {
         if utt.isEmpty {
             ring.append(f)
             if ring.count > preroll { ring.removeFirst() }
-            if speech { utt = ring; silent = 0 }
+            if speech {
+                utt = ring
+                silent = 0
+                levelSum = Double(lastRms)
+                levelCount = 1
+            }
             return nil
         }
         silent = speech ? 0 : silent + 1
+        levelSum += Double(lastRms)
+        levelCount += 1
         // Too long to be a wake word (dictation or steady noise): stop buffering and
         // wait for silence so a tail fragment of the dictation is never judged alone.
         var head: Event?
@@ -62,6 +86,7 @@ struct Segmenter {
         guard silent >= hangover else { return head }
         let done = !skipping && utt.count - hangover >= minFrames ? Event.utterance(Array(utt.joined())) : nil
         utt = []; ring = []; skipping = false
+        levelSum = 0; levelCount = 0
         return done ?? head
     }
 }
@@ -84,10 +109,49 @@ func vadSelftest() {
             break
         }
     }
-    if sawUtterance {
-        print("vad-selftest: ok")
-    } else {
+    guard sawUtterance else {
         print("vad-selftest: FAILED (no utterance)")
         exit(1)
     }
+
+    // Windows DictationSegmenterRebasesFloorAfterSteadyNoiseFromFirstFrame: steady above-threshold
+    // noise traps skipping until RebaseFloor lifts the floor to the mean level.
+    seg = Segmenter(cfg: cfg)
+    let noise = [Float](repeating: 0.01, count: frameLen)
+    let voice = [Float](repeating: 0.1, count: frameLen)
+    var head: Segmenter.Event?
+    var headAt = -1
+    for i in 0..<120 where head == nil {
+        head = seg.push(noise)
+        headAt = i
+    }
+    var stillLocked = true
+    for _ in 0..<30 {
+        stillLocked = stillLocked && seg.push(noise) == nil && seg.lastWasSpeech
+    }
+    guard case .head? = head, (90...100).contains(headAt), stillLocked else {
+        print("vad-selftest: FAILED (steady noise did not trap skipping; headAt=\(headAt) locked=\(stillLocked))")
+        exit(1)
+    }
+    let floorBefore = seg.noiseFloor
+    seg.rebaseFloor()
+    guard seg.noiseFloor >= floorBefore, seg.noiseFloor >= 0.01 * 0.9 else {
+        print("vad-selftest: FAILED (rebase did not raise floor; \(floorBefore)->\(seg.noiseFloor))")
+        exit(1)
+    }
+    var quietAfter = 0
+    for _ in 0..<12 {
+        _ = seg.push(noise)
+        if !seg.lastWasSpeech { quietAfter += 1 }
+    }
+    for _ in 0..<12 { _ = seg.push(voice) }
+    var wake: Segmenter.Event?
+    for _ in 0..<11 where wake == nil {
+        wake = seg.push(noise)
+    }
+    guard quietAfter == 12, case .utterance(let u)? = wake, u.count >= frameLen * 12 else {
+        print("vad-selftest: FAILED (after rebase: quietAfter=\(quietAfter) wake=\(String(describing: wake)))")
+        exit(1)
+    }
+    print("vad-selftest: ok")
 }
