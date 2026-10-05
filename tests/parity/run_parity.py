@@ -504,6 +504,22 @@ def check_swift_runtime_call_chain(result: Result, repo: SourceTree) -> None:
             "rebaseFloorAfterNoWake(&seg)",
         ],
     )
+    # hyp3: Speech deadline / hard-stop on over-cap head must rebase, same as empty/no-wake success path.
+    catch_match = re.search(
+        r"transcript\s*=\s*try\s+await\s+transcribe.*?\} catch \{(.*?)\bcontinue\b",
+        body,
+        flags=re.DOTALL,
+    )
+    catch_body = catch_match.group(1) if catch_match else ""
+    require_substrings(
+        result,
+        "Swift runtime rebases floor when over-cap head transcription fails",
+        catch_body,
+        [
+            "transcribe failed:",
+            "if isHead { rebaseFloorAfterNoWake(&seg) }",
+        ],
+    )
 
 
 def extract_braced_body(source: str, signature_pattern: str, after: str | None = None) -> str:

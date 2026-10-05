@@ -659,7 +659,10 @@ final class Listener {
             let transcript: Transcript
             let began = Date()
             do { transcript = try await transcribe(u, locale: Locale(identifier: config.cfg.locale ?? "ja_JP")) } catch {
-                log("transcribe failed: \(error)"); continue
+                log("transcribe failed: \(error)")
+                // Over-cap head that timed out / failed STT: same trap as empty/no-wake; lift the floor (Windows RebaseFloor).
+                if isHead { rebaseFloorAfterNoWake(&seg) }
+                continue
             }
             let t = transcript.text
             // Logged too, so misses that transcribe to nothing are visible when tuning.
