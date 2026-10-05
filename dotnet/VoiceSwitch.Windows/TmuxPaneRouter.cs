@@ -26,7 +26,8 @@ public static class TmuxPaneRouter
         "&& { printf '%s\\n%s' \"$b\" \"$s\"; exit 0; }; done; done; exit 1";
 
     // Sent when send-keys ran and exited 0. SkippedNoBody when a pane was chosen but had no extractable body
-    // (must not fall through to paste). NotRouted when nothing took the dictation.
+    // (must not fall through to paste). SendFailed when pane+body were known but send-keys failed (paste body only).
+    // NotRouted when nothing took the dictation.
     public static async Task<RouteDisposition> RouteAsync(string text)
     {
         var server = await FindServerAsync();

@@ -207,20 +207,28 @@ def choose(utterance, panes, agents):
 
 
 def check_windows_no_body_no_paste():
-    """Pane hit + null body must not become a paste of the full dictation (critique fix)."""
+    """Pane hit + null body must not become a paste of the full dictation (critique fix).
+    Pane+body with send-keys failure must paste the extracted body only, not the full text."""
     modes = (ROOT / "dotnet/VoiceSwitch.Windows.Core/SuperwhisperModes.cs").read_text()
     pane = (ROOT / "dotnet/VoiceSwitch.Windows.Core/PaneRoute.cs").read_text()
     router = (ROOT / "dotnet/VoiceSwitch.Windows/TmuxPaneRouter.cs").read_text()
+    handoff = (ROOT / "dotnet/VoiceSwitch.Windows/SuperwhisperHandoff.cs").read_text()
     if "SkippedNoBody" not in modes:
         return fail("SuperwhisperModes missing SkippedNoBody")
+    if "SendFailed" not in modes:
+        return fail("SuperwhisperModes missing SendFailed")
     if "route is RouteDisposition.Sent or RouteDisposition.SkippedNoBody ? DictationDelivery.Pane" not in modes:
         return fail("Decide does not treat SkippedNoBody as non-paste")
     if "SuppressFallback: true" not in pane:
         return fail("RequireSendBody must set SuppressFallback")
+    if "RouteDisposition.SendFailed" not in pane:
+        return fail("Disposition must return SendFailed when pane set and send failed")
     if "PaneRoute.Disposition" not in router:
         return fail("TmuxPaneRouter must return Disposition (not bare bool)")
     if "Task<bool> RouteAsync" in router:
         return fail("RouteAsync still returns bool (loses no-body vs unrouted)")
+    if "route == RouteDisposition.SendFailed ? PaneRoute.ExtractSendBody(text)" not in handoff:
+        return fail("handoff must paste ExtractSendBody on SendFailed, not the full text")
     return 0
 
 

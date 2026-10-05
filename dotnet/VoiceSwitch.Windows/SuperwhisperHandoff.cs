@@ -155,7 +155,15 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         switch (SuperwhisperModes.Decide(modeRequested, route))
         {
             case DictationDelivery.Paste:
-                Log.Info(paste(text, audio.Target) ? "dictation delivered: paste" : "dictation not delivered: no target window to paste into");
+                // SendFailed already chose a pane body; paste that, never the full dictation wrapper.
+                var payload = route == RouteDisposition.SendFailed ? PaneRoute.ExtractSendBody(text) : text;
+                if (payload is null)
+                {
+                    Log.Info("dictation not delivered: send failed and no body to paste");
+                    break;
+                }
+
+                Log.Info(paste(payload, audio.Target) ? "dictation delivered: paste" : "dictation not delivered: no target window to paste into");
                 break;
             case DictationDelivery.Superwhisper:
                 Log.Info("dictation delivered: superwhisper");
