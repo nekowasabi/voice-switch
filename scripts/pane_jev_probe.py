@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Ask Jev which tmux pane a dictation is addressed to, over a fixed pane catalog.
 
-Same question shape as `jevPick` in main.swift. Needs TYPESAFE_API_KEY (or JEV_API_KEY).
+Same question shape as `jevRequestBody` in PaneRoute.swift and `PaneRoute.JevRequestBody` in C#.
+Needs TYPESAFE_API_KEY (or JEV_API_KEY).
 Prints one line per case so thresholds can be read off real answers.
 """
 import json

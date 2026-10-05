@@ -32,6 +32,7 @@
   "jev_responses": [
     {"name": "a catalog choice becomes a pick", "catalog": ["%0", "%1"], "body": "{\"answers\":{\"pane\":{\"type\":\"choice\",\"choice\":\"%1\",\"confidence\":0.87,\"probabilities\":{\"%0\":0.1,\"%1\":0.87,\"none\":0.03}}},\"model\":\"jev-latest\",\"usage\":{}}", "pick": {"pane": "%1", "confidence": 0.87}},
     {"name": "none keeps its confidence", "catalog": ["%0", "%1"], "body": "{\"answers\":{\"pane\":{\"type\":\"choice\",\"choice\":\"none\",\"confidence\":0.91}}}", "pick": {"pane": null, "confidence": 0.91}},
+    {"name": "an integer confidence is a number", "catalog": ["%0", "%1"], "body": "{\"answers\":{\"pane\":{\"type\":\"choice\",\"choice\":\"%0\",\"confidence\":1}}}", "pick": {"pane": "%0", "confidence": 1.0}},
     {"name": "a choice outside the catalog is dropped", "catalog": ["%0", "%1"], "body": "{\"answers\":{\"pane\":{\"type\":\"choice\",\"choice\":\"%9\",\"confidence\":0.99}}}", "pick": null},
     {"name": "a non-choice answer is dropped", "catalog": ["%0", "%1"], "body": "{\"answers\":{\"pane\":{\"type\":\"score\",\"score\":0.9,\"confidence\":0.9}}}", "pick": null},
     {"name": "a missing confidence is dropped", "catalog": ["%0", "%1"], "body": "{\"answers\":{\"pane\":{\"type\":\"choice\",\"choice\":\"%0\"}}}", "pick": null},
