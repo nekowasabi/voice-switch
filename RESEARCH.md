@@ -58,7 +58,7 @@
 
 1. **再起動が 1 回失敗すると、二度と試さない（Windows と同じ形）。** `MacApp.swift:300-305` では、`AVAudioEngineConfigurationChange` を受けると `stop()` してから `start()` する。`start()` が投げると `restart failed` がログに出て、`running` は false のまま残る。observer は `guard … self.running` で始まるので、以後の通知はすべて無視され、二度と再起動しない。
 2. **`transcribe` がハングすると止まる。** かつては `transcribe`（SpeechAnalyzer）に期限が無く、consume ループが直列に待つため 1 回でも戻らないとループが止まった。**コード上の修正済み**（`transcribeDeadlineSeconds` / `TranscribeDeadline`、期限 `max(10, audioSeconds + 20)`、タイムアウトは既存の `transcribe failed` 経路）。**Mac 実機ランタイムは未検証**（この box では Apple Speech を実行できない）。
-3. **定常音で VAD が発話中のまま抜けない。** Mac の `Segmenter.swift` は、無音のときにしか floor が追従しない（`:34`）。閾値を超える定常音が続くと `skipping` から抜けられない。Windows には救済（`RebaseFloor`、`Segmenter.cs:38-44`）があるが、Mac には無い。
+3. **定常音で VAD が発話中のまま抜けない。** かつては Mac の `Segmenter.swift` は無音のときにしか floor が追従せず、閾値を超える定常音で `skipping` から抜けられなかった。**コード上の修正済み**（Windows `RebaseFloor` を `rebaseFloor` / `rebaseFloorAfterNoWake` として移植）。**Mac 実機ランタイムは未検証**。
 
 ### 止まったときに見るもの
 
@@ -82,7 +82,7 @@
 
 - 仮説 1: `start()` が失敗したら、Windows と同じく間隔を空けて再試行する。observer の `running` ガードで再試行が潰れないようにする。
 - 仮説 2: **コード反映済み。** Mac `transcribe` に Windows と同じ式の期限（`max(10, 秒数 + 20)` 秒 = `transcribeDeadlineSeconds` / `TranscribeDeadline`）を付け、超えたら既存の `transcribe failed` の経路へ流す。box では Apple Speech を実行できないため **Mac 実機ランタイムは未検証**。
-- 仮説 3: Windows の `RebaseFloor` を移植する。
+- 仮説 3: **コード反映済み。** Windows の `RebaseFloor` を Mac `Segmenter.rebaseFloor` に移植し、over-cap head で wake が無いときに呼ぶ。**Mac 実機ランタイムは未検証**。
 
 ## 最新研究・OSS との比較
 
@@ -104,7 +104,7 @@
 
 | 項目 | 理由 |
 |---|---|
-| VAD の置換（[Earshot](https://github.com/pykeio/earshot)、[TEN VAD](https://huggingface.co/TEN-framework/ten-vad)、Silero、[kiloVAD](https://arxiv.org/abs/2607.25870)、Cobra） | 問題は VAD の精度でなく floor の追従。Mac は `RebaseFloor` の移植で足りる。Windows のログでも VAD は原因でなかった。速度の数値は自己申告。 |
+| VAD の置換（[Earshot](https://github.com/pykeio/earshot)、[TEN VAD](https://huggingface.co/TEN-framework/ten-vad)、Silero、[kiloVAD](https://arxiv.org/abs/2607.25870)、Cobra） | 問題は VAD の精度でなく floor の追従。Mac は `RebaseFloor` 移植済み（実機未検証）。Windows のログでも VAD は原因でなかった。速度の数値は自己申告。 |
 | [Foreground VAD](https://arxiv.org/abs/2609.19856) | 背景話者で終端が遅れる実害を観測していない。 |
 | 終話判定（LiveKit Turn Detector、[Endpoint Anticipation](https://arxiv.org/abs/2606.13450)、[Next-Turn](https://arxiv.org/abs/2606.18094)） | 会話エージェント向け。本アプリは停止語と superwhisper の記録ショートカットでも終了でき、固定無音（`endSilenceMs`）で困った実例が無い。 |
 | 専用ウェイクワードによる完全一致の置換 | 完全一致は誤作動を抑える設計上の利点でもある。日本語の学習と評価の運用コストが新たに要る。 |

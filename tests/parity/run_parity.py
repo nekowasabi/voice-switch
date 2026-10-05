@@ -382,6 +382,17 @@ def check_transcribe_deadline(result: Result, repo: SourceTree) -> None:
     )
     require_substrings(
         result,
+        "Swift transcribeUnbounded hard-stops SpeechAnalyzer on cancel (KillProcess intent)",
+        mac,
+        [
+            "withTaskCancellationHandler",
+            "collect.cancel()",
+            "await an.cancelAndFinishNow()",
+            "Task { await an.cancelAndFinishNow() }",
+        ],
+    )
+    require_substrings(
+        result,
         "Windows TranscribeDeadline helper and recognizer use the same formula",
         core + "\n" + runtime,
         [

@@ -41,6 +41,7 @@ struct TranscribeTimeoutError: Error, CustomStringConvertible {
 
 /// One-shot Apple Speech with the Windows-matching deadline (RESEARCH hyp 2).
 /// On timeout, throws `TranscribeTimeoutError` so callers take the existing `transcribe failed` path.
+/// cancelAll alone still waits for children; `transcribeUnbounded` hard-stops via cancelAndFinishNow.
 func transcribe(_ samples: [Float], locale: Locale) async throws -> Transcript {
     let limit = transcribeDeadlineSeconds(audioSeconds: Double(samples.count) / rate)
     try await withThrowingTaskGroup(of: Transcript.self) { group in
@@ -64,6 +65,9 @@ func transcribe(_ samples: [Float], locale: Locale) async throws -> Transcript {
     }
 }
 
+/// Hard-stops SpeechAnalyzer on cancel (Windows KillProcess intent).
+/// `withThrowingTaskGroup.cancelAll` still waits for children; analyzeSequence/finalize may ignore
+/// Task cancellation alone, so without cancelAndFinishNow the deadline never frees the group.
 func transcribeUnbounded(_ samples: [Float], locale: Locale) async throws -> Transcript {
     let tr = SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [], attributeOptions: [.audioTimeRange])
     let an = SpeechAnalyzer(modules: [tr])
@@ -86,12 +90,26 @@ func transcribeUnbounded(_ samples: [Float], locale: Locale) async throws -> Tra
         }
         return t
     }
-    if let end = try await an.analyzeSequence(stream) {
-        try await an.finalizeAndFinish(through: end)
-    } else {
-        await an.cancelAndFinishNow()
+    return try await withTaskCancellationHandler {
+        do {
+            try Task.checkCancellation()
+            if let end = try await an.analyzeSequence(stream) {
+                try Task.checkCancellation()
+                try await an.finalizeAndFinish(through: end)
+            } else {
+                await an.cancelAndFinishNow()
+            }
+            return try await collect.value
+        } catch {
+            collect.cancel()
+            await an.cancelAndFinishNow()
+            throw error
+        }
+    } onCancel: {
+        collect.cancel()
+        // Must hard-stop SpeechAnalyzer so cancelAll can return (Windows KillProcess equivalent).
+        Task { await an.cancelAndFinishNow() }
     }
-    return try await collect.value
 }
 
 func ensureModel(_ locale: Locale) async throws {
