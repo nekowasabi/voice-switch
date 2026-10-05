@@ -6,7 +6,7 @@
 
 - Windows では、USB マイク（Yeti Nano）が一瞬消えて戻ったあとの再起動が 1 回だけ試されていた。その 1 回が失敗するとエラー状態のまま止まり、マイクがもう一度抜き差しされるまで二度と試していなかった。エラーはログに出ていなかったので、ログは黙っていた。修正済み（コミット済み `8fbfc49`、実機には未導入）。
 - VAD・認識・バッファの詰まりは、Windows のログでは原因ではなかった。
-- Mac にも同じ形の欠陥が疑われる。ただし計測していないので、修正はしていない。
+- Mac にも同じ形の欠陥が疑われる。仮説 1（再起動再試行）・仮説 2（transcribe 期限）・仮説 3（RebaseFloor）はコードに反映済み。いずれも **Mac 実機ランタイムは未検証**（計測も未実施）。
 
 ## Windows の計測結果
 
@@ -57,7 +57,7 @@
 ### 疑っている箇所（仮説）
 
 1. **再起動が 1 回失敗すると、二度と試さない（Windows と同じ形）。** `MacApp.swift:300-305` では、`AVAudioEngineConfigurationChange` を受けると `stop()` してから `start()` する。`start()` が投げると `restart failed` がログに出て、`running` は false のまま残る。observer は `guard … self.running` で始まるので、以後の通知はすべて無視され、二度と再起動しない。
-2. **`transcribe` がハングすると止まる。** `MacApp.swift:37-64` の `transcribe`（SpeechAnalyzer）には期限が無い。consume ループ（`MacApp.swift:445`）はこれを直列に待つので、1 回でも戻らないとループが止まる。その間も上限なしの AsyncStream（`MacApp.swift:296`）に音声が約 64KB/秒（約 230MB/時）溜まり続け、ログは何も出ない。
+2. **`transcribe` がハングすると止まる。** かつては `transcribe`（SpeechAnalyzer）に期限が無く、consume ループが直列に待つため 1 回でも戻らないとループが止まった。**コード上の修正済み**（`transcribeDeadlineSeconds` / `TranscribeDeadline`、期限 `max(10, audioSeconds + 20)`、タイムアウトは既存の `transcribe failed` 経路）。**Mac 実機ランタイムは未検証**（この box では Apple Speech を実行できない）。
 3. **定常音で VAD が発話中のまま抜けない。** Mac の `Segmenter.swift` は、無音のときにしか floor が追従しない（`:34`）。閾値を超える定常音が続くと `skipping` から抜けられない。Windows には救済（`RebaseFloor`、`Segmenter.cs:38-44`）があるが、Mac には無い。
 
 ### 止まったときに見るもの
@@ -81,7 +81,7 @@
 ### 仮説ごとの直し方の案（計測で確定してから入れる）
 
 - 仮説 1: `start()` が失敗したら、Windows と同じく間隔を空けて再試行する。observer の `running` ガードで再試行が潰れないようにする。
-- 仮説 2: `transcribe` に Windows と同じ式の期限（`max(10, 秒数 + 20)` 秒）を付け、超えたら既存の `transcribe failed` の経路へ流す。
+- 仮説 2: **コード反映済み。** Mac `transcribe` に Windows と同じ式の期限（`max(10, 秒数 + 20)` 秒 = `transcribeDeadlineSeconds` / `TranscribeDeadline`）を付け、超えたら既存の `transcribe failed` の経路へ流す。box では Apple Speech を実行できないため **Mac 実機ランタイムは未検証**。
 - 仮説 3: Windows の `RebaseFloor` を移植する。
 
 ## 最新研究・OSS との比較

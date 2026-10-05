@@ -93,6 +93,15 @@ struct Segmenter {
 
 /// Synthetic tones through the Segmenter — no Speech/AVFoundation required.
 func vadSelftest() {
+    // RESEARCH hyp 2: deadline helper matches Windows TranscribeDeadline (no Apple Speech needed).
+    guard transcribeDeadlineSeconds(audioSeconds: 0) == 20,
+          transcribeDeadlineSeconds(audioSeconds: 5) == 25,
+          transcribeDeadlineSeconds(audioSeconds: -15) == 10,
+          abs(transcribeDeadlineSeconds(audioSeconds: 0.5) - 20.5) < 0.001,
+          transcribeDeadlineSeconds(audioSeconds: Double(16000) / rate) == 21 else {
+        print("vad-selftest: FAILED (transcribe deadline formula)")
+        exit(1)
+    }
     let cfg = Config(wakeWords: ["test"], command: "true",
                      maxSeconds: 2.5, hangoverMs: 300, prerollMs: 300, minSpeechMs: 300,
                      vadRatio: 3.0, vadMinRMS: 0.005)

@@ -6,7 +6,7 @@
 
 ## ブランチと状態
 
-- ブランチは `feat/pane-route-jev`。Slice A（本文切り出し）まで入れた。
+- ブランチは `feat/pane-route-jev`。Overnight Slice A–D まで入れた（B2 Mac superwhisperMode 配線は未着手）。
 - PR #4（`feat/tmux-pane-route`）は触っていない。PR #4 は 63 コミット古い main から分かれていて、main と衝突している。このブランチで新しく PR を作り、PR #4 を閉じる想定。
 - `b612216`（RESEARCH.md の研究比較）は別の話題の変更。PR を作る前に別ブランチへ分けるか決める。
 
@@ -48,6 +48,7 @@ superwhisper の自動ペーストと pane への送信の両方が届き、同�
 - ユーザー作成の専用 mode: key `new-mode-1`、表示名 `voice_switch`、`autoPaste: false`。
 - Windows: `dictation.superwhisperMode`（表示名か key）。未設定は従来どおり。設定時は handoff 前に mode 切替・後に復帰。pane に送れたら終わり。送れなければ voice-switch がクリップボード経由で一度ペースト。
 - **本文なし（pane は当たったが `ExtractSendBody` が null）は paste しない**（`RouteDisposition.SkippedNoBody`）。全文フォールバック禁止。
+- **SendFailed（mode 設定時）**: paste するのは抽出本文だけ。mode 未設定時は従来どおり Superwhisper が全文を自動ペーストしうる。
 - Mac: Config にフィールドはあるが handoff 配線は未着手（Slice B2）。
 - Windows 実機での mode 切替・paste の再確認は未実施（box のみ）。
 
@@ -57,7 +58,13 @@ superwhisper の自動ペーストと pane への送信の両方が届き、同�
 - 21:43 のログでも `jev=off` だった。動いている exe が、キーのない環境から起動されたままの可能性が高い。
 - 対処は、トレイから終了して、エクスプローラーかスタートメニューから起動し直すこと。make から起動するなら `WSLENV=TYPESAFE_API_KEY PC=wsl make` とする。`WSLENV` を付ければ `Start-Process` の子プロセスまでキーが届くことは確認済み。
 
-### 4. その他
+### 4. RESEARCH hyp 2/3（Slice C/D）— コード反映済み・Mac 実機未検証
+
+- Slice C: Mac VAD に `rebaseFloor`（Windows `RebaseFloor`）を移植。`vad-selftest` / parity 静的検査。
+- Slice D: Mac `transcribe` に期限 `max(10, audioSeconds + 20)`（`transcribeDeadlineSeconds` / `TranscribeDeadline`）。タイムアウトは既存 `transcribe failed` 経路。Windows.Tests で式を検証。
+- **この box では Apple Speech を実行できない。Mac 実機ランタイムは未検証。ライブ Speech を主張しないこと。**
+
+### 5. その他
 
 - Swift は一度もビルドしていない。Mac で `make parity-test` を `--require-swift` 付きで実行するのが最初の確認。
 - Windows 版では、エージェント名の自動検出をしていない。照合するのはウィンドウ名、pane タイトル、実行中のコマンドだけ。Claude Code は実行中のコマンドが `node` に見えることがある。

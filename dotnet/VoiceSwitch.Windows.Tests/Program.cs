@@ -183,7 +183,8 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("pane route request body carries the catalog and none", () => Check(PaneRouteRequestBodyCarriesCatalog())),
     ("pane route log line names hits, pick, and reason", () => Check(PaneRouteLogLineNamesHitsPickAndReason())),
     ("pane route extracts the quoted send body like the shared fixture", PaneRouteExtractsSendBodyLikeFixture),
-    ("pane route skips send when the body is missing", () => Check(PaneRouteSkipsWhenSendBodyMissing()))
+    ("pane route skips send when the body is missing", () => Check(PaneRouteSkipsWhenSendBodyMissing())),
+    ("transcribe deadline is max(10, audioSeconds + 20)", () => Check(TranscribeDeadlineMatchesFormula()))
 };
 
 var failed = 0;
@@ -369,6 +370,24 @@ static bool PaneRouteSkipsWhenSendBodyMissing()
         && PaneRoute.Disposition(alreadySkipped, sent: false) == RouteDisposition.NotRouted
         && PaneRoute.LogLine(1, "off", without) == "tmux: hits=1 jev=off -> skip (no send body for %2; not sending)";
 }
+
+static bool TranscribeDeadlineMatchesFormula()
+{
+    // Same contract as Mac transcribeDeadlineSeconds / RESEARCH hyp 2.
+    // For non-negative audio, audio+20 is always >= 20; the max(10, …) floor only bites below -10 s.
+    if (TranscribeDeadline.Seconds(0) != 20) return false;
+    if (TranscribeDeadline.Seconds(5) != 25) return false;
+    if (TranscribeDeadline.Seconds(-15) != 10) return false;
+    if (Math.Abs(TranscribeDeadline.Seconds(0.5) - 20.5) > 1e-9) return false;
+    // 16 kHz 16-bit mono: 1 s = 32000 bytes = 16000 samples → deadline 21 s.
+    if (Math.Abs(TranscribeDeadline.SecondsFromPcmBytes(32000) - 21) > 1e-9) return false;
+    if (Math.Abs(TranscribeDeadline.SecondsFromSampleCount(16000) - 21) > 1e-9) return false;
+    if (TranscribeDeadline.SecondsFromPcmBytes(0) != 20) return false;
+    if (TranscribeDeadline.SecondsFromSampleCount(0) != 20) return false;
+    return true;
+}
+
+
 
 static bool Normalizes() =>
     TextMatching.Normalize(" 音声 入力。") == "音声入力";

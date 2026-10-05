@@ -274,6 +274,17 @@
         "file": "dotnet/VoiceSwitch.Windows/DictationRuntime.cs",
         "markers": ["micInUseBy(config.SkipWhileMicInUseBy", "is using the microphone", "MicInUse.By"]
       }
+    },
+    {
+      "id": "transcribe_deadline",
+      "macos": {
+        "file": "Sources/voice-switch/Platform.swift",
+        "markers": ["transcribeDeadlineSeconds", "max(10, audioSeconds + 20)"]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows.Core/TranscribeDeadline.cs",
+        "markers": ["TranscribeDeadline", "Math.Max(10, audioSeconds + 20)"]
+      }
     }
   ],
   "allowed_capability_gaps": [

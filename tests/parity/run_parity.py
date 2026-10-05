@@ -225,6 +225,7 @@ def check_static_call_chains(result: Result, repo: SourceTree) -> None:
     check_swift_cli_call_chain(result, repo)
     check_swift_runtime_call_chain(result, repo)
     check_swift_segmenter_rebase(result, repo)
+    check_transcribe_deadline(result, repo)
 
 
 def check_dictation_test_markers(result: Result, repo: SourceTree) -> None:
@@ -347,6 +348,55 @@ def check_swift_segmenter_rebase(result: Result, repo: SourceTree) -> None:
             "dictation vad: floor rebased",
             "if isHead { rebaseFloorAfterNoWake(&seg) }",
             "if isHead && start == nil",
+        ],
+    )
+
+
+
+def check_transcribe_deadline(result: Result, repo: SourceTree) -> None:
+    platform = repo.code("Sources/voice-switch/Platform.swift")
+    mac = repo.code("Sources/voice-switch/MacApp.swift")
+    core = repo.code("dotnet/VoiceSwitch.Windows.Core/TranscribeDeadline.cs")
+    runtime = repo.code("dotnet/VoiceSwitch.Windows/DictationRuntime.cs")
+    tests = repo.code("dotnet/VoiceSwitch.Windows.Tests/Program.cs")
+    require_substrings(
+        result,
+        "Swift transcribeDeadlineSeconds matches Windows max(10, audio + 20)",
+        platform,
+        [
+            "func transcribeDeadlineSeconds(audioSeconds: Double)",
+            "max(10, audioSeconds + 20)",
+        ],
+    )
+    require_substrings(
+        result,
+        "Swift MacApp wraps SpeechAnalyzer with the shared deadline",
+        mac,
+        [
+            "struct TranscribeTimeoutError",
+            "transcribeDeadlineSeconds(audioSeconds: Double(samples.count) / rate)",
+            "withThrowingTaskGroup(of: Transcript.self)",
+            "transcribeUnbounded",
+            "transcribe failed:",
+        ],
+    )
+    require_substrings(
+        result,
+        "Windows TranscribeDeadline helper and recognizer use the same formula",
+        core + "\n" + runtime,
+        [
+            "public static class TranscribeDeadline",
+            "Math.Max(10, audioSeconds + 20)",
+            "TranscribeDeadline.SecondsFromPcmBytes(pcm.Length)",
+        ],
+    )
+    require_substrings(
+        result,
+        "Windows.Tests covers the shared transcribe deadline formula",
+        tests,
+        [
+            "transcribe deadline is max(10, audioSeconds + 20)",
+            "TranscribeDeadlineMatchesFormula",
         ],
     )
 

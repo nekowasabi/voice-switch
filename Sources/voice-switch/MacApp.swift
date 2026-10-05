@@ -34,7 +34,37 @@ func convert(_ input: AVAudioPCMBuffer, with conv: AVAudioConverter, flush: Bool
     return out
 }
 
+struct TranscribeTimeoutError: Error, CustomStringConvertible {
+    let seconds: TimeInterval
+    var description: String { "timed out after \(Int(seconds.rounded(.up)))s" }
+}
+
+/// One-shot Apple Speech with the Windows-matching deadline (RESEARCH hyp 2).
+/// On timeout, throws `TranscribeTimeoutError` so callers take the existing `transcribe failed` path.
 func transcribe(_ samples: [Float], locale: Locale) async throws -> Transcript {
+    let limit = transcribeDeadlineSeconds(audioSeconds: Double(samples.count) / rate)
+    try await withThrowingTaskGroup(of: Transcript.self) { group in
+        group.addTask {
+            try await transcribeUnbounded(samples, locale: locale)
+        }
+        group.addTask {
+            try await Task.sleep(nanoseconds: UInt64(limit * 1_000_000_000))
+            throw TranscribeTimeoutError(seconds: limit)
+        }
+        do {
+            guard let result = try await group.next() else {
+                throw TranscribeTimeoutError(seconds: limit)
+            }
+            group.cancelAll()
+            return result
+        } catch {
+            group.cancelAll()
+            throw error
+        }
+    }
+}
+
+func transcribeUnbounded(_ samples: [Float], locale: Locale) async throws -> Transcript {
     let tr = SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [], attributeOptions: [.audioTimeRange])
     let an = SpeechAnalyzer(modules: [tr])
     var input = pcmBuffer(samples)
@@ -48,6 +78,7 @@ func transcribe(_ samples: [Float], locale: Locale) async throws -> Transcript {
     let collect = Task { () throws -> Transcript in
         var t = Transcript(runs: [])
         for try await r in tr.results {
+            try Task.checkCancellation()
             for run in r.text.runs {
                 let range = run.audioTimeRange
                 t.runs.append((String(r.text[run.range].characters), range?.start.seconds, range?.end.seconds))

@@ -48,7 +48,7 @@ If `dictation` is present:
 
 A wake word is ignored while an app in `skipWhileMicInUseBy` has the microphone open. Dictation is skipped when the frontmost bundle id is in `dictation.excludeBundleIDs`.
 
-Optional `dictation.superwhisperMode` (Windows; key or display name) selects a Superwhisper mode that turns auto-paste off for voice-switch dictations. Unset keeps the old behavior (Superwhisper may auto-paste). When set, voice-switch switches to that mode before handoff and restores the previous mode after; if the pane route did not send, voice-switch pastes once into the wake-time window. A pane that matched but had no extractable send body does not paste the full dictation. Mac wiring for this field is not in this branch yet.
+Optional `dictation.superwhisperMode` (Windows; key or display name) selects a Superwhisper mode that turns auto-paste off for voice-switch dictations. Unset keeps the old behavior (Superwhisper may auto-paste). When set, voice-switch switches to that mode before handoff and restores the previous mode after; if the pane route did not send, voice-switch pastes once into the wake-time window (SendFailed pastes the extracted body only, never the full dictation wrapper). A pane that matched but had no extractable send body does not paste the full dictation. Mac wiring for this field is not in this branch yet.
 
 The top-level `maxSeconds` (sample 2.5) caps a short wake-word utterance. It is not the dictation cap.
 
