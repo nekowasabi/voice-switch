@@ -587,6 +587,9 @@ def wait_node_pane():
     return None, f"node+claude not ready {last}"
 
 
+LIVE_SKIPPED = []
+
+
 def main():
     code = check_windows_no_body_no_paste()
     if code:
@@ -609,6 +612,11 @@ def main():
     code = check_resolve_body_fixture()
     if code:
         return code
+    if not Path("/proc").is_dir():
+        # Agent-name discovery walks /proc/*/environ, so the live tmux part cannot run on Mac.
+        print("SKIP live tmux proof: no /proc (Linux only)")
+        LIVE_SKIPPED.append(True)
+        return 0
     if os.path.exists(SOCK):
         return fail(f"socket already present {SOCK}")
     work = Path(tempfile.mkdtemp(prefix="voice-switch-claude-"))
@@ -728,7 +736,7 @@ if __name__ == "__main__":
         down = 0
         if os.path.exists(SOCK):
             down = stop_server()
-        elif status == 0:
+        elif status == 0 and not LIVE_SKIPPED:
             print("FAIL socket missing before cleanup", file=sys.stderr)
             down = 1
         if down:
