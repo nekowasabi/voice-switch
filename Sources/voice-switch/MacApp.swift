@@ -44,7 +44,7 @@ struct TranscribeTimeoutError: Error, CustomStringConvertible {
 /// cancelAll alone still waits for children; `transcribeUnbounded` hard-stops via cancelAndFinishNow.
 func transcribe(_ samples: [Float], locale: Locale) async throws -> Transcript {
     let limit = transcribeDeadlineSeconds(audioSeconds: Double(samples.count) / rate)
-    try await withThrowingTaskGroup(of: Transcript.self) { group in
+    return try await withThrowingTaskGroup(of: Transcript.self) { group in
         group.addTask {
             try await transcribeUnbounded(samples, locale: locale)
         }
