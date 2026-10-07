@@ -510,12 +510,12 @@ public sealed class WindowsDictationRuntime
         Log.Info($"dictation timing: startTimeoutMs={config.Dictation?.StartTimeoutMs ?? 3000} endSilenceMs={config.Dictation?.EndSilenceMs ?? 1200} hangoverMs={config.HangoverMs ?? 300} minSpeechMs={config.MinSpeechMs ?? 300} maxSeconds={config.Dictation?.MaxSeconds ?? config.MaxSeconds ?? 60} wakeReadings=\"{string.Join(',', config.Wakes().Select(wake => $"{wake.Text}={wake.Reading}"))}\"");
         if (DictationTimingGuard.ShouldWarnHighEndSilence(config.Dictation?.EndSilenceMs))
         {
-            Log.Info($"dictation timing: endSilenceMs unusually high ({config.Dictation?.EndSilenceMs}); example is 2400");
+            Log.Info($"dictation timing warn: endSilenceMs unusually high ({config.Dictation?.EndSilenceMs}); example is 2400");
         }
 
         if (DictationTimingGuard.ShouldWarnHighStartTimeout(config.Dictation?.StartTimeoutMs))
         {
-            Log.Info($"dictation timing: startTimeoutMs unusually high ({config.Dictation?.StartTimeoutMs}); example is 3000");
+            Log.Info($"dictation timing warn: startTimeoutMs unusually high ({config.Dictation?.StartTimeoutMs}); example is 3000");
         }
     }
 
