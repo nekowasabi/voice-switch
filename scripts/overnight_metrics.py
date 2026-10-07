@@ -3,6 +3,19 @@
 
 No behavior change to the product — harness only.
 Redacts: never prints API keys; default JSON is counts only (no text bodies).
+
+Notes on semantics (M1b):
+- empty_text_rate = empty among complete_count (missing text= OR blank strip).
+  empty_text_rate_scored keeps the older scored-only denom for comparison.
+- tmux_send_count / tmux_send_rate are decision-to-send (`-> send` on the
+  `tmux: hits=` line), NOT proof the pane received keys. Delivery failures
+  are counted separately when product logs them (pane-route builds):
+  `tmux: send-keys exited`, `tmux: send-keys failed to start`,
+  `dictation not delivered: send failed…`, `dictation not delivered: no target…`.
+  Older deployments may never emit those lines (counts stay 0).
+- Track C timing: hist + mode over all `dictation timing:` lines; *_last is
+  the final line only (not used as the sole reported value).
+- stt_ms p50/p90 use nearest-rank on sorted samples.
 """
 from __future__ import annotations
 
@@ -30,6 +43,24 @@ RE_TMUX_DISP = re.compile(r"->\s+(send|skip)\b(?:\s+%\d+)?\s*\(([^)]*)\)")
 RE_TIMING = re.compile(r"dictation timing:")
 RE_END_SILENCE = re.compile(r"\bendSilenceMs=(\d+)\b")
 RE_START_TIMEOUT = re.compile(r"\bstartTimeoutMs=(\d+)\b")
+# Delivery / post-decision (pane-route product logs; may be absent on older builds)
+RE_SEND_KEYS_EXITED = re.compile(r"tmux: send-keys exited\b")
+RE_SEND_KEYS_FAIL_START = re.compile(r"tmux: send-keys failed to start\b")
+RE_NOT_DELIVERED_SEND_FAILED = re.compile(
+    r"dictation not delivered: send failed"
+)
+RE_NOT_DELIVERED_NO_WINDOW = re.compile(
+    r"dictation not delivered: no target window"
+)
+
+NOTES = (
+    "tmux_send_count is decision-to-send (-> send on tmux: hits= line), "
+    "not arrived-at-pane. Delivery counters parse pane-route log lines "
+    "(send-keys exited / failed to start / not delivered); older logs may "
+    "have zeros. empty_text_rate uses complete_count; empty_text_rate_scored "
+    "uses text_scored_count. Timing hist/mode cover all timing lines; "
+    "endSilenceMs/startTimeoutMs alias *_last."
+)
 
 
 def percentile(sorted_vals: list[int], p: float) -> Optional[int]:
@@ -40,6 +71,14 @@ def percentile(sorted_vals: list[int], p: float) -> Optional[int]:
     # nearest-rank, 1-indexed style used in the plan's measured p50
     k = int(round((p / 100.0) * (len(sorted_vals) - 1)))
     return sorted_vals[k]
+
+
+def mode_of(hist: Counter[str]) -> Optional[int]:
+    """Most common value; on ties, first-seen wins (not last-wins)."""
+    if not hist:
+        return None
+    key, _ = hist.most_common(1)[0]
+    return int(key)
 
 
 def iter_lines(path: Path, tail: Optional[int]) -> Iterable[str]:
@@ -61,13 +100,20 @@ def parse_metrics(path: Path, tail: Optional[int] = None) -> dict[str, Any]:
     leading_wake_true = 0
     text_scored = 0
     empty_text_count = 0
+    empty_text_scored_count = 0
     wake_session_count = 0
     tmux_count = 0
     tmux_send_count = 0
     tmux_disposition: Counter[str] = Counter()
     jev_hist: Counter[str] = Counter()
-    end_silence: Optional[int] = None
-    start_timeout: Optional[int] = None
+    end_silence_hist: Counter[str] = Counter()
+    start_timeout_hist: Counter[str] = Counter()
+    end_silence_last: Optional[int] = None
+    start_timeout_last: Optional[int] = None
+    send_keys_exited = 0
+    send_keys_failed_start = 0
+    not_delivered_send_failed = 0
+    not_delivered_no_window = 0
     parse_errors = 0
     lines_scanned = 0
 
@@ -95,6 +141,10 @@ def parse_metrics(path: Path, tail: Optional[int] = None) -> dict[str, Any]:
                 text_scored += 1
                 if tm.group(1).strip() == "":
                     empty_text_count += 1
+                    empty_text_scored_count += 1
+            else:
+                # missing text= counts as empty among complete (plan Track A)
+                empty_text_count += 1
             continue
 
         if RE_WAKE_SESSION.search(line):
@@ -119,15 +169,35 @@ def parse_metrics(path: Path, tail: Optional[int] = None) -> dict[str, Any]:
                 parse_errors += 1
             continue
 
+        if RE_SEND_KEYS_EXITED.search(line):
+            send_keys_exited += 1
+            continue
+
+        if RE_SEND_KEYS_FAIL_START.search(line):
+            send_keys_failed_start += 1
+            continue
+
+        if RE_NOT_DELIVERED_SEND_FAILED.search(line):
+            not_delivered_send_failed += 1
+            continue
+
+        if RE_NOT_DELIVERED_NO_WINDOW.search(line):
+            not_delivered_no_window += 1
+            continue
+
         if RE_TIMING.search(line):
             es = RE_END_SILENCE.search(line)
             st = RE_START_TIMEOUT.search(line)
             if es:
-                end_silence = int(es.group(1))
+                val = int(es.group(1))
+                end_silence_last = val
+                end_silence_hist[str(val)] += 1
             else:
                 parse_errors += 1
             if st:
-                start_timeout = int(st.group(1))
+                val = int(st.group(1))
+                start_timeout_last = val
+                start_timeout_hist[str(val)] += 1
             else:
                 parse_errors += 1
             continue
@@ -138,15 +208,21 @@ def parse_metrics(path: Path, tail: Optional[int] = None) -> dict[str, Any]:
         (leading_wake_true / complete_count) if complete_count else None
     )
     empty_text_rate = (
-        (empty_text_count / text_scored) if text_scored else None
+        (empty_text_count / complete_count) if complete_count else None
+    )
+    empty_text_rate_scored = (
+        (empty_text_scored_count / text_scored) if text_scored else None
     )
     tmux_send_rate = (tmux_send_count / tmux_count) if tmux_count else None
+    end_silence_mode = mode_of(end_silence_hist)
+    start_timeout_mode = mode_of(start_timeout_hist)
 
     return {
         "path": str(path),
         "tail": tail,
         "lines_scanned": lines_scanned,
         "parse_errors": parse_errors,
+        "notes": NOTES,
         # Track A
         "stt_count": stt_count,
         "stt_ms_min": stt_sorted[0] if stt_sorted else None,
@@ -159,18 +235,29 @@ def parse_metrics(path: Path, tail: Optional[int] = None) -> dict[str, Any]:
         "text_scored_count": text_scored,
         "empty_text_count": empty_text_count,
         "empty_text_rate": empty_text_rate,
+        "empty_text_scored_count": empty_text_scored_count,
+        "empty_text_rate_scored": empty_text_rate_scored,
         "wake_session_count": wake_session_count,
-        # Track B
+        # Track B — decision-to-send + delivery failure counters
         "tmux_count": tmux_count,
         "tmux_send_count": tmux_send_count,
         "tmux_send_rate": tmux_send_rate,
         "tmux_disposition": dict(sorted(tmux_disposition.items())),
         "jev": dict(sorted(jev_hist.items())),
-        # Track C
-        "endSilenceMs": end_silence,
-        "startTimeoutMs": start_timeout,
+        "tmux_send_keys_exited_count": send_keys_exited,
+        "tmux_send_keys_failed_start_count": send_keys_failed_start,
+        "dictation_not_delivered_send_failed_count": not_delivered_send_failed,
+        "dictation_not_delivered_no_window_count": not_delivered_no_window,
+        # Track C — hist + mode; *_last / bare aliases are last-wins only
+        "endSilenceMs_hist": dict(sorted(end_silence_hist.items(), key=lambda kv: int(kv[0]))),
+        "startTimeoutMs_hist": dict(sorted(start_timeout_hist.items(), key=lambda kv: int(kv[0]))),
+        "endSilenceMs_mode": end_silence_mode,
+        "startTimeoutMs_mode": start_timeout_mode,
+        "endSilenceMs_last": end_silence_last,
+        "startTimeoutMs_last": start_timeout_last,
+        "endSilenceMs": end_silence_last,
+        "startTimeoutMs": start_timeout_last,
     }
-
 
 
 def self_test() -> int:
@@ -194,12 +281,23 @@ def self_test() -> int:
         "complete_count": 5,
         "leadingWake_true": 2,
         "text_scored_count": 4,
-        "empty_text_count": 2,
+        # empty = 2 blank text= + 1 missing text= → 3 among complete
+        "empty_text_count": 3,
+        "empty_text_scored_count": 2,
         "wake_session_count": 2,
         "tmux_count": 3,
         "tmux_send_count": 1,
+        "tmux_send_keys_exited_count": 1,
+        "tmux_send_keys_failed_start_count": 1,
+        "dictation_not_delivered_send_failed_count": 1,
+        "dictation_not_delivered_no_window_count": 1,
+        "endSilenceMs_last": 24000,
+        "startTimeoutMs_last": 30000,
         "endSilenceMs": 24000,
         "startTimeoutMs": 30000,
+        # mode: first-seen on tie → 1200 / 3000 (proves not last-wins-only)
+        "endSilenceMs_mode": 1200,
+        "startTimeoutMs_mode": 3000,
         "parse_errors": 0,
     }
     for k, want in checks.items():
@@ -217,13 +315,32 @@ def self_test() -> int:
     if m["jev"].get("none@1.00") != 1:
         failures.append(f"jev none: {m['jev']}")
 
+    # hist must include both timing values (not collapsed to last)
+    if m["endSilenceMs_hist"] != {"1200": 1, "24000": 1}:
+        failures.append(f"endSilenceMs_hist: {m['endSilenceMs_hist']}")
+    if m["startTimeoutMs_hist"] != {"3000": 1, "30000": 1}:
+        failures.append(f"startTimeoutMs_hist: {m['startTimeoutMs_hist']}")
+    # mode must not equal last when hist has an earlier value with equal count
+    if m["endSilenceMs_mode"] == m["endSilenceMs_last"] and m["endSilenceMs_hist"].get("1200") == 1:
+        # only fail if mode wrongly picked last while 1200 also has 1 —
+        # with first-seen tie-break mode should be 1200 ≠ 24000
+        if m["endSilenceMs_mode"] == 24000:
+            failures.append("endSilenceMs_mode last-wins (want first-seen on tie)")
+
     # rates
     if abs((m["leadingWake_rate"] or 0) - 0.4) > 1e-9:
         failures.append(f"leadingWake_rate: {m['leadingWake_rate']}")
-    if abs((m["empty_text_rate"] or 0) - 0.5) > 1e-9:
+    # empty_text_rate among complete: 3/5
+    if abs((m["empty_text_rate"] or 0) - 0.6) > 1e-9:
         failures.append(f"empty_text_rate: {m['empty_text_rate']}")
+    # scored-only: 2/4
+    if abs((m["empty_text_rate_scored"] or 0) - 0.5) > 1e-9:
+        failures.append(f"empty_text_rate_scored: {m['empty_text_rate_scored']}")
     if abs((m["tmux_send_rate"] or 0) - (1 / 3)) > 1e-9:
         failures.append(f"tmux_send_rate: {m['tmux_send_rate']}")
+
+    if not m.get("notes"):
+        failures.append("notes missing")
 
     if failures:
         print("SELF-TEST FAIL:", file=sys.stderr)
@@ -237,7 +354,13 @@ def self_test() -> int:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    p = argparse.ArgumentParser(description="voice-switch overnight metrics harness")
+    p = argparse.ArgumentParser(
+        description=(
+            "voice-switch overnight metrics harness. "
+            "tmux_send_* = decision-to-send; delivery failure counters are separate. "
+            "empty_text_rate uses complete_count. Timing reports hist+mode."
+        )
+    )
     p.add_argument(
         "--path",
         default=os.environ.get("VOICE_SWITCH_LOG", ""),

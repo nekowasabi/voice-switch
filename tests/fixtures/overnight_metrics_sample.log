@@ -3,6 +3,8 @@
 2026-10-07T10:00:02.0000000+09:00 dictation recognition: complete id=1 extent=ClosedUtterance range=0..1000 rejected=False leadingWake=True standaloneStop=False stopRange=- pendingBefore=1 text="インプット" conf=0.9
 2026-10-07T10:00:02.1000000+09:00 dictation session: wake-only id=1 source=0..1000
 2026-10-07T10:00:03.0000000+09:00 tmux: hits=1 jev=off -> send %2 (unique hit)
+2026-10-07T10:00:03.0500000+09:00 tmux: send-keys exited 1
+2026-10-07T10:00:03.1000000+09:00 dictation not delivered: send failed and no body to paste
 2026-10-07T10:00:10.0000000+09:00 dictation recognition: stt id=2 ms=200 audioMs=800
 2026-10-07T10:00:11.0000000+09:00 dictation recognition: complete id=2 extent=ClosedUtterance range=1000..2000 rejected=False leadingWake=False standaloneStop=False stopRange=- pendingBefore=1 text="" conf=-
 2026-10-07T10:00:20.0000000+09:00 dictation recognition: stt id=3 ms=300 audioMs=900
@@ -13,4 +15,6 @@
 2026-10-07T10:00:32.0000000+09:00 tmux: hits=0 jev=off -> skip (no pane matched)
 2026-10-07T10:00:40.0000000+09:00 dictation recognition: complete id=5 extent=ClosedUtterance range=4000..5000 rejected=False leadingWake=False standaloneStop=False stopRange=- pendingBefore=1
 2026-10-07T10:00:41.0000000+09:00 tmux: hits=0 jev=none@1.00 -> skip (no pane matched)
+2026-10-07T10:00:42.0000000+09:00 tmux: send-keys failed to start: Access denied
+2026-10-07T10:00:43.0000000+09:00 dictation not delivered: no target window to paste into
 2026-10-07T10:00:50.0000000+09:00 dictation timing: startTimeoutMs=30000 endSilenceMs=24000 hangoverMs=300 minSpeechMs=300 maxSeconds=600 wakeReadings="インプット=いんぷっと"
