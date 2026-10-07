@@ -567,14 +567,15 @@ static bool DictationWakeReadingRecoversNearHomophones()
         && DictationBoundaries.LeadingWake(wakeThenFuzzy, wakes) == new WakePrefix(4000, 4000);
 }
 
-// H2b: live miss 縫製入力 as whole closed at d=2 (wake-only). d=2 is whole-utterance only — not a prefix of a longer body,
-// and not a d=2 prefix hit on other long wakes (ほうせいにはいる… → 音声に入る). ShortWake stays ≤1.
+// H2c: live miss 縫製入力 as whole closed at d=2 (wake-only). d=2 needs reading len≥MinReadingDistance2=8 and
+// whole utterance — not a prefix, and not len 5–7 wakes (いんぷっと FP: 妊婦と/インクと). ShortWake stays ≤1.
 static bool DictationLongWakeReadingRecoversDistance2ClosedHosei()
 {
     var longWake = WakeWord.From("音声入力", "おんせいにゅうりょく");
     var hairuWake = WakeWord.From("音声に入る", "おんせいにはいる");
     var shortWake = WakeWord.From("おんせい");
-    WakeWord[] wakes = [longWake, hairuWake, shortWake];
+    var inputWake = WakeWord.From("インプット", "いんぷっと"); // len=5: H2b ambient FP at d=2
+    WakeWord[] wakes = [longWake, hairuWake, shortWake, inputWake];
     var hosei = Recognized(1, RecognitionExtent.ClosedUtterance, 0, 10000, "縫製入力", false,
         Run("縫製", 0, 4000, "ほうせい"), Run("入力", 4000, 10000, "にゅうりょく"));
     var hoseiSpaced = Recognized(2, RecognitionExtent.ClosedUtterance, 0, 10000, "縫製入力", false,
@@ -588,6 +589,15 @@ static bool DictationLongWakeReadingRecoversDistance2ClosedHosei()
     var hoseiHairuThenBody = Recognized(5, RecognitionExtent.ClosedUtterance, 0, 14000, "縫製に入る明日", false,
         Run("縫製", 0, 4000, "ほうせい"), Run("に", 4000, 5000, "に"), Run("入", 5000, 7000, "はい"), Run("る", 7000, 8000, "る"),
         Run("明日", 11000, 14000, "あした"));
+    // H2c: いんぷっと (len=5) must not accept d=2 whole closed (妊婦と / インクと from H4 replay).
+    var ninputo = Recognized(6, RecognitionExtent.ClosedUtterance, 0, 5000, "妊婦と", false,
+        Run("妊婦", 0, 3500, "にんぷ"), Run("と", 3500, 5000, "と"));
+    var inkuto = Recognized(7, RecognitionExtent.ClosedUtterance, 0, 5000, "インクと", false,
+        Run("インク", 0, 3500, "いんく"), Run("と", 3500, 5000, "と"));
+    var ninputoFused = Recognized(8, RecognitionExtent.ClosedUtterance, 0, 5000, "にんぷと", false,
+        Run("にんぷと", 0, 5000, "にんぷと"));
+    var inkutoFused = Recognized(9, RecognitionExtent.ClosedUtterance, 0, 5000, "いんくと", false,
+        Run("いんくと", 0, 5000, "いんくと"));
     var hit = DictationBoundaries.LeadingWake(hosei, wakes);
     var spaced = DictationBoundaries.LeadingWake(hoseiSpaced, wakes);
     return hit == new WakePrefix(10000, null, longWake, 2)
@@ -598,7 +608,13 @@ static bool DictationLongWakeReadingRecoversDistance2ClosedHosei()
         && DictationBoundaries.LeadingWake(hoseiShortOnly, wakes) is null
         && DictationBoundaries.LeadingWake(hoseiThenBody, wakes) is null
         && DictationBoundaries.LeadingWake(hoseiHairuThenBody, [hairuWake]) is null
-        && DictationBoundaries.LeadingWake(hoseiHairuThenBody, wakes) is null;
+        && DictationBoundaries.LeadingWake(hoseiHairuThenBody, wakes) is null
+        && DictationBoundaries.LeadingWake(ninputo, [inputWake]) is null
+        && DictationBoundaries.LeadingWake(inkuto, [inputWake]) is null
+        && DictationBoundaries.LeadingWake(ninputoFused, [inputWake]) is null
+        && DictationBoundaries.LeadingWake(inkutoFused, [inputWake]) is null
+        && DictationBoundaries.LeadingWake(ninputo, wakes) is null
+        && DictationBoundaries.LeadingWake(inkuto, wakes) is null;
 }
 
 static bool DictationKanaWakeMatchesKanjiThroughReading()
