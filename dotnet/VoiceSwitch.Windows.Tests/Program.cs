@@ -357,14 +357,16 @@ static bool PaneRouteScanLogCapsCandAndTruncatesKey()
         panes.Add(new PaneLabel($"%{i}", "win", $"title with spaces {i} and:colon", i == 0 ? "bash" : "node"));
     }
 
-    var line = PaneRoute.ScanLog(panes, "縫製入力ですよもっと長い本文");
+    // 20 kana: key must truncate to 16 and drop the tail (not the full body).
+    const string longKey = "あいうえおかきくけこさしすせそたちつてと";
+    var line = PaneRoute.ScanLog(panes, longKey);
     var empty = PaneRoute.ScanLog(Array.Empty<PaneLabel>(), "x");
-    // Cap 8, sanitize title, key ≤16 (drops 本文), empty catalog, LogLine unchanged.
+    // Cap 8, sanitize title, key ≤16, empty catalog, LogLine unchanged.
     return line.StartsWith("tmux: scan panes=10 cand=[%0:bash:title_with_spaces_0_and_ ", StringComparison.Ordinal)
         && line.Contains("%7:node:title_with_spaces_7_an", StringComparison.Ordinal)
         && !line.Contains("%8:", StringComparison.Ordinal)
-        && line.EndsWith("] key=\"縫製入力ですよもっと長い\"", StringComparison.Ordinal)
-        && !line.Contains("本文", StringComparison.Ordinal)
+        && line.EndsWith("] key=\"あいうえおかきくけこさしすせ\"", StringComparison.Ordinal)
+        && !line.Contains("そたちつてと", StringComparison.Ordinal)
         && empty == "tmux: scan panes=0 cand=[] key=\"x\""
         && PaneRoute.LogLine(0, "off", new RouteDecision(null, "no pane matched")) == "tmux: hits=0 jev=off body=- -> skip (no pane matched)";
 }
