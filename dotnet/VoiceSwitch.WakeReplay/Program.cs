@@ -97,6 +97,7 @@ static int RunSelfTest()
     // - 温泉 alone → hit short おんせい (d=1 whole closed); excluded from long+short+d3 examples (!hit)
     // - ほうせいにはいるよ prefix body → no d=2 prefix hit on main
     // - 音声入力 exact → hit; excluded from near-miss examples
+    // - id=100 old-format (text= conf= grammar= but no reading=) → scored ambient; must NOT be the cutover
     // - id=101/102 old-build (before first reading= line): Closed no-text lw=True, PrefixHead no-text lw=False
     // - PrefixHead no-text leadingWake=False → unscored (H8 PrefixHead class)
     // - PrefixHead no-text leadingWake=True → unscored_live_true (H4b ±2% path)
@@ -111,7 +112,7 @@ static int RunSelfTest()
         }
     }
 
-    Expect("scored", report.Scored == 9, $"got {report.Scored}");
+    Expect("scored", report.Scored == 10, $"got {report.Scored}");
     Expect("live_true", report.LiveTrue == 4, $"got {report.LiveTrue}");
     Expect("unscored_live_true", report.UnscoredLiveTrue == 2, $"got {report.UnscoredLiveTrue}");
     Expect("wake_hits", report.WakeHits == 2, $"got {report.WakeHits}");
@@ -197,6 +198,10 @@ static int RunSelfTest()
     // text-less row never carries reading/alts → every unscored_live_true row is unrecoverable on replay.
     // Cutover = first complete line carrying reading= (current heard-block format); rows before it are old-build.
     // Fixture: old = id=101 Closed lw=T + id=102 PrefixHead lw=F; current = id=6 PH lw=F, id=7 PH lw=T, id=12 Closed lw=F.
+    // id=100 (line 2) is the old text=-without-reading= format, so a cutover keyed on text= would land on line 2
+    // and turn id=101/102 into current-build → cutover_line / old_* expectations fail.
+    // id=12 (post-cutover ClosedUtterance without text=) is SYNTHETIC: the current DictationRuntime always logs
+    // text= for ClosedUtterance; it only exercises the current-build closed_no_text counter.
     Expect("unscored_closed_no_text", report.UnscoredClosedNoText == 2, $"got {report.UnscoredClosedNoText}");
     Expect("unscored_prefix_head", report.UnscoredPrefixHead == 3, $"got {report.UnscoredPrefixHead}");
     Expect("unscored_other", report.UnscoredOther == 0, $"got {report.UnscoredOther}");
@@ -208,7 +213,10 @@ static int RunSelfTest()
     Expect("unscored_with_alts", report.UnscoredWithAlts == 0, $"got {report.UnscoredWithAlts}");
     Expect("unscored_live_true_unrecoverable", report.UnscoredLiveTrueUnrecoverable == report.UnscoredLiveTrue,
         $"got {report.UnscoredLiveTrueUnrecoverable} vs {report.UnscoredLiveTrue}");
-    Expect("cutover_line", report.CutoverLine == 4, $"got {report.CutoverLine}");
+    Expect("cutover_line", report.CutoverLine == 5, $"got {report.CutoverLine}");
+    Expect("build_split_known", report.BuildSplitKnown, "cutover must be found on fixture");
+    Expect("post_cutover_text_without_reading", report.PostCutoverTextWithoutReading == 0,
+        $"got {report.PostCutoverTextWithoutReading}");
     Expect("cutover_ts", report.CutoverTimestamp == "2026-10-07T12:00:01.0000000+09:00", $"got {report.CutoverTimestamp}");
     Expect("old_unscored_closed_no_text", report.OldUnscoredClosedNoText == 1, $"got {report.OldUnscoredClosedNoText}");
     Expect("old_unscored_prefix_head", report.OldUnscoredPrefixHead == 1, $"got {report.OldUnscoredPrefixHead}");
@@ -221,6 +229,51 @@ static int RunSelfTest()
     Expect("old_plus_current_live_true", report.OldLiveTrueClosedNoText + report.OldLiveTruePrefixHead
         + report.CurrentLiveTrueClosedNoText + report.CurrentLiveTruePrefixHead == report.UnscoredLiveTrue,
         $"split != {report.UnscoredLiveTrue}");
+
+    // H8 soft: no reading= line anywhere → cutover unknown, build split not reported (not all-old).
+    // Also: a post-cutover text= line without reading= is counted by the sanity counter, while an
+    // unterminated text=" (transcript newline split the line) is excluded.
+    {
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"wake-replay-selftest-{Environment.ProcessId}");
+        Directory.CreateDirectory(tmpDir);
+        try
+        {
+            const string pre = "dictation recognition: complete";
+            const string tail = "rejected=False standaloneStop=False stopRange=- pendingBefore=1";
+            var noCut = Path.Combine(tmpDir, "no_cutover.log");
+            File.WriteAllLines(noCut, new[]
+            {
+                $"2026-10-07T12:00:00.0000000+09:00 {pre} id=1 extent=ClosedUtterance range=0..100 leadingWake=True {tail}",
+                $"2026-10-07T12:00:01.0000000+09:00 {pre} id=2 extent=ClosedUtterance range=100..200 leadingWake=False {tail} text=\"ありがとう\" conf=0.40 grammar=dictation",
+            }, new UTF8Encoding(false));
+            var r0 = Replay.Run(noCut, "self-test-no-cutover", gainedCap: 40, examplesCap: 40);
+            Expect("no_cutover_line_zero", r0.CutoverLine == 0, $"got {r0.CutoverLine}");
+            Expect("no_cutover_split_unknown", !r0.BuildSplitKnown, "split must be unknown without reading=");
+            var sw0 = new StringWriter();
+            r0.WriteHuman(sw0);
+            var h0 = sw0.ToString();
+            Expect("no_cutover_human_unknown", h0.Contains("build=unknown", StringComparison.Ordinal), "missing build=unknown");
+            Expect("no_cutover_human_no_old_build", !h0.Contains("old_build", StringComparison.Ordinal), "old_build printed without cutover");
+            Expect("no_cutover_json_unknown", r0.ToJson().Contains("\"build_split\":\"unknown\"", StringComparison.Ordinal), "json build_split");
+
+            var sanity = Path.Combine(tmpDir, "sanity.log");
+            File.WriteAllLines(sanity, new[]
+            {
+                $"2026-10-07T12:00:00.0000000+09:00 {pre} id=1 extent=ClosedUtterance range=0..100 leadingWake=False {tail} text=\"はい\" conf=0.40 grammar=dictation reading=\"はい\"",
+                $"2026-10-07T12:00:01.0000000+09:00 {pre} id=2 extent=ClosedUtterance range=100..200 leadingWake=False {tail} text=\"いいえ\" conf=0.40 grammar=dictation",
+                $"2026-10-07T12:00:02.0000000+09:00 {pre} id=3 extent=PrefixHead range=200..300 leadingWake=False {tail} text=\"改行の",
+                "前半\" conf=0.36 grammar=dictation reading=\"かいぎょう の ぜんはん\"",
+            }, new UTF8Encoding(false));
+            var r1 = Replay.Run(sanity, "self-test-sanity", gainedCap: 40, examplesCap: 40);
+            Expect("sanity_cutover_line", r1.CutoverLine == 1, $"got {r1.CutoverLine}");
+            Expect("sanity_post_cutover_text_without_reading", r1.PostCutoverTextWithoutReading == 1,
+                $"got {r1.PostCutoverTextWithoutReading} (id=2 counts; unterminated id=3 excluded)");
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
+    }
 
     // H4b LooksIntentional goldens — keep/revert not locked only to substring heuristic.
     Expect("intentional_housei", Replay.LooksIntentional("縫製入力", "ほうせい にゅうりょく"), "縫製入力 must be intentional");
@@ -370,6 +423,8 @@ internal static class Replay
         var currentUnscoredPrefixHead = 0;
         var currentLiveTrueClosedNoText = 0;
         var currentLiveTruePrefixHead = 0;
+        // Sanity: after the cutover every terminated text= line should also carry reading=.
+        var postCutoverTextWithoutReading = 0;
         var lineNo = 0;
         const int MinExampleWakeReading = 10;
 
@@ -396,6 +451,16 @@ internal static class Replay
             }
 
             var currentBuild = cutoverLine != 0;
+            if (currentBuild && !line.Contains(" reading=\"", StringComparison.Ordinal))
+            {
+                var t = line.IndexOf(" text=\"", StringComparison.Ordinal);
+                // Unterminated text=" means the transcript contained a newline and the line was split; skip it.
+                if (t >= 0 && line.IndexOf('"', t + 7) >= 0)
+                {
+                    postCutoverTextWithoutReading++;
+                }
+            }
+
             var parsed = ParseComplete(line);
             if (parsed is null)
             {
@@ -682,7 +747,8 @@ internal static class Replay
             CurrentUnscoredClosedNoText: currentUnscoredClosedNoText,
             CurrentUnscoredPrefixHead: currentUnscoredPrefixHead,
             CurrentLiveTrueClosedNoText: currentLiveTrueClosedNoText,
-            CurrentLiveTruePrefixHead: currentLiveTruePrefixHead);
+            CurrentLiveTruePrefixHead: currentLiveTruePrefixHead,
+            PostCutoverTextWithoutReading: postCutoverTextWithoutReading);
     }
 
     // H4b: explicit ambient/intentional goldens first so keep/revert is not locked only to
@@ -888,8 +954,12 @@ internal sealed record Report(
     int CurrentUnscoredClosedNoText,
     int CurrentUnscoredPrefixHead,
     int CurrentLiveTrueClosedNoText,
-    int CurrentLiveTruePrefixHead)
+    int CurrentLiveTruePrefixHead,
+    int PostCutoverTextWithoutReading)
 {
+    // No reading= line at all → the old/current split is unknown (not "everything is old").
+    public bool BuildSplitKnown => CutoverLine != 0;
+
 
     public void WriteHuman(TextWriter w)
     {
@@ -912,11 +982,17 @@ internal sealed record Report(
         w.WriteLine($"unscored_live_true_class closed_no_text={UnscoredLiveTrueClosedNoText} PrefixHead={UnscoredLiveTruePrefixHead}");
         w.WriteLine($"unscored_meta with_reading={UnscoredWithReading} with_alts={UnscoredWithAlts} (product writes reading=/alts= only alongside text=)");
         w.WriteLine($"{UnscoredLiveTrueUnrecoverable} unrecoverable: ログに text/reading/alts がない (unscored_live_true_unrecoverable={UnscoredLiveTrueUnrecoverable} of {UnscoredLiveTrue})");
-        w.WriteLine(CutoverLine == 0
-            ? "cutover rule=first complete line with reading= (current DictationRuntime heard-block format) found=none → all rows old-build"
-            : $"cutover rule=first complete line with reading= (current DictationRuntime heard-block format) line={CutoverLine} ts={CutoverTimestamp}");
-        w.WriteLine($"old_build (before cutover) unscored closed_no_text={OldUnscoredClosedNoText} PrefixHead={OldUnscoredPrefixHead} live_true closed_no_text={OldLiveTrueClosedNoText} PrefixHead={OldLiveTruePrefixHead} total={OldLiveTrueClosedNoText + OldLiveTruePrefixHead}");
-        w.WriteLine($"current_build (from cutover) unscored closed_no_text={CurrentUnscoredClosedNoText} PrefixHead={CurrentUnscoredPrefixHead} live_true closed_no_text={CurrentLiveTrueClosedNoText} PrefixHead={CurrentLiveTruePrefixHead} total={CurrentLiveTrueClosedNoText + CurrentLiveTruePrefixHead}");
+        if (!BuildSplitKnown)
+        {
+            w.WriteLine("cutover rule=first complete line with reading= (current DictationRuntime heard-block format) found=none → build=unknown (old/current not split)");
+        }
+        else
+        {
+            w.WriteLine($"cutover rule=first complete line with reading= (current DictationRuntime heard-block format) line={CutoverLine} ts={CutoverTimestamp}");
+            w.WriteLine($"cutover_sanity post_cutover_text_without_reading={PostCutoverTextWithoutReading} (terminated text= lines after cutover lacking reading=; expect 0)");
+            w.WriteLine($"old_build (before cutover) unscored closed_no_text={OldUnscoredClosedNoText} PrefixHead={OldUnscoredPrefixHead} live_true closed_no_text={OldLiveTrueClosedNoText} PrefixHead={OldLiveTruePrefixHead} total={OldLiveTrueClosedNoText + OldLiveTruePrefixHead}");
+            w.WriteLine($"current_build (from cutover) unscored closed_no_text={CurrentUnscoredClosedNoText} PrefixHead={CurrentUnscoredPrefixHead} live_true closed_no_text={CurrentLiveTrueClosedNoText} PrefixHead={CurrentLiveTruePrefixHead} total={CurrentLiveTrueClosedNoText + CurrentLiveTruePrefixHead}");
+        }
         w.WriteLine($"agreed_true={AgreedTrue} agreed_false={AgreedFalse} gained={Gained} lost={Lost}");
         w.WriteLine($"gained_intentional={IntentionalGained} gained_ambient={AmbientGained}");
         w.WriteLine("near_miss_by_distance:");
@@ -988,15 +1064,20 @@ internal sealed record Report(
         Num("unscored_live_true_prefix_head", UnscoredLiveTruePrefixHead);
         Num("unscored_live_true_unrecoverable", UnscoredLiveTrueUnrecoverable);
         Num("cutover_line", CutoverLine);
-        Num("old_build_unscored_closed_no_text", OldUnscoredClosedNoText);
-        Num("old_build_unscored_prefix_head", OldUnscoredPrefixHead);
-        Num("old_build_live_true_closed_no_text", OldLiveTrueClosedNoText);
-        Num("old_build_live_true_prefix_head", OldLiveTruePrefixHead);
-        Num("current_build_unscored_closed_no_text", CurrentUnscoredClosedNoText);
-        Num("current_build_unscored_prefix_head", CurrentUnscoredPrefixHead);
-        Num("current_build_live_true_closed_no_text", CurrentLiveTrueClosedNoText);
-        Num("current_build_live_true_prefix_head", CurrentLiveTruePrefixHead);
-        sb.Append(CultureInfo.InvariantCulture, $"\"cutover_ts\":\"{Escape(CutoverTimestamp ?? "")}\",");
+        sb.Append(BuildSplitKnown ? "\"build_split\":\"known\"," : "\"build_split\":\"unknown\",");
+        if (BuildSplitKnown)
+        {
+            Num("old_build_unscored_closed_no_text", OldUnscoredClosedNoText);
+            Num("old_build_unscored_prefix_head", OldUnscoredPrefixHead);
+            Num("old_build_live_true_closed_no_text", OldLiveTrueClosedNoText);
+            Num("old_build_live_true_prefix_head", OldLiveTruePrefixHead);
+            Num("current_build_unscored_closed_no_text", CurrentUnscoredClosedNoText);
+            Num("current_build_unscored_prefix_head", CurrentUnscoredPrefixHead);
+            Num("current_build_live_true_closed_no_text", CurrentLiveTrueClosedNoText);
+            Num("current_build_live_true_prefix_head", CurrentLiveTruePrefixHead);
+            sb.Append(CultureInfo.InvariantCulture, $"\"cutover_ts\":\"{Escape(CutoverTimestamp ?? "")}\",");
+            Num("post_cutover_text_without_reading", PostCutoverTextWithoutReading);
+        }
         sb.Append("\"cutover_rule\":\"first complete line with reading=\",");
         sb.Append(CultureInfo.InvariantCulture, $"\"label\":\"{Escape(Label)}\",");
         sb.Append("\"gained_readings\":[");

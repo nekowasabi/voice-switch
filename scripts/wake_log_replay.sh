@@ -76,6 +76,14 @@ if [[ "${1:-}" == "--self-test-restore" ]]; then
   exit $?
 fi
 
+# Reject unknown flags so e.g. `--self-test` is never treated as a log path (would pollute overnight artifacts).
+for arg in "$@"; do
+  if [[ "$arg" == --* ]]; then
+    echo "unknown flag: $arg (usage: $0 [LOG] [OUT_DIR] | --self-test-restore)" >&2
+    exit 2
+  fi
+done
+
 LOG="${1:-/workspace/voice-switch-overnight/voice-switch.log}"
 OUT_DIR="${2:-/workspace/voice-switch-overnight}"
 
