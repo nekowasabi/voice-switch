@@ -24,6 +24,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -341,6 +342,32 @@ def self_test() -> int:
 
     if not m.get("notes"):
         failures.append("notes missing")
+
+    # warn lines must not share the Track C `dictation timing:` prefix (parse poison)
+    baseline = {
+        "parse_errors": m["parse_errors"],
+        "endSilenceMs_hist": dict(m["endSilenceMs_hist"]),
+        "startTimeoutMs_hist": dict(m["startTimeoutMs_hist"]),
+        "endSilenceMs_mode": m["endSilenceMs_mode"],
+        "startTimeoutMs_mode": m["startTimeoutMs_mode"],
+        "endSilenceMs_last": m["endSilenceMs_last"],
+        "startTimeoutMs_last": m["startTimeoutMs_last"],
+        "endSilenceMs": m["endSilenceMs"],
+        "startTimeoutMs": m["startTimeoutMs"],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        polluted = Path(tmp) / "overnight_metrics_warn.log"
+        polluted.write_text(
+            FIXTURE.read_text(encoding="utf-8")
+            + "dictation timing warn: endSilenceMs unusually high (24000); example is 2400\n"
+            + "dictation timing warn: startTimeoutMs unusually high (30000); example is 3000\n",
+            encoding="utf-8",
+        )
+        w = parse_metrics(polluted, tail=None)
+    for k, want in baseline.items():
+        got = w.get(k)
+        if got != want:
+            failures.append(f"warn-prefix poison {k}: got={got!r} want={want!r}")
 
     if failures:
         print("SELF-TEST FAIL:", file=sys.stderr)
