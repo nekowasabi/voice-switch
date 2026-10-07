@@ -23,16 +23,96 @@ struct SegmenterFixture: Decodable {
     var head: Spec
 }
 
+struct PaneRouteFixture: Decodable {
+    struct Pane: Decodable {
+        var id: String
+        var window: String
+        var title: String
+        var command: String
+    }
+
+    struct Match: Decodable {
+        var name: String
+        var dictation: String
+        var agents: [String: [String]]
+        var hits: [String]
+    }
+
+    struct Pick: Decodable {
+        var pane: String?
+        var confidence: Double
+    }
+
+    struct Policy: Decodable {
+        var name: String
+        var hits: [String]
+        var pick: Pick?
+        var send: String?
+        var reason: String
+    }
+
+    struct Response: Decodable {
+        var name: String
+        var catalog: [String]
+        var body: String
+        var pick: Pick?
+    }
+
+    struct Extract: Decodable {
+        var name: String
+        var dictation: String
+        var body: String?
+    }
+
+    struct Candidates: Decodable {
+        var name: String
+        var dictation: String
+        var labels: [String]
+        var candidates: [String]
+    }
+
+    struct BodyPick: Decodable {
+        var choice: String?
+        var confidence: Double
+    }
+
+    struct BodyResponse: Decodable {
+        var name: String
+        var catalog: [String]
+        var body: String
+        var pick: BodyPick?
+    }
+
+    struct ResolveBody: Decodable {
+        var name: String
+        var dictation: String
+        var labels: [String]
+        var pick: BodyPick?
+        var body: String?
+        var reason: String
+    }
+
+    var catalog: [Pane]
+    var match: [Match]
+    var policy: [Policy]
+    var jev_responses: [Response]
+    var extract: [Extract]
+    var candidates: [Candidates]
+    var body_jev_responses: [BodyResponse]
+    var resolve_body: [ResolveBody]
+}
+
 var failures: [String] = []
 let args = CommandLine.arguments
-guard args.count == 3 else {
-    FileHandle.standardError.write(Data("usage: swift-parity text_matching.json segmenter.json\n".utf8))
+guard args.count == 4 else {
+    FileHandle.standardError.write(Data("usage: swift-parity text_matching.json segmenter.json pane_route.json\n".utf8))
     exit(2)
 }
 
 let decoder = JSONDecoder()
 let textFixture = try decoder.decode(TextFixture.self, from: Data(contentsOf: URL(fileURLWithPath: args[1])))
 let segmenterFixture = try decoder.decode(SegmenterFixture.self, from: Data(contentsOf: URL(fileURLWithPath: args[2])))
+let paneFixture = try decoder.decode(PaneRouteFixture.self, from: Data(contentsOf: URL(fileURLWithPath: args[3])))
 
 for item in textFixture.normalization {
     let actual = normalize(item.input)
@@ -52,8 +132,49 @@ let segmenterConfig = Config(
 checkSegmenter(segmenterFixture.selftest, config: segmenterConfig)
 checkSegmenter(segmenterFixture.head, config: segmenterConfig)
 
+let panes = paneFixture.catalog.map { PaneLabel(id: $0.id, window: $0.window, title: $0.title, command: $0.command) }
+for item in paneFixture.match {
+    let actual = matchingPanes(item.dictation, panes, agents: item.agents).map { $0.id }
+    check(actual == item.hits, "pane match \(item.name) expected=\(item.hits) actual=\(actual)")
+}
+for item in paneFixture.policy {
+    let hits = item.hits.map { PaneLabel(id: $0, window: "", title: "", command: "") }
+    let pick = item.pick.map { JevPick(pane: $0.pane, confidence: $0.confidence) }
+    let decision = decideRoute(hits, pick)
+    check(decision.pane == item.send && decision.reason == item.reason,
+          "pane policy \(item.name) expected=\(item.send ?? "nil") (\(item.reason)) actual=\(decision.pane ?? "nil") (\(decision.reason))")
+}
+for item in paneFixture.jev_responses {
+    let actual = parseJevPick(Data(item.body.utf8), catalog: item.catalog)
+    let expected = item.pick.map { JevPick(pane: $0.pane, confidence: $0.confidence) }
+    check(actual == expected, "jev parse \(item.name)")
+}
+for item in paneFixture.extract {
+    let actual = extractSendBody(item.dictation)
+    check(actual == item.body, "pane extract \(item.name) expected=\(item.body ?? "nil") actual=\(actual ?? "nil")")
+}
+for item in paneFixture.candidates {
+    let actual = sendBodyCandidates(item.dictation, labels: item.labels)
+    check(actual == item.candidates, "pane candidates \(item.name) expected=\(item.candidates) actual=\(actual)")
+}
+for item in paneFixture.body_jev_responses {
+    let actual = parseJevBodyPick(Data(item.body.utf8), catalog: item.catalog)
+    let expected = item.pick.map { JevBodyPick(choice: $0.choice, confidence: $0.confidence) }
+    check(actual == expected, "body jev parse \(item.name)")
+}
+for item in paneFixture.resolve_body {
+    let pick = item.pick.map { JevBodyPick(choice: $0.choice, confidence: $0.confidence) }
+    let actual = resolveSendBody(item.dictation, labels: item.labels, bodyPick: pick)
+    check(actual.body == item.body && actual.reason == item.reason,
+          "resolve body \(item.name) expected=\(item.body ?? "nil") (\(item.reason)) actual=\(actual.body ?? "nil") (\(actual.reason))")
+}
+
 if failures.isEmpty {
     print("PASS behavior fixtures")
+    print("PASS pane route fixtures")
+    print("PASS pane extract fixtures")
+    print("PASS pane candidates fixtures")
+    print("PASS pane body resolve fixtures")
 } else {
     for failure in failures {
         FileHandle.standardError.write(Data("FAIL \(failure)\n".utf8))

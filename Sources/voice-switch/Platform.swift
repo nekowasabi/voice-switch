@@ -89,3 +89,10 @@ enum Platform {
         #endif
     }
 }
+
+
+/// Wall-clock seconds for one STT call: max(10, audioSeconds + 20).
+/// Same formula as Windows `TranscribeDeadline.Seconds` / RESEARCH hyp 2.
+func transcribeDeadlineSeconds(audioSeconds: Double) -> TimeInterval {
+    max(10, audioSeconds + 20)
+}
