@@ -8,3 +8,4 @@
 2026-10-07T12:00:07.0000000+09:00 dictation recognition: complete id=7 extent=PrefixHead range=9000..12000 rejected=False leadingWake=True standaloneStop=False stopRange=- pendingBefore=1
 2026-10-07T12:00:08.0000000+09:00 dictation recognition: complete id=8 extent=ClosedUtterance range=12000..13000 rejected=False leadingWake=False standaloneStop=False stopRange=- pendingBefore=1 text="妊婦と" conf=0.40 grammar=dictation reading="にんぷ と"
 2026-10-07T12:00:09.0000000+09:00 dictation recognition: complete id=9 extent=ClosedUtterance range=13000..14000 rejected=False leadingWake=False standaloneStop=False stopRange=- pendingBefore=1 text="インクと" conf=0.40 grammar=dictation reading="いんく と"
+2026-10-07T12:00:10.0000000+09:00 dictation recognition: complete id=10 extent=ClosedUtterance range=14000..16000 rejected=False leadingWake=False standaloneStop=False stopRange=- pendingBefore=1 text="縫製入力の本文です" conf=0.41 grammar=dictation reading="ほうせい にゅうりょく の ほんぶん です"
