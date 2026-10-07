@@ -1,0 +1,331 @@
+{
+  "catalog": [
+    {"id": "%0", "window": "voice-switch", "title": "editor", "command": "nvim"},
+    {"id": "%1", "window": "voice-switch", "title": "", "command": "node"},
+    {"id": "%2", "window": "dotfiles", "title": "", "command": "node"},
+    {"id": "%3", "window": "shell", "title": "", "command": "zsh"}
+  ],
+  "match": [
+    {"name": "window name is a label", "dictation": "dotfiles で変更をコミットして", "agents": {}, "hits": ["%2"]},
+    {"name": "title is a label", "dictation": "Editor を開いて", "agents": {}, "hits": ["%0"]},
+    {"name": "command is a label and matches twice", "dictation": "node のバージョンを上げて", "agents": {}, "hits": ["%1", "%2"]},
+    {"name": "agent names are labels only through the injected map", "dictation": "claude にログを見てもらって", "agents": {"%1": ["claude"]}, "hits": ["%1"]},
+    {"name": "empty title never matches", "dictation": "", "agents": {}, "hits": []},
+    {"name": "no label in the text", "dictation": "今日はいい天気ですね", "agents": {}, "hits": []},
+    {"name": "matching sees the full dictation, not only the quoted body", "dictation": "dotfiles に「テスト」を送って", "agents": {}, "hits": ["%2"]}
+  ],
+  "policy": [
+    {"name": "one hit without jev sends it", "hits": ["%0"], "pick": null, "send": "%0", "reason": "unique hit"},
+    {"name": "one hit agreed by jev sends it", "hits": ["%0"], "pick": {"pane": "%0", "confidence": 0.9}, "send": "%0", "reason": "unique hit"},
+    {"name": "one hit contradicted confidently is rejected", "hits": ["%0"], "pick": {"pane": "%2", "confidence": 0.8}, "send": null, "reason": "jev rejected"},
+    {"name": "one hit with a confident none is rejected", "hits": ["%0"], "pick": {"pane": null, "confidence": 0.9}, "send": null, "reason": "jev rejected"},
+    {"name": "one hit contradicted below the floor still sends", "hits": ["%0"], "pick": {"pane": "%2", "confidence": 0.79}, "send": "%0", "reason": "unique hit"},
+    {"name": "two hits without jev send nothing", "hits": ["%1", "%2"], "pick": null, "send": null, "reason": "2 panes matched"},
+    {"name": "two hits narrowed at the floor send the pick", "hits": ["%1", "%2"], "pick": {"pane": "%2", "confidence": 0.8}, "send": "%2", "reason": "jev narrowed"},
+    {"name": "two hits narrowed below the floor send nothing", "hits": ["%1", "%2"], "pick": {"pane": "%2", "confidence": 0.79}, "send": null, "reason": "2 panes matched"},
+    {"name": "two hits with a confident pick outside the hits send nothing", "hits": ["%1", "%2"], "pick": {"pane": "%0", "confidence": 0.95}, "send": null, "reason": "2 panes matched"},
+    {"name": "two hits with a confident none send nothing", "hits": ["%1", "%2"], "pick": {"pane": null, "confidence": 0.9}, "send": null, "reason": "2 panes matched"},
+    {"name": "no hit without jev sends nothing", "hits": [], "pick": null, "send": null, "reason": "no pane matched"},
+    {"name": "no hit with a confident pick only suggests", "hits": [], "pick": {"pane": "%7", "confidence": 0.9}, "send": null, "reason": "no pane matched; jev suggests %7"},
+    {"name": "no hit with a weak pick stays silent", "hits": [], "pick": {"pane": "%7", "confidence": 0.5}, "send": null, "reason": "no pane matched"},
+    {"name": "no hit with a confident none sends nothing", "hits": [], "pick": {"pane": null, "confidence": 0.9}, "send": null, "reason": "no pane matched"}
+  ],
+  "jev_responses": [
+    {"name": "a catalog choice becomes a pick", "catalog": ["%0", "%1"], "body": "{\"answers\":{\"pane\":{\"type\":\"choice\",\"choice\":\"%1\",\"confidence\":0.87,\"probabilities\":{\"%0\":0.1,\"%1\":0.87,\"none\":0.03}}},\"model\":\"jev-latest\",\"usage\":{}}", "pick": {"pane": "%1", "confidence": 0.87}},
+    {"name": "none keeps its confidence", "catalog": ["%0", "%1"], "body": "{\"answers\":{\"pane\":{\"type\":\"choice\",\"choice\":\"none\",\"confidence\":0.91}}}", "pick": {"pane": null, "confidence": 0.91}},
+    {"name": "an integer confidence is a number", "catalog": ["%0", "%1"], "body": "{\"answers\":{\"pane\":{\"type\":\"choice\",\"choice\":\"%0\",\"confidence\":1}}}", "pick": {"pane": "%0", "confidence": 1.0}},
+    {"name": "a choice outside the catalog is dropped", "catalog": ["%0", "%1"], "body": "{\"answers\":{\"pane\":{\"type\":\"choice\",\"choice\":\"%9\",\"confidence\":0.99}}}", "pick": null},
+    {"name": "a non-choice answer is dropped", "catalog": ["%0", "%1"], "body": "{\"answers\":{\"pane\":{\"type\":\"score\",\"score\":0.9,\"confidence\":0.9}}}", "pick": null},
+    {"name": "a missing confidence is dropped", "catalog": ["%0", "%1"], "body": "{\"answers\":{\"pane\":{\"type\":\"choice\",\"choice\":\"%0\"}}}", "pick": null},
+    {"name": "a missing pane answer is dropped", "catalog": ["%0", "%1"], "body": "{\"answers\":{}}", "pick": null},
+    {"name": "malformed json is dropped", "catalog": ["%0", "%1"], "body": "{\"answers\":", "pick": null}
+  ],
+  "extract": [
+    {"name": "double corner quotes are the body", "dictation": "「ハローワールド」を claude に送って", "body": "ハローワールド"},
+    {"name": "single corner quotes when there is no double pair", "dictation": "ボイススイッチの Claude Code の pane に『ハローワールド』を送信して", "body": "ハローワールド"},
+    {"name": "the pane label outside the quotes is not sent", "dictation": "dotfiles に「テスト」を送って", "body": "テスト"},
+    {"name": "double corner quotes are preferred over single", "dictation": "『中身』の前に「外枠」を送信して", "body": "外枠"},
+    {"name": "nested double pairs keep the first balanced span", "dictation": "「外「内」側」を送って", "body": "外「内」側"},
+    {"name": "an empty double pair is skipped for the next pair", "dictation": "「」のあと『本文』を入力して", "body": "本文"},
+    {"name": "the body is trimmed, including full-width spaces", "dictation": "「　こんにちは　」と入力して", "body": "こんにちは"},
+    {"name": "a whitespace-only interior is no body", "dictation": "「   」を送って", "body": null},
+    {"name": "no quotes is no body, never the full dictation", "dictation": "ボイススイッチの Claude Code の pane にハローワールドを送信して", "body": null},
+    {"name": "an unbalanced open quote is no body", "dictation": "「ハローワールドを送って", "body": null},
+    {"name": "a stray close quote is no body", "dictation": "ハローワールド」を送って", "body": null}
+  ],
+"candidates": [
+    {
+      "name": "label, cue, and routing particle yield the body last",
+      "dictation": "ボイススイッチの Claude Code の pane にハローワールドを送信して",
+      "labels": [
+        "Claude Code"
+      ],
+      "candidates": [
+        "の pane にハローワールドを送信して",
+        "ボイススイッチの Claude Code の pane にハローワールド",
+        "ハローワールド"
+      ]
+    },
+    {
+      "name": "window label plus を送って",
+      "dictation": "dotfiles にテストを送って",
+      "labels": [
+        "dotfiles"
+      ],
+      "candidates": [
+        "にテストを送って",
+        "dotfiles にテスト",
+        "テスト"
+      ]
+    },
+    {
+      "name": "cue only, no labels",
+      "dictation": "ハローワールドを送信して",
+      "labels": [],
+      "candidates": [
+        "ハローワールド"
+      ]
+    },
+    {
+      "name": "no cue and no label is empty",
+      "dictation": "ただの独り言",
+      "labels": [],
+      "candidates": []
+    },
+    {
+      "name": "label alone is empty, never the full string",
+      "dictation": "claude",
+      "labels": [
+        "claude"
+      ],
+      "candidates": []
+    },
+    {
+      "name": "と入力して with label and に",
+      "dictation": "claude にハローと入力して",
+      "labels": [
+        "claude"
+      ],
+      "candidates": [
+        "にハローと入力して",
+        "claude にハロー",
+        "ハロー"
+      ]
+    },
+    {
+      "name": "へ particle after latin label",
+      "dictation": "claudeへハローを送って",
+      "labels": [
+        "claude"
+      ],
+      "candidates": [
+        "へハローを送って",
+        "claudeへハロー",
+        "ハロー"
+      ]
+    },
+    {
+      "name": "を貼って",
+      "dictation": "editor にメモを貼って",
+      "labels": [
+        "editor"
+      ],
+      "candidates": [
+        "にメモを貼って",
+        "editor にメモ",
+        "メモ"
+      ]
+    },
+    {
+      "name": "と送信して",
+      "dictation": "dotfiles にOKと送信して",
+      "labels": [
+        "dotfiles"
+      ],
+      "candidates": [
+        "にOKと送信して",
+        "dotfiles にOK",
+        "OK"
+      ]
+    },
+    {
+      "name": "outer whitespace is trimmed before cutting",
+      "dictation": "  Claude Code に  hi  を送って  ",
+      "labels": [
+        "Claude Code"
+      ],
+      "candidates": [
+        "に  hi  を送って",
+        "Claude Code に  hi",
+        "hi"
+      ]
+    },
+    {
+      "name": "label match is case-insensitive",
+      "dictation": "CLAUDE code にxを送って",
+      "labels": [
+        "Claude Code"
+      ],
+      "candidates": [
+        "にxを送って",
+        "CLAUDE code にx",
+        "x"
+      ]
+    },
+    {
+      "name": "cue without labels still strips routing",
+      "dictation": "dotfiles にテストを送って",
+      "labels": [],
+      "candidates": [
+        "dotfiles にテスト",
+        "テスト"
+      ]
+    },
+    {
+      "name": "full dictation is never a candidate",
+      "dictation": "を送って",
+      "labels": [],
+      "candidates": []
+    }
+  ],
+"body_jev_responses": [
+    {
+      "name": "a catalog body choice becomes a pick",
+      "catalog": [
+        "c0",
+        "c1"
+      ],
+      "body": "{\"answers\":{\"body\":{\"type\":\"choice\",\"choice\":\"c1\",\"confidence\":0.88}}}",
+      "pick": {
+        "choice": "c1",
+        "confidence": 0.88
+      }
+    },
+    {
+      "name": "none keeps its confidence",
+      "catalog": [
+        "c0"
+      ],
+      "body": "{\"answers\":{\"body\":{\"type\":\"choice\",\"choice\":\"none\",\"confidence\":0.93}}}",
+      "pick": {
+        "choice": null,
+        "confidence": 0.93
+      }
+    },
+    {
+      "name": "out of catalog is no pick",
+      "catalog": [
+        "c0"
+      ],
+      "body": "{\"answers\":{\"body\":{\"type\":\"choice\",\"choice\":\"c9\",\"confidence\":0.99}}}",
+      "pick": null
+    },
+    {
+      "name": "wrong answer key is no pick",
+      "catalog": [
+        "c0"
+      ],
+      "body": "{\"answers\":{\"pane\":{\"type\":\"choice\",\"choice\":\"c0\",\"confidence\":0.99}}}",
+      "pick": null
+    },
+    {
+      "name": "non-choice type is no pick",
+      "catalog": [
+        "c0"
+      ],
+      "body": "{\"answers\":{\"body\":{\"type\":\"text\",\"choice\":\"c0\",\"confidence\":0.99}}}",
+      "pick": null
+    }
+  ],
+"resolve_body": [
+    {
+      "name": "quoted short-circuits without looking at pick",
+      "dictation": "dotfiles に「テスト」を送って",
+      "labels": [
+        "dotfiles"
+      ],
+      "pick": {
+        "choice": "c0",
+        "confidence": 0.99
+      },
+      "body": "テスト",
+      "reason": "quoted"
+    },
+    {
+      "name": "one candidate accepted as jev body",
+      "dictation": "ハローワールドを送信して",
+      "labels": [],
+      "pick": {
+        "choice": "c0",
+        "confidence": 0.9
+      },
+      "body": "ハローワールド",
+      "reason": "jev body"
+    },
+    {
+      "name": "two candidates: c2 is the body",
+      "dictation": "dotfiles にテストを送って",
+      "labels": [
+        "dotfiles"
+      ],
+      "pick": {
+        "choice": "c2",
+        "confidence": 0.85
+      },
+      "body": "テスト",
+      "reason": "jev body"
+    },
+    {
+      "name": "low confidence refuses",
+      "dictation": "ハローワールドを送信して",
+      "labels": [],
+      "pick": {
+        "choice": "c0",
+        "confidence": 0.79
+      },
+      "body": null,
+      "reason": "jev body low confidence"
+    },
+    {
+      "name": "none refuses",
+      "dictation": "ハローワールドを送信して",
+      "labels": [],
+      "pick": {
+        "choice": null,
+        "confidence": 0.95
+      },
+      "body": null,
+      "reason": "jev body none"
+    },
+    {
+      "name": "missing pick refuses",
+      "dictation": "ハローワールドを送信して",
+      "labels": [],
+      "pick": null,
+      "body": null,
+      "reason": "no body pick"
+    },
+    {
+      "name": "no candidates",
+      "dictation": "ただの独り言",
+      "labels": [],
+      "pick": {
+        "choice": "c0",
+        "confidence": 0.99
+      },
+      "body": null,
+      "reason": "no candidates"
+    },
+    {
+      "name": "out of range choice rejects",
+      "dictation": "ハローワールドを送信して",
+      "labels": [],
+      "pick": {
+        "choice": "c3",
+        "confidence": 0.99
+      },
+      "body": null,
+      "reason": "jev body rejected"
+    }
+  ]
+}

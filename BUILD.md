@@ -7,7 +7,7 @@
 | unset / anything except `wsl` | `make relaunch` | macOS `VoiceSwitch.app`, quit, reinstalled, and reopened |
 | `PC=wsl` or `PC=WSL` | `make win` | Windows `.NET` build, tests, and publish |
 
-Case-insensitive `PC=wsl` and `PC=WSL` both select Windows. The Windows default release directory is `$(CURDIR)/release`. Pass `RELEASE_DIR` when you need a Windows-local folder from WSL.
+Case-insensitive `PC=wsl` and `PC=WSL` both select Windows. The Windows default release directory is `C:\takeda\tools\voice-switch` (`/mnt/c/takeda/tools/voice-switch`), so the exe runs from local disk rather than a `\\wsl.localhost` path. Publishing stops a running `voice-switch.exe`, copies `config.json` only when that folder has none (from `release/config.json` if present, else `config.example.windows.json`), and starts the exe again. Pass `RELEASE_DIR` to publish elsewhere.
 
 ## macOS
 
