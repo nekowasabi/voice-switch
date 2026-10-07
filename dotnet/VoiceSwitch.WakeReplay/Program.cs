@@ -91,7 +91,9 @@ static int RunSelfTest()
     // - 温泉 alone → hit short おんせい (d=1 whole closed)
     // - ほうせいにはいるよ prefix body → no d=2 prefix hit on main
     // - 音声入力 exact → hit
-    // - empty / unscored line without text= → skipped
+    // - PrefixHead no-text leadingWake=False → unscored
+    // - PrefixHead no-text leadingWake=True → unscored_live_true (H4b ±2% path)
+    // - 妊婦と / インクと ambient scored false (main: no gain)
     var failures = new List<string>();
     void Expect(string name, bool cond, string detail = "")
     {
@@ -101,18 +103,49 @@ static int RunSelfTest()
         }
     }
 
-    Expect("scored", report.Scored == 5, $"got {report.Scored}");
-    Expect("live_true", report.LiveTrue == 2, $"got {report.LiveTrue}");
+    Expect("scored", report.Scored == 7, $"got {report.Scored}");
+    Expect("live_true", report.LiveTrue == 3, $"got {report.LiveTrue}");
+    Expect("unscored_live_true", report.UnscoredLiveTrue == 1, $"got {report.UnscoredLiveTrue}");
     Expect("wake_hits", report.WakeHits == 2, $"got {report.WakeHits}");
     Expect("agreed_true", report.AgreedTrue == 2, $"got {report.AgreedTrue}");
     Expect("gained", report.Gained == 0, $"got {report.Gained} (main must not gain 縫製)");
     Expect("lost", report.Lost == 0, $"got {report.Lost}");
-    Expect("unscored", report.Unscored == 1, $"got {report.Unscored}");
+    Expect("unscored", report.Unscored == 2, $"got {report.Unscored}");
     Expect("near_miss_d2_has_hosei", report.NearMissByDistance.GetValueOrDefault(2) >= 1,
         $"d2={report.NearMissByDistance.GetValueOrDefault(2)}");
     // 縫製入力 reading vs おんせいにゅうりょく is d=2 near-miss
     Expect("near_miss_lists_housei", report.NearMissReadings.Any(r => r.Contains("ほうせい", StringComparison.Ordinal)),
         string.Join(',', report.NearMissReadings));
+
+    // H4b LooksIntentional goldens — keep/revert not locked only to substring heuristic.
+    Expect("intentional_housei", Replay.LooksIntentional("縫製入力", "ほうせい にゅうりょく"), "縫製入力 must be intentional");
+    Expect("ambient_ninpu", !Replay.LooksIntentional("妊婦と", "にんぷ と"), "妊婦と must be ambient");
+    Expect("ambient_inku", !Replay.LooksIntentional("インクと", "いんく と"), "インクと must be ambient");
+
+    // H4b shell trap restore proof (failure path).
+    var sh = Path.Combine(root, "scripts", "wake_log_replay.sh");
+    if (!File.Exists(sh))
+    {
+        failures.Add($"missing {sh}");
+    }
+    else
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "/bin/bash",
+            ArgumentList = { sh, "--self-test-restore" },
+            WorkingDirectory = root,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        using var proc = System.Diagnostics.Process.Start(psi)
+            ?? throw new InvalidOperationException("failed to start wake_log_replay.sh");
+        var stdout = proc.StandardOutput.ReadToEnd();
+        var stderr = proc.StandardError.ReadToEnd();
+        proc.WaitForExit();
+        Expect("restore_trap", proc.ExitCode == 0 && stdout.Contains("OK wake_log_replay restore trap self-test", StringComparison.Ordinal),
+            $"exit={proc.ExitCode} stdout={stdout.Trim()} stderr={stderr.Trim()}");
+    }
 
     if (failures.Count > 0)
     {
@@ -369,10 +402,22 @@ internal static class Replay
             NearMissReadings: nearMissReadings);
     }
 
-    private static bool LooksIntentional(string text, string? reading)
+    // H4b: explicit ambient/intentional goldens first so keep/revert is not locked only to
+    // loose substring heuristics. Remaining markers cover other gained near-wakes.
+    internal static bool LooksIntentional(string text, string? reading)
     {
-        // Heuristic for Track A verdict: gained hits that look like wake attempts vs ambient.
         var n = TextMatching.Normalize(text);
+        // Measured H4 gained goldens (keep these stable for revert vs keep verdict).
+        if (n == "縫製入力")
+        {
+            return true;
+        }
+
+        if (n is "妊婦と" or "インクと")
+        {
+            return false;
+        }
+
         if (n.Contains("縫製", StringComparison.Ordinal)
             || n.Contains("音声", StringComparison.Ordinal)
             || n.Contains("温水", StringComparison.Ordinal)
