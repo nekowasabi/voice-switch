@@ -365,8 +365,8 @@ static bool PaneRouteScanLogCapsCandAndTruncatesKey()
     return line.StartsWith("tmux: scan panes=10 cand=[%0:bash:title_with_spaces_0_and_ ", StringComparison.Ordinal)
         && line.Contains("%7:node:title_with_spaces_7_an", StringComparison.Ordinal)
         && !line.Contains("%8:", StringComparison.Ordinal)
-        && line.EndsWith("] key=\"あいうえおかきくけこさしすせ\"", StringComparison.Ordinal)
-        && !line.Contains("そたちつてと", StringComparison.Ordinal)
+        && line.EndsWith("] key=\"あいうえおかきくけこさしすせそた\"", StringComparison.Ordinal)
+        && !line.Contains("ちつてと", StringComparison.Ordinal)
         && empty == "tmux: scan panes=0 cand=[] key=\"x\""
         && PaneRoute.LogLine(0, "off", new RouteDecision(null, "no pane matched")) == "tmux: hits=0 jev=off body=- -> skip (no pane matched)";
 }
