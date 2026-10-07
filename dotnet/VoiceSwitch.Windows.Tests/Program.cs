@@ -43,6 +43,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation lone wake body then stop submits body", () => Check(DictationLoneWakeBodyThenStopSubmitsBody())),
     ("dictation repeated wake prefix keeps body", () => Check(DictationRepeatedWakePrefixKeepsBody())),
     ("dictation wake reading recovers near-homophones but never cuts a body from a fuzzy match", () => Check(DictationWakeReadingRecoversNearHomophones())),
+    ("dictation long wake reading recovers distance-2 closed 縫製入力 as wake-only", () => Check(DictationLongWakeReadingRecoversDistance2ClosedHosei())),
     ("dictation kana wake word matches SAPI's kanji through the reading", () => Check(DictationKanaWakeMatchesKanjiThroughReading())),
     ("dictation session opens a wait on a fuzzy wake and starts the body on the next utterance", () => Check(DictationSessionOpensWaitOnFuzzyWake())),
     ("dictation runtime logs a reading-matched wake-only with its distance", () => Check(DictationRuntimeLogsReadingWakeOnly())),
@@ -894,6 +895,71 @@ static bool DictationWakeReadingRecoversNearHomophones()
         && DictationBoundaries.LeadingWake(onsenWa, wakes) is null
         && DictationBoundaries.LeadingWake(exactThenBody, wakes) == new WakePrefix(10000, 13000)
         && DictationBoundaries.LeadingWake(wakeThenFuzzy, wakes) == new WakePrefix(4000, 4000);
+}
+
+// H2d: live miss 縫製入力 as whole closed at d=2 (wake-only). d=2 needs reading len≥MinReadingDistance2=10 and
+// whole utterance — not a prefix, and not len <10 wakes (いんぷっと=5; おんせいにはいる=8 whole ほうせいにはいる). ShortWake stays ≤1.
+static bool DictationLongWakeReadingRecoversDistance2ClosedHosei()
+{
+    var longWake = WakeWord.From("音声入力", "おんせいにゅうりょく"); // len=10
+    var hairuWake = WakeWord.From("音声に入る", "おんせいにはいる"); // len=8: H2c residual at d=2
+    var hairuYoWake = WakeWord.From("音声に入るよ", "おんせいにはいるよ"); // len=9: stays ≤1
+    var shortWake = WakeWord.From("おんせい");
+    var inputWake = WakeWord.From("インプット", "いんぷっと"); // len=5: H2b ambient FP at d=2
+    WakeWord[] wakes = [longWake, hairuWake, hairuYoWake, shortWake, inputWake];
+    var hosei = Recognized(1, RecognitionExtent.ClosedUtterance, 0, 10000, "縫製入力", false,
+        Run("縫製", 0, 4000, "ほうせい"), Run("入力", 4000, 10000, "にゅうりょく"));
+    var hoseiSpaced = Recognized(2, RecognitionExtent.ClosedUtterance, 0, 10000, "縫製入力", false,
+        Run("縫製入力", 0, 10000, "ほうせい にゅうりょく"));
+    var hoseiPrefix = hosei with { Extent = RecognitionExtent.PrefixHead };
+    // ShortWakeReading=4: ほうせい↔おんせい is distance 2 and must stay rejected.
+    var hoseiShortOnly = Recognized(3, RecognitionExtent.ClosedUtterance, 0, 4000, "縫製", false, Run("縫製", 0, 4000, "ほうせい"));
+    // Before H2b, d=2 could match as a size±1 prefix of a longer closed utterance (FP on other long wakes).
+    var hoseiThenBody = Recognized(4, RecognitionExtent.ClosedUtterance, 0, 16000, "縫製入力明日", false,
+        Run("縫製", 0, 4000, "ほうせい"), Run("入力", 4000, 10000, "にゅうりょく"), Run("明日", 13000, 16000, "あした"));
+    var hoseiHairuThenBody = Recognized(5, RecognitionExtent.ClosedUtterance, 0, 14000, "縫製に入る明日", false,
+        Run("縫製", 0, 4000, "ほうせい"), Run("に", 4000, 5000, "に"), Run("入", 5000, 7000, "はい"), Run("る", 7000, 8000, "る"),
+        Run("明日", 11000, 14000, "あした"));
+    // H2d: whole-closed ほうせいにはいる must NOT match 音声に入る (len=8 < MinReadingDistance2=10) at d=2.
+    var hoseiHairuWhole = Recognized(10, RecognitionExtent.ClosedUtterance, 0, 8000, "縫製に入る", false,
+        Run("縫製", 0, 4000, "ほうせい"), Run("に", 4000, 5000, "に"), Run("入", 5000, 7000, "はい"), Run("る", 7000, 8000, "る"));
+    var hoseiHairuWholeFused = Recognized(11, RecognitionExtent.ClosedUtterance, 0, 8000, "縫製に入る", false,
+        Run("縫製に入る", 0, 8000, "ほうせいにはいる"));
+    // Optional: len=9 wake stays at d≤1.
+    var hoseiHairuYo = Recognized(12, RecognitionExtent.ClosedUtterance, 0, 9000, "縫製に入るよ", false,
+        Run("縫製に入るよ", 0, 9000, "ほうせいにはいるよ"));
+    // H2c: いんぷっと (len=5) must not accept d=2 whole closed (妊婦と / インクと from H4 replay).
+    var ninputo = Recognized(6, RecognitionExtent.ClosedUtterance, 0, 5000, "妊婦と", false,
+        Run("妊婦", 0, 3500, "にんぷ"), Run("と", 3500, 5000, "と"));
+    var inkuto = Recognized(7, RecognitionExtent.ClosedUtterance, 0, 5000, "インクと", false,
+        Run("インク", 0, 3500, "いんく"), Run("と", 3500, 5000, "と"));
+    var ninputoFused = Recognized(8, RecognitionExtent.ClosedUtterance, 0, 5000, "にんぷと", false,
+        Run("にんぷと", 0, 5000, "にんぷと"));
+    var inkutoFused = Recognized(9, RecognitionExtent.ClosedUtterance, 0, 5000, "いんくと", false,
+        Run("いんくと", 0, 5000, "いんくと"));
+    var hit = DictationBoundaries.LeadingWake(hosei, wakes);
+    var spaced = DictationBoundaries.LeadingWake(hoseiSpaced, wakes);
+    return hit == new WakePrefix(10000, null, longWake, 2)
+        && spaced == new WakePrefix(10000, null, longWake, 2)
+        && hit is { BodyStart: null, Distance: 2, ByReading: not null }
+        && DictationBoundaries.LeadingWake(hoseiPrefix, wakes) is null
+        && DictationBoundaries.LeadingWake(hoseiShortOnly, [shortWake]) is null
+        && DictationBoundaries.LeadingWake(hoseiShortOnly, wakes) is null
+        && DictationBoundaries.LeadingWake(hoseiThenBody, wakes) is null
+        && DictationBoundaries.LeadingWake(hoseiHairuThenBody, [hairuWake]) is null
+        && DictationBoundaries.LeadingWake(hoseiHairuThenBody, wakes) is null
+        && DictationBoundaries.LeadingWake(hoseiHairuWhole, [hairuWake]) is null
+        && DictationBoundaries.LeadingWake(hoseiHairuWhole, wakes) is null
+        && DictationBoundaries.LeadingWake(hoseiHairuWholeFused, [hairuWake]) is null
+        && DictationBoundaries.LeadingWake(hoseiHairuWholeFused, wakes) is null
+        && DictationBoundaries.LeadingWake(hoseiHairuYo, [hairuYoWake]) is null
+        && DictationBoundaries.LeadingWake(hoseiHairuYo, wakes) is null
+        && DictationBoundaries.LeadingWake(ninputo, [inputWake]) is null
+        && DictationBoundaries.LeadingWake(inkuto, [inputWake]) is null
+        && DictationBoundaries.LeadingWake(ninputoFused, [inputWake]) is null
+        && DictationBoundaries.LeadingWake(inkutoFused, [inputWake]) is null
+        && DictationBoundaries.LeadingWake(ninputo, wakes) is null
+        && DictationBoundaries.LeadingWake(inkuto, wakes) is null;
 }
 
 static bool DictationKanaWakeMatchesKanjiThroughReading()
