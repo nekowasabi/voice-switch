@@ -781,6 +781,8 @@ def check_swift_core_behavior(result: Result, require_swift: bool) -> None:
                 str(ROOT / "Sources/voice-switch/Config.swift"),
                 str(ROOT / "Sources/voice-switch/Transcript.swift"),
                 str(ROOT / "Sources/voice-switch/Segmenter.swift"),
+                str(ROOT / "Sources/voice-switch/Platform.swift"),
+                str(ROOT / "Sources/voice-switch/SuperwhisperModes.swift"),
                 str(ROOT / "Sources/voice-switch/PaneRoute.swift"),
                 str(SWIFT_HARNESS),
                 "-o",
