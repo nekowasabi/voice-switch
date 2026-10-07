@@ -1426,7 +1426,7 @@ public sealed class SpeechPowerShellDictationRecognizer : IDictationRecognizer, 
                 observe?.Invoke(new RecognitionDiagnostic(request, identity.StartTimeUtc, 0, null, identity.ProcessId, Running: true, identity));
                 using var killOnCancel = cancellation.Register(static state => KillProcess((Process)state!), current.Process);
                 var pcm = ToBytes(request.Samples.AsSpan());
-                var timeout = TimeSpan.FromSeconds(Math.Max(10, pcm.Length / 32000.0 + 20));
+                var timeout = TimeSpan.FromSeconds(TranscribeDeadline.SecondsFromPcmBytes(pcm.Length));
                 dto = await current.ExchangeAsync(request, pcm, timeout, cancellation).ConfigureAwait(false);
                 cancellation.ThrowIfCancellationRequested();
             }
