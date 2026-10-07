@@ -97,8 +97,10 @@ static int RunSelfTest()
     // - 温泉 alone → hit short おんせい (d=1 whole closed); excluded from long+short+d3 examples (!hit)
     // - ほうせいにはいるよ prefix body → no d=2 prefix hit on main
     // - 音声入力 exact → hit; excluded from near-miss examples
-    // - PrefixHead no-text leadingWake=False → unscored
+    // - PrefixHead no-text leadingWake=False → unscored (H8 PrefixHead class)
     // - PrefixHead no-text leadingWake=True → unscored_live_true (H4b ±2% path)
+    // - ClosedUtterance no-text → unscored (H8 no-text= class)
+    // - ClosedUtterance reading-only leadingWake=True → unscored_live_true; H8 score-from-reading recovers
     // - 妊婦と / インクと ambient scored false (main: no gain)
     var failures = new List<string>();
     void Expect(string name, bool cond, string detail = "")
@@ -110,13 +112,13 @@ static int RunSelfTest()
     }
 
     Expect("scored", report.Scored == 9, $"got {report.Scored}");
-    Expect("live_true", report.LiveTrue == 3, $"got {report.LiveTrue}");
-    Expect("unscored_live_true", report.UnscoredLiveTrue == 1, $"got {report.UnscoredLiveTrue}");
+    Expect("live_true", report.LiveTrue == 4, $"got {report.LiveTrue}");
+    Expect("unscored_live_true", report.UnscoredLiveTrue == 2, $"got {report.UnscoredLiveTrue}");
     Expect("wake_hits", report.WakeHits == 2, $"got {report.WakeHits}");
     Expect("agreed_true", report.AgreedTrue == 2, $"got {report.AgreedTrue}");
     Expect("gained", report.Gained == 0, $"got {report.Gained} (main must not gain 縫製)");
     Expect("lost", report.Lost == 0, $"got {report.Lost}");
-    Expect("unscored", report.Unscored == 2, $"got {report.Unscored}");
+    Expect("unscored", report.Unscored == 4, $"got {report.Unscored}");
     Expect("near_miss_d2_has_hosei", report.NearMissByDistance.GetValueOrDefault(2) >= 1,
         $"d2={report.NearMissByDistance.GetValueOrDefault(2)}");
     // 縫製入力 reading vs おんせいにゅうりょく is d=2 near-miss
@@ -189,6 +191,26 @@ static int RunSelfTest()
         $"got {report.D3NearMissIntentional}");
     Expect("d3_near_miss_ambient_zero", report.D3NearMissAmbient == 0,
         $"got {report.D3NearMissAmbient}");
+
+    // H8: classify unscored (no text= / PrefixHead / other); score-from-reading when reading= remains.
+    // Fixture: 2 PrefixHead no-text (lw F/T); 1 Closed no-text; 1 Closed reading-only lw=True → recover.
+    Expect("unscored_no_text", report.UnscoredNoText == 2, $"got {report.UnscoredNoText}");
+    Expect("unscored_prefix_head", report.UnscoredPrefixHead == 2, $"got {report.UnscoredPrefixHead}");
+    Expect("unscored_other", report.UnscoredOther == 0, $"got {report.UnscoredOther}");
+    Expect("unscored_live_true_no_text", report.UnscoredLiveTrueNoText == 1, $"got {report.UnscoredLiveTrueNoText}");
+    Expect("unscored_live_true_prefix_head", report.UnscoredLiveTruePrefixHead == 1, $"got {report.UnscoredLiveTruePrefixHead}");
+    Expect("unscored_with_reading", report.UnscoredWithReading == 1, $"got {report.UnscoredWithReading}");
+    Expect("unscored_with_alts", report.UnscoredWithAlts == 0, $"got {report.UnscoredWithAlts}");
+    Expect("score_from_reading_tried", report.ScoreFromReadingTried == 1, $"got {report.ScoreFromReadingTried}");
+    Expect("score_from_reading_hits", report.ScoreFromReadingHits == 1, $"got {report.ScoreFromReadingHits}");
+    Expect("score_from_reading_recovered_live_true", report.ScoreFromReadingRecoveredLiveTrue == 1,
+        $"got {report.ScoreFromReadingRecoveredLiveTrue}");
+    Expect("after_unscored_live_true", report.AfterUnscoredLiveTrue == 1, $"got {report.AfterUnscoredLiveTrue}");
+    Expect("after_wake_hits", report.AfterWakeHits == 3, $"got {report.AfterWakeHits}");
+    // Before: unscored_live_true includes the reading-only row; after recovers it.
+    Expect("unscored_live_true_before_includes_reading_only", report.UnscoredLiveTrue == 2,
+        $"got {report.UnscoredLiveTrue}");
+    Expect("live_true_with_reading_only", report.LiveTrue == 4, $"got {report.LiveTrue}");
 
     // H4b LooksIntentional goldens — keep/revert not locked only to substring heuristic.
     Expect("intentional_housei", Replay.LooksIntentional("縫製入力", "ほうせい にゅうりょく"), "縫製入力 must be intentional");
@@ -317,6 +339,17 @@ internal static class Replay
         var d3NearMissAmbient = 0;
         var intentionalGained = 0;
         var ambientGained = 0;
+        // H8: unscored classification + score-from-reading (replay only; no runtime privacy change).
+        var unscoredNoText = 0;
+        var unscoredPrefixHead = 0;
+        var unscoredOther = 0;
+        var unscoredWithReading = 0;
+        var unscoredWithAlts = 0;
+        var scoreFromReadingTried = 0;
+        var scoreFromReadingHits = 0;
+        var scoreFromReadingRecoveredLiveTrue = 0;
+        var unscoredLiveTrueNoText = 0;
+        var unscoredLiveTruePrefixHead = 0;
         const int MinExampleWakeReading = 10;
 
         foreach (var line in File.ReadLines(logPath, Encoding.UTF8))
@@ -336,14 +369,44 @@ internal static class Replay
             var parsed = ParseComplete(line);
             if (parsed is null)
             {
+                // Missing leadingWake=/extent= or unparseable complete line.
                 unscored++;
+                unscoredOther++;
                 continue;
             }
 
             if (parsed.Text is null)
             {
-                // Live still set leadingWake, but the log omitted text/reading (active-session PrefixHead privacy).
+                // Live still set leadingWake, but the log omitted text= (privacy / older body omit).
+                // H8 classifies: PrefixHead vs no-text= (Closed without text) vs other (above).
                 unscored++;
+                if (parsed.Extent == RecognitionExtent.PrefixHead)
+                {
+                    unscoredPrefixHead++;
+                    if (parsed.LiveLeadingWake)
+                    {
+                        unscoredLiveTruePrefixHead++;
+                    }
+                }
+                else
+                {
+                    unscoredNoText++;
+                    if (parsed.LiveLeadingWake)
+                    {
+                        unscoredLiveTrueNoText++;
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(parsed.Reading))
+                {
+                    unscoredWithReading++;
+                }
+
+                if (!string.IsNullOrEmpty(parsed.Alts))
+                {
+                    unscoredWithAlts++;
+                }
+
                 if (parsed.LiveLeadingWake)
                 {
                     liveTrue++;
@@ -352,6 +415,23 @@ internal static class Replay
                 else
                 {
                     liveFalse++;
+                }
+
+                // Score-from-reading trial: when reading= remains without text=,
+                // run the same LeadingWake API offline. Does not change production log writing.
+                if (!string.IsNullOrEmpty(parsed.Reading))
+                {
+                    scoreFromReadingTried++;
+                    var readingOnly = BuildUtterance(parsed);
+                    var readingHit = DictationBoundaries.LeadingWake(readingOnly, wakes);
+                    if (readingHit is not null)
+                    {
+                        scoreFromReadingHits++;
+                        if (parsed.LiveLeadingWake)
+                        {
+                            scoreFromReadingRecoveredLiveTrue++;
+                        }
+                    }
                 }
 
                 continue;
@@ -560,7 +640,17 @@ internal static class Replay
             ShortNearMissAmbient: shortNearMissAmbient,
             D3NearMissExamples: d3NearMissExamples,
             D3NearMissIntentional: d3NearMissIntentional,
-            D3NearMissAmbient: d3NearMissAmbient);
+            D3NearMissAmbient: d3NearMissAmbient,
+            UnscoredNoText: unscoredNoText,
+            UnscoredPrefixHead: unscoredPrefixHead,
+            UnscoredOther: unscoredOther,
+            UnscoredWithReading: unscoredWithReading,
+            UnscoredWithAlts: unscoredWithAlts,
+            ScoreFromReadingTried: scoreFromReadingTried,
+            ScoreFromReadingHits: scoreFromReadingHits,
+            ScoreFromReadingRecoveredLiveTrue: scoreFromReadingRecoveredLiveTrue,
+            UnscoredLiveTrueNoText: unscoredLiveTrueNoText,
+            UnscoredLiveTruePrefixHead: unscoredLiveTruePrefixHead);
     }
 
     // H4b: explicit ambient/intentional goldens first so keep/revert is not locked only to
@@ -748,8 +838,22 @@ internal sealed record Report(
     int ShortNearMissAmbient,
     IReadOnlyList<string> D3NearMissExamples,
     int D3NearMissIntentional,
-    int D3NearMissAmbient)
+    int D3NearMissAmbient,
+    int UnscoredNoText,
+    int UnscoredPrefixHead,
+    int UnscoredOther,
+    int UnscoredWithReading,
+    int UnscoredWithAlts,
+    int ScoreFromReadingTried,
+    int ScoreFromReadingHits,
+    int ScoreFromReadingRecoveredLiveTrue,
+    int UnscoredLiveTrueNoText,
+    int UnscoredLiveTruePrefixHead)
 {
+    // After = text-scored wake_hits plus score-from-reading hits; unscored_live_true minus recovered.
+    public int AfterWakeHits => WakeHits + ScoreFromReadingHits;
+    public int AfterUnscoredLiveTrue => UnscoredLiveTrue - ScoreFromReadingRecoveredLiveTrue;
+
     public void WriteHuman(TextWriter w)
     {
         var liveTrueTotal = LiveTrue;
@@ -759,13 +863,21 @@ internal sealed record Report(
         var inBand = WakeHits >= bandLo && WakeHits <= bandHi;
         var scoredLiveTrue = LiveTrue - UnscoredLiveTrue;
         w.WriteLine($"label={Label}");
-        w.WriteLine($"scored={Scored} unscored={Unscored} unscored_live_true={UnscoredLiveTrue} (no text=; PrefixHead privacy)");
+        w.WriteLine($"scored={Scored} unscored={Unscored} unscored_live_true={UnscoredLiveTrue} (no text=; before score-from-reading)");
         w.WriteLine($"live_true={LiveTrue} live_false={LiveFalse} scored_live_true={scoredLiveTrue}");
         w.WriteLine($"wake_hits={WakeHits} wake_hits_vs_live_true_pct={pct:0.00} band=[{bandLo},{bandHi}] in_band={inBand}");
         if (!inBand)
         {
             w.WriteLine($"parity_note=wake_hits outside ±2% of live_true; cause=unscored_live_true={UnscoredLiveTrue} plus gained/lost; do not tune matcher");
         }
+        // H8 classification of unscored rows + optional score-from-reading trial (replay only).
+        w.WriteLine($"unscored_class no_text={UnscoredNoText} PrefixHead={UnscoredPrefixHead} other={UnscoredOther}");
+        w.WriteLine($"unscored_live_true_class no_text={UnscoredLiveTrueNoText} PrefixHead={UnscoredLiveTruePrefixHead}");
+        w.WriteLine($"unscored_meta with_reading={UnscoredWithReading} with_alts={UnscoredWithAlts}");
+        w.WriteLine($"score_from_reading tried={ScoreFromReadingTried} hits={ScoreFromReadingHits} recovered_live_true={ScoreFromReadingRecoveredLiveTrue}");
+        var afterPct = liveTrueTotal == 0 ? 0.0 : 100.0 * AfterWakeHits / liveTrueTotal;
+        var afterInBand = AfterWakeHits >= bandLo && AfterWakeHits <= bandHi;
+        w.WriteLine($"after_score_from_reading unscored_live_true={AfterUnscoredLiveTrue} wake_hits={AfterWakeHits} wake_hits_vs_live_true_pct={afterPct:0.00} in_band={afterInBand}");
         w.WriteLine($"agreed_true={AgreedTrue} agreed_false={AgreedFalse} gained={Gained} lost={Lost}");
         w.WriteLine($"gained_intentional={IntentionalGained} gained_ambient={AmbientGained}");
         w.WriteLine("near_miss_by_distance:");
@@ -828,6 +940,18 @@ internal sealed record Report(
         Num("short_near_miss_ambient", ShortNearMissAmbient);
         Num("d3_near_miss_intentional", D3NearMissIntentional);
         Num("d3_near_miss_ambient", D3NearMissAmbient);
+        Num("unscored_no_text", UnscoredNoText);
+        Num("unscored_prefix_head", UnscoredPrefixHead);
+        Num("unscored_other", UnscoredOther);
+        Num("unscored_with_reading", UnscoredWithReading);
+        Num("unscored_with_alts", UnscoredWithAlts);
+        Num("score_from_reading_tried", ScoreFromReadingTried);
+        Num("score_from_reading_hits", ScoreFromReadingHits);
+        Num("score_from_reading_recovered_live_true", ScoreFromReadingRecoveredLiveTrue);
+        Num("after_unscored_live_true", AfterUnscoredLiveTrue);
+        Num("after_wake_hits", AfterWakeHits);
+        Num("unscored_live_true_no_text", UnscoredLiveTrueNoText);
+        Num("unscored_live_true_prefix_head", UnscoredLiveTruePrefixHead);
         sb.Append(CultureInfo.InvariantCulture, $"\"label\":\"{Escape(Label)}\",");
         sb.Append("\"gained_readings\":[");
         sb.Append(string.Join(',', GainedRows.Select(r => $"\"{Escape(r)}\"")));
