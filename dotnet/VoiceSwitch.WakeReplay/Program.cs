@@ -97,10 +97,10 @@ static int RunSelfTest()
     // - 温泉 alone → hit short おんせい (d=1 whole closed); excluded from long+short+d3 examples (!hit)
     // - ほうせいにはいるよ prefix body → no d=2 prefix hit on main
     // - 音声入力 exact → hit; excluded from near-miss examples
+    // - id=101/102 old-build (before first reading= line): Closed no-text lw=True, PrefixHead no-text lw=False
     // - PrefixHead no-text leadingWake=False → unscored (H8 PrefixHead class)
     // - PrefixHead no-text leadingWake=True → unscored_live_true (H4b ±2% path)
-    // - ClosedUtterance no-text → unscored (H8 no-text= class)
-    // - ClosedUtterance reading-only leadingWake=True → unscored_live_true; H8 score-from-reading recovers
+    // - ClosedUtterance no-text → unscored (H8 closed_no_text class)
     // - 妊婦と / インクと ambient scored false (main: no gain)
     var failures = new List<string>();
     void Expect(string name, bool cond, string detail = "")
@@ -118,7 +118,7 @@ static int RunSelfTest()
     Expect("agreed_true", report.AgreedTrue == 2, $"got {report.AgreedTrue}");
     Expect("gained", report.Gained == 0, $"got {report.Gained} (main must not gain 縫製)");
     Expect("lost", report.Lost == 0, $"got {report.Lost}");
-    Expect("unscored", report.Unscored == 4, $"got {report.Unscored}");
+    Expect("unscored", report.Unscored == 5, $"got {report.Unscored}");
     Expect("near_miss_d2_has_hosei", report.NearMissByDistance.GetValueOrDefault(2) >= 1,
         $"d2={report.NearMissByDistance.GetValueOrDefault(2)}");
     // 縫製入力 reading vs おんせいにゅうりょく is d=2 near-miss
@@ -192,25 +192,35 @@ static int RunSelfTest()
     Expect("d3_near_miss_ambient_zero", report.D3NearMissAmbient == 0,
         $"got {report.D3NearMissAmbient}");
 
-    // H8: classify unscored (no text= / PrefixHead / other); score-from-reading when reading= remains.
-    // Fixture: 2 PrefixHead no-text (lw F/T); 1 Closed no-text; 1 Closed reading-only lw=True → recover.
-    Expect("unscored_no_text", report.UnscoredNoText == 2, $"got {report.UnscoredNoText}");
-    Expect("unscored_prefix_head", report.UnscoredPrefixHead == 2, $"got {report.UnscoredPrefixHead}");
+    // H8: classify unscored (closed_no_text / PrefixHead / other) and split old/current build.
+    // The product (DictationRuntime) writes reading=/alts= only inside the same block as text=, so a
+    // text-less row never carries reading/alts → every unscored_live_true row is unrecoverable on replay.
+    // Cutover = first complete line carrying reading= (current heard-block format); rows before it are old-build.
+    // Fixture: old = id=101 Closed lw=T + id=102 PrefixHead lw=F; current = id=6 PH lw=F, id=7 PH lw=T, id=12 Closed lw=F.
+    Expect("unscored_closed_no_text", report.UnscoredClosedNoText == 2, $"got {report.UnscoredClosedNoText}");
+    Expect("unscored_prefix_head", report.UnscoredPrefixHead == 3, $"got {report.UnscoredPrefixHead}");
     Expect("unscored_other", report.UnscoredOther == 0, $"got {report.UnscoredOther}");
-    Expect("unscored_live_true_no_text", report.UnscoredLiveTrueNoText == 1, $"got {report.UnscoredLiveTrueNoText}");
+    Expect("unscored_class_sum", report.UnscoredClosedNoText + report.UnscoredPrefixHead + report.UnscoredOther == report.Unscored,
+        $"sum != {report.Unscored}");
+    Expect("unscored_live_true_closed_no_text", report.UnscoredLiveTrueClosedNoText == 1, $"got {report.UnscoredLiveTrueClosedNoText}");
     Expect("unscored_live_true_prefix_head", report.UnscoredLiveTruePrefixHead == 1, $"got {report.UnscoredLiveTruePrefixHead}");
-    Expect("unscored_with_reading", report.UnscoredWithReading == 1, $"got {report.UnscoredWithReading}");
+    Expect("unscored_with_reading", report.UnscoredWithReading == 0, $"got {report.UnscoredWithReading}");
     Expect("unscored_with_alts", report.UnscoredWithAlts == 0, $"got {report.UnscoredWithAlts}");
-    Expect("score_from_reading_tried", report.ScoreFromReadingTried == 1, $"got {report.ScoreFromReadingTried}");
-    Expect("score_from_reading_hits", report.ScoreFromReadingHits == 1, $"got {report.ScoreFromReadingHits}");
-    Expect("score_from_reading_recovered_live_true", report.ScoreFromReadingRecoveredLiveTrue == 1,
-        $"got {report.ScoreFromReadingRecoveredLiveTrue}");
-    Expect("after_unscored_live_true", report.AfterUnscoredLiveTrue == 1, $"got {report.AfterUnscoredLiveTrue}");
-    Expect("after_wake_hits", report.AfterWakeHits == 3, $"got {report.AfterWakeHits}");
-    // Before: unscored_live_true includes the reading-only row; after recovers it.
-    Expect("unscored_live_true_before_includes_reading_only", report.UnscoredLiveTrue == 2,
-        $"got {report.UnscoredLiveTrue}");
-    Expect("live_true_with_reading_only", report.LiveTrue == 4, $"got {report.LiveTrue}");
+    Expect("unscored_live_true_unrecoverable", report.UnscoredLiveTrueUnrecoverable == report.UnscoredLiveTrue,
+        $"got {report.UnscoredLiveTrueUnrecoverable} vs {report.UnscoredLiveTrue}");
+    Expect("cutover_line", report.CutoverLine == 4, $"got {report.CutoverLine}");
+    Expect("cutover_ts", report.CutoverTimestamp == "2026-10-07T12:00:01.0000000+09:00", $"got {report.CutoverTimestamp}");
+    Expect("old_unscored_closed_no_text", report.OldUnscoredClosedNoText == 1, $"got {report.OldUnscoredClosedNoText}");
+    Expect("old_unscored_prefix_head", report.OldUnscoredPrefixHead == 1, $"got {report.OldUnscoredPrefixHead}");
+    Expect("old_live_true_closed_no_text", report.OldLiveTrueClosedNoText == 1, $"got {report.OldLiveTrueClosedNoText}");
+    Expect("old_live_true_prefix_head", report.OldLiveTruePrefixHead == 0, $"got {report.OldLiveTruePrefixHead}");
+    Expect("current_unscored_closed_no_text", report.CurrentUnscoredClosedNoText == 1, $"got {report.CurrentUnscoredClosedNoText}");
+    Expect("current_unscored_prefix_head", report.CurrentUnscoredPrefixHead == 2, $"got {report.CurrentUnscoredPrefixHead}");
+    Expect("current_live_true_closed_no_text", report.CurrentLiveTrueClosedNoText == 0, $"got {report.CurrentLiveTrueClosedNoText}");
+    Expect("current_live_true_prefix_head", report.CurrentLiveTruePrefixHead == 1, $"got {report.CurrentLiveTruePrefixHead}");
+    Expect("old_plus_current_live_true", report.OldLiveTrueClosedNoText + report.OldLiveTruePrefixHead
+        + report.CurrentLiveTrueClosedNoText + report.CurrentLiveTruePrefixHead == report.UnscoredLiveTrue,
+        $"split != {report.UnscoredLiveTrue}");
 
     // H4b LooksIntentional goldens — keep/revert not locked only to substring heuristic.
     Expect("intentional_housei", Replay.LooksIntentional("縫製入力", "ほうせい にゅうりょく"), "縫製入力 must be intentional");
@@ -339,21 +349,33 @@ internal static class Replay
         var d3NearMissAmbient = 0;
         var intentionalGained = 0;
         var ambientGained = 0;
-        // H8: unscored classification + score-from-reading (replay only; no runtime privacy change).
-        var unscoredNoText = 0;
+        // H8: unscored classification + old/current build split (replay only; no runtime privacy change).
+        var unscoredClosedNoText = 0;
         var unscoredPrefixHead = 0;
         var unscoredOther = 0;
         var unscoredWithReading = 0;
         var unscoredWithAlts = 0;
-        var scoreFromReadingTried = 0;
-        var scoreFromReadingHits = 0;
-        var scoreFromReadingRecoveredLiveTrue = 0;
-        var unscoredLiveTrueNoText = 0;
+        var unscoredLiveTrueClosedNoText = 0;
         var unscoredLiveTruePrefixHead = 0;
+        var unscoredLiveTrueUnrecoverable = 0;
+        // Cutover = first complete line that carries reading= (the current DictationRuntime heard block
+        // always ends with reading="..."). Complete lines before it come from an older build.
+        var cutoverLine = 0;
+        string? cutoverTimestamp = null;
+        var oldUnscoredClosedNoText = 0;
+        var oldUnscoredPrefixHead = 0;
+        var oldLiveTrueClosedNoText = 0;
+        var oldLiveTruePrefixHead = 0;
+        var currentUnscoredClosedNoText = 0;
+        var currentUnscoredPrefixHead = 0;
+        var currentLiveTrueClosedNoText = 0;
+        var currentLiveTruePrefixHead = 0;
+        var lineNo = 0;
         const int MinExampleWakeReading = 10;
 
         foreach (var line in File.ReadLines(logPath, Encoding.UTF8))
         {
+            lineNo++;
             var wr = WakeReadings.Match(line);
             if (wr.Success && line.Contains("dictation timing:", StringComparison.Ordinal))
             {
@@ -366,6 +388,14 @@ internal static class Replay
                 continue;
             }
 
+            if (cutoverLine == 0 && line.Contains(" reading=\"", StringComparison.Ordinal))
+            {
+                cutoverLine = lineNo;
+                var sp = line.IndexOf(' ', StringComparison.Ordinal);
+                cutoverTimestamp = sp > 0 ? line[..sp] : "";
+            }
+
+            var currentBuild = cutoverLine != 0;
             var parsed = ParseComplete(line);
             if (parsed is null)
             {
@@ -377,23 +407,28 @@ internal static class Replay
 
             if (parsed.Text is null)
             {
-                // Live still set leadingWake, but the log omitted text= (privacy / older body omit).
-                // H8 classifies: PrefixHead vs no-text= (Closed without text) vs other (above).
+                // Live still set leadingWake, but the log omitted text= (PrefixHead privacy / older build).
+                // H8 classifies: PrefixHead vs closed_no_text (ClosedUtterance without text) vs other (above).
                 unscored++;
-                if (parsed.Extent == RecognitionExtent.PrefixHead)
+                var isPrefixHead = parsed.Extent == RecognitionExtent.PrefixHead;
+                if (isPrefixHead)
                 {
                     unscoredPrefixHead++;
+                    if (currentBuild) { currentUnscoredPrefixHead++; } else { oldUnscoredPrefixHead++; }
                     if (parsed.LiveLeadingWake)
                     {
                         unscoredLiveTruePrefixHead++;
+                        if (currentBuild) { currentLiveTruePrefixHead++; } else { oldLiveTruePrefixHead++; }
                     }
                 }
                 else
                 {
-                    unscoredNoText++;
+                    unscoredClosedNoText++;
+                    if (currentBuild) { currentUnscoredClosedNoText++; } else { oldUnscoredClosedNoText++; }
                     if (parsed.LiveLeadingWake)
                     {
-                        unscoredLiveTrueNoText++;
+                        unscoredLiveTrueClosedNoText++;
+                        if (currentBuild) { currentLiveTrueClosedNoText++; } else { oldLiveTrueClosedNoText++; }
                     }
                 }
 
@@ -417,21 +452,10 @@ internal static class Replay
                     liveFalse++;
                 }
 
-                // Score-from-reading trial: when reading= remains without text=,
-                // run the same LeadingWake API offline. Does not change production log writing.
-                if (!string.IsNullOrEmpty(parsed.Reading))
+                // Nothing left to score offline: no text=, reading=, or alts= on this row.
+                if (parsed.LiveLeadingWake && string.IsNullOrEmpty(parsed.Reading) && string.IsNullOrEmpty(parsed.Alts))
                 {
-                    scoreFromReadingTried++;
-                    var readingOnly = BuildUtterance(parsed);
-                    var readingHit = DictationBoundaries.LeadingWake(readingOnly, wakes);
-                    if (readingHit is not null)
-                    {
-                        scoreFromReadingHits++;
-                        if (parsed.LiveLeadingWake)
-                        {
-                            scoreFromReadingRecoveredLiveTrue++;
-                        }
-                    }
+                    unscoredLiveTrueUnrecoverable++;
                 }
 
                 continue;
@@ -641,16 +665,24 @@ internal static class Replay
             D3NearMissExamples: d3NearMissExamples,
             D3NearMissIntentional: d3NearMissIntentional,
             D3NearMissAmbient: d3NearMissAmbient,
-            UnscoredNoText: unscoredNoText,
+            UnscoredClosedNoText: unscoredClosedNoText,
             UnscoredPrefixHead: unscoredPrefixHead,
             UnscoredOther: unscoredOther,
             UnscoredWithReading: unscoredWithReading,
             UnscoredWithAlts: unscoredWithAlts,
-            ScoreFromReadingTried: scoreFromReadingTried,
-            ScoreFromReadingHits: scoreFromReadingHits,
-            ScoreFromReadingRecoveredLiveTrue: scoreFromReadingRecoveredLiveTrue,
-            UnscoredLiveTrueNoText: unscoredLiveTrueNoText,
-            UnscoredLiveTruePrefixHead: unscoredLiveTruePrefixHead);
+            UnscoredLiveTrueClosedNoText: unscoredLiveTrueClosedNoText,
+            UnscoredLiveTruePrefixHead: unscoredLiveTruePrefixHead,
+            UnscoredLiveTrueUnrecoverable: unscoredLiveTrueUnrecoverable,
+            CutoverLine: cutoverLine,
+            CutoverTimestamp: cutoverTimestamp,
+            OldUnscoredClosedNoText: oldUnscoredClosedNoText,
+            OldUnscoredPrefixHead: oldUnscoredPrefixHead,
+            OldLiveTrueClosedNoText: oldLiveTrueClosedNoText,
+            OldLiveTruePrefixHead: oldLiveTruePrefixHead,
+            CurrentUnscoredClosedNoText: currentUnscoredClosedNoText,
+            CurrentUnscoredPrefixHead: currentUnscoredPrefixHead,
+            CurrentLiveTrueClosedNoText: currentLiveTrueClosedNoText,
+            CurrentLiveTruePrefixHead: currentLiveTruePrefixHead);
     }
 
     // H4b: explicit ambient/intentional goldens first so keep/revert is not locked only to
@@ -839,20 +871,25 @@ internal sealed record Report(
     IReadOnlyList<string> D3NearMissExamples,
     int D3NearMissIntentional,
     int D3NearMissAmbient,
-    int UnscoredNoText,
+    int UnscoredClosedNoText,
     int UnscoredPrefixHead,
     int UnscoredOther,
     int UnscoredWithReading,
     int UnscoredWithAlts,
-    int ScoreFromReadingTried,
-    int ScoreFromReadingHits,
-    int ScoreFromReadingRecoveredLiveTrue,
-    int UnscoredLiveTrueNoText,
-    int UnscoredLiveTruePrefixHead)
+    int UnscoredLiveTrueClosedNoText,
+    int UnscoredLiveTruePrefixHead,
+    int UnscoredLiveTrueUnrecoverable,
+    int CutoverLine,
+    string? CutoverTimestamp,
+    int OldUnscoredClosedNoText,
+    int OldUnscoredPrefixHead,
+    int OldLiveTrueClosedNoText,
+    int OldLiveTruePrefixHead,
+    int CurrentUnscoredClosedNoText,
+    int CurrentUnscoredPrefixHead,
+    int CurrentLiveTrueClosedNoText,
+    int CurrentLiveTruePrefixHead)
 {
-    // After = text-scored wake_hits plus score-from-reading hits; unscored_live_true minus recovered.
-    public int AfterWakeHits => WakeHits + ScoreFromReadingHits;
-    public int AfterUnscoredLiveTrue => UnscoredLiveTrue - ScoreFromReadingRecoveredLiveTrue;
 
     public void WriteHuman(TextWriter w)
     {
@@ -863,21 +900,23 @@ internal sealed record Report(
         var inBand = WakeHits >= bandLo && WakeHits <= bandHi;
         var scoredLiveTrue = LiveTrue - UnscoredLiveTrue;
         w.WriteLine($"label={Label}");
-        w.WriteLine($"scored={Scored} unscored={Unscored} unscored_live_true={UnscoredLiveTrue} (no text=; before score-from-reading)");
+        w.WriteLine($"scored={Scored} unscored={Unscored} unscored_live_true={UnscoredLiveTrue} (no text=)");
         w.WriteLine($"live_true={LiveTrue} live_false={LiveFalse} scored_live_true={scoredLiveTrue}");
         w.WriteLine($"wake_hits={WakeHits} wake_hits_vs_live_true_pct={pct:0.00} band=[{bandLo},{bandHi}] in_band={inBand}");
         if (!inBand)
         {
             w.WriteLine($"parity_note=wake_hits outside ±2% of live_true; cause=unscored_live_true={UnscoredLiveTrue} plus gained/lost; do not tune matcher");
         }
-        // H8 classification of unscored rows + optional score-from-reading trial (replay only).
-        w.WriteLine($"unscored_class no_text={UnscoredNoText} PrefixHead={UnscoredPrefixHead} other={UnscoredOther}");
-        w.WriteLine($"unscored_live_true_class no_text={UnscoredLiveTrueNoText} PrefixHead={UnscoredLiveTruePrefixHead}");
-        w.WriteLine($"unscored_meta with_reading={UnscoredWithReading} with_alts={UnscoredWithAlts}");
-        w.WriteLine($"score_from_reading tried={ScoreFromReadingTried} hits={ScoreFromReadingHits} recovered_live_true={ScoreFromReadingRecoveredLiveTrue}");
-        var afterPct = liveTrueTotal == 0 ? 0.0 : 100.0 * AfterWakeHits / liveTrueTotal;
-        var afterInBand = AfterWakeHits >= bandLo && AfterWakeHits <= bandHi;
-        w.WriteLine($"after_score_from_reading unscored_live_true={AfterUnscoredLiveTrue} wake_hits={AfterWakeHits} wake_hits_vs_live_true_pct={afterPct:0.00} in_band={afterInBand}");
+        // H8 classification of unscored rows + old/current build split (replay only).
+        w.WriteLine($"unscored_class closed_no_text={UnscoredClosedNoText} PrefixHead={UnscoredPrefixHead} other={UnscoredOther}");
+        w.WriteLine($"unscored_live_true_class closed_no_text={UnscoredLiveTrueClosedNoText} PrefixHead={UnscoredLiveTruePrefixHead}");
+        w.WriteLine($"unscored_meta with_reading={UnscoredWithReading} with_alts={UnscoredWithAlts} (product writes reading=/alts= only alongside text=)");
+        w.WriteLine($"{UnscoredLiveTrueUnrecoverable} unrecoverable: ログに text/reading/alts がない (unscored_live_true_unrecoverable={UnscoredLiveTrueUnrecoverable} of {UnscoredLiveTrue})");
+        w.WriteLine(CutoverLine == 0
+            ? "cutover rule=first complete line with reading= (current DictationRuntime heard-block format) found=none → all rows old-build"
+            : $"cutover rule=first complete line with reading= (current DictationRuntime heard-block format) line={CutoverLine} ts={CutoverTimestamp}");
+        w.WriteLine($"old_build (before cutover) unscored closed_no_text={OldUnscoredClosedNoText} PrefixHead={OldUnscoredPrefixHead} live_true closed_no_text={OldLiveTrueClosedNoText} PrefixHead={OldLiveTruePrefixHead} total={OldLiveTrueClosedNoText + OldLiveTruePrefixHead}");
+        w.WriteLine($"current_build (from cutover) unscored closed_no_text={CurrentUnscoredClosedNoText} PrefixHead={CurrentUnscoredPrefixHead} live_true closed_no_text={CurrentLiveTrueClosedNoText} PrefixHead={CurrentLiveTruePrefixHead} total={CurrentLiveTrueClosedNoText + CurrentLiveTruePrefixHead}");
         w.WriteLine($"agreed_true={AgreedTrue} agreed_false={AgreedFalse} gained={Gained} lost={Lost}");
         w.WriteLine($"gained_intentional={IntentionalGained} gained_ambient={AmbientGained}");
         w.WriteLine("near_miss_by_distance:");
@@ -940,18 +979,25 @@ internal sealed record Report(
         Num("short_near_miss_ambient", ShortNearMissAmbient);
         Num("d3_near_miss_intentional", D3NearMissIntentional);
         Num("d3_near_miss_ambient", D3NearMissAmbient);
-        Num("unscored_no_text", UnscoredNoText);
+        Num("unscored_closed_no_text", UnscoredClosedNoText);
         Num("unscored_prefix_head", UnscoredPrefixHead);
         Num("unscored_other", UnscoredOther);
         Num("unscored_with_reading", UnscoredWithReading);
         Num("unscored_with_alts", UnscoredWithAlts);
-        Num("score_from_reading_tried", ScoreFromReadingTried);
-        Num("score_from_reading_hits", ScoreFromReadingHits);
-        Num("score_from_reading_recovered_live_true", ScoreFromReadingRecoveredLiveTrue);
-        Num("after_unscored_live_true", AfterUnscoredLiveTrue);
-        Num("after_wake_hits", AfterWakeHits);
-        Num("unscored_live_true_no_text", UnscoredLiveTrueNoText);
+        Num("unscored_live_true_closed_no_text", UnscoredLiveTrueClosedNoText);
         Num("unscored_live_true_prefix_head", UnscoredLiveTruePrefixHead);
+        Num("unscored_live_true_unrecoverable", UnscoredLiveTrueUnrecoverable);
+        Num("cutover_line", CutoverLine);
+        Num("old_build_unscored_closed_no_text", OldUnscoredClosedNoText);
+        Num("old_build_unscored_prefix_head", OldUnscoredPrefixHead);
+        Num("old_build_live_true_closed_no_text", OldLiveTrueClosedNoText);
+        Num("old_build_live_true_prefix_head", OldLiveTruePrefixHead);
+        Num("current_build_unscored_closed_no_text", CurrentUnscoredClosedNoText);
+        Num("current_build_unscored_prefix_head", CurrentUnscoredPrefixHead);
+        Num("current_build_live_true_closed_no_text", CurrentLiveTrueClosedNoText);
+        Num("current_build_live_true_prefix_head", CurrentLiveTruePrefixHead);
+        sb.Append(CultureInfo.InvariantCulture, $"\"cutover_ts\":\"{Escape(CutoverTimestamp ?? "")}\",");
+        sb.Append("\"cutover_rule\":\"first complete line with reading=\",");
         sb.Append(CultureInfo.InvariantCulture, $"\"label\":\"{Escape(Label)}\",");
         sb.Append("\"gained_readings\":[");
         sb.Append(string.Join(',', GainedRows.Select(r => $"\"{Escape(r)}\"")));
