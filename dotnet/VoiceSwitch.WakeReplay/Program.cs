@@ -13,7 +13,7 @@ static int Usage()
     Console.Error.WriteLine(
         """
         Usage:
-          dotnet run --project dotnet/VoiceSwitch.WakeReplay -- --log <path> [--label NAME] [--gained-cap 40] [--json-out path]
+          dotnet run --project dotnet/VoiceSwitch.WakeReplay -- --log <path> [--label NAME] [--gained-cap 40] [--examples-cap 40] [--json-out path]
           dotnet run --project dotnet/VoiceSwitch.WakeReplay -- --self-test
         """);
     return 2;
@@ -28,6 +28,7 @@ var selfTest = false;
 string? logPath = null;
 var label = "matcher";
 var gainedCap = 40;
+var examplesCap = 40;
 string? jsonOut = null;
 for (var i = 0; i < args.Length; i++)
 {
@@ -44,6 +45,9 @@ for (var i = 0; i < args.Length; i++)
             break;
         case "--gained-cap" when i + 1 < args.Length:
             gainedCap = int.Parse(args[++i], CultureInfo.InvariantCulture);
+            break;
+        case "--examples-cap" when i + 1 < args.Length:
+            examplesCap = int.Parse(args[++i], CultureInfo.InvariantCulture);
             break;
         case "--json-out" when i + 1 < args.Length:
             jsonOut = args[++i];
@@ -66,7 +70,7 @@ if (logPath is null)
     return Usage();
 }
 
-var report = Replay.Run(logPath, label, gainedCap);
+var report = Replay.Run(logPath, label, gainedCap, examplesCap);
 report.WriteHuman(Console.Out);
 if (jsonOut is not null)
 {
@@ -85,7 +89,7 @@ static int RunSelfTest()
         return 1;
     }
 
-    var report = Replay.Run(fixture, "self-test", gainedCap: 40);
+    var report = Replay.Run(fixture, "self-test", gainedCap: 40, examplesCap: 40);
     // Known counts on the fixture (main matcher, d≤1):
     // - 縫製入力 (ほうせいにゅうりょく) → no hit (d=2 needs H2b)
     // - 温泉 alone → hit short おんせい (d=1 whole closed)
@@ -116,6 +120,22 @@ static int RunSelfTest()
     // 縫製入力 reading vs おんせいにゅうりょく is d=2 near-miss
     Expect("near_miss_lists_housei", report.NearMissReadings.Any(r => r.Contains("ほうせい", StringComparison.Ordinal)),
         string.Join(',', report.NearMissReadings));
+
+    // H5: long-wake (Reading.Length>=10) near-miss examples, d=1..2 only; short おんせい excluded.
+    // Fixture locks: 縫製入力 → d=2 via おんせいにゅうりょく (intentional); exact 音声入力 / short wakes omitted.
+    Expect("near_miss_examples_count", report.NearMissExamples.Count == 1,
+        $"got {report.NearMissExamples.Count}: {string.Join(" | ", report.NearMissExamples)}");
+    Expect("near_miss_example_housei",
+        report.NearMissExamples.Any(r => r.Contains("縫製入力", StringComparison.Ordinal)
+            && r.Contains("d=2", StringComparison.Ordinal)
+            && r.Contains("おんせいにゅうりょく", StringComparison.Ordinal)
+            && r.Contains("intentional=True", StringComparison.Ordinal)),
+        string.Join(" | ", report.NearMissExamples));
+    Expect("near_miss_examples_no_short_onsei",
+        !report.NearMissExamples.Any(r => r.Contains("wake=おんせい ", StringComparison.Ordinal)
+            || r.Contains("wake=おんせい/", StringComparison.Ordinal)
+            || r.EndsWith("wake=おんせい", StringComparison.Ordinal)),
+        string.Join(" | ", report.NearMissExamples));
 
     // H4b LooksIntentional goldens — keep/revert not locked only to substring heuristic.
     Expect("intentional_housei", Replay.LooksIntentional("縫製入力", "ほうせい にゅうりょく"), "縫製入力 must be intentional");
@@ -218,7 +238,7 @@ internal static class Replay
         WakeWord.From("音声によって", "おんせいによって"),
     ];
 
-    public static Report Run(string logPath, string label, int gainedCap)
+    public static Report Run(string logPath, string label, int gainedCap, int examplesCap = 40)
     {
         var wakes = DefaultWakes;
         var scored = 0;
@@ -235,8 +255,10 @@ internal static class Replay
         var nearMissByDistance = new Dictionary<int, int>();
         var nearMissByWake = new Dictionary<string, int>(StringComparer.Ordinal);
         var nearMissReadings = new List<string>();
+        var nearMissExamples = new List<string>();
         var intentionalGained = 0;
         var ambientGained = 0;
+        const int MinExampleWakeReading = 10;
 
         foreach (var line in File.ReadLines(logPath, Encoding.UTF8))
         {
@@ -339,6 +361,9 @@ internal static class Replay
                 {
                     var best = 99;
                     WakeWord? bestWake = null;
+                    // H5 examples: best among long wakes only (Reading.Length >= 10); exclude short おんせい noise.
+                    var bestLong = 99;
+                    WakeWord? bestLongWake = null;
                     foreach (var wake in wakes.Where(w => w.Reading.Length > 0))
                     {
                         // Compare whole utterance reading to wake reading (and size±1 prefixes already covered by matcher;
@@ -348,6 +373,12 @@ internal static class Replay
                         {
                             best = d;
                             bestWake = wake;
+                        }
+
+                        if (wake.Reading.Length >= MinExampleWakeReading && d <= 3 && d < bestLong)
+                        {
+                            bestLong = d;
+                            bestLongWake = wake;
                         }
 
                         // Also allow size±1 window on longer utterances (matches ReadingWake length set).
@@ -365,6 +396,12 @@ internal static class Replay
                                 best = d;
                                 bestWake = wake;
                             }
+
+                            if (wake.Reading.Length >= MinExampleWakeReading && d <= 3 && d < bestLong)
+                            {
+                                bestLong = d;
+                                bestLongWake = wake;
+                            }
                         }
                     }
 
@@ -377,6 +414,14 @@ internal static class Replay
                         {
                             nearMissReadings.Add($"d={best} wake={bestWake.Reading} reading=\"{Compact(primary, 24)}\"");
                         }
+                    }
+
+                    // H5: dump examples for long-wake d=1..2 only (skip d=0 exact / d>=3). Cap <=40.
+                    if (bestLongWake is not null && bestLong >= 1 && bestLong <= 2 && nearMissExamples.Count < examplesCap)
+                    {
+                        var intentional = LooksIntentional(parsed.Text, parsed.Reading);
+                        nearMissExamples.Add(
+                            $"text=\"{Compact(parsed.Text, 24)}\" reading=\"{Compact(primary, 24)}\" wake={bestLongWake.Reading} d={bestLong} intentional={intentional}");
                     }
                 }
             }
@@ -399,7 +444,8 @@ internal static class Replay
             GainedRows: gainedRows,
             NearMissByDistance: nearMissByDistance,
             NearMissByWake: nearMissByWake,
-            NearMissReadings: nearMissReadings);
+            NearMissReadings: nearMissReadings,
+            NearMissExamples: nearMissExamples);
     }
 
     // H4b: explicit ambient/intentional goldens first so keep/revert is not locked only to
@@ -580,7 +626,8 @@ internal sealed record Report(
     IReadOnlyList<string> GainedRows,
     IReadOnlyDictionary<int, int> NearMissByDistance,
     IReadOnlyDictionary<string, int> NearMissByWake,
-    IReadOnlyList<string> NearMissReadings)
+    IReadOnlyList<string> NearMissReadings,
+    IReadOnlyList<string> NearMissExamples)
 {
     public void WriteHuman(TextWriter w)
     {
@@ -617,6 +664,12 @@ internal sealed record Report(
         {
             w.WriteLine("  " + row);
         }
+
+        w.WriteLine($"near_miss_examples_long_wake_d1_2 (cap {NearMissExamples.Count}, wake.Reading.Length>=10):");
+        foreach (var row in NearMissExamples)
+        {
+            w.WriteLine("  " + row);
+        }
     }
 
     public string ToJson()
@@ -643,7 +696,9 @@ internal sealed record Report(
         sb.Append(string.Join(',', NearMissByDistance.OrderBy(k => k.Key).Select(kv => $"\"{kv.Key}\":{kv.Value}")));
         sb.Append("},\"near_miss_by_wake\":{");
         sb.Append(string.Join(',', NearMissByWake.Select(kv => $"\"{Escape(kv.Key)}\":{kv.Value}")));
-        sb.Append("}}");
+        sb.Append("},\"near_miss_examples\":[");
+        sb.Append(string.Join(',', NearMissExamples.Select(r => $"\"{Escape(r)}\"")));
+        sb.Append("]}");
         return sb.ToString();
 
         static string Escape(string s) =>
