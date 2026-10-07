@@ -42,6 +42,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation lone wake body then stop submits body", () => Check(DictationLoneWakeBodyThenStopSubmitsBody())),
     ("dictation repeated wake prefix keeps body", () => Check(DictationRepeatedWakePrefixKeepsBody())),
     ("dictation wake reading recovers near-homophones but never cuts a body from a fuzzy match", () => Check(DictationWakeReadingRecoversNearHomophones())),
+    ("dictation long wake reading recovers distance-2 closed 縫製入力 as wake-only", () => Check(DictationLongWakeReadingRecoversDistance2ClosedHosei())),
     ("dictation kana wake word matches SAPI's kanji through the reading", () => Check(DictationKanaWakeMatchesKanjiThroughReading())),
     ("dictation session opens a wait on a fuzzy wake and starts the body on the next utterance", () => Check(DictationSessionOpensWaitOnFuzzyWake())),
     ("dictation runtime logs a reading-matched wake-only with its distance", () => Check(DictationRuntimeLogsReadingWakeOnly())),
@@ -564,6 +565,29 @@ static bool DictationWakeReadingRecoversNearHomophones()
         && DictationBoundaries.LeadingWake(onsenWa, wakes) is null
         && DictationBoundaries.LeadingWake(exactThenBody, wakes) == new WakePrefix(10000, 13000)
         && DictationBoundaries.LeadingWake(wakeThenFuzzy, wakes) == new WakePrefix(4000, 4000);
+}
+
+// H2: live log misheard 音声入力 as 縫製入力 (ほうせい↔おんせい, distance 2). Long closed wake-only; short stays ≤1.
+static bool DictationLongWakeReadingRecoversDistance2ClosedHosei()
+{
+    var longWake = WakeWord.From("音声入力", "おんせいにゅうりょく");
+    var shortWake = WakeWord.From("おんせい");
+    WakeWord[] wakes = [longWake, shortWake];
+    var hosei = Recognized(1, RecognitionExtent.ClosedUtterance, 0, 10000, "縫製入力", false,
+        Run("縫製", 0, 4000, "ほうせい"), Run("入力", 4000, 10000, "にゅうりょく"));
+    var hoseiSpaced = Recognized(2, RecognitionExtent.ClosedUtterance, 0, 10000, "縫製入力", false,
+        Run("縫製入力", 0, 10000, "ほうせい にゅうりょく"));
+    var hoseiPrefix = hosei with { Extent = RecognitionExtent.PrefixHead };
+    // ShortWakeReading=4: ほうせい↔おんせい is distance 2 and must stay rejected.
+    var hoseiShortOnly = Recognized(3, RecognitionExtent.ClosedUtterance, 0, 4000, "縫製", false, Run("縫製", 0, 4000, "ほうせい"));
+    var hit = DictationBoundaries.LeadingWake(hosei, wakes);
+    var spaced = DictationBoundaries.LeadingWake(hoseiSpaced, wakes);
+    return hit == new WakePrefix(10000, null, longWake, 2)
+        && spaced == new WakePrefix(10000, null, longWake, 2)
+        && hit is { BodyStart: null, Distance: 2, ByReading: not null }
+        && DictationBoundaries.LeadingWake(hoseiPrefix, wakes) is null
+        && DictationBoundaries.LeadingWake(hoseiShortOnly, [shortWake]) is null
+        && DictationBoundaries.LeadingWake(hoseiShortOnly, wakes) is null;
 }
 
 static bool DictationKanaWakeMatchesKanjiThroughReading()

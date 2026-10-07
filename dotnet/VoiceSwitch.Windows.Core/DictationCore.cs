@@ -268,16 +268,18 @@ public static class DictationBoundaries
     }
 
     // Wake readings of this many kana or fewer (おんせい) match by reading only when they are the whole closed
-    // utterance. As an exact prefix, kana おんせい opened a body on 音声メモ… and 音声認識… in 5 of 54 non-wake TTS
-    // fixtures; as a 1-distance prefix it would take ordinary speech starting with 温泉 or 安静. On the 2026-10-04 live
-    // log the rule keeps 温水 x5, 温泉 and 温泉に入る and gives up 温泉は, 温泉入浴 x3 and 温泉有力を….
+    // utterance at distance ≤1. As an exact prefix, kana おんせい opened a body on 音声メモ… and 音声認識… in 5 of 54
+    // non-wake TTS fixtures; as a 1-distance prefix it would take ordinary speech starting with 温泉 or 安静; distance 2
+    // would widen that further (ほうせい). On the 2026-10-04 live log the rule keeps 温水 x5, 温泉 and 温泉に入る and gives
+    // up 温泉は, 温泉入浴 x3 and 温泉有力を…. Longer closed wakes may use distance ≤2 (縫製入力 / ほうせい vs おんせい).
     public const int ShortWakeReading = 4;
 
     // Next is the lexeme after the wake, or null when the wake ends inside a lexeme (End is then a proportional split).
     private readonly record struct ReadingHit(WakeWord Wake, int Distance, long End, int? Next);
 
-    // SAPI writes a slurred 音声 as 温泉 or 温水, so text equality misses it while the kana differ by one.
-    // Longest wake reading first; the utterance prefix may be one kana shorter or longer than the wake.
+    // SAPI writes a slurred 音声 as 温泉 or 温水 (distance 1) or 縫製 (distance 2 on the long wake). Text equality misses
+    // those while the kana differ. Longest wake reading first; the utterance prefix may be one kana shorter or longer
+    // than the wake (size±1 only). Short wakes stay at distance ≤1 and whole-closed only; long closed wakes allow ≤2.
     private static ReadingHit? ReadingWake(LexicalRun[] lexemes, int index, IReadOnlyList<WakeWord> wakes, bool allowFuzzy, bool closed)
     {
         var readings = lexemes.Skip(index)
@@ -288,6 +290,8 @@ public static class DictationBoundaries
         {
             var size = wake.Reading.Length;
             (int Distance, int Length)? best = null;
+            // Long closed wakes may accept distance 2 (縫製入力); short stays ≤1 to avoid 温泉/温水 FP widening.
+            var maxDistance = (size > ShortWakeReading && closed) ? 2 : 1;
             foreach (var length in new[] { size, size - 1, size + 1 })
             {
                 if (length <= 0 || length > all.Length)
@@ -296,7 +300,7 @@ public static class DictationBoundaries
                 }
 
                 var distance = TextMatching.EditDistance(all[..length], wake.Reading);
-                if (distance > 1 || (distance == 1 && !allowFuzzy) || (size <= ShortWakeReading && !(closed && length == all.Length)))
+                if (distance > maxDistance || (distance >= 1 && !allowFuzzy) || (size <= ShortWakeReading && !(closed && length == all.Length)))
                 {
                     continue;
                 }
