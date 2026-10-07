@@ -29,6 +29,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("program rejects synthetic WAV without dictation config", () => Check(ProgramRejectsSyntheticWavWithoutDictationConfig())),
     ("synthetic WAV without output dir suppresses external dispatch", () => Check(SyntheticWavWithoutOutputDirSuppressesExternalDispatch())),
     ("validates config boundary", () => Check(ValidatesConfig())),
+    ("warns when endSilenceMs or startTimeoutMs are unusually high", () => Check(WarnsOnHighDictationTiming())),
     ("rejects numeric noise reduction mode", () => Check(RejectsNumericNoiseReductionMode())),
     ("recognition key changes only for recognizer inputs", () => Check(ComparesRecognitionKey())),
     ("config wake words carry readings with the word as fallback", () => Check(ConfigWakeWordsCarryReadings())),
@@ -393,6 +394,18 @@ static bool ValidatesConfig()
         && Rejects("""{"wakeWords":["。"],"command":"wake"}""", "wakeWords[0]")
         && Rejects("""{"wakeWords":["a"],"locale":"no_such_locale","command":"wake"}""", "locale");
 }
+
+static bool WarnsOnHighDictationTiming() =>
+    DictationTimingGuard.ShouldWarnHighEndSilence(24000)
+    && DictationTimingGuard.ShouldWarnHighEndSilence(10001)
+    && !DictationTimingGuard.ShouldWarnHighEndSilence(10000)
+    && !DictationTimingGuard.ShouldWarnHighEndSilence(2400)
+    && !DictationTimingGuard.ShouldWarnHighEndSilence(null)
+    && DictationTimingGuard.ShouldWarnHighStartTimeout(30000)
+    && DictationTimingGuard.ShouldWarnHighStartTimeout(15001)
+    && !DictationTimingGuard.ShouldWarnHighStartTimeout(15000)
+    && !DictationTimingGuard.ShouldWarnHighStartTimeout(3000)
+    && !DictationTimingGuard.ShouldWarnHighStartTimeout(null);
 
 static bool RejectsNumericNoiseReductionMode() =>
     Rejects("""{"wakeWords":["a"],"command":"wake","noiseReduction":{"mode":2}}""", "Config JSON is invalid");
