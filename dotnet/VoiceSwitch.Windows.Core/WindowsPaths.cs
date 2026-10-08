@@ -32,6 +32,9 @@ public static class WindowsPaths
     public static string SuperwhisperPreferencesPath() =>
         ExpandPath(@"%LOCALAPPDATA%\com.superwhisper.app\preferences.json");
 
+    public static string SuperwhisperModesPath() =>
+        ExpandPath(@"%LOCALAPPDATA%\com.superwhisper.app\modes");
+
     public static string ExpandPath(string path)
     {
         var expanded = path;

@@ -66,6 +66,9 @@ struct DictationConfig: Decodable {
     var startTimeoutMs: Int?
     /// Windows only (executable names); one config file can serve both platforms, and macOS ignores it.
     var excludeProcessNames: [String]?
+    /// Superwhisper mode key or display name for voice-switch dictations (Mac + Windows).
+    /// Unset keeps auto-paste behavior; set switches mode around handoff and pastes when not routed.
+    var superwhisperMode: String?
 
     init(recordingsDir: String? = nil, endSilenceMs: Int? = nil, maxSeconds: Double? = nil,
          excludeBundleIDs: [String]? = nil, startTimeoutMs: Int? = nil) {
@@ -74,6 +77,32 @@ struct DictationConfig: Decodable {
         self.maxSeconds = maxSeconds
         self.excludeBundleIDs = excludeBundleIDs
         self.startTimeoutMs = startTimeoutMs
+    }
+}
+
+
+/// Load-time guardrails for timing fields that are easy to mistype 10x. No clamp — warn only.
+/// Thresholds match Windows DictationTimingGuard (endSilenceMs > 10000, startTimeoutMs > 15000).
+enum DictationTimingGuard {
+    static func shouldWarnHighEndSilence(_ ms: Int?) -> Bool {
+        guard let ms else { return false }
+        return ms > 10000
+    }
+
+    static func shouldWarnHighStartTimeout(_ ms: Int?) -> Bool {
+        guard let ms else { return false }
+        return ms > 15000
+    }
+
+    static func warnIfNeeded(_ cfg: Config) {
+        if shouldWarnHighEndSilence(cfg.dictation?.endSilenceMs),
+           let ms = cfg.dictation?.endSilenceMs {
+            log("dictation timing warn: endSilenceMs unusually high (\(ms)); example is 2400")
+        }
+        if shouldWarnHighStartTimeout(cfg.dictation?.startTimeoutMs),
+           let ms = cfg.dictation?.startTimeoutMs {
+            log("dictation timing warn: startTimeoutMs unusually high (\(ms)); example is 3000")
+        }
     }
 }
 
@@ -86,6 +115,7 @@ final class ConfigFile {
         self.path = path
         cfg = try Self.load(path)
         mtime = Self.modified(path)
+        DictationTimingGuard.warnIfNeeded(cfg)
     }
 
     // Checked between utterances so wake words can be edited without a restart.
@@ -96,6 +126,7 @@ final class ConfigFile {
         do {
             cfg = try Self.load(path)
             log("config reloaded: \(cfg.wakeWords)")
+            DictationTimingGuard.warnIfNeeded(cfg)
         } catch {
             log("config reload failed, keeping previous: \(error)")
         }

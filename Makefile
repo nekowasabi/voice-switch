@@ -30,7 +30,8 @@ WIN_RID ?= win-x64
 WIN_APP := dotnet/VoiceSwitch.Windows/VoiceSwitch.Windows.csproj
 WIN_TESTS := dotnet/VoiceSwitch.Windows.Tests/VoiceSwitch.Windows.Tests.csproj
 DOTNET_RESTORE_FLAGS ?= --ignore-failed-sources --disable-parallel
-RELEASE_DIR ?= $(CURDIR)/release
+# Why: Run from local disk, not \\wsl.localhost, as focusbm does; AV heuristics flag UNC-launched exes.
+RELEASE_DIR ?= /mnt/c/takeda/tools/voice-switch
 
 .PHONY: build app install relaunch uninstall logs win win-restore win-build win-test parity-test win-publish win-verify help
 
@@ -93,6 +94,8 @@ parity-test: ## Run macOS/Windows parity contract checks
 
 win-publish: win-build ## Windows: publish voice-switch.exe to RELEASE_DIR
 	mkdir -p "$(RELEASE_DIR)"
+	@# A running voice-switch.exe locks its DLLs and publish fails with Access denied.
+	-taskkill.exe /IM voice-switch.exe /F >/dev/null 2>&1
 	@# The tray used to ship as a second exe; drop its leftovers so release/ holds one app.
 	rm -f "$(RELEASE_DIR)"/voice-switch-tray.*
 	$(DOTNET) publish $(WIN_APP) -c $(WIN_CONFIG) -r $(WIN_RID) --self-contained false \
@@ -100,7 +103,11 @@ win-publish: win-build ## Windows: publish voice-switch.exe to RELEASE_DIR
 		-p:DebugType=None \
 		-p:CopyOutputSymbolsToPublishDirectory=false \
 		-o "$(RELEASE_DIR)"
-	test -f "$(RELEASE_DIR)/config.json" || cp config.example.windows.json "$(RELEASE_DIR)/config.json"
+	@# An existing config.json in RELEASE_DIR is never overwritten. The old in-repo release/config.json seeds it once.
+	[ -f "$(RELEASE_DIR)/config.json" ] || [ ! -f release/config.json ] || cp release/config.json "$(RELEASE_DIR)/config.json"
+	[ -f "$(RELEASE_DIR)/config.json" ] || cp config.example.windows.json "$(RELEASE_DIR)/config.json"
+	@# cwd is RELEASE_DIR so the exe starts from local disk, not a UNC path.
+	cd "$(RELEASE_DIR)" && powershell.exe -NoProfile -Command "Start-Process -FilePath .\voice-switch.exe"
 	@echo "Windows build → $(RELEASE_DIR)"
 	@echo "Run:  $(RELEASE_DIR)/voice-switch.exe            (tray app, listens on launch)"
 	@echo "Try:  $(RELEASE_DIR)/voice-switch.exe --self-test"

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Windows.Forms;
 
 namespace VoiceSwitch.Windows.Tray;
 
@@ -40,19 +41,66 @@ public static class WindowFocus
             return;
         }
 
-        // AllowSetForegroundWindow can only be granted by the foreground process itself, and a synthetic Alt tap toggles
-        // menu bars and can eat the paste; sharing Superwhisper's input queue is what lets SetForegroundWindow succeed.
-        var attached = AttachThreadInput(GetCurrentThreadId(), thread, true);
+        var (attached, restored) = ForceForeground(thread, target);
+        Log.Info($"dictation focus: foreground={name} target=0x{target:X} attached={attached} restored={restored}");
+    }
+
+    // Used when Superwhisper runs a mode with auto-paste off and no pane took the dictation. Clipboard needs an STA
+    // thread, and the wait before restoring it must not stall the HUD, so the paste runs on its own STA thread.
+    public static bool Paste(string text, nint target)
+    {
+        if (target == 0 || !OperatingSystem.IsWindows() || !IsWindow(target))
+        {
+            return false;
+        }
+
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var previous = Clipboard.ContainsText() ? Clipboard.GetText() : null;
+                Clipboard.SetText(text);
+                var foreground = GetForegroundWindow();
+                if (foreground != 0 && foreground != target && !ForceForeground(GetWindowThreadProcessId(foreground, out _), target).Restored)
+                {
+                    Log.Info($"dictation paste: could not bring target=0x{target:X} to the front");
+                }
+
+                SendKeys.SendWait("^v");
+                // Ctrl+V is only queued; the target reads the clipboard when it handles it. 1 s outlasts a busy target.
+                Thread.Sleep(TimeSpan.FromSeconds(1));
+                if (previous is not null && Clipboard.ContainsText() && Clipboard.GetText() == text)
+                {
+                    Clipboard.SetText(previous);
+                }
+            }
+            catch (ExternalException ex)
+            {
+                Log.Info($"dictation paste: clipboard failed: {ex.Message}");
+            }
+        })
+        {
+            IsBackground = true
+        };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        return true;
+    }
+
+    // AllowSetForegroundWindow can only be granted by the foreground process itself, and a synthetic Alt tap toggles
+    // menu bars and can eat the paste; sharing the foreground thread's input queue is what lets SetForegroundWindow succeed.
+    private static (bool Attached, bool Restored) ForceForeground(uint foregroundThread, nint target)
+    {
+        var attached = AttachThreadInput(GetCurrentThreadId(), foregroundThread, true);
         try
         {
-            var restored = SetForegroundWindow(target);
-            Log.Info($"dictation focus: foreground={name} target=0x{target:X} attached={attached} restored={restored}");
+            return (attached, SetForegroundWindow(target));
         }
         finally
         {
             if (attached)
             {
-                AttachThreadInput(GetCurrentThreadId(), thread, false);
+                AttachThreadInput(GetCurrentThreadId(), foregroundThread, false);
             }
         }
     }
