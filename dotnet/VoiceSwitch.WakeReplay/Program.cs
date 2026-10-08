@@ -93,7 +93,8 @@ static int RunSelfTest()
     // Known counts on the fixture (main matcher, d≤1):
     // - 縫製入力 (ほうせいにゅうりょく) → no hit (d=2 needs H2d); H5b near-miss example
     // - 縫製入力の本文… → size±1 prefix d=2 but whole≫2 → not an H5b example
-    // - 温泉 alone → hit short おんせい (d=1 whole closed); excluded from long+short examples (!hit)
+    // - 法政入力 (ほうぜいにゅうりょく) → no hit; whole d=3 vs おんせいにゅうりょく; H7 example
+    // - 温泉 alone → hit short おんせい (d=1 whole closed); excluded from long+short+d3 examples (!hit)
     // - ほうせいにはいるよ prefix body → no d=2 prefix hit on main
     // - 音声入力 exact → hit; excluded from near-miss examples
     // - PrefixHead no-text leadingWake=False → unscored
@@ -108,7 +109,7 @@ static int RunSelfTest()
         }
     }
 
-    Expect("scored", report.Scored == 8, $"got {report.Scored}");
+    Expect("scored", report.Scored == 9, $"got {report.Scored}");
     Expect("live_true", report.LiveTrue == 3, $"got {report.LiveTrue}");
     Expect("unscored_live_true", report.UnscoredLiveTrue == 1, $"got {report.UnscoredLiveTrue}");
     Expect("wake_hits", report.WakeHits == 2, $"got {report.WakeHits}");
@@ -162,6 +163,32 @@ static int RunSelfTest()
         $"got {report.ShortNearMissIntentional}");
     Expect("short_near_miss_ambient_zero", report.ShortNearMissAmbient == 0,
         $"got {report.ShortNearMissAmbient}");
+
+    // H7: long-wake near-miss examples = !hit ∧ whole-utterance d=3 ∧ Reading.Length>=10.
+    // Fixture: 法政入力 (ほうぜいにゅうりょく) is the sole d=3 long whole miss. d=2 縫製入力 stays in H5b.
+    Expect("d3_near_miss_examples_count", report.D3NearMissExamples.Count == 1,
+        $"got {report.D3NearMissExamples.Count}: {string.Join(" | ", report.D3NearMissExamples)}");
+    Expect("d3_near_miss_example_houzei",
+        report.D3NearMissExamples.Any(r => r.Contains("法政入力", StringComparison.Ordinal)
+            && r.Contains("d=3", StringComparison.Ordinal)
+            && r.Contains("おんせいにゅうりょく", StringComparison.Ordinal)
+            && r.Contains("intentional=True", StringComparison.Ordinal)),
+        string.Join(" | ", report.D3NearMissExamples));
+    Expect("d3_near_miss_examples_exclude_d2_housei",
+        !report.D3NearMissExamples.Any(r => r.Contains("縫製入力", StringComparison.Ordinal)),
+        string.Join(" | ", report.D3NearMissExamples));
+    Expect("d3_near_miss_examples_exclude_hits",
+        !report.D3NearMissExamples.Any(r => r.Contains("音声入力", StringComparison.Ordinal)
+            || r.Contains("text=\"温泉\"", StringComparison.Ordinal)),
+        string.Join(" | ", report.D3NearMissExamples));
+    Expect("d3_near_miss_examples_no_prefix_of_longer",
+        !report.D3NearMissExamples.Any(r => r.Contains("縫製入力の本文", StringComparison.Ordinal)
+            || r.Contains("のほんぶん", StringComparison.Ordinal)),
+        string.Join(" | ", report.D3NearMissExamples));
+    Expect("d3_near_miss_intentional_one", report.D3NearMissIntentional == 1,
+        $"got {report.D3NearMissIntentional}");
+    Expect("d3_near_miss_ambient_zero", report.D3NearMissAmbient == 0,
+        $"got {report.D3NearMissAmbient}");
 
     // H4b LooksIntentional goldens — keep/revert not locked only to substring heuristic.
     Expect("intentional_housei", Replay.LooksIntentional("縫製入力", "ほうせい にゅうりょく"), "縫製入力 must be intentional");
@@ -285,6 +312,9 @@ internal static class Replay
         var shortNearMissExamples = new List<string>();
         var shortNearMissIntentional = 0;
         var shortNearMissAmbient = 0;
+        var d3NearMissExamples = new List<string>();
+        var d3NearMissIntentional = 0;
+        var d3NearMissAmbient = 0;
         var intentionalGained = 0;
         var ambientGained = 0;
         const int MinExampleWakeReading = 10;
@@ -390,7 +420,8 @@ internal static class Replay
                 {
                     var best = 99;
                     WakeWord? bestWake = null;
-                    // H5b long examples: whole-utterance among wakes with Reading.Length>=10 (aligns to H2d d=2).
+                    // H5b long examples: whole-utterance among wakes with Reading.Length>=10, d=1..2.
+                    // H7 long examples: same wake length gate, whole-utterance d=3 only.
                     // H6 short examples: whole-utterance among wakes with Reading.Length<10, d=1 only.
                     // size±1 prefixes may still update the census (best), never example ranking.
                     var bestLong = 99;
@@ -481,6 +512,26 @@ internal static class Replay
                             shortNearMissAmbient++;
                         }
                     }
+
+                    // H7: misses only (!hit). Long-wake whole-utterance d=3. Cap <=40.
+                    // bestLong is the closest long-wake whole distance (1..3); d=1|2 stay in H5b.
+                    if (!hit
+                        && bestLongWake is not null
+                        && bestLong == 3
+                        && d3NearMissExamples.Count < examplesCap)
+                    {
+                        var intentional = LooksIntentional(parsed.Text, parsed.Reading);
+                        d3NearMissExamples.Add(
+                            $"text=\"{Compact(parsed.Text, 24)}\" reading=\"{Compact(primary, 24)}\" wake={bestLongWake.Reading} d={bestLong} intentional={intentional}");
+                        if (intentional)
+                        {
+                            d3NearMissIntentional++;
+                        }
+                        else
+                        {
+                            d3NearMissAmbient++;
+                        }
+                    }
                 }
             }
         }
@@ -506,7 +557,10 @@ internal static class Replay
             NearMissExamples: nearMissExamples,
             ShortNearMissExamples: shortNearMissExamples,
             ShortNearMissIntentional: shortNearMissIntentional,
-            ShortNearMissAmbient: shortNearMissAmbient);
+            ShortNearMissAmbient: shortNearMissAmbient,
+            D3NearMissExamples: d3NearMissExamples,
+            D3NearMissIntentional: d3NearMissIntentional,
+            D3NearMissAmbient: d3NearMissAmbient);
     }
 
     // H4b: explicit ambient/intentional goldens first so keep/revert is not locked only to
@@ -691,7 +745,10 @@ internal sealed record Report(
     IReadOnlyList<string> NearMissExamples,
     IReadOnlyList<string> ShortNearMissExamples,
     int ShortNearMissIntentional,
-    int ShortNearMissAmbient)
+    int ShortNearMissAmbient,
+    IReadOnlyList<string> D3NearMissExamples,
+    int D3NearMissIntentional,
+    int D3NearMissAmbient)
 {
     public void WriteHuman(TextWriter w)
     {
@@ -741,6 +798,13 @@ internal sealed record Report(
         {
             w.WriteLine("  " + row);
         }
+
+        w.WriteLine($"near_miss_examples_long_wake_d3_misses_whole (shown {D3NearMissExamples.Count}, wake.Reading.Length>=10, !hit, whole-utterance, d=3):");
+        w.WriteLine($"d3_near_miss_intentional={D3NearMissIntentional} d3_near_miss_ambient={D3NearMissAmbient}");
+        foreach (var row in D3NearMissExamples)
+        {
+            w.WriteLine("  " + row);
+        }
     }
 
     public string ToJson()
@@ -762,6 +826,8 @@ internal sealed record Report(
         Num("gained_ambient", AmbientGained);
         Num("short_near_miss_intentional", ShortNearMissIntentional);
         Num("short_near_miss_ambient", ShortNearMissAmbient);
+        Num("d3_near_miss_intentional", D3NearMissIntentional);
+        Num("d3_near_miss_ambient", D3NearMissAmbient);
         sb.Append(CultureInfo.InvariantCulture, $"\"label\":\"{Escape(Label)}\",");
         sb.Append("\"gained_readings\":[");
         sb.Append(string.Join(',', GainedRows.Select(r => $"\"{Escape(r)}\"")));
@@ -773,6 +839,8 @@ internal sealed record Report(
         sb.Append(string.Join(',', NearMissExamples.Select(r => $"\"{Escape(r)}\"")));
         sb.Append("],\"near_miss_examples_short\":[");
         sb.Append(string.Join(',', ShortNearMissExamples.Select(r => $"\"{Escape(r)}\"")));
+        sb.Append("],\"near_miss_examples_d3\":[");
+        sb.Append(string.Join(',', D3NearMissExamples.Select(r => $"\"{Escape(r)}\"")));
         sb.Append("]}");
         return sb.ToString();
 
