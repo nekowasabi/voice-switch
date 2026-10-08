@@ -11,7 +11,19 @@ public sealed record DictationConfig(
     string[]? ExcludeBundleIDs = null,
     int? StartTimeoutMs = null,
     // Windows twin of excludeBundleIDs: executable names (with or without .exe) whose window in front stops a wake.
-    string[]? ExcludeProcessNames = null);
+    string[]? ExcludeProcessNames = null,
+    // Superwhisper mode key or name used for voice-switch dictations; meant to be a mode with auto-paste off.
+    string? SuperwhisperMode = null);
+
+/// <summary>Load-time guardrails for timing fields that are easy to mistype 10x. No clamp — warn only.</summary>
+public static class DictationTimingGuard
+{
+    // example.windows.json uses 2400; values above 10s are almost always a typo (e.g. 24000).
+    public static bool ShouldWarnHighEndSilence(int? ms) => ms is > 10000;
+
+    // example.windows.json uses 3000; values above 15s are almost always a typo (e.g. 30000).
+    public static bool ShouldWarnHighStartTimeout(int? ms) => ms is > 15000;
+}
 
 public enum NoiseReductionMode
 {

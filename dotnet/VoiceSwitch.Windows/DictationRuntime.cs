@@ -505,8 +505,19 @@ public sealed class WindowsDictationRuntime
         LogTiming();
     }
 
-    private void LogTiming() =>
+    private void LogTiming()
+    {
         Log.Info($"dictation timing: startTimeoutMs={config.Dictation?.StartTimeoutMs ?? 3000} endSilenceMs={config.Dictation?.EndSilenceMs ?? 1200} hangoverMs={config.HangoverMs ?? 300} minSpeechMs={config.MinSpeechMs ?? 300} maxSeconds={config.Dictation?.MaxSeconds ?? config.MaxSeconds ?? 60} wakeReadings=\"{string.Join(',', config.Wakes().Select(wake => $"{wake.Text}={wake.Reading}"))}\"");
+        if (DictationTimingGuard.ShouldWarnHighEndSilence(config.Dictation?.EndSilenceMs))
+        {
+            Log.Info($"dictation timing warn: endSilenceMs unusually high ({config.Dictation?.EndSilenceMs}); example is 2400");
+        }
+
+        if (DictationTimingGuard.ShouldWarnHighStartTimeout(config.Dictation?.StartTimeoutMs))
+        {
+            Log.Info($"dictation timing warn: startTimeoutMs unusually high ({config.Dictation?.StartTimeoutMs}); example is 3000");
+        }
+    }
 
     private VoiceSwitchConfig WithWakeReadings(VoiceSwitchConfig c) =>
         c with { WakeReadings = wakeReading is null ? ImeReadings.Of(c.WakeWords) : c.WakeWords.Select(wakeReading).ToArray() };
@@ -1415,7 +1426,7 @@ public sealed class SpeechPowerShellDictationRecognizer : IDictationRecognizer, 
                 observe?.Invoke(new RecognitionDiagnostic(request, identity.StartTimeUtc, 0, null, identity.ProcessId, Running: true, identity));
                 using var killOnCancel = cancellation.Register(static state => KillProcess((Process)state!), current.Process);
                 var pcm = ToBytes(request.Samples.AsSpan());
-                var timeout = TimeSpan.FromSeconds(Math.Max(10, pcm.Length / 32000.0 + 20));
+                var timeout = TimeSpan.FromSeconds(TranscribeDeadline.SecondsFromPcmBytes(pcm.Length));
                 dto = await current.ExchangeAsync(request, pcm, timeout, cancellation).ConfigureAwait(false);
                 cancellation.ThrowIfCancellationRequested();
             }

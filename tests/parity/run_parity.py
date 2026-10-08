@@ -21,6 +21,7 @@ CONTRACT = HERE / "contracts" / "platform_parity.json"
 TEXT_FIXTURE = HERE / "fixtures" / "text_matching.json"
 SEGMENTER_FIXTURE = HERE / "fixtures" / "segmenter.json"
 CLI_FIXTURE = HERE / "fixtures" / "cli.json"
+PANE_ROUTE_FIXTURE = HERE / "fixtures" / "pane_route.json"
 SWIFT_HARNESS = HERE / "swift" / "main.swift"
 
 
@@ -30,6 +31,7 @@ def main() -> int:
     text_fixture = load_json(TEXT_FIXTURE)
     segmenter_fixture = load_json(SEGMENTER_FIXTURE)
     cli_fixture = load_json(CLI_FIXTURE)
+    pane_route_fixture = load_json(PANE_ROUTE_FIXTURE)
     repo = SourceTree(ROOT)
     result = Result()
 
@@ -40,7 +42,7 @@ def main() -> int:
     check_config_fields(result, repo)
     check_example_config_fields(result, contract)
     check_cli_contract(result, repo, contract, cli_fixture)
-    check_windows_core_behavior(result, text_fixture, segmenter_fixture)
+    check_windows_core_behavior(result, text_fixture, segmenter_fixture, pane_route_fixture)
     check_swift_core_behavior(result, args.require_swift)
     check_mutation_gate(result, repo, contract)
 
@@ -222,6 +224,9 @@ def check_static_call_chains(result: Result, repo: SourceTree) -> None:
     check_windows_runtime_call_chain(result, repo)
     check_swift_cli_call_chain(result, repo)
     check_swift_runtime_call_chain(result, repo)
+    check_swift_segmenter_rebase(result, repo)
+    check_transcribe_deadline(result, repo)
+    check_mac_superwhisper_mode_handoff(result, repo)
 
 
 def check_dictation_test_markers(result: Result, repo: SourceTree) -> None:
@@ -319,6 +324,174 @@ def check_swift_cli_call_chain(result: Result, repo: SourceTree) -> None:
     )
 
 
+
+def check_swift_segmenter_rebase(result: Result, repo: SourceTree) -> None:
+    segmenter = repo.code("Sources/voice-switch/Segmenter.swift")
+    mac = repo.code("Sources/voice-switch/MacApp.swift")
+    require_substrings(
+        result,
+        "Swift Segmenter ports Windows RebaseFloor with level accounting",
+        segmenter,
+        [
+            "mutating func rebaseFloor()",
+            "levelSum",
+            "levelCount",
+            "if skipping && levelCount > 0",
+            "seg.rebaseFloor()",
+        ],
+    )
+    require_substrings(
+        result,
+        "Swift MacApp calls rebase after over-cap head with no wake",
+        mac,
+        [
+            "func rebaseFloorAfterNoWake(_ seg: inout Segmenter)",
+            "dictation vad: floor rebased",
+            "if isHead { rebaseFloorAfterNoWake(&seg) }",
+            "if isHead && start == nil",
+        ],
+    )
+
+
+
+def check_transcribe_deadline(result: Result, repo: SourceTree) -> None:
+    platform = repo.code("Sources/voice-switch/Platform.swift")
+    mac = repo.code("Sources/voice-switch/MacApp.swift")
+    core = repo.code("dotnet/VoiceSwitch.Windows.Core/TranscribeDeadline.cs")
+    runtime = repo.code("dotnet/VoiceSwitch.Windows/DictationRuntime.cs")
+    tests = repo.code("dotnet/VoiceSwitch.Windows.Tests/Program.cs")
+    require_substrings(
+        result,
+        "Swift transcribeDeadlineSeconds matches Windows max(10, audio + 20)",
+        platform,
+        [
+            "func transcribeDeadlineSeconds(audioSeconds: Double)",
+            "max(10, audioSeconds + 20)",
+        ],
+    )
+    require_substrings(
+        result,
+        "Swift MacApp wraps SpeechAnalyzer with the shared deadline",
+        mac,
+        [
+            "struct TranscribeTimeoutError",
+            "transcribeDeadlineSeconds(audioSeconds: Double(samples.count) / rate)",
+            "withThrowingTaskGroup(of: Transcript.self)",
+            "transcribeUnbounded",
+            "transcribe failed:",
+        ],
+    )
+    require_substrings(
+        result,
+        "Swift transcribeUnbounded hard-stops SpeechAnalyzer on cancel (KillProcess intent)",
+        mac,
+        [
+            "withTaskCancellationHandler",
+            "collect.cancel()",
+            "await an.cancelAndFinishNow()",
+            "Task { await an.cancelAndFinishNow() }",
+        ],
+    )
+    require_substrings(
+        result,
+        "Windows TranscribeDeadline helper and recognizer use the same formula",
+        core + "\n" + runtime,
+        [
+            "public static class TranscribeDeadline",
+            "Math.Max(10, audioSeconds + 20)",
+            "TranscribeDeadline.SecondsFromPcmBytes(pcm.Length)",
+        ],
+    )
+    require_substrings(
+        result,
+        "Windows.Tests covers the shared transcribe deadline formula",
+        tests,
+        [
+            "transcribe deadline is max(10, audioSeconds + 20)",
+            "TranscribeDeadlineMatchesFormula",
+        ],
+    )
+
+
+def check_mac_superwhisper_mode_handoff(result: Result, repo: SourceTree) -> None:
+    modes = repo.code("Sources/voice-switch/SuperwhisperModes.swift")
+    pane = repo.code("Sources/voice-switch/PaneRoute.swift")
+    mac = repo.code("Sources/voice-switch/MacApp.swift")
+    require_substrings(
+        result,
+        "Swift SuperwhisperModes mirrors Windows ResolveKey/ActiveMode/Decide",
+        modes,
+        [
+            "enum RouteDisposition",
+            "case skippedNoBody",
+            "case sendFailed",
+            "case notRouted",
+            "struct RouteResult: Equatable",
+            "let body: String?",
+            "static func sendFailed(_ body: String?) -> RouteResult",
+            "func resolveSuperwhisperModeKey",
+            "func activeSuperwhisperMode",
+            "func decideDictationDelivery(modeRequested: Bool, route: RouteDisposition)",
+            "case .sent, .skippedNoBody:",
+            "return modeRequested ? .paste : .superwhisper",
+        ],
+    )
+    require_substrings(
+        result,
+        "Swift routeDictation returns RouteResult and waits for send-keys",
+        pane,
+        [
+            "func requireSendBody(pane: String?, reason: String, body: String?)",
+            "func routeDisposition(pane: String?, suppressFallback: Bool, sent: Bool, body: String? = nil) -> RouteResult",
+            "func sendKeysToPane(_ id: String, _ body: String) -> Bool",
+            "p.waitUntilExit()",
+            "func routeDictation(_ text: String) async -> RouteResult",
+            "func beginBodyResolve(",
+            "await jevBodyPick(",
+            r"body=\(bodySource)",
+            "return routeDisposition(pane:",
+            "sent: sent, body: body)",
+        ],
+    )
+    require_substrings(
+        result,
+        "Swift MacApp handoff switches mode, restores, and pastes on Decide",
+        mac,
+        [
+            "enterSuperwhisperMode(cfg.superwhisperMode, target: target)",
+            "superwhisper://mode?key=",
+            "superwhisper mode restored:",
+            "let route = await routeDictation(result)",
+            "decideDictationDelivery(modeRequested: modeRequested, route: route.disposition)",
+            "pasteDictation(payload, target: target)",
+            "dictation delivered: paste",
+            "dictation delivered: superwhisper",
+            "route.disposition == .sendFailed",
+            "payload = route.body",
+            "dictation not delivered: send failed and no body to paste",
+            # B2: modeRequested only after post-switch activeMode == key (failed poll → no paste).
+            "guard readSuperwhisperActiveMode() == key else",
+            "return (false, nil)",
+        ],
+    )
+    # SendFailed paste must use the body send-keys tried (RouteResult), never a quote-only re-extract.
+    win_handoff = repo.code("dotnet/VoiceSwitch.Windows/SuperwhisperHandoff.cs")
+    label = "SendFailed paste uses RouteResult body, not extractSendBody / ExtractSendBody"
+    if "extractSendBody" in mac or "ExtractSendBody" in win_handoff:
+        result.fail(f"{label}: handoff still re-runs the quote-only extract")
+    else:
+        require_substrings(
+            result,
+            label,
+            win_handoff,
+            [
+                "Func<string, Task<RouteResult>>",
+                "route.Disposition == RouteDisposition.SendFailed ? route.Body : text",
+                "SuperwhisperModes.Decide(modeRequested, route.Disposition)",
+            ],
+        )
+
+
 def check_swift_runtime_call_chain(result: Result, repo: SourceTree) -> None:
     mac = repo.code("Sources/voice-switch/MacApp.swift")
     body = extract_braced_body(mac, r"private\s+func\s+consume\s*\([^)]*\)\s+async\s*\{")
@@ -343,6 +516,31 @@ def check_swift_runtime_call_chain(result: Result, repo: SourceTree) -> None:
             "micInUse(by: config.cfg.skipWhileMicInUseBy ?? [])",
             "Platform.runCommand(config.cfg.stopCommand ?? Platform.defaultSuperwhisperToggle)",
             "stop word, nothing is recording",
+        ],
+    )
+    require_substrings(
+        result,
+        "Swift runtime rebases floor after over-cap head with no wake",
+        body,
+        [
+            "if isHead && start == nil",
+            "rebaseFloorAfterNoWake(&seg)",
+        ],
+    )
+    # hyp3: Speech deadline / hard-stop on over-cap head must rebase, same as empty/no-wake success path.
+    catch_match = re.search(
+        r"transcript\s*=\s*try\s+await\s+transcribe.*?\} catch \{(.*?)\bcontinue\b",
+        body,
+        flags=re.DOTALL,
+    )
+    catch_body = catch_match.group(1) if catch_match else ""
+    require_substrings(
+        result,
+        "Swift runtime rebases floor when over-cap head transcription fails",
+        catch_body,
+        [
+            "transcribe failed:",
+            "if isHead { rebaseFloorAfterNoWake(&seg) }",
         ],
     )
 
@@ -527,7 +725,7 @@ def windows_cs_files() -> list[str]:
     ]
 
 
-def check_windows_core_behavior(result: Result, text_fixture: dict, segmenter_fixture: dict) -> None:
+def check_windows_core_behavior(result: Result, text_fixture: dict, segmenter_fixture: dict, pane_route_fixture: dict) -> None:
     dotnet = shutil.which("dotnet") or str(Path.home() / ".local/share/mise/shims/dotnet")
     if not Path(dotnet).exists() and shutil.which("dotnet") is None:
         result.fail("dotnet not found; cannot execute Windows C# core behavior harness")
@@ -541,7 +739,7 @@ def check_windows_core_behavior(result: Result, text_fixture: dict, segmenter_fi
             shutil.copy2(source, core_tmp / source.name)
         (core_tmp / "VoiceSwitch.Windows.Core.csproj").write_text(core_project(), encoding="utf-8")
         (tmp_path / "Harness.csproj").write_text(harness_project(core_tmp / "VoiceSwitch.Windows.Core.csproj"), encoding="utf-8")
-        (tmp_path / "Program.cs").write_text(harness_program(text_fixture, segmenter_fixture), encoding="utf-8")
+        (tmp_path / "Program.cs").write_text(harness_program(text_fixture, segmenter_fixture, pane_route_fixture), encoding="utf-8")
         completed = subprocess.run(
             [
                 dotnet,
@@ -583,6 +781,9 @@ def check_swift_core_behavior(result: Result, require_swift: bool) -> None:
                 str(ROOT / "Sources/voice-switch/Config.swift"),
                 str(ROOT / "Sources/voice-switch/Transcript.swift"),
                 str(ROOT / "Sources/voice-switch/Segmenter.swift"),
+                str(ROOT / "Sources/voice-switch/Platform.swift"),
+                str(ROOT / "Sources/voice-switch/SuperwhisperModes.swift"),
+                str(ROOT / "Sources/voice-switch/PaneRoute.swift"),
                 str(SWIFT_HARNESS),
                 "-o",
                 str(binary),
@@ -597,7 +798,7 @@ def check_swift_core_behavior(result: Result, require_swift: bool) -> None:
             result.fail("Swift pure harness failed to compile:\n" + completed.stdout + completed.stderr)
             return
         completed = subprocess.run(
-            [str(binary), str(TEXT_FIXTURE), str(SEGMENTER_FIXTURE)],
+            [str(binary), str(TEXT_FIXTURE), str(SEGMENTER_FIXTURE), str(PANE_ROUTE_FIXTURE)],
             cwd=ROOT,
             text=True,
             stdout=subprocess.PIPE,
@@ -652,9 +853,10 @@ def harness_project(core: Path) -> str:
     )
 
 
-def harness_program(text_fixture: dict, segmenter_fixture: dict) -> str:
+def harness_program(text_fixture: dict, segmenter_fixture: dict, pane_route_fixture: dict) -> str:
     text_json = json.dumps(text_fixture, ensure_ascii=False)
     segmenter_json = json.dumps(segmenter_fixture, ensure_ascii=False)
+    pane_route_json = json.dumps(pane_route_fixture, ensure_ascii=False)
     return textwrap.dedent(
         f"""\
         using System.Text.Json;
@@ -662,6 +864,7 @@ def harness_program(text_fixture: dict, segmenter_fixture: dict) -> str:
 
         var textFixture = JsonDocument.Parse({cs_string(text_json)}).RootElement;
         var segmenterFixture = JsonDocument.Parse({cs_string(segmenter_json)}).RootElement;
+        var paneFixture = JsonDocument.Parse({cs_string(pane_route_json)}).RootElement;
         var failures = new List<string>();
 
         foreach (var item in textFixture.GetProperty("normalization").EnumerateArray())
@@ -704,6 +907,62 @@ def harness_program(text_fixture: dict, segmenter_fixture: dict) -> str:
         CheckSegmenter(segmenterFixture.GetProperty("selftest"), segmenterConfig);
         CheckSegmenter(segmenterFixture.GetProperty("head"), segmenterConfig);
 
+        var paneCatalog = paneFixture.GetProperty("catalog").EnumerateArray()
+            .Select(p => new PaneLabel(p.GetProperty("id").GetString()!, p.GetProperty("window").GetString()!, p.GetProperty("title").GetString()!, p.GetProperty("command").GetString()!))
+            .ToList();
+        foreach (var item in paneFixture.GetProperty("match").EnumerateArray())
+        {{
+            var agents = item.GetProperty("agents").EnumerateObject().ToDictionary(a => a.Name, a => a.Value.EnumerateArray().Select(v => v.GetString()!).ToArray());
+            var actual = PaneRoute.MatchingPanes(item.GetProperty("dictation").GetString()!, paneCatalog, agents).Select(p => p.Id).ToList();
+            var expected = item.GetProperty("hits").EnumerateArray().Select(v => v.GetString()!).ToList();
+            Check(actual.SequenceEqual(expected), $"pane match {{item.GetProperty("name").GetString()}} expected=[{{string.Join(",", expected)}}] actual=[{{string.Join(",", actual)}}]");
+        }}
+
+        foreach (var item in paneFixture.GetProperty("policy").EnumerateArray())
+        {{
+            var hits = item.GetProperty("hits").EnumerateArray().Select(v => new PaneLabel(v.GetString()!, "", "", "")).ToList();
+            var decision = PaneRoute.Decide(hits, FixturePick(item));
+            var expected = new RouteDecision(OptionalString(item, "send"), item.GetProperty("reason").GetString()!);
+            Check(decision == expected, $"pane policy {{item.GetProperty("name").GetString()}} expected={{expected}} actual={{decision}}");
+        }}
+
+        foreach (var item in paneFixture.GetProperty("jev_responses").EnumerateArray())
+        {{
+            var catalog = item.GetProperty("catalog").EnumerateArray().Select(v => v.GetString()!).ToList();
+            var actual = PaneRoute.ParseJevPick(item.GetProperty("body").GetString()!, catalog);
+            Check(actual == FixturePick(item), $"jev parse {{item.GetProperty("name").GetString()}}");
+        }}
+
+        foreach (var item in paneFixture.GetProperty("extract").EnumerateArray())
+        {{
+            var actual = PaneRoute.ExtractSendBody(item.GetProperty("dictation").GetString()!);
+            var expected = OptionalString(item, "body");
+            Check(actual == expected, $"pane extract {{item.GetProperty("name").GetString()}} expected={{expected}} actual={{actual}}");
+        }}
+
+        foreach (var item in paneFixture.GetProperty("candidates").EnumerateArray())
+        {{
+            var labels = item.GetProperty("labels").EnumerateArray().Select(v => v.GetString()!).ToList();
+            var actual = PaneRoute.SendBodyCandidates(item.GetProperty("dictation").GetString()!, labels);
+            var expected = item.GetProperty("candidates").EnumerateArray().Select(v => v.GetString()!).ToList();
+            Check(actual.SequenceEqual(expected), $"pane candidates {{item.GetProperty("name").GetString()}} expected=[{{string.Join(",", expected)}}] actual=[{{string.Join(",", actual)}}]");
+        }}
+
+        foreach (var item in paneFixture.GetProperty("body_jev_responses").EnumerateArray())
+        {{
+            var catalog = item.GetProperty("catalog").EnumerateArray().Select(v => v.GetString()!).ToList();
+            var actual = PaneRoute.ParseJevBodyPick(item.GetProperty("body").GetString()!, catalog);
+            Check(actual == FixtureBodyPick(item), $"body jev parse {{item.GetProperty("name").GetString()}}");
+        }}
+
+        foreach (var item in paneFixture.GetProperty("resolve_body").EnumerateArray())
+        {{
+            var labels = item.GetProperty("labels").EnumerateArray().Select(v => v.GetString()!).ToList();
+            var actual = PaneRoute.ResolveSendBody(item.GetProperty("dictation").GetString()!, labels, FixtureBodyPick(item));
+            var expected = new SendBodyResult(OptionalString(item, "body"), item.GetProperty("reason").GetString()!);
+            Check(actual == expected, $"resolve body {{item.GetProperty("name").GetString()}} expected={{expected}} actual={{actual}}");
+        }}
+
         if (failures.Count > 0)
         {{
             foreach (var failure in failures) Console.Error.WriteLine("FAIL " + failure);
@@ -711,6 +970,10 @@ def harness_program(text_fixture: dict, segmenter_fixture: dict) -> str:
         }}
 
         Console.WriteLine("PASS behavior fixtures");
+        Console.WriteLine("PASS pane route fixtures");
+        Console.WriteLine("PASS pane extract fixtures");
+        Console.WriteLine("PASS pane candidates fixtures");
+        Console.WriteLine("PASS pane body resolve fixtures");
         return 0;
 
         void Check(bool condition, string message)
@@ -722,6 +985,25 @@ def harness_program(text_fixture: dict, segmenter_fixture: dict) -> str:
         {{
             var value = item.GetProperty(name);
             return value.ValueKind == JsonValueKind.Null ? null : value.GetString();
+        }}
+
+        static JevPick? FixturePick(JsonElement item)
+        {{
+            var pick = item.GetProperty("pick");
+            return pick.ValueKind == JsonValueKind.Null ? null : new JevPick(OptionalString(pick, "pane"), pick.GetProperty("confidence").GetDouble());
+        }}
+
+        static JevBodyPick? FixtureBodyPick(JsonElement item)
+        {{
+            if (!item.TryGetProperty("pick", out var pick) || pick.ValueKind == JsonValueKind.Null)
+            {{
+                return null;
+            }}
+
+            var choice = pick.GetProperty("choice");
+            return new JevBodyPick(
+                choice.ValueKind == JsonValueKind.Null ? null : choice.GetString(),
+                pick.GetProperty("confidence").GetDouble());
         }}
 
         void CheckSegmenter(JsonElement spec, VoiceSwitchConfig segmenterConfig)
