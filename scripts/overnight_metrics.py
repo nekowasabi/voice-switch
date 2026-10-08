@@ -41,6 +41,11 @@ RE_WAKE_SESSION = re.compile(r"dictation session: wake")
 RE_TMUX = re.compile(r"tmux: hits=")
 RE_TMUX_JEV = re.compile(r"\bjev=(\S+)")
 RE_TMUX_DISP = re.compile(r"->\s+(send|skip)\b(?:\s+%\d+)?\s*\(([^)]*)\)")
+# H3 sibling: tmux: scan panes=N cand=[%id:cmd:title …] key="…"
+RE_TMUX_SCAN = re.compile(
+    r'tmux: scan panes=(\d+) cand=\[([^\]]*)\] key="([^"]*)"'
+)
+RE_TMUX_SCAN_PREFIX = re.compile(r"tmux: scan\b")
 RE_TIMING = re.compile(r"dictation timing:")
 RE_END_SILENCE = re.compile(r"\bendSilenceMs=(\d+)\b")
 RE_START_TIMEOUT = re.compile(r"\bstartTimeoutMs=(\d+)\b")
@@ -60,7 +65,11 @@ NOTES = (
     "(send-keys exited / failed to start / not delivered); older logs may "
     "have zeros. empty_text_rate uses complete_count; empty_text_rate_scored "
     "uses text_scored_count. Timing hist/mode cover all timing lines; "
-    "endSilenceMs/startTimeoutMs alias *_last."
+    "endSilenceMs/startTimeoutMs alias *_last. H3 scan sibling: "
+    "panes_scanned_hist / skip_pane_cmd_hist / skip_with_0_panes vs "
+    "skip_with_panes_but_no_match; H3b: no-match family includes "
+    "'no pane matched; jev suggests %N' and clears last_scan after each "
+    "hits= (no routing change)."
 )
 
 
@@ -115,6 +124,12 @@ def parse_metrics(path: Path, tail: Optional[int] = None) -> dict[str, Any]:
     send_keys_failed_start = 0
     not_delivered_send_failed = 0
     not_delivered_no_window = 0
+    panes_scanned_hist: Counter[str] = Counter()
+    skip_pane_cmd_hist: Counter[str] = Counter()
+    skip_with_0_panes = 0
+    skip_with_panes_but_no_match = 0
+    last_scan_panes: Optional[int] = None
+    last_scan_cmds: list[str] = []
     parse_errors = 0
     lines_scanned = 0
 
@@ -152,6 +167,24 @@ def parse_metrics(path: Path, tail: Optional[int] = None) -> dict[str, Any]:
             wake_session_count += 1
             continue
 
+        if RE_TMUX_SCAN_PREFIX.search(line):
+            scan_m = RE_TMUX_SCAN.search(line)
+            if not scan_m:
+                parse_errors += 1
+                continue
+            n = int(scan_m.group(1))
+            cand = scan_m.group(2).strip()
+            panes_scanned_hist[str(n)] += 1
+            cmds: list[str] = []
+            if cand:
+                for part in cand.split():
+                    fields = part.split(":", 2)
+                    if len(fields) >= 2 and fields[1]:
+                        cmds.append(fields[1])
+            last_scan_panes = n
+            last_scan_cmds = cmds
+            continue
+
         if RE_TMUX.search(line):
             tmux_count += 1
             jev_m = RE_TMUX_JEV.search(line)
@@ -164,8 +197,24 @@ def parse_metrics(path: Path, tail: Optional[int] = None) -> dict[str, Any]:
                 kind, reason = disp_m.group(1), disp_m.group(2).strip()
                 if kind == "send":
                     tmux_send_count += 1
+                else:
+                    # H3: cmd hist among skips; 0-panes vs panes-but-no-match
+                    # H3b: no-match family includes "no pane matched; jev suggests %N"
+                    if last_scan_panes is not None:
+                        for cmd in last_scan_cmds:
+                            skip_pane_cmd_hist[cmd] += 1
+                        if reason == "no pane matched" or reason.startswith(
+                            "no pane matched;"
+                        ):
+                            if last_scan_panes == 0:
+                                skip_with_0_panes += 1
+                            else:
+                                skip_with_panes_but_no_match += 1
                 key = f"{kind} ({reason})" if reason else kind
                 tmux_disposition[key] += 1
+                # H3b: each hits= consumes at most one preceding scan sibling
+                last_scan_panes = None
+                last_scan_cmds = []
             else:
                 parse_errors += 1
             continue
@@ -249,6 +298,13 @@ def parse_metrics(path: Path, tail: Optional[int] = None) -> dict[str, Any]:
         "tmux_send_keys_failed_start_count": send_keys_failed_start,
         "dictation_not_delivered_send_failed_count": not_delivered_send_failed,
         "dictation_not_delivered_no_window_count": not_delivered_no_window,
+        # H3 route observability (scan sibling; measurement only)
+        "panes_scanned_hist": dict(
+            sorted(panes_scanned_hist.items(), key=lambda kv: int(kv[0]))
+        ),
+        "skip_pane_cmd_hist": dict(sorted(skip_pane_cmd_hist.items())),
+        "skip_with_0_panes": skip_with_0_panes,
+        "skip_with_panes_but_no_match": skip_with_panes_but_no_match,
         # Track C — hist + mode; *_last / bare aliases are last-wins only
         "endSilenceMs_hist": dict(sorted(end_silence_hist.items(), key=lambda kv: int(kv[0]))),
         "startTimeoutMs_hist": dict(sorted(start_timeout_hist.items(), key=lambda kv: int(kv[0]))),
@@ -315,6 +371,86 @@ def self_test() -> int:
         failures.append(f"jev off: {m['jev']}")
     if m["jev"].get("none@1.00") != 1:
         failures.append(f"jev none: {m['jev']}")
+
+    # H3 scan sibling
+    if m["panes_scanned_hist"] != {"0": 1, "2": 1, "3": 1}:
+        failures.append(f"panes_scanned_hist: {m['panes_scanned_hist']}")
+    # skip cmd hist: only from the two skips (0-pane skip contributes no cmds;
+    # panes=3 skip contributes zsh/node/claude). send's bash/node must NOT appear alone from send.
+    # panes=0 skip adds nothing; panes=3 adds zsh, node, claude.
+    if m["skip_pane_cmd_hist"] != {"claude": 1, "node": 1, "zsh": 1}:
+        failures.append(f"skip_pane_cmd_hist: {m['skip_pane_cmd_hist']}")
+    if m["skip_with_0_panes"] != 1:
+        failures.append(f"skip_with_0_panes: {m['skip_with_0_panes']}")
+    if m["skip_with_panes_but_no_match"] != 1:
+        failures.append(f"skip_with_panes_but_no_match: {m['skip_with_panes_but_no_match']}")
+
+    # H3b proves: jev-suggest no-match family + clear last_scan after hits=
+    def _parse_text(body: str) -> dict[str, Any]:
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".log", delete=False, encoding="utf-8"
+        ) as tf:
+            tf.write(body)
+            tmp = Path(tf.name)
+        try:
+            return parse_metrics(tmp, tail=None)
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    m_jev = _parse_text(
+        'tmux: scan panes=2 cand=[%0:bash:a %1:node:b] key="x"\n'
+        "tmux: hits=0 jev=suggest@0.90 -> skip (no pane matched; jev suggests %2)\n"
+    )
+    if m_jev["skip_with_panes_but_no_match"] != 1:
+        failures.append(
+            f"H3b jev-suggest skip_with_panes_but_no_match: "
+            f"{m_jev['skip_with_panes_but_no_match']}"
+        )
+    if m_jev["skip_with_0_panes"] != 0:
+        failures.append(f"H3b jev-suggest skip_with_0_panes: {m_jev['skip_with_0_panes']}")
+    if m_jev["skip_pane_cmd_hist"] != {"bash": 1, "node": 1}:
+        failures.append(f"H3b jev-suggest cmd hist: {m_jev['skip_pane_cmd_hist']}")
+
+    m_jev0 = _parse_text(
+        'tmux: scan panes=0 cand=[] key="x"\n'
+        "tmux: hits=0 jev=suggest@0.90 -> skip (no pane matched; jev suggests %2)\n"
+    )
+    if m_jev0["skip_with_0_panes"] != 1:
+        failures.append(f"H3b jev-suggest 0-panes: {m_jev0['skip_with_0_panes']}")
+    if m_jev0["skip_with_panes_but_no_match"] != 0:
+        failures.append(
+            f"H3b jev-suggest 0-panes no-match: {m_jev0['skip_with_panes_but_no_match']}"
+        )
+
+    m_stale = _parse_text(
+        'tmux: scan panes=3 cand=[%0:zsh: %1:node:x %2:claude:y] key="k"\n'
+        "tmux: hits=0 jev=off -> skip (no pane matched)\n"
+        "tmux: hits=0 jev=off -> skip (no pane matched)\n"
+    )
+    if m_stale["skip_with_panes_but_no_match"] != 1:
+        failures.append(
+            f"H3b stale skip_with_panes_but_no_match: "
+            f"{m_stale['skip_with_panes_but_no_match']} (want 1)"
+        )
+    if m_stale["skip_pane_cmd_hist"] != {"claude": 1, "node": 1, "zsh": 1}:
+        failures.append(
+            f"H3b stale cmd hist doubled?: {m_stale['skip_pane_cmd_hist']}"
+        )
+
+    m_send_clear = _parse_text(
+        'tmux: scan panes=3 cand=[%0:zsh: %1:node:x %2:claude:y] key="k"\n'
+        "tmux: hits=1 jev=off -> send %0 (unique hit)\n"
+        "tmux: hits=0 jev=off -> skip (no pane matched)\n"
+    )
+    if m_send_clear["skip_with_panes_but_no_match"] != 0:
+        failures.append(
+            f"H3b send-clears-scan skip_with_panes: "
+            f"{m_send_clear['skip_with_panes_but_no_match']}"
+        )
+    if m_send_clear["skip_pane_cmd_hist"]:
+        failures.append(
+            f"H3b send-clears-scan cmd hist: {m_send_clear['skip_pane_cmd_hist']}"
+        )
 
     # hist must include both timing values (not collapsed to last)
     if m["endSilenceMs_hist"] != {"1200": 1, "24000": 1}:

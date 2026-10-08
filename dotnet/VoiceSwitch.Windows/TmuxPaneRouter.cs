@@ -73,6 +73,8 @@ public static class TmuxPaneRouter
         }
 
         decision = PaneRoute.RequireSendBody(decision, body);
+        // Sibling scan line before the decision: measurement only (H3); routing unchanged.
+        Log.Info(PaneRoute.ScanLog(panes, text));
         Log.Info(PaneRoute.LogLine(hits.Count, jevField, decision, bodySource));
         var sent = decision.Pane is { } pane && body is not null && await SendKeysAsync(server, pane, body);
         return PaneRoute.Disposition(decision, sent, body);

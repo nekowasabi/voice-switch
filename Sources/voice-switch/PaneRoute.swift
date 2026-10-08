@@ -533,6 +533,36 @@ func sendKeysToPane(_ id: String, _ body: String) -> Bool {
     return true
 }
 
+
+/// Sibling observability line (measurement only, H3). Cap cand at 8; title/cmd ≤24; key ≤16.
+let scanCandCap = 8
+let scanFieldMax = 24
+let scanKeyMax = 16
+
+func sanitizeScanToken(_ value: String, max: Int) -> String {
+    if value.isEmpty || max <= 0 { return "" }
+    var out = ""
+    out.reserveCapacity(min(value.count, max))
+    for ch in value {
+        if out.count >= max { break }
+        if ch.isWhitespace || ch == "[" || ch == "]" || ch == "\"" || ch == ":" {
+            out.append("_")
+        } else {
+            out.append(ch)
+        }
+    }
+    return out
+}
+
+func scanLog(_ panes: [PaneLabel], matchKey: String) -> String {
+    let n = panes.count
+    let shown = panes.prefix(scanCandCap).map { p in
+        "\(p.id):\(sanitizeScanToken(p.command, max: scanFieldMax)):\(sanitizeScanToken(p.title, max: scanFieldMax))"
+    }
+    let key = sanitizeScanToken(matchKey, max: scanKeyMax)
+    return "tmux: scan panes=\(n) cand=[\(shown.joined(separator: " "))] key=\"\(key)\""
+}
+
 /// One log line per dictation, e.g. `tmux: hits=2 jev=%2@0.87 -> send %2 (jev narrowed)`.
 /// Returns the same RouteResult Windows `TmuxPaneRouter.RouteAsync` does (disposition for Decide, body for SendFailed paste).
 func routeDictation(_ text: String) async -> RouteResult {
@@ -584,6 +614,8 @@ func routeDictation(_ text: String) async -> RouteResult {
         }
     }
     let required = requireSendBody(pane: decision.pane, reason: decision.reason, body: body)
+    // Sibling scan line before the decision: measurement only (H3); routing unchanged.
+    log(scanLog(panes, matchKey: text))
     let prefix = "tmux: hits=\(hits.count) jev=\(jevField) body=\(bodySource)"
     if let id = required.pane, let body {
         log("\(prefix) -> send \(id) (\(required.reason))")

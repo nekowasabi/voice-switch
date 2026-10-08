@@ -186,6 +186,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("pane route parses jev answers like the shared fixture", PaneRouteParsesJevAnswersLikeFixture),
     ("pane route request body carries the catalog and none", () => Check(PaneRouteRequestBodyCarriesCatalog())),
     ("pane route log line names hits, pick, and reason", () => Check(PaneRouteLogLineNamesHitsPickAndReason())),
+    ("pane route scan log caps cand and truncates key", () => Check(PaneRouteScanLogCapsCandAndTruncatesKey())),
     ("pane route extracts the quoted send body like the shared fixture", PaneRouteExtractsSendBodyLikeFixture),
     ("pane route builds send-body candidates like the shared fixture", PaneRouteBuildsSendBodyCandidatesLikeFixture),
     ("pane route parses body jev answers like the shared fixture", PaneRouteParsesBodyJevAnswersLikeFixture),
@@ -349,6 +350,28 @@ static bool PaneRouteLogLineNamesHitsPickAndReason() =>
     PaneRoute.LogLine(2, PaneRoute.JevField(new JevPick("%2", 0.87)), new RouteDecision("%2", "jev narrowed"), "quoted") == "tmux: hits=2 jev=%2@0.87 body=quoted -> send %2 (jev narrowed)"
     && PaneRoute.LogLine(1, PaneRoute.JevField(new JevPick(null, 0.9)), new RouteDecision(null, "jev rejected")) == "tmux: hits=1 jev=none@0.90 body=- -> skip (jev rejected)"
     && PaneRoute.LogLine(0, "off", new RouteDecision(null, "no pane matched")) == "tmux: hits=0 jev=off body=- -> skip (no pane matched)";
+
+static bool PaneRouteScanLogCapsCandAndTruncatesKey()
+{
+    var panes = new List<PaneLabel>();
+    for (var i = 0; i < 10; i++)
+    {
+        panes.Add(new PaneLabel($"%{i}", "win", $"title with spaces {i} and:colon", i == 0 ? "bash" : "node"));
+    }
+
+    // 20 kana: key must truncate to 16 and drop the tail (not the full body).
+    const string longKey = "あいうえおかきくけこさしすせそたちつてと";
+    var line = PaneRoute.ScanLog(panes, longKey);
+    var empty = PaneRoute.ScanLog(Array.Empty<PaneLabel>(), "x");
+    // Cap 8, sanitize title, key ≤16, empty catalog, LogLine unchanged.
+    return line.StartsWith("tmux: scan panes=10 cand=[%0:bash:title_with_spaces_0_and_ ", StringComparison.Ordinal)
+        && line.Contains("%7:node:title_with_spaces_7_an", StringComparison.Ordinal)
+        && !line.Contains("%8:", StringComparison.Ordinal)
+        && line.EndsWith("] key=\"あいうえおかきくけこさしすせそた\"", StringComparison.Ordinal)
+        && !line.Contains("ちつてと", StringComparison.Ordinal)
+        && empty == "tmux: scan panes=0 cand=[] key=\"x\""
+        && PaneRoute.LogLine(0, "off", new RouteDecision(null, "no pane matched")) == "tmux: hits=0 jev=off body=- -> skip (no pane matched)";
+}
 
 static TestOutcome PaneRouteExtractsSendBodyLikeFixture()
 {

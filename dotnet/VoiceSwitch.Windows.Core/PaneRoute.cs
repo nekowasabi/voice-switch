@@ -537,6 +537,54 @@ public static class PaneRoute
     public static string JevField(JevPick pick) =>
         $"{pick.Pane ?? "none"}@{pick.Confidence.ToString("0.00", CultureInfo.InvariantCulture)}";
 
+    // Sibling observability line (measurement only). Cap cand at 8; title/cmd ≤24; key ≤16.
+    // Does not change routing. Never logs the full dictated body.
+    public const int ScanCandCap = 8;
+    public const int ScanFieldMax = 24;
+    public const int ScanKeyMax = 16;
+
+    public static string ScanLog(IReadOnlyList<PaneLabel> panes, string matchKey)
+    {
+        var n = panes.Count;
+        var parts = new List<string>(Math.Min(n, ScanCandCap));
+        for (var i = 0; i < n && i < ScanCandCap; i++)
+        {
+            var p = panes[i];
+            parts.Add($"{p.Id}:{SanitizeScanToken(p.Command, ScanFieldMax)}:{SanitizeScanToken(p.Title, ScanFieldMax)}");
+        }
+
+        return $"tmux: scan panes={n} cand=[{string.Join(" ", parts)}] key=\"{SanitizeScanToken(matchKey, ScanKeyMax)}\"";
+    }
+
+    // Space-splitable cand entries: collapse whitespace and strip separators from fields.
+    public static string SanitizeScanToken(string value, int max)
+    {
+        if (string.IsNullOrEmpty(value) || max <= 0)
+        {
+            return "";
+        }
+
+        var sb = new StringBuilder(Math.Min(value.Length, max));
+        foreach (var c in value)
+        {
+            if (sb.Length >= max)
+            {
+                break;
+            }
+
+            if (char.IsWhiteSpace(c) || c is '[' or ']' or '"' or ':')
+            {
+                sb.Append('_');
+            }
+            else
+            {
+                sb.Append(c);
+            }
+        }
+
+        return sb.ToString();
+    }
+
     // One log line per dictation, e.g. `tmux: hits=2 jev=%2@0.87 body=quoted -> send %2 (jev narrowed)`.
     public static string LogLine(int hits, string jevField, RouteDecision decision, string bodySource = "-") =>
         decision.Pane is { } pane
