@@ -93,7 +93,7 @@ static int RunSelfTest()
     // Known counts on the fixture (main matcher, d≤1):
     // - 縫製入力 (ほうせいにゅうりょく) → no hit (d=2 needs H2d); H5b near-miss example
     // - 縫製入力の本文… → size±1 prefix d=2 but whole≫2 → not an H5b example
-    // - 温泉 alone → hit short おんせい (d=1 whole closed); excluded from examples (!hit + short)
+    // - 温泉 alone → hit short おんせい (d=1 whole closed); excluded from long+short examples (!hit)
     // - ほうせいにはいるよ prefix body → no d=2 prefix hit on main
     // - 音声入力 exact → hit; excluded from near-miss examples
     // - PrefixHead no-text leadingWake=False → unscored
@@ -147,6 +147,21 @@ static int RunSelfTest()
             || r.Contains("wake=おんせい/", StringComparison.Ordinal)
             || r.EndsWith("wake=おんせい", StringComparison.Ordinal)),
         string.Join(" | ", report.NearMissExamples));
+
+    // H6: short-wake near-miss examples = !hit ∧ whole-utterance d=1 ∧ Reading.Length<10.
+    // Fixture: 温泉 is a matcher hit on おんせい → excluded. No other short whole d=1 miss on fixture → count=0.
+    Expect("short_near_miss_examples_count", report.ShortNearMissExamples.Count == 0,
+        $"got {report.ShortNearMissExamples.Count}: {string.Join(" | ", report.ShortNearMissExamples)}");
+    Expect("short_near_miss_examples_exclude_onsen_hit",
+        !report.ShortNearMissExamples.Any(r => r.Contains("text=\"温泉\"", StringComparison.Ordinal)),
+        string.Join(" | ", report.ShortNearMissExamples));
+    Expect("short_near_miss_examples_no_long_wake",
+        !report.ShortNearMissExamples.Any(r => r.Contains("おんせいにゅうりょく", StringComparison.Ordinal)),
+        string.Join(" | ", report.ShortNearMissExamples));
+    Expect("short_near_miss_intentional_zero", report.ShortNearMissIntentional == 0,
+        $"got {report.ShortNearMissIntentional}");
+    Expect("short_near_miss_ambient_zero", report.ShortNearMissAmbient == 0,
+        $"got {report.ShortNearMissAmbient}");
 
     // H4b LooksIntentional goldens — keep/revert not locked only to substring heuristic.
     Expect("intentional_housei", Replay.LooksIntentional("縫製入力", "ほうせい にゅうりょく"), "縫製入力 must be intentional");
@@ -267,6 +282,9 @@ internal static class Replay
         var nearMissByWake = new Dictionary<string, int>(StringComparer.Ordinal);
         var nearMissReadings = new List<string>();
         var nearMissExamples = new List<string>();
+        var shortNearMissExamples = new List<string>();
+        var shortNearMissIntentional = 0;
+        var shortNearMissAmbient = 0;
         var intentionalGained = 0;
         var ambientGained = 0;
         const int MinExampleWakeReading = 10;
@@ -372,10 +390,13 @@ internal static class Replay
                 {
                     var best = 99;
                     WakeWord? bestWake = null;
-                    // H5b examples: whole-utterance distance only among long wakes (aligns to H2d d=2 closed+whole).
-                    // size±1 prefixes may still update the census (best), never the example ranking (bestLong).
+                    // H5b long examples: whole-utterance among wakes with Reading.Length>=10 (aligns to H2d d=2).
+                    // H6 short examples: whole-utterance among wakes with Reading.Length<10, d=1 only.
+                    // size±1 prefixes may still update the census (best), never example ranking.
                     var bestLong = 99;
                     WakeWord? bestLongWake = null;
+                    var bestShort = 99;
+                    WakeWord? bestShortWake = null;
                     foreach (var wake in wakes.Where(w => w.Reading.Length > 0))
                     {
                         // Whole-utterance edit distance.
@@ -390,6 +411,12 @@ internal static class Replay
                         {
                             bestLong = dWhole;
                             bestLongWake = wake;
+                        }
+
+                        if (wake.Reading.Length < MinExampleWakeReading && dWhole == 1 && dWhole < bestShort)
+                        {
+                            bestShort = dWhole;
+                            bestShortWake = wake;
                         }
 
                         // Census only: size±1 window on longer utterances (matches ReadingWake length set).
@@ -434,6 +461,26 @@ internal static class Replay
                         nearMissExamples.Add(
                             $"text=\"{Compact(parsed.Text, 24)}\" reading=\"{Compact(primary, 24)}\" wake={bestLongWake.Reading} d={bestLong} intentional={intentional}");
                     }
+
+                    // H6: misses only (!hit). Short-wake whole-utterance d=1. Cap <=40.
+                    // Complements H5b (>=10): Reading.Length < MinExampleWakeReading. Includes おんせい / いんぷっと.
+                    if (!hit
+                        && bestShortWake is not null
+                        && bestShort == 1
+                        && shortNearMissExamples.Count < examplesCap)
+                    {
+                        var intentional = LooksIntentional(parsed.Text, parsed.Reading);
+                        shortNearMissExamples.Add(
+                            $"text=\"{Compact(parsed.Text, 24)}\" reading=\"{Compact(primary, 24)}\" wake={bestShortWake.Reading} d={bestShort} intentional={intentional}");
+                        if (intentional)
+                        {
+                            shortNearMissIntentional++;
+                        }
+                        else
+                        {
+                            shortNearMissAmbient++;
+                        }
+                    }
                 }
             }
         }
@@ -456,7 +503,10 @@ internal static class Replay
             NearMissByDistance: nearMissByDistance,
             NearMissByWake: nearMissByWake,
             NearMissReadings: nearMissReadings,
-            NearMissExamples: nearMissExamples);
+            NearMissExamples: nearMissExamples,
+            ShortNearMissExamples: shortNearMissExamples,
+            ShortNearMissIntentional: shortNearMissIntentional,
+            ShortNearMissAmbient: shortNearMissAmbient);
     }
 
     // H4b: explicit ambient/intentional goldens first so keep/revert is not locked only to
@@ -638,7 +688,10 @@ internal sealed record Report(
     IReadOnlyDictionary<int, int> NearMissByDistance,
     IReadOnlyDictionary<string, int> NearMissByWake,
     IReadOnlyList<string> NearMissReadings,
-    IReadOnlyList<string> NearMissExamples)
+    IReadOnlyList<string> NearMissExamples,
+    IReadOnlyList<string> ShortNearMissExamples,
+    int ShortNearMissIntentional,
+    int ShortNearMissAmbient)
 {
     public void WriteHuman(TextWriter w)
     {
@@ -681,6 +734,13 @@ internal sealed record Report(
         {
             w.WriteLine("  " + row);
         }
+
+        w.WriteLine($"near_miss_examples_short_wake_d1_misses_whole (shown {ShortNearMissExamples.Count}, wake.Reading.Length<10, !hit, whole-utterance, d=1):");
+        w.WriteLine($"short_near_miss_intentional={ShortNearMissIntentional} short_near_miss_ambient={ShortNearMissAmbient}");
+        foreach (var row in ShortNearMissExamples)
+        {
+            w.WriteLine("  " + row);
+        }
     }
 
     public string ToJson()
@@ -700,6 +760,8 @@ internal sealed record Report(
         Num("lost", Lost);
         Num("gained_intentional", IntentionalGained);
         Num("gained_ambient", AmbientGained);
+        Num("short_near_miss_intentional", ShortNearMissIntentional);
+        Num("short_near_miss_ambient", ShortNearMissAmbient);
         sb.Append(CultureInfo.InvariantCulture, $"\"label\":\"{Escape(Label)}\",");
         sb.Append("\"gained_readings\":[");
         sb.Append(string.Join(',', GainedRows.Select(r => $"\"{Escape(r)}\"")));
@@ -709,6 +771,8 @@ internal sealed record Report(
         sb.Append(string.Join(',', NearMissByWake.Select(kv => $"\"{Escape(kv.Key)}\":{kv.Value}")));
         sb.Append("},\"near_miss_examples\":[");
         sb.Append(string.Join(',', NearMissExamples.Select(r => $"\"{Escape(r)}\"")));
+        sb.Append("],\"near_miss_examples_short\":[");
+        sb.Append(string.Join(',', ShortNearMissExamples.Select(r => $"\"{Escape(r)}\"")));
         sb.Append("]}");
         return sb.ToString();
 
