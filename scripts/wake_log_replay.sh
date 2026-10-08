@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Track A wake log replay wrapper. Measurement only — restores DictationCore after H2b run.
+# Track A wake log replay wrapper. Measurement only — restores DictationCore after compare runs.
 # H4b: Core swap always restored via EXIT trap (even if build/run fails).
+# H5: also swaps H2D_SHA (default 94b90a8) → h4_replay_h2d.json/.txt (SKIP_H2D=1 to skip).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -87,20 +88,35 @@ dotnet run --project "$PROJ" -c Release --no-build -- \
   --log "$LOG" --label "main-$(git rev-parse --short HEAD)" \
   --json-out "$OUT_DIR/h4_replay_main.json" | tee "$OUT_DIR/h4_replay_main.txt"
 
-if git cat-file -e "${H2B_SHA}^{commit}" 2>/dev/null; then
-  echo "=== H2b (${H2B_SHA}) temporary Core swap ==="
+run_core_swap() {
+  local sha="$1"
+  local tag="$2"
+  local out_json="$3"
+  local out_txt="$4"
+  if ! git cat-file -e "${sha}^{commit}" 2>/dev/null; then
+    echo "WARN: ${tag} SHA=${sha} not in this clone; skipped ${tag} run" >&2
+    return 0
+  fi
+  echo "=== ${tag} (${sha}) temporary Core swap ==="
   CORE_BAK=$(mktemp)
   cp "$CORE" "$CORE_BAK"
   RESTORE_NEEDED=1
-  git show "${H2B_SHA}:dotnet/VoiceSwitch.Windows.Core/DictationCore.cs" > "$CORE"
+  git show "${sha}:dotnet/VoiceSwitch.Windows.Core/DictationCore.cs" > "$CORE"
   dotnet build "$PROJ" -c Release -v q
   dotnet run --project "$PROJ" -c Release --no-build -- \
-    --log "$LOG" --label "h2b-${H2B_SHA}" \
-    --json-out "$OUT_DIR/h4_replay_h2b.json" | tee "$OUT_DIR/h4_replay_h2b.txt"
-  # Explicit restore before EXIT (trap is the safety net if anything above failed).
+    --log "$LOG" --label "${tag}-${sha}" \
+    --json-out "$out_json" | tee "$out_txt"
   restore_core
   dotnet build "$PROJ" -c Release -v q
   echo "Restored $CORE to tree version."
-else
-  echo "WARN: H2B_SHA=${H2B_SHA} not in this clone; skipped H2b run" >&2
+}
+
+if [[ "${SKIP_H2B:-0}" != "1" ]]; then
+  run_core_swap "${H2B_SHA}" "h2b" "$OUT_DIR/h4_replay_h2b.json" "$OUT_DIR/h4_replay_h2b.txt"
+fi
+
+# H5: compare H2d tip (MinReadingDistance2=10). Set SKIP_H2D=1 to skip.
+H2D_SHA="${H2D_SHA:-94b90a8}"
+if [[ "${SKIP_H2D:-0}" != "1" ]]; then
+  run_core_swap "${H2D_SHA}" "h2d" "$OUT_DIR/h4_replay_h2d.json" "$OUT_DIR/h4_replay_h2d.txt"
 fi

@@ -13,7 +13,7 @@ static int Usage()
     Console.Error.WriteLine(
         """
         Usage:
-          dotnet run --project dotnet/VoiceSwitch.WakeReplay -- --log <path> [--label NAME] [--gained-cap 40] [--json-out path]
+          dotnet run --project dotnet/VoiceSwitch.WakeReplay -- --log <path> [--label NAME] [--gained-cap 40] [--examples-cap 40] [--json-out path]
           dotnet run --project dotnet/VoiceSwitch.WakeReplay -- --self-test
         """);
     return 2;
@@ -28,6 +28,7 @@ var selfTest = false;
 string? logPath = null;
 var label = "matcher";
 var gainedCap = 40;
+var examplesCap = 40;
 string? jsonOut = null;
 for (var i = 0; i < args.Length; i++)
 {
@@ -44,6 +45,9 @@ for (var i = 0; i < args.Length; i++)
             break;
         case "--gained-cap" when i + 1 < args.Length:
             gainedCap = int.Parse(args[++i], CultureInfo.InvariantCulture);
+            break;
+        case "--examples-cap" when i + 1 < args.Length:
+            examplesCap = int.Parse(args[++i], CultureInfo.InvariantCulture);
             break;
         case "--json-out" when i + 1 < args.Length:
             jsonOut = args[++i];
@@ -66,7 +70,7 @@ if (logPath is null)
     return Usage();
 }
 
-var report = Replay.Run(logPath, label, gainedCap);
+var report = Replay.Run(logPath, label, gainedCap, examplesCap);
 report.WriteHuman(Console.Out);
 if (jsonOut is not null)
 {
@@ -85,12 +89,13 @@ static int RunSelfTest()
         return 1;
     }
 
-    var report = Replay.Run(fixture, "self-test", gainedCap: 40);
+    var report = Replay.Run(fixture, "self-test", gainedCap: 40, examplesCap: 40);
     // Known counts on the fixture (main matcher, d≤1):
-    // - 縫製入力 (ほうせいにゅうりょく) → no hit (d=2 needs H2b)
-    // - 温泉 alone → hit short おんせい (d=1 whole closed)
+    // - 縫製入力 (ほうせいにゅうりょく) → no hit (d=2 needs H2d); H5b near-miss example
+    // - 縫製入力の本文… → size±1 prefix d=2 but whole≫2 → not an H5b example
+    // - 温泉 alone → hit short おんせい (d=1 whole closed); excluded from examples (!hit + short)
     // - ほうせいにはいるよ prefix body → no d=2 prefix hit on main
-    // - 音声入力 exact → hit
+    // - 音声入力 exact → hit; excluded from near-miss examples
     // - PrefixHead no-text leadingWake=False → unscored
     // - PrefixHead no-text leadingWake=True → unscored_live_true (H4b ±2% path)
     // - 妊婦と / インクと ambient scored false (main: no gain)
@@ -103,7 +108,7 @@ static int RunSelfTest()
         }
     }
 
-    Expect("scored", report.Scored == 7, $"got {report.Scored}");
+    Expect("scored", report.Scored == 8, $"got {report.Scored}");
     Expect("live_true", report.LiveTrue == 3, $"got {report.LiveTrue}");
     Expect("unscored_live_true", report.UnscoredLiveTrue == 1, $"got {report.UnscoredLiveTrue}");
     Expect("wake_hits", report.WakeHits == 2, $"got {report.WakeHits}");
@@ -116,6 +121,32 @@ static int RunSelfTest()
     // 縫製入力 reading vs おんせいにゅうりょく is d=2 near-miss
     Expect("near_miss_lists_housei", report.NearMissReadings.Any(r => r.Contains("ほうせい", StringComparison.Ordinal)),
         string.Join(',', report.NearMissReadings));
+
+    // H5b: long-wake near-miss examples = !hit ∧ whole-utterance d=1..2 ∧ Reading.Length>=10.
+    // Main matcher: 縫製入力 is a miss (d=2 needs H2d) → sole example. Hits (音声入力 / 温泉) excluded.
+    // Prefix-of-longer (縫製入力の本文…) size±1 d=2 must NOT become an example (H2d d=2 is whole-only).
+    Expect("near_miss_examples_count", report.NearMissExamples.Count == 1,
+        $"got {report.NearMissExamples.Count}: {string.Join(" | ", report.NearMissExamples)}");
+    Expect("near_miss_example_housei",
+        report.NearMissExamples.Any(r => r.Contains("縫製入力", StringComparison.Ordinal)
+            && !r.Contains("縫製入力の本文", StringComparison.Ordinal)
+            && r.Contains("d=2", StringComparison.Ordinal)
+            && r.Contains("おんせいにゅうりょく", StringComparison.Ordinal)
+            && r.Contains("intentional=True", StringComparison.Ordinal)),
+        string.Join(" | ", report.NearMissExamples));
+    Expect("near_miss_examples_exclude_hits",
+        !report.NearMissExamples.Any(r => r.Contains("音声入力", StringComparison.Ordinal)
+            || r.Contains("text=\"温泉\"", StringComparison.Ordinal)),
+        string.Join(" | ", report.NearMissExamples));
+    Expect("near_miss_examples_no_prefix_of_longer",
+        !report.NearMissExamples.Any(r => r.Contains("縫製入力の本文", StringComparison.Ordinal)
+            || r.Contains("のほんぶん", StringComparison.Ordinal)),
+        string.Join(" | ", report.NearMissExamples));
+    Expect("near_miss_examples_no_short_onsei",
+        !report.NearMissExamples.Any(r => r.Contains("wake=おんせい ", StringComparison.Ordinal)
+            || r.Contains("wake=おんせい/", StringComparison.Ordinal)
+            || r.EndsWith("wake=おんせい", StringComparison.Ordinal)),
+        string.Join(" | ", report.NearMissExamples));
 
     // H4b LooksIntentional goldens — keep/revert not locked only to substring heuristic.
     Expect("intentional_housei", Replay.LooksIntentional("縫製入力", "ほうせい にゅうりょく"), "縫製入力 must be intentional");
@@ -218,7 +249,7 @@ internal static class Replay
         WakeWord.From("音声によって", "おんせいによって"),
     ];
 
-    public static Report Run(string logPath, string label, int gainedCap)
+    public static Report Run(string logPath, string label, int gainedCap, int examplesCap = 40)
     {
         var wakes = DefaultWakes;
         var scored = 0;
@@ -235,8 +266,10 @@ internal static class Replay
         var nearMissByDistance = new Dictionary<int, int>();
         var nearMissByWake = new Dictionary<string, int>(StringComparer.Ordinal);
         var nearMissReadings = new List<string>();
+        var nearMissExamples = new List<string>();
         var intentionalGained = 0;
         var ambientGained = 0;
+        const int MinExampleWakeReading = 10;
 
         foreach (var line in File.ReadLines(logPath, Encoding.UTF8))
         {
@@ -339,27 +372,37 @@ internal static class Replay
                 {
                     var best = 99;
                     WakeWord? bestWake = null;
+                    // H5b examples: whole-utterance distance only among long wakes (aligns to H2d d=2 closed+whole).
+                    // size±1 prefixes may still update the census (best), never the example ranking (bestLong).
+                    var bestLong = 99;
+                    WakeWord? bestLongWake = null;
                     foreach (var wake in wakes.Where(w => w.Reading.Length > 0))
                     {
-                        // Compare whole utterance reading to wake reading (and size±1 prefixes already covered by matcher;
-                        // census uses full-string edit distance capped at 3 for ranking).
-                        var d = TextMatching.EditDistance(primary, wake.Reading);
-                        if (d >= 1 && d <= 3 && d < best)
+                        // Whole-utterance edit distance.
+                        var dWhole = TextMatching.EditDistance(primary, wake.Reading);
+                        if (dWhole >= 1 && dWhole <= 3 && dWhole < best)
                         {
-                            best = d;
+                            best = dWhole;
                             bestWake = wake;
                         }
 
-                        // Also allow size±1 window on longer utterances (matches ReadingWake length set).
+                        if (wake.Reading.Length >= MinExampleWakeReading && dWhole >= 1 && dWhole <= 3 && dWhole < bestLong)
+                        {
+                            bestLong = dWhole;
+                            bestLongWake = wake;
+                        }
+
+                        // Census only: size±1 window on longer utterances (matches ReadingWake length set).
                         var size = wake.Reading.Length;
                         foreach (var length in new[] { size, size - 1, size + 1 })
                         {
-                            if (length <= 0 || length > primary.Length)
+                            if (length <= 0 || length > primary.Length || length == primary.Length)
                             {
+                                // length == primary.Length already covered by dWhole above.
                                 continue;
                             }
 
-                            d = TextMatching.EditDistance(primary[..length], wake.Reading);
+                            var d = TextMatching.EditDistance(primary[..length], wake.Reading);
                             if (d >= 1 && d <= 3 && d < best)
                             {
                                 best = d;
@@ -377,6 +420,19 @@ internal static class Replay
                         {
                             nearMissReadings.Add($"d={best} wake={bestWake.Reading} reading=\"{Compact(primary, 24)}\"");
                         }
+                    }
+
+                    // H5b: misses only (!hit). Long-wake whole-utterance d=1..2. Cap <=40.
+                    // Matcher hits (incl. H2d gained 縫製入力) are gained, not near-misses.
+                    if (!hit
+                        && bestLongWake is not null
+                        && bestLong >= 1
+                        && bestLong <= 2
+                        && nearMissExamples.Count < examplesCap)
+                    {
+                        var intentional = LooksIntentional(parsed.Text, parsed.Reading);
+                        nearMissExamples.Add(
+                            $"text=\"{Compact(parsed.Text, 24)}\" reading=\"{Compact(primary, 24)}\" wake={bestLongWake.Reading} d={bestLong} intentional={intentional}");
                     }
                 }
             }
@@ -399,7 +455,8 @@ internal static class Replay
             GainedRows: gainedRows,
             NearMissByDistance: nearMissByDistance,
             NearMissByWake: nearMissByWake,
-            NearMissReadings: nearMissReadings);
+            NearMissReadings: nearMissReadings,
+            NearMissExamples: nearMissExamples);
     }
 
     // H4b: explicit ambient/intentional goldens first so keep/revert is not locked only to
@@ -580,7 +637,8 @@ internal sealed record Report(
     IReadOnlyList<string> GainedRows,
     IReadOnlyDictionary<int, int> NearMissByDistance,
     IReadOnlyDictionary<string, int> NearMissByWake,
-    IReadOnlyList<string> NearMissReadings)
+    IReadOnlyList<string> NearMissReadings,
+    IReadOnlyList<string> NearMissExamples)
 {
     public void WriteHuman(TextWriter w)
     {
@@ -617,6 +675,12 @@ internal sealed record Report(
         {
             w.WriteLine("  " + row);
         }
+
+        w.WriteLine($"near_miss_examples_long_wake_d1_2_misses_whole (shown {NearMissExamples.Count}, wake.Reading.Length>=10, !hit, whole-utterance):");
+        foreach (var row in NearMissExamples)
+        {
+            w.WriteLine("  " + row);
+        }
     }
 
     public string ToJson()
@@ -643,7 +707,9 @@ internal sealed record Report(
         sb.Append(string.Join(',', NearMissByDistance.OrderBy(k => k.Key).Select(kv => $"\"{kv.Key}\":{kv.Value}")));
         sb.Append("},\"near_miss_by_wake\":{");
         sb.Append(string.Join(',', NearMissByWake.Select(kv => $"\"{Escape(kv.Key)}\":{kv.Value}")));
-        sb.Append("}}");
+        sb.Append("},\"near_miss_examples\":[");
+        sb.Append(string.Join(',', NearMissExamples.Select(r => $"\"{Escape(r)}\"")));
+        sb.Append("]}");
         return sb.ToString();
 
         static string Escape(string s) =>
