@@ -1,0 +1,6 @@
+{
+  "shared_flags": ["--fire", "--vad-selftest"],
+  "aliases": {
+    "--vad-selftest": ["--self-test"]
+  }
+}
