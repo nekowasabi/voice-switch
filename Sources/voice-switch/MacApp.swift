@@ -848,8 +848,8 @@ final class HUD {
                 if shown == mine { panel.orderOut(nil) }
             }
         }
-        // The screen with the mouse, so it shows where the user is looking on multi-monitor setups.
-        let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
+        // Follow the focused window even when the pointer remains on another display.
+        let screen = NSScreen.main ?? NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) }
         guard let area = screen?.visibleFrame else { return }
         let size = NSSize(width: 160, height: 40)
         panel.setFrame(NSRect(x: area.midX - size.width / 2, y: area.maxY - size.height - 12, width: size.width, height: size.height), display: true)
