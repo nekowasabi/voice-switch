@@ -49,6 +49,8 @@ public sealed record VoiceSwitchConfig(
     string[]? StopWords = null,
     string? StopCommand = null,
     DictationConfig? Dictation = null,
+    // Parsed for cross-platform config compatibility; Windows does not run macrowhisper (macOS-only CLI hooks).
+    System.Text.Json.JsonElement? Macrowhisper = null,
     NoiseReductionOptions? NoiseReduction = null)
 {
     // Parallel to WakeWords by index. The Windows runtime fills it from MS-IME; config files never carry it.
