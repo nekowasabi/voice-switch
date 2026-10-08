@@ -93,7 +93,10 @@ public static class Program
                         handoff = new RegisteredSuperwhisperHandoff(
                             RegisteredSuperwhisperHandoff.DefaultRoot(),
                             WindowsPaths.SuperwhisperRecordingsPath(config.Dictation),
-                            dryRun: effectiveDryRun);
+                            dryRun: effectiveDryRun,
+                            onTranscribed: TmuxPaneRouter.RouteAsync,
+                            superwhisperMode: config.Dictation.SuperwhisperMode,
+                            paste: Tray.WindowFocus.Paste);
                     }
 
                     IPcmCapture capture;
