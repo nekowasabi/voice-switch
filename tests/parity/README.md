@@ -18,7 +18,8 @@ What the checker proves:
 - Every sample config key that appears on only one platform must be covered by `allowed_sample_config_gaps`.
 - Swift and C# config types must keep the same retained compatibility fields.
 - Windows core behavior is executed through compiled `VoiceSwitch.Windows.Core` copied into a temporary project.
-- Swift pure behavior is executed through production `Config.swift`, `Transcript.swift`, and `Segmenter.swift` when `swiftc` is present.
+- Swift pure behavior is executed through production `Config.swift`, `Transcript.swift`, `Segmenter.swift`, and `PaneRoute.swift` when `swiftc` is present.
+- The tmux pane route (label match, Jev policy table, Jev answer parsing) is asserted on both platforms from `fixtures/pane_route.json`; the C# tests read the same file.
 - Static call-chain checks tie the Windows CLI parse to `Main`, recognized text to `TextMatching.Decide`, and the decision to `CommandRunner.Run`.
 - Static call-chain checks tie the Windows `--vad-selftest` alias to `SelfTest.Run`, and require that self-test to exercise `Segmenter`.
 - Static call-chain checks tie macOS `--fire` and `--vad-selftest` branches to the actual Swift handlers, and inspect the macOS wake/stop runtime branch in `Listener.consume`.

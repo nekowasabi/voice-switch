@@ -15,6 +15,7 @@
     "recordingsDir": "~/Documents/superwhisper/recordings",
     "endSilenceMs": 1200, "startTimeoutMs": 3000,
     "maxSeconds": 60,
-    "excludeBundleIDs": []
+    "excludeBundleIDs": [],
+    "superwhisperMode": "voice_switch"
   }
 }

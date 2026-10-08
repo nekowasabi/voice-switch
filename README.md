@@ -1,6 +1,6 @@
 # voice-switch
 
-On macOS, a menu-bar app. A wake word on its own runs a command through `/bin/sh`. Speech after a wake word is recorded and opened in superwhisper only when `dictation` is set. Without it, that longer utterance is ignored. On `main`, the transcribed text is not passed to another program.
+On macOS, a menu-bar app. A wake word on its own runs a command through `/bin/sh`. Speech after a wake word is recorded and opened in superwhisper only when `dictation` is set. Without it, that longer utterance is ignored. When dictation returns a string, one tmux pane receives it only if the pane catalog, optionally checked by Jev, points at exactly one pane. Otherwise nothing is sent.
 
 [日本語](README_ja.md)
 
@@ -42,15 +42,33 @@ If `dictation` is present:
 
 - A lone wake word starts a dictation and waits for speech. The sample wait is `startTimeoutMs` 3000. Silence before any speech cancels it.
 - An utterance that starts with a wake word and continues is recorded until about `endSilenceMs` of silence (sample 1200), a stop word, superwhisper's record shortcut, or `dictation.maxSeconds` (sample 60). The wake-word audio is cut.
-- The wav is opened in superwhisper. The app polls `dictation.recordingsDir` (sample `~/Documents/superwhisper/recordings`) for a new `meta.json`, reads `llmResult` or else `result`, and logs the length. On `main` that string is not passed on. The code activates the app that was frontmost when the wake word was heard, while superwhisper is frontmost, so superwhisper does not skip its paste.
+- The wav is opened in superwhisper. The app polls `dictation.recordingsDir` (sample `~/Documents/superwhisper/recordings`) for a new `meta.json`, reads `llmResult` or else `result`, and logs the length. That string then goes through the pane routing below. The code activates the app that was frontmost when the wake word was heard, while superwhisper is frontmost, so superwhisper does not skip its paste.
 
 `stopWords` said on their own end an in-progress dictation. If an app in `skipWhileMicInUseBy` is using the microphone instead, the same word runs `stopCommand`. The sample word is `入力ストップ`. The sample `stopCommand` is the same superwhisper record URL, which toggles.
 
 A wake word is ignored while an app in `skipWhileMicInUseBy` has the microphone open. Dictation is skipped when the frontmost bundle id is in `dictation.excludeBundleIDs`.
 
+Optional `dictation.superwhisperMode` (Mac + Windows; key or display name) selects a Superwhisper mode that turns auto-paste off for voice-switch dictations. Unset keeps the old behavior (Superwhisper may auto-paste). When set, voice-switch switches to that mode before handoff and restores the previous mode after; if the pane route did not send, voice-switch pastes once into the wake-time app (SendFailed pastes the same resolved body send-keys tried, quoted or body-Jev, never the full dictation wrapper). A pane that matched but had no extractable send body does not paste the full dictation. Mac mode switch / paste are wired in source; live Mac runtime is unverified on this box (no swiftc / Apple Speech).
+
 The top-level `maxSeconds` (sample 2.5) caps a short wake-word utterance. It is not the dictation cap.
 
 The menu items are 一時停止 (releases the microphone), マイク, 設定ファイルを開く, ログを開く, ログイン時に起動, and 終了.
+
+## Pane routing (tmux and Jev)
+
+The dictation string is matched to a closed catalog from `tmux list-panes -a -F '#{pane_id}\t#{window_name}\t#{pane_title}\t#{pane_current_command}'`. On macOS the command runs through `/usr/bin/env`. On Windows it runs as `wsl.exe -e tmux ...`, so the target is tmux inside WSL. The app does not start a tmux server. If tmux fails or there is no server, nothing is sent and the failure is logged. A pane hits when any non-empty label is a case-insensitive substring of the text. Labels are the pane title, the window name, and the current command. On Linux, an allowlisted agent name found for that pane through `/proc` (`claude`, `aider`, `gemini`, `copilot`, `codex`, `devin`, `hermes`, `opencode`, `pi`, `grok`, `cursor-agent`) is a label too. Mac and Windows have no `/proc` walk, so there only title, window, and command match.
+
+If `TYPESAFE_API_KEY` (or else `JEV_API_KEY`) is set in the app's environment, the dictation text and the pane labels (id, window, title, command, agent names) are sent to TypeSafe at `https://api.typesafe.ai/v1/systemone` (model `jev-latest`) as one choice question: which listed pane does the speaker address, or none. A Finder-launched app and the Windows tray do not see shell exports, so the variable has to be set where the app starts. The answer counts only at confidence 0.8 or higher, and only for panes already in the catalog:
+
+- One label hit: it is sent, unless Jev confidently names a different pane or none. Then nothing is sent (`jev rejected`).
+- Two or more hits: the pane Jev names is sent if it is one of the hits (`jev narrowed`). Otherwise nothing is sent.
+- No hit: nothing is sent. A confident pick is logged as a suggestion only.
+
+Without a key, after the 5 s timeout, on an HTTP error, or on an answer that is not a catalog choice, the rule is the one without Jev: send iff exactly one label hit. Jev never adds a pane the catalog does not have. The text goes out as `tmux send-keys -t <pane-id> -l -- <text>`, as argv and never through a shell, and only to an id of the form `%N`. Each dictation writes one log line like `tmux: hits=2 jev=%2@0.87 -> send %2 (jev narrowed)`. `jev=off` means no key, `jev=error` means the request or the answer failed. The key and the dictation text are never logged. The next handoff waits while the route runs.
+
+The 0.8 floor comes from `scripts/pane_jev_probe.py`, 8 utterances against a fixed catalog: the two wrong answers had confidence 0.49 and 0.52, the right ones 0.80 to 1.00. Rerun it and read the `tmux:` log lines to recalibrate. `scripts/pane_route_proof.py` proves the rule without Jev against a private tmux server on Linux. The policy table, the label match, and the answer parser are shared between Swift and C# through `tests/parity/fixtures/pane_route.json`.
+
+Not hand-tested: the Swift side was not compiled here, so the Mac build and a live Mac dictation are not claimed. On Windows, `wsl.exe` reaching tmux, Japanese text surviving the `wsl.exe` round trip in both directions, and a live dictation landing in a WSL pane were not run. `make win-test` covers the C# logic on WSL; the proof script covers the rule without Jev.
 
 ## CLI
 
