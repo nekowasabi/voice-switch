@@ -23,6 +23,8 @@ struct Config: Decodable {
     var dictation: DictationConfig?
     /// Parsed for cross-platform config compatibility; macOS does not process this lane.
     var noiseReduction: NoiseReductionOptions?
+    /// Absent disables macrowhisper CLI hooks.
+    var macrowhisper: MacrowhisperConfig?
 
     init(wakeWords: [String], locale: String? = nil, command: String,
          maxSeconds: Double? = nil, hangoverMs: Int? = nil, prerollMs: Int? = nil,
@@ -55,6 +57,24 @@ struct NoiseReductionOptions: Decodable {
         self.mode = mode
         self.maxAttenuationDb = maxAttenuationDb
     }
+}
+
+/// Optional hooks into the macrowhisper CLI (https://github.com/ognistik/macrowhisper).
+/// Same surface the Alfred workflow uses: schedule / auto-return / set-active, then Superwhisper.
+/// scheduleAction and autoReturn are mutually exclusive in macrowhisper (scheduling cancels auto-return and vice versa).
+struct MacrowhisperConfig: Decodable {
+    /// Absolute path or bare name on PATH. Default: "macrowhisper".
+    var bin: String?
+    /// `macrowhisper --schedule-action <name>` before starting Superwhisper (one-shot for the next recording).
+    var scheduleAction: String?
+    /// `macrowhisper --auto-return true` before starting Superwhisper (one-shot Return after insert).
+    var autoReturn: Bool?
+    /// `macrowhisper --action <name>` — set the persistent fallback active action (not one-shot).
+    var activeAction: String?
+    /// Optional `superwhisper://mode?key=` before/with record (Alfred's dictateMode).
+    var modeKey: String?
+    /// Also run the same prepare step before one-breath dictation handoff to Superwhisper. Default true when any hook is set.
+    var onDictationHandoff: Bool?
 }
 
 struct DictationConfig: Decodable {

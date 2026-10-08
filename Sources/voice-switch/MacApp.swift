@@ -280,7 +280,7 @@ func pasteDictation(_ text: String, target: NSRunningApplication?) -> Bool {
 /// superwhisper transcribes the file. With `dictation.superwhisperMode` set, switches to that mode
 /// (auto-paste off), restores after, and voice-switch pastes only when the pane route did not deliver.
 /// Unset keeps the old behavior (Superwhisper may auto-paste).
-func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplication?) async {
+func handoff(_ samples: [Float], cfg: DictationConfig, macrowhisper: MacrowhisperConfig?, target: NSRunningApplication?) async {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("voice-switch")
     let wav = dir.appendingPathComponent("\(UUID().uuidString).wav")
     defer { try? FileManager.default.removeItem(at: wav) }
@@ -291,6 +291,9 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     do {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try writeWAV(samples, to: wav)
+        if Macrowhisper.shouldPrepareHandoff(macrowhisper) {
+            Macrowhisper.prepare(macrowhisper)
+        }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         p.arguments = ["-g", "-a", "superwhisper", wav.path]
@@ -700,7 +703,11 @@ final class Listener {
             }
             // People pause after the wake word ("音声入力、…"), which ends the utterance at the wake word alone.
             // With dictation on, a lone wake word therefore opens a dictation that waits for the text.
-            guard start != nil || config.cfg.dictation != nil else { Platform.runCommand(config.cfg.command); continue }
+            guard start != nil || config.cfg.dictation != nil else {
+                Macrowhisper.prepare(config.cfg.macrowhisper)
+                Platform.runCommand(config.cfg.command)
+                continue
+            }
             if let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
                config.cfg.dictation?.excludeBundleIDs?.contains(id) == true {
                 log("dictation skipped: \(id) is excluded"); continue
@@ -755,7 +762,7 @@ final class Listener {
         }
         guard claimed else { log("dictation dropped: previous one still in flight"); return }
         Task {
-            await handoff(d.samples, cfg: cfg, target: d.target)
+            await handoff(d.samples, cfg: cfg, macrowhisper: config.cfg.macrowhisper, target: d.target)
             handoffBusy.withLock { $0 = false }
         }
     }

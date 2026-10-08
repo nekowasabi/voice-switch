@@ -1,0 +1,37 @@
+{
+  "wakeWords": [
+    "音声入力",
+    "音声入る",
+    "おんせい",
+    "音声に入るよ",
+    "音声に入る",
+    "音声によって"
+  ],
+  "locale": "ja_JP",
+  "command": "open -g superwhisper://record",
+  "skipWhileMicInUseBy": [
+    "com.superduper.superwhisper"
+  ],
+  "stopWords": [
+    "入力ストップ"
+  ],
+  "stopCommand": "open -g superwhisper://record",
+  "maxSeconds": 2.5,
+  "hangoverMs": 300,
+  "prerollMs": 300,
+  "minSpeechMs": 300,
+  "vadRatio": 3.0,
+  "vadMinRMS": 0.005,
+  "dictation": {
+    "recordingsDir": "~/Documents/superwhisper/recordings",
+    "endSilenceMs": 1200,
+    "startTimeoutMs": 3000,
+    "maxSeconds": 60,
+    "excludeBundleIDs": []
+  },
+  "macrowhisper": {
+    "bin": "macrowhisper",
+    "scheduleAction": "autoPaste",
+    "onDictationHandoff": true
+  }
+}

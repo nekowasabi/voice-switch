@@ -70,6 +70,42 @@ The 0.8 floor comes from `scripts/pane_jev_probe.py`, 8 utterances against a fix
 
 Not hand-tested: the Swift side was not compiled here, so the Mac build and a live Mac dictation are not claimed. On Windows, `wsl.exe` reaching tmux, Japanese text surviving the `wsl.exe` round trip in both directions, and a live dictation landing in a WSL pane were not run. `make win-test` covers the C# logic on WSL; the proof script covers the rule without Jev.
 
+## macrowhisper integration
+
+[macrowhisper](https://github.com/ognistik/macrowhisper) watches Superwhisper recordings and runs insert/URL/Shortcut/shell/AppleScript actions. voice-switch does **not** reimplement that; it calls the same public CLI the [Alfred workflow](https://github.com/ognistik/macrowhisper/tree/main/alfred) uses before starting Superwhisper.
+
+Documented CLI used here ([cli-reference](https://github.com/ognistik/macrowhisper/blob/main/docs/cli-reference.md)):
+
+| Config field | CLI |
+| --- | --- |
+| `scheduleAction` | `macrowhisper --schedule-action <name>` (one-shot for the next / active recording) |
+| `autoReturn` | `macrowhisper --auto-return true` (one-shot Return; mutually exclusive with schedule) |
+| `activeAction` | `macrowhisper --action <name>` (persistent fallback) |
+| `modeKey` | `open -g superwhisper://mode?key=…` |
+| `bin` | Absolute path or name on `PATH` (default `macrowhisper`) |
+| `onDictationHandoff` | Also prepare before one-breath WAV handoff (default `true` when any hook is set) |
+
+Priority when more than one is set: `scheduleAction` > `autoReturn` > `activeAction` (macrowhisper treats schedule and auto-return as mutually exclusive).
+
+Example: `config.example.macrowhisper.json`
+
+```json
+"macrowhisper": {
+  "bin": "macrowhisper",
+  "scheduleAction": "autoPaste",
+  "onDictationHandoff": true
+}
+```
+
+Requirements on the Mac:
+
+1. Install macrowhisper (`brew install ognistik/formulae/macrowhisper`) and start the service (`macrowhisper --start-service`).
+2. Follow macrowhisper’s Superwhisper text-input checklist (paste off, etc.).
+3. Ensure `scheduleAction` / `activeAction` names exist in `~/.config/macrowhisper/macrowhisper.json` (`macrowhisper --list-actions`).
+
+Wake-word path: prepare CLI hooks → run `command` (record toggle).  
+One-breath dictation: optional prepare → open WAV in Superwhisper (macrowhisper’s watcher handles the result when configured).
+
 ## CLI
 
 - `voice-switch --check a.wav` feeds files through the VAD and transcriber and prints a verdict per utterance. Windows has the same mode with SAPI; it reads PCM16 mono 16 kHz WAV only.
