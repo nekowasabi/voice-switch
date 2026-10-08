@@ -493,6 +493,7 @@ final class Listener {
     let config: ConfigFile
     private var engine = AVAudioEngine()
     private let cont: AsyncStream<[Float]>.Continuation
+    private let phaseCont: AsyncStream<Phase>.Continuation
     private var pending: [Float] = []
     private(set) var running = false
     /// The user wants input on; stays true while a failed restart is being retried, unlike `running`.
@@ -511,7 +512,10 @@ final class Listener {
         self.config = config
         let (stream, cont) = AsyncStream<[Float]>.makeStream()
         self.cont = cont
+        let (phases, phaseCont) = AsyncStream<Phase>.makeStream()
+        self.phaseCont = phaseCont
         Task { await self.consume(stream) }
+        Task { @MainActor [weak self] in for await phase in phases { self?.onPhase?(phase) } }
         // Input device switches stop the tap silently; restart on the engine's own signal.
         NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: .main) { [weak self] note in
             guard let self, self.wanted, note.object as? AVAudioEngine === self.engine else { return }
@@ -610,7 +614,7 @@ final class Listener {
                 // .ended hides itself after a moment; the idle that follows it is not a change.
                 if phase != shown, !(shown == .ended && phase == .idle) {
                     shown = phase
-                    DispatchQueue.main.async { self.onPhase?(phase) }
+                    phaseCont.yield(phase)
                 }
             }
             if f.isEmpty { seg = Segmenter(cfg: config.cfg); dictation = nil; Hotkeys.end(); continue }
