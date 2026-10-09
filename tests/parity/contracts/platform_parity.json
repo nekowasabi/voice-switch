@@ -111,7 +111,7 @@
       "id": "whole_utterance_wake_runs_command",
       "macos": {
         "file": "Sources/voice-switch/MacApp.swift",
-        "markers": ["!isHead", "wakeWords.map(normalize).contains(t)", "Platform.runCommand(config.cfg.command)"]
+        "markers": ["!isHead", "wakeWords.map(normalize).contains(t)", "Platform.runMacAction(config.cfg)"]
       },
       "windows": {
         "file": "dotnet/VoiceSwitch.Windows.Core/TextMatching.cs",
@@ -123,7 +123,7 @@
       "id": "whole_utterance_stop_runs_stop_command",
       "macos": {
         "file": "Sources/voice-switch/MacApp.swift",
-        "markers": ["stopWords ?? []", "stopCommand ?? Platform.defaultSuperwhisperToggle", "isStopWord"]
+        "markers": ["stopWords ?? []", "Platform.runMacAction(config.cfg, stop: true)", "isStopWord"]
       },
       "windows": {
         "file": "dotnet/VoiceSwitch.Windows.Core/TextMatching.cs",
@@ -293,7 +293,7 @@
       "platform": "windows",
       "macos": {
         "file": "Sources/voice-switch/MacApp.swift",
-        "markers": ["micInUse(by:", "stop word, nothing is recording", "stopCommand ?? Platform.defaultSuperwhisperToggle"]
+        "markers": ["micInUse(by:", "stop word, nothing is recording", "Platform.runMacAction(config.cfg, stop: true)"]
       },
       "reason": "Windows command mode, when dictation is absent, dispatches configured stop words directly instead of using the macOS session/mic-in-use guard; the Windows dictation runtime has its own session-gated stop handling."
     },

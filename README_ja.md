@@ -76,3 +76,37 @@
 空白だけなら起動しない。終了は待たない。終了コードが非ゼロならログだけ残す。`-key` は渡さない。`TYPESAFE_API_KEY` はソースにも設定にも書かない。CLI が鍵を読むなら、その環境変数を読む。このリポジトリに鍵の値は無い。
 
 そのブランチの Mac ビルド成功は書いていない。フォーカスを変えたあとも superwhisper がペーストするかは、確認済みとは書いていない。
+
+## macOS の URL スキーム実行設定
+
+メニューの「設定ファイルを開く」から、既存の JSON オブジェクトに次を追加します。
+
+```json
+"macOS": {
+  "wakeURL": "superwhisper://record",
+  "stopURL": "superwhisper://record"
+}
+```
+
+`wakeURL` は `command`、`stopURL` は `stopCommand` より優先され、シェルを介さず
+`/usr/bin/open` に URL を一引数で渡します。互換性のため `command` は引き続き必須です。
+各 URL の省略・null は従来コマンドに戻り、空文字列や不正 URL は設定エラーになります。
+Windows .NET は `macOS` を無視し、従来のコマンドを使います。
+
+ウェイクワードで URL を実行するには **`dictation` オブジェクトを削除してコマンドモードにします**。
+既存のディクテーション中の停止処理や Superwhisper への WAV 引き渡しは変更しません。
+`stopURL` は `skipWhileMicInUseBy` のアプリがマイクを使用中の場合だけ実行されます。
+URL の空白は `%20` にし、シェル用の引用符を付けないでください。
+不正な再読込はログに記録し、前の有効な設定を維持します。
+
+[完全な設定例](config.example.macos-url.json)と[詳細・Mac 確認手順](docs/macos-url-actions.md)を参照してください。
+Mac で `make build`、`make url-test` を実行後、別の設定コピーで次を実行すると、
+マイクを使わず URL を確認できます（Superwhisper の録音を切り替えます）。
+
+```sh
+VOICE_SWITCH_CONFIG="$PWD/config.example.macos-url.json" .build/release/voice-switch --fire
+```
+
+URL 起動失敗時は非ゼロ終了となり、ターミナルまたは「ログを開く」で詳細を確認できます。
+クラウドでは静的検証のみ実行済みです。Swift / .NET SDK がなく、Mac ビルド、
+LaunchServices、実マイク、Superwhisper の録音・文字起こし・貼付の一連の動作は未確認です。

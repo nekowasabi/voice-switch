@@ -7,6 +7,8 @@ struct Config: Decodable {
     var wakeWords: [String]
     var locale: String?
     var command: String
+    /// macOS-only URL overrides; Windows continues to use command / stopCommand.
+    var macOS: MacOSActions?
     var maxSeconds: Double?
     var hangoverMs: Int?
     var prerollMs: Int?
@@ -158,5 +160,43 @@ final class ConfigFile {
 
     private static func modified(_ path: String) -> Date? {
         try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date
+    }
+}
+
+/// URL actions are decoded at the config boundary; execution never repairs or shell-quotes them.
+struct MacOSActions: Decodable {
+    var wakeURL: ActionURL?
+    var stopURL: ActionURL?
+}
+
+struct ActionURL: Decodable {
+    let rawValue: String
+    var openArguments: [String] { ["-g", "--", rawValue] }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+        func invalid() -> DecodingError {
+            .dataCorruptedError(in: container, debugDescription:
+                "URL action must be an absolute application URL (for example superwhisper://record); " +
+                "encode spaces as %20, use valid percent escapes, and do not use file/data/javascript URLs.")
+        }
+        guard !raw.isEmpty,
+              raw.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters)) == nil,
+              let colon = raw.firstIndex(of: ":") else { throw invalid() }
+        let scheme = String(raw[..<colon])
+        guard scheme.range(of: "^[A-Za-z][A-Za-z0-9+.-]*$", options: .regularExpression) != nil,
+              !["file", "data", "javascript"].contains(scheme.lowercased()) else { throw invalid() }
+        let destination = raw[raw.index(after: colon)...]
+        guard !destination.isEmpty, destination != "//" else { throw invalid() }
+        let bytes = Array(raw.utf8)
+        func hex(_ byte: UInt8) -> Bool {
+            (48...57).contains(byte) || (65...70).contains(byte) || (97...102).contains(byte)
+        }
+        for i in bytes.indices where bytes[i] == 37 {
+            guard i + 2 < bytes.count, hex(bytes[i + 1]), hex(bytes[i + 2]) else { throw invalid() }
+        }
+        guard let parsed = URLComponents(string: raw), parsed.scheme != nil else { throw invalid() }
+        rawValue = raw
     }
 }

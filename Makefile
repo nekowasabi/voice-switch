@@ -33,7 +33,7 @@ DOTNET_RESTORE_FLAGS ?= --ignore-failed-sources --disable-parallel
 # Why: Run from local disk, not \\wsl.localhost, as focusbm does; AV heuristics flag UNC-launched exes.
 RELEASE_DIR ?= /mnt/c/takeda/tools/voice-switch
 
-.PHONY: build app install relaunch uninstall logs win win-restore win-build win-test parity-test win-publish win-verify help
+.PHONY: build app install relaunch uninstall logs win win-restore win-build win-test parity-test win-publish win-verify help url-test
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -88,6 +88,9 @@ win-build: win-restore win-test ## Windows: build .NET app and behavior tests
 win-test: win-restore ## Windows: run package-free behavior tests
 	$(DOTNET) run --project $(WIN_TESTS) -c $(WIN_CONFIG) --no-restore
 	$(MAKE) parity-test
+
+url-test: ## Require Swift URL action regression tests (macOS or Linux with Swift)
+	python3 tests/url-actions/run.py --require-swift
 
 parity-test: ## Run macOS/Windows parity contract checks
 	python3 tests/parity/run_parity.py

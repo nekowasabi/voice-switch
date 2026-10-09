@@ -26,8 +26,7 @@ if mode == "--vad-selftest" {
 } else if mode == "--fire" {
     do {
         let cfg = try ConfigFile(path: configPath).cfg
-        log("firing command: \(cfg.command)")
-        Platform.runCommand(cfg.command)
+        guard Platform.runMacAction(cfg, wait: true) else { exit(1) }
         RunLoop.main.run(until: Date() + 1)
         exit(0)
     } catch { log("fatal: \(error)"); exit(1) }
@@ -63,10 +62,12 @@ if mode == "--vad-selftest" {
     exit(0)
 } else {
     if isatty(STDOUT_FILENO) == 0 {
+        try? FileManager.default.createDirectory(at: logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         if !FileManager.default.fileExists(atPath: logURL.path) {
             FileManager.default.createFile(atPath: logURL.path, contents: nil)
         }
         freopen(logURL.path, "a", stdout)
+        freopen(logURL.path, "a", stderr)
         setvbuf(stdout, nil, _IOLBF, 0)
     }
     let app = NSApplication.shared

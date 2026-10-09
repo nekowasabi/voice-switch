@@ -76,6 +76,43 @@ enum Platform {
         do { try p.run() } catch { log("command failed to start: \(error)") }
     }
 
+    /// macOS wake/stop dispatch. A URL override never falls back to a shell on failure.
+    @discardableResult
+    static func runMacAction(_ cfg: Config, stop: Bool = false, wait: Bool = false) -> Bool {
+        if let url = stop ? cfg.macOS?.stopURL : cfg.macOS?.wakeURL {
+            log("URL action: \(stop ? "stop" : "wake")")
+            return runURLProcess(urlProcess(url), wait: wait)
+        }
+        runCommand(stop ? (cfg.stopCommand ?? defaultSuperwhisperToggle) : cfg.command)
+        return true
+    }
+
+    static func urlProcess(_ url: ActionURL) -> Process {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = url.openArguments
+        return process
+    }
+
+    @discardableResult
+    static func runURLProcess(_ process: Process, wait: Bool) -> Bool {
+        func report(_ process: Process) {
+            if process.terminationStatus != 0 {
+                log("URL action failed (open exit \(process.terminationStatus)); check the URL setting and install/register its target app. See open's error above.")
+            }
+        }
+        // Inherit stderr so LaunchServices diagnostics reach the terminal or app log.
+        if !wait { process.terminationHandler = { report($0) } }
+        do { try process.run() }
+        catch { log("URL action could not start /usr/bin/open: \(error)"); return false }
+        if wait {
+            process.waitUntilExit()
+            report(process)
+            return process.terminationStatus == 0
+        }
+        return true
+    }
+
     /// Open a file with the default handler (config / log).
     static func openFile(_ path: String) {
         #if os(Windows)
