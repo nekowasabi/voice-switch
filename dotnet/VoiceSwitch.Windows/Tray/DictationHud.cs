@@ -101,8 +101,10 @@ public sealed class DictationHud : Form
                 break;
         }
 
-        // The screen with the mouse, so it shows where the user is looking on multi-monitor setups.
-        var area = Screen.FromPoint(Cursor.Position).WorkingArea;
+        // Why: Follow the foreground window instead of the pointer; dictation targets the focused display.
+        var foreground = WindowFocus.Foreground();
+        var screen = foreground != 0 ? Screen.FromHandle(foreground) : Screen.FromPoint(Cursor.Position);
+        var area = screen.WorkingArea;
         Location = new Point(area.Left + (area.Width - Width) / 2, area.Top + 12);
         ShowWindow(Handle, SwShowNoActivate);
     }
