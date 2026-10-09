@@ -34,7 +34,7 @@ The app asks for the microphone and for on-device speech recognition. While a di
 
 `command` and `stopCommand` are run with `/bin/sh -c`. The sample file is `config.example.json`.
 
-For direct macOS URL actions, set `macOS.wakeURL` / `macOS.stopURL` (for example `superwhisper://record`). Each overrides its corresponding command; keep `command` for compatibility. Wake actions require command mode (`dictation` absent); `--fire` tests the wake action directly. See the [complete URL example](config.example.macos-url.json) and [settings, errors, and Mac verification steps](docs/macos-url-actions.md). Windows .NET continues to use its existing commands.
+For direct macOS URL actions, set `macOS.wakeURL` / `macOS.stopURL` (for example `superwhisper://record/start` and `superwhisper://record/stop`). Each overrides its corresponding command; keep `command` for compatibility. Wake actions require command mode (`dictation` absent); `--fire` tests the wake action directly. See the [complete URL example](config.example.macos-url.json) and [settings, errors, and Mac verification steps](docs/macos-url-actions.md). Windows .NET continues to use its existing commands.
 
 A wake word has to be the whole utterance. The sample words are `音声入力`, `音声入る`, `おんせい`, `音声に入るよ`, `音声に入る`, and `音声によって`, with locale `ja_JP`.
 

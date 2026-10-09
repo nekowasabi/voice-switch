@@ -1,13 +1,19 @@
 {
-  "wakeWords": ["音声入力"],
+  "wakeWords": [
+    "音声入力"
+  ],
   "locale": "ja_JP",
-  "command": "open -g superwhisper://record",
-  "stopWords": ["入力ストップ"],
-  "stopCommand": "open -g superwhisper://record",
-  "skipWhileMicInUseBy": ["com.superduper.superwhisper"],
+  "command": "open -g superwhisper://record/start",
+  "stopWords": [
+    "入力ストップ"
+  ],
+  "stopCommand": "open -g superwhisper://record/stop",
+  "skipWhileMicInUseBy": [
+    "com.superduper.superwhisper"
+  ],
   "macOS": {
-    "wakeURL": "superwhisper://record",
-    "stopURL": "superwhisper://record"
+    "wakeURL": "superwhisper://record/start",
+    "stopURL": "superwhisper://record/stop"
   },
   "maxSeconds": 2.5,
   "hangoverMs": 300,

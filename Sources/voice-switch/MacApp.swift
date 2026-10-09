@@ -682,7 +682,7 @@ final class Listener {
             }
             if !isHead, (config.cfg.stopWords ?? []).map(normalize).contains(t) {
                 if let busy = micInUse(by: config.cfg.skipWhileMicInUseBy ?? []) {
-                    // Only while it records: superwhisper://record toggles, so this cannot start a recording.
+                    // Only when observed busy. Prefer a stop-only URL: mic state can change before delivery.
                     log("heard: \(t)  -> stop \(busy)")
                     Platform.runMacAction(config.cfg, stop: true)
                 } else {

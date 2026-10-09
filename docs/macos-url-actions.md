@@ -3,12 +3,18 @@
 voice-switch sends a configured URL to its installed handler. It does not register
 an incoming `voice-switch://` scheme. No OS settings or URL associations are changed.
 
+The [official Superwhisper deep-link documentation](https://superwhisper.com/docs/modes/switching-modes)
+(checked 2026-10-09) documents `record` as a toggle, `record/start` as start-only,
+and `record/stop` as stop-only. This example uses start/stop so repeated delivery
+cannot flip the requested recording state. That is a documented contract, not
+a live test of the installed Superwhisper version.
+
 Open **設定ファイルを開く** from the menu and add:
 
 ```json
 "macOS": {
-  "wakeURL": "superwhisper://record",
-  "stopURL": "superwhisper://record"
+  "wakeURL": "superwhisper://record/start",
+  "stopURL": "superwhisper://record/stop"
 }
 ```
 
@@ -58,17 +64,23 @@ application's action. Errors appear in the terminal or **ログを開く**
    without launching apps. Optionally run the full parity suite where .NET is
    also installed: `python3 tests/parity/run_parity.py --require-swift`.
 2. Copy `config.example.macos-url.json` to a separate test path. With Superwhisper
-   installed, run (this intentionally invokes its recording toggle):
+   installed, run (this intentionally starts recording):
    ```sh
    VOICE_SWITCH_CONFIG="$PWD/config.example.macos-url.json" .build/release/voice-switch --fire
    echo $?
    ```
-   Confirm recording starts; run again to stop. This first check does not prove
-   microphone recognition or voice-switch's dictation handoff works.
+   Confirm recording starts; run again and confirm it stays recording. Stop it
+   using Superwhisper's UI. To test URL stopping without a microphone trigger,
+   change `wakeURL` in your separate test copy to `superwhisper://record/stop`
+   and repeat `--fire` twice: the first stops an active recording; the second
+   should leave it stopped. Restore `wakeURL` to `superwhisper://record/start`.
+   This does not prove microphone recognition or voice-switch's dictation
+   handoff works.
 3. In the test copy, set `wakeURL` to an unregistered scheme such as
    `voice-switch-unregistered-test://run`. Repeat `--fire`: expect a diagnostic
    and nonzero exit, with no legacy command executed. Set it to `not a URL`:
-   expect a config error naming `macOS.wakeURL`, before launching any handler.
+   expect a config error naming `macOS.wakeURL`, before launching any handler. Also remove `command` from the test copy and
+   confirm startup fails even with a valid URL; restore it afterward.
 4. To test another app, use a known installed scheme, including a query with
    `%20` and `&`. Confirm that all parameters arrive intact. Do not use a URL
    that performs an unwanted destructive action.
@@ -76,7 +88,8 @@ application's action. Errors appear in the terminal or **ログを開く**
    settings (back up your existing config first), restart/open your built app,
    and grant its microphone/speech permissions if needed. Say `音声入力` and
    verify Superwhisper records. Say `入力ストップ` while Superwhisper owns the mic
-   and verify the stop action. Check the log. Edit a URL to an invalid value
+   and verify the stop action. A repeated stop word when nothing owns the mic
+   should do nothing. Check the log. Edit a URL to an invalid value
    while listening and confirm the log retains the previous configuration;
    correct it and confirm reload on a later utterance.
 6. Restore your original config. If it contains `dictation`, separately test
@@ -108,3 +121,28 @@ skills from https://github.com/ColdTbrew/pstack-codex at commit
 were additional shell command examples versus a typed macOS URL override. The
 latter keeps the existing command fallback while putting URL validation at
 config decoding and argument separation at the process boundary.
+
+## Review of state and repetition
+
+URL dispatch does not create a voice-switch dictation session or set a recording
+flag. In command mode, after a launch attempt the listener returns to listening,
+even if spawning `open` fails. A later nonzero exit is logged asynchronously.
+There is no automatic retry and no fallback command after URL failure. `--fire`
+waits and reports the URL dispatch status as its exit code. External application
+state is never inferred from that status.
+
+Each accepted utterance or `--fire` invocation creates a fresh `Process`.
+There is no persistent deduplication or cooldown for URL actions, matching the
+existing command path. The mic-use guard is an observation, not an atomic
+transaction with the target: two wake events before the app acquires the mic,
+or two stops before it releases it, can each dispatch. Use idempotent target
+URLs when repeated delivery must be harmless. Generic application URLs can
+have other side effects; voice-switch cannot guarantee exactly-once delivery.
+
+A wake URL does not double as a stop URL: when only `wakeURL` is present, stop
+uses `stopCommand` (or its legacy toggle default). When only `stopURL` is present,
+wake uses the required `command`. Both URLs are validated when decoding the
+whole config, even if dictation currently prevents a wake URL from firing.
+
+The static-test inventory and the limits of each check are recorded in
+[the review evidence](macos-url-actions-review.md).

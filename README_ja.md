@@ -83,8 +83,8 @@
 
 ```json
 "macOS": {
-  "wakeURL": "superwhisper://record",
-  "stopURL": "superwhisper://record"
+  "wakeURL": "superwhisper://record/start",
+  "stopURL": "superwhisper://record/stop"
 }
 ```
 
@@ -101,7 +101,7 @@ URL の空白は `%20` にし、シェル用の引用符を付けないでくだ
 
 [完全な設定例](config.example.macos-url.json)と[詳細・Mac 確認手順](docs/macos-url-actions.md)を参照してください。
 Mac で `make build`、`make url-test` を実行後、別の設定コピーで次を実行すると、
-マイクを使わず URL を確認できます（Superwhisper の録音を切り替えます）。
+voice-switch のマイクを使わず URL を確認できます（Superwhisper の録音を開始します）。
 
 ```sh
 VOICE_SWITCH_CONFIG="$PWD/config.example.macos-url.json" .build/release/voice-switch --fire
@@ -110,3 +110,8 @@ VOICE_SWITCH_CONFIG="$PWD/config.example.macos-url.json" .build/release/voice-sw
 URL 起動失敗時は非ゼロ終了となり、ターミナルまたは「ログを開く」で詳細を確認できます。
 クラウドでは静的検証のみ実行済みです。Swift / .NET SDK がなく、Mac ビルド、
 LaunchServices、実マイク、Superwhisper の録音・文字起こし・貼付の一連の動作は未確認です。
+
+上の例は[公式の deep link 仕様](https://superwhisper.com/docs/modes/switching-modes)にある
+開始専用・停止専用 URL を使います。`superwhisper://record` はトグルなので、
+繰り返すと状態を反転させます。`--fire` の再実行で開始状態が維持されることを確認し、
+停止は Superwhisper の UI、またはテスト用コピーの `wakeURL` を `/record/stop` に変更して確認してください。

@@ -10,6 +10,17 @@ func config(_ mac: [String: Any]? = nil) throws -> Config {
     if let mac { value["macOS"] = mac }
     return try JSONDecoder().decode(Config.self, from: JSONSerialization.data(withJSONObject: value))
 }
+for value in [#"{"wakeWords":["start"],"macOS":{"wakeURL":"app://run"}}"#,
+              #"{"wakeWords":["start"],"command":null,"macOS":{"wakeURL":"app://run"}}"#] {
+    do {
+        _ = try JSONDecoder().decode(Config.self, from: Data(value.utf8))
+        fatalError("URL override must not make command optional")
+    } catch DecodingError.keyNotFound(let key, _) {
+        expect(key.stringValue == "command", "missing-command error must identify command")
+    } catch DecodingError.valueNotFound(_, let context) {
+        expect(context.codingPath.last?.stringValue == "command", "null-command error must identify command")
+    }
+}
 let plain = try config()
 expect(plain.macOS == nil && plain.command == "legacy", "legacy config must keep working")
 let nulls = try config(["wakeURL": NSNull(), "stopURL": NSNull()])
@@ -33,13 +44,16 @@ for invalid in ["", " ", "-aCalculator", "/tmp/a", "relative", "1bad://x", "app:
         }
     }
 }
-for valid in ["superwhisper://record", "shortcuts://run-shortcut?name=My%20Shortcut", "https://example.com/a?x=1&y=2", "app:opaque", "app://日本語", "app://a%0A"] {
+for valid in ["superwhisper://record/start", "superwhisper://record/stop", "superwhisper://record", "shortcuts://run-shortcut?name=My%20Shortcut", "https://example.com/a?x=1&y=2", "app:opaque", "app://日本語", "app://a%0A"] {
     let parsed = try config(["wakeURL": valid])
     expect(parsed.macOS?.wakeURL?.rawValue == valid, "valid URL rejected")
 }
 let process = Platform.urlProcess(cfg.macOS!.wakeURL!)
 expect(process.executableURL?.path == "/usr/bin/open", "must use absolute open executable")
 expect(process.arguments == ["-g", "--", raw], "must not use a shell")
+let secondProcess = Platform.urlProcess(cfg.macOS!.wakeURL!)
+expect(process !== secondProcess, "repeated dispatch must not reuse a single-shot Process")
+expect(process.arguments == secondProcess.arguments, "repeated dispatch must preserve the full URL")
 // Exercise launch failures and exit status without opening any application.
 let missing = Process()
 missing.executableURL = URL(fileURLWithPath: "/nonexistent/voice-switch-url-test")
