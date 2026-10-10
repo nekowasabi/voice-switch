@@ -54,6 +54,8 @@ Optional `dictation.superwhisperMode` (Mac + Windows; key or display name) selec
 
 The top-level `maxSeconds` (sample 2.5) caps a short wake-word utterance. It is not the dictation cap.
 
+Optional `earlyWakeMs` (Mac + Windows dictation mode; try 300) recognizes the utterance while it is still open: at 60 ms and 150 ms of silence, and every `earlyWakeMs` of speech. A wake word then fires without waiting for `hangoverMs`. A wake word that also starts a longer one (`音声` beside `音声入力`) fires only after 150 ms of silence, and starts a one-breath dictation only when a 150 ms pause follows it, so `音声認識…` is not a wake. Absent keeps the old timing. Synthetic-speech results are in `.claude/hillclimb/wake-latency/`; a live hand test is still pending on both platforms.
+
 The menu items are 一時停止 (releases the microphone), マイク, 設定ファイルを開く, ログを開く, ログイン時に起動, and 終了.
 
 ## Pane routing (tmux and Jev)
