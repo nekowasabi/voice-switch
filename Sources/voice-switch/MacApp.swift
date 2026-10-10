@@ -191,6 +191,12 @@ func openSuperwhisperURL(_ url: String) throws {
 }
 
 func readSuperwhisperActiveMode(preferencesPath: String = superwhisperPreferencesPath()) -> String? {
+    // Current Superwhisper keeps the active mode in its defaults domain, not in preferences.json.
+    let domain = "com.superduper.superwhisper" as CFString
+    _ = CFPreferencesAppSynchronize(domain)
+    if let key = CFPreferencesCopyAppValue("activeModeKey" as CFString, domain) as? String, !key.isEmpty {
+        return key
+    }
     guard let data = FileManager.default.contents(atPath: preferencesPath),
           let text = String(data: data, encoding: .utf8) else { return nil }
     return activeSuperwhisperMode(text)
@@ -294,18 +300,20 @@ func pasteDictation(_ text: String, target: NSRunningApplication?) -> Bool {
 /// superwhisper transcribes the file. With `dictation.superwhisperMode` set, switches to that mode
 /// (auto-paste off), restores after, and voice-switch pastes only when the pane route did not deliver.
 /// Unset keeps the old behavior (Superwhisper may auto-paste).
-func handoff(_ samples: [Float], cfg: DictationConfig, macrowhisper: MacrowhisperConfig?, target: NSRunningApplication?) async {
+func handoff(_ samples: [Float], cfg: DictationConfig, macrowhisper: MacrowhisperConfig?, target: NSRunningApplication?, action: WakeAction?) async {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("voice-switch")
     let wav = dir.appendingPathComponent("\(UUID().uuidString).wav")
     defer { try? FileManager.default.removeItem(at: wav) }
     let submitted = Date()
+    var cfg = cfg
+    if let mode = action?.superwhisperMode { cfg.superwhisperMode = mode }
     let (modeRequested, previousMode) = await enterSuperwhisperMode(cfg.superwhisperMode, target: target)
     var result: String?
     var launched = false
     do {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try writeWAV(samples, to: wav)
-        if Macrowhisper.shouldPrepareHandoff(macrowhisper) {
+        if action == nil, Macrowhisper.shouldPrepareHandoff(macrowhisper) {
             Macrowhisper.prepare(macrowhisper)
         }
         let p = Process()
@@ -332,6 +340,12 @@ func handoff(_ samples: [Float], cfg: DictationConfig, macrowhisper: Macrowhispe
         log("dictation: no superwhisper result within 30 s"); return
     }
     log("dictation: \(result.count) chars in \(Int(Date().timeIntervalSince(submitted) * 1000)) ms")
+    if let action {
+        let p = Platform.urlProcess(action.url)
+        p.arguments = action.openArguments(input: result)
+        Platform.runURLProcess(p, wait: false)
+        return
+    }
     let route = await routeDictation(result)
     switch decideDictationDelivery(modeRequested: modeRequested, route: route.disposition) {
     case .pane:
@@ -608,6 +622,7 @@ final class Listener {
         var target = NSWorkspace.shared.frontmostApplication
         /// Frames during which the mic hears our own confirmation sound, so it cannot count as the text starting.
         var deafFrames = 0
+        var action: WakeAction? = nil
     }
 
     enum Phase { case idle, waiting, recording, ended }
@@ -734,6 +749,38 @@ final class Listener {
             // Utterance length shows whether the VAD holds on past the word; stt is recognizer time.
             log("heard: \(t)\(hit ? "  -> wake" : "")  [utt \(u.count * 1000 / Int(rate)) ms, stt \(Int(Date().timeIntervalSince(began) * 1000)) ms]")
             let start = hit || config.cfg.dictation == nil ? nil : dictationStart(transcript, wakeWords: config.cfg.wakeWords)
+            var selectedAction: (action: WakeAction, start: (cutAt: Double, rest: String)?)?
+            if !hit && start == nil {
+                for action in config.cfg.macOS?.actions ?? [] {
+                    let actionStart = dictationStart(transcript, wakeWords: action.wakeWords)
+                    if actionStart != nil || (!isHead && action.wakeWords.map(normalize).contains(t)) {
+                        selectedAction = (action, actionStart)
+                        break
+                    }
+                }
+            }
+            if let selectedAction {
+                guard !handoffBusy.withLock({ $0 }) else {
+                    log("action skipped: previous dictation still in flight"); continue
+                }
+                if let busy = micInUse(by: config.cfg.skipWhileMicInUseBy ?? []) {
+                    log("skipped: \(busy) is using the microphone"); continue
+                }
+                if let start = selectedAction.start {
+                    dictation = Dictation(samples: trimmed(u, cutAt: start.cutAt), silentFrames: 0, heardSpeech: true,
+                                          action: selectedAction.action)
+                    log("dictation started (cut at \(Int(start.cutAt * 1000)) ms) -> action \(selectedAction.action.name)")
+                } else {
+                    dictation = Dictation(samples: [], silentFrames: 0, heardSpeech: false, action: selectedAction.action)
+                    if UserDefaults.standard.bool(forKey: soundKey) {
+                        NSSound(named: "Tink")?.play()
+                        dictation?.deafFrames = frames(ms: 600)
+                    }
+                    log("dictation started (waiting for text) -> action \(selectedAction.action.name)")
+                }
+                Hotkeys.begin()
+                continue
+            }
             // Over-cap head and recognizer found no wake: steady noise must not keep skipping forever (Windows RebaseFloor).
             if isHead && start == nil {
                 rebaseFloorAfterNoWake(&seg)
@@ -806,7 +853,7 @@ final class Listener {
         }
         guard claimed else { log("dictation dropped: previous one still in flight"); return }
         Task {
-            await handoff(d.samples, cfg: cfg, macrowhisper: config.cfg.macrowhisper, target: d.target)
+            await handoff(d.samples, cfg: cfg, macrowhisper: config.cfg.macrowhisper, target: d.target, action: d.action)
             handoffBusy.withLock { $0 = false }
         }
     }

@@ -80,4 +80,30 @@ try Data(#"{"wakeWords":["changed"],"command":"updated","macOS":{"wakeURL":"app:
 try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: 10)], ofItemAtPath: file.path)
 loaded.reloadIfChanged()
 expect(loaded.cfg.command == "updated" && loaded.cfg.macOS?.wakeURL?.rawValue == "app://fixed", "corrected reload must take effect")
+// Wake actions: decode, validation, and input= composition.
+expect(plain.macOS?.actions == nil, "actions absent when not configured")
+let uuid = "alter://action/26B00BAB-5655-4581-BCA0-F3880E746CC9"
+let acts = try config(["actions": [["name": "progress", "wakeWords": ["progress", "プログレス"], "url": uuid]]])
+let act = acts.macOS?.actions?.first
+expect(act?.name == "progress" && act?.wakeWords == ["progress", "プログレス"] && act?.url.rawValue == uuid, "action must decode")
+expect(act?.superwhisperMode == nil, "superwhisperMode absent when not configured")
+let moded = try config(["actions": [["name": "p", "wakeWords": ["p"], "url": uuid, "superwhisperMode": "input-voice-switch"]]])
+expect(moded.macOS?.actions?.first?.superwhisperMode == "input-voice-switch", "action superwhisperMode must decode")
+for bad in [["name": "a", "wakeWords": ["x"], "url": "file:///tmp/a"], ["name": "a", "wakeWords": ["x"], "url": ""],
+            ["name": "a", "wakeWords": [String](), "url": uuid]] as [[String: Any]] {
+    do { _ = try config(["actions": [bad]]); fatalError("accepted invalid action") }
+    catch DecodingError.dataCorrupted { checks += 1 }
+}
+func inputItems(_ args: [String]) -> [URLQueryItem] {
+    expect(args.count == 3 && args[0] == "-g" && args[1] == "--", "input URL must be one argument after --")
+    return URLComponents(string: args[2])!.queryItems!.filter { $0.name == "input" }
+}
+let sentence = "今日 a&b=c+d#e?f"
+let built = act!.openArguments(input: sentence)
+expect(inputItems(built).map(\.value) == [sentence], "input must round-trip as a single item")
+expect(built[2].firstIndex(where: { "&+# ".contains($0) }) == nil, "raw & + # must not remain in value")
+let withInput = try config(["actions": [["name": "p", "wakeWords": ["p"], "url": uuid + "?input=Sample%20text&k=v"]]]).macOS!.actions![0]
+let rebuilt = withInput.openArguments(input: "new")
+expect(inputItems(rebuilt).map(\.value) == ["new"], "existing input must be replaced, not duplicated")
+expect(URLComponents(string: rebuilt[2])!.queryItems!.contains { $0.name == "k" && $0.value == "v" }, "other query items kept")
 print("URL actions: \(checks) checks passed")

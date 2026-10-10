@@ -170,6 +170,42 @@ final class ConfigFile {
 struct MacOSActions: Decodable {
     var wakeURL: ActionURL?
     var stopURL: ActionURL?
+    var actions: [WakeAction]?
+}
+
+/// A wake phrase that opens its own URL with the dictated text appended as `input=`.
+struct WakeAction: Decodable {
+    let name: String
+    let wakeWords: [String]
+    let url: ActionURL
+    /// Superwhisper mode (key or name) used for this action's dictation, typically one with auto-paste off
+    /// so the text reaches only the URL. Absent falls back to `dictation.superwhisperMode`.
+    let superwhisperMode: String?
+
+    private enum CodingKeys: String, CodingKey { case name, wakeWords, url, superwhisperMode }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        wakeWords = try c.decode([String].self, forKey: .wakeWords)
+        url = try c.decode(ActionURL.self, forKey: .url)
+        superwhisperMode = try c.decodeIfPresent(String.self, forKey: .superwhisperMode)
+        guard !wakeWords.isEmpty else {
+            throw DecodingError.dataCorruptedError(forKey: .wakeWords, in: c,
+                debugDescription: "Wake action needs at least one wake word.")
+        }
+    }
+
+    /// `open` arguments with the URL's `input` query replaced by `input` (one item, percent-encoded).
+    func openArguments(input: String) -> [String] {
+        guard var parts = URLComponents(string: url.rawValue) else { return url.openArguments }
+        let unreserved = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+        let value = input.addingPercentEncoding(withAllowedCharacters: unreserved) ?? ""
+        var items = (parts.percentEncodedQueryItems ?? []).filter { $0.name != "input" }
+        items.append(URLQueryItem(name: "input", value: value))
+        parts.percentEncodedQueryItems = items
+        return ["-g", "--", parts.string ?? url.rawValue]
+    }
 }
 
 struct ActionURL: Decodable {

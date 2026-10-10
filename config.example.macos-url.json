@@ -13,7 +13,14 @@
   ],
   "macOS": {
     "wakeURL": "superwhisper://record/start",
-    "stopURL": "superwhisper://record/stop"
+    "stopURL": "superwhisper://record/stop",
+    "actions": [
+      {
+        "name": "progress",
+        "wakeWords": ["progress", "プログレス"],
+        "url": "alter://action/26B00BAB-5655-4581-BCA0-F3880E746CC9"
+      }
+    ]
   },
   "maxSeconds": 2.5,
   "hangoverMs": 300,
