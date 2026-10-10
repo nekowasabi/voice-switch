@@ -42,8 +42,11 @@ def main() -> int:
     check_config_fields(result, repo)
     check_example_config_fields(result, contract)
     check_cli_contract(result, repo, contract, cli_fixture)
-    check_windows_core_behavior(result, text_fixture, segmenter_fixture, pane_route_fixture)
-    check_swift_core_behavior(result, args.require_swift)
+    if args.static_only:
+        result.note("Static-only run: compiled Windows and Swift behavior tests were NOT run.")
+    else:
+        check_windows_core_behavior(result, text_fixture, segmenter_fixture, pane_route_fixture)
+        check_swift_core_behavior(result, args.require_swift)
     check_mutation_gate(result, repo, contract)
 
     result.note("macOS runtime execution skipped: Apple Speech, AVFoundation, and the macOS SDK are not available in this WSL environment.")
@@ -62,7 +65,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="fail instead of skipping the native pure-Swift harness when swiftc is unavailable",
     )
-    return parser.parse_args()
+    parser.add_argument("--static-only", action="store_true", help="run source contracts only, without SDKs")
+    args = parser.parse_args()
+    if args.static_only and args.require_swift:
+        parser.error("--static-only cannot be combined with --require-swift")
+    return args
 
 
 class SourceTree:
@@ -312,9 +319,9 @@ def check_swift_cli_call_chain(result: Result, repo: SourceTree) -> None:
     main_swift = repo.code("Sources/voice-switch/main.swift")
     require_substrings(
         result,
-        "Swift CLI --fire branch reaches Platform.runCommand",
+        "Swift CLI --fire branch waits for macOS action result",
         main_swift,
-        ['"--fire"', 'mode == "--fire"', "ConfigFile(path: configPath).cfg", "Platform.runCommand(cfg.command)"],
+        ['"--fire"', 'mode == "--fire"', "ConfigFile(path: configPath).cfg", "Platform.runMacAction(cfg, wait: true)"],
     )
     require_substrings(
         result,
@@ -493,6 +500,11 @@ def check_mac_superwhisper_mode_handoff(result: Result, repo: SourceTree) -> Non
 
 
 def check_swift_runtime_call_chain(result: Result, repo: SourceTree) -> None:
+    dispatch = extract_braced_body(repo.code("Sources/voice-switch/Platform.swift"), r"static func runMacAction[^\{]*\{")
+    require_substrings(result, "macOS action dispatch preserves command fallback", dispatch,
+                       ["stop ? cfg.macOS?.stopURL : cfg.macOS?.wakeURL",
+                        "runURLProcess(urlProcess(url), wait: wait)",
+                        "runCommand(stop ? (cfg.stopCommand ?? defaultSuperwhisperToggle) : cfg.command)"])
     mac = repo.code("Sources/voice-switch/MacApp.swift")
     body = extract_braced_body(mac, r"private\s+func\s+consume\s*\([^)]*\)\s+async\s*\{")
     require_substrings(
@@ -504,7 +516,7 @@ def check_swift_runtime_call_chain(result: Result, repo: SourceTree) -> None:
             "let event = seg.push(f)",
             "transcript = try await transcribe",
             "let hit = !isHead && config.cfg.wakeWords.map(normalize).contains(t)",
-            "Platform.runCommand(config.cfg.command)",
+            "Platform.runMacAction(config.cfg)",
         ],
     )
     require_substrings(
@@ -514,7 +526,7 @@ def check_swift_runtime_call_chain(result: Result, repo: SourceTree) -> None:
         [
             "config.cfg.stopWords ?? []",
             "micInUse(by: config.cfg.skipWhileMicInUseBy ?? [])",
-            "Platform.runCommand(config.cfg.stopCommand ?? Platform.defaultSuperwhisperToggle)",
+            "Platform.runMacAction(config.cfg, stop: true)",
             "stop word, nothing is recording",
         ],
     )
@@ -571,6 +583,11 @@ def check_config_fields(result: Result, repo: SourceTree) -> None:
     swift_dictation = extract_swift_struct_fields(swift, "DictationConfig")
     cs_config = extract_cs_record_fields(cs, "VoiceSwitchConfig")
     cs_dictation = extract_cs_record_fields(cs, "DictationConfig")
+    # This setting intentionally selects LaunchServices actions only on macOS.
+    if "macOS" not in swift_config:
+        result.fail("macOS URL action config is missing")
+    swift_config.discard("macOS")
+    result.note("Config.macOS is intentionally Mac-only; Windows keeps command / stopCommand.")
     compare_sets(result, "Config fields", swift_config, cs_config)
     compare_sets(result, "DictationConfig fields", swift_dictation, cs_dictation)
 

@@ -682,9 +682,9 @@ final class Listener {
             }
             if !isHead, (config.cfg.stopWords ?? []).map(normalize).contains(t) {
                 if let busy = micInUse(by: config.cfg.skipWhileMicInUseBy ?? []) {
-                    // Only while it records: superwhisper://record toggles, so this cannot start a recording.
+                    // Only when observed busy. Prefer a stop-only URL: mic state can change before delivery.
                     log("heard: \(t)  -> stop \(busy)")
-                    Platform.runCommand(config.cfg.stopCommand ?? Platform.defaultSuperwhisperToggle)
+                    Platform.runMacAction(config.cfg, stop: true)
                 } else {
                     log("heard: \(t)  (stop word, nothing is recording)")
                 }
@@ -709,7 +709,7 @@ final class Listener {
             // With dictation on, a lone wake word therefore opens a dictation that waits for the text.
             guard start != nil || config.cfg.dictation != nil else {
                 Macrowhisper.prepare(config.cfg.macrowhisper)
-                Platform.runCommand(config.cfg.command)
+                Platform.runMacAction(config.cfg)
                 continue
             }
             if let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,

@@ -1,6 +1,6 @@
 # voice-switch
 
-On macOS, a menu-bar app. A wake word on its own runs a command through `/bin/sh`. Speech after a wake word is recorded and opened in superwhisper only when `dictation` is set. Without it, that longer utterance is ignored. When dictation returns a string, one tmux pane receives it only if the pane catalog, optionally checked by Jev, points at exactly one pane. Otherwise nothing is sent.
+On macOS, a menu-bar app. A wake word on its own runs a command through `/bin/sh`, or sends a configured macOS URL action without a shell. Speech after a wake word is recorded and opened in superwhisper only when `dictation` is set. Without it, that longer utterance is ignored. When dictation returns a string, one tmux pane receives it only if the pane catalog, optionally checked by Jev, points at exactly one pane. Otherwise nothing is sent.
 
 [日本語](README_ja.md)
 
@@ -33,6 +33,8 @@ The app asks for the microphone and for on-device speech recognition. While a di
 `$VOICE_SWITCH_CONFIG`, or `~/.config/voice-switch/config.json` when that variable is unset. The file is re-read between utterances when its modification time changes.
 
 `command` and `stopCommand` are run with `/bin/sh -c`. The sample file is `config.example.json`.
+
+For direct macOS URL actions, set `macOS.wakeURL` / `macOS.stopURL` (for example `superwhisper://record/start` and `superwhisper://record/stop`). Each overrides its corresponding command; keep `command` for compatibility. Wake actions require command mode (`dictation` absent); `--fire` tests the wake action directly. See the [complete URL example](config.example.macos-url.json) and [settings, errors, and Mac verification steps](docs/macos-url-actions.md). Windows .NET continues to use its existing commands.
 
 A wake word has to be the whole utterance. The sample words are `音声入力`, `音声入る`, `おんせい`, `音声に入るよ`, `音声に入る`, and `音声によって`, with locale `ja_JP`.
 
