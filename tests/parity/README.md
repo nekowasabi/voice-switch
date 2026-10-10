@@ -18,7 +18,7 @@ What the checker proves:
 - Comments are stripped before static marker and call-chain checks.
 - Every discovered CLI switch must be shared or covered by `allowed_cli_gaps`.
 - Every sample config key that appears on only one platform must be covered by `allowed_sample_config_gaps`.
-- Swift and C# config types must keep the same retained compatibility fields. The intentional `macOS` URL action object is Mac-only; Windows .NET ignores it.
+- Swift and C# config types must keep the same retained compatibility fields. The intentional `macOS` URL action object is Mac-only; Windows .NET ignores it. Its mirror, the `windows` object (`windows.actions`), is Windows-only; Swift ignores it.
 - Windows core behavior is executed through compiled `VoiceSwitch.Windows.Core` copied into a temporary project.
 - Swift pure behavior is executed through production `Config.swift`, `Transcript.swift`, `Segmenter.swift`, and `PaneRoute.swift` when `swiftc` is present.
 - The tmux pane route (label match, Jev policy table, Jev answer parsing) is asserted on both platforms from `fixtures/pane_route.json`; the C# tests read the same file.

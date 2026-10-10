@@ -94,7 +94,7 @@ public sealed record DictationEvent(string Kind, FinishReason? Reason, SampleRan
     public static DictationEvent Error(FinishReason reason) => new("error", reason, null);
 }
 
-public sealed record DictationAudio(Guid SessionId, SampleRange Range, ImmutableArray<short> Samples, FinishReason Reason = FinishReason.Silence, nint Target = 0);
+public sealed record DictationAudio(Guid SessionId, SampleRange Range, ImmutableArray<short> Samples, FinishReason Reason = FinishReason.Silence, nint Target = 0, WakeAction? Action = null);
 
 public sealed record HandoffResult(HandoffStatus Status, Guid Id, string? Path, string Message);
 
@@ -459,7 +459,10 @@ public sealed record WakePrefix(long WakeEnd, long? BodyStart, WakeWord? ByReadi
 public sealed class DictationSession
 {
     private readonly VoiceSwitchConfig config;
-    private readonly WakeWord[] wakes;
+    // Default wakes first so they keep priority; then each windows.actions entry in config order.
+    private readonly (WakeAction? Owner, WakeWord[] Wakes)[] wakeSets;
+    // The set that opened this session; the awaiting branch strips a repeated wake of that same set.
+    private WakeWord[] wakes;
     private readonly List<DictationEvent> events = new();
     private Guid sessionId;
     private long? bodyStart;
@@ -478,9 +481,14 @@ public sealed class DictationSession
     {
         this.config = config;
         wakes = config.Wakes();
+        wakeSets = (config.Windows?.Actions ?? [])
+            .Select(action => ((WakeAction?)action, action.Wakes()))
+            .Prepend((null, wakes))
+            .ToArray();
     }
 
     public IReadOnlyList<DictationEvent> Events => events;
+    public WakeAction? Action { get; private set; }
     public SampleRange? PendingBody => bodyStart is long start && !terminal ? new SampleRange(start, lastSpeechEnd) : null;
     public bool IsActive => bodyStart is not null && !terminal;
     public bool IsAwaitingBody => awaitingBody && !terminal;
@@ -509,7 +517,7 @@ public sealed class DictationSession
 
             if (recognition.Extent == RecognitionExtent.Probe)
             {
-                if (DictationBoundaries.EarlyWake(recognition, wakes) is { BodyStart: long early } && early > wakeEnd)
+                if (DictationBoundaries.EarlyWake(recognition, wakeSets[0].Wakes) is { BodyStart: long early } && early > wakeEnd)
                 {
                     StartBody(early, recognition.Source.End, now);
                 }
@@ -539,9 +547,24 @@ public sealed class DictationSession
 
         if (bodyStart is null)
         {
+            // Probes and rejected hypotheses use the default wakes only, as on Mac.
             var wake = recognition.Extent == RecognitionExtent.Probe
                 ? DictationBoundaries.EarlyWake(recognition, wakes)
                 : DictationBoundaries.LeadingWake(recognition, wakes) ?? DictationBoundaries.RejectedWake(recognition, config.WakeWords);
+            if (wake is null && recognition.Extent != RecognitionExtent.Probe)
+            {
+                foreach (var (owner, set) in wakeSets.Skip(1))
+                {
+                    if (DictationBoundaries.LeadingWake(recognition, set) is { } hit)
+                    {
+                        wake = hit;
+                        wakes = set;
+                        Action = owner;
+                        break;
+                    }
+                }
+            }
+
             if (wake is null)
             {
                 return null;
@@ -677,7 +700,7 @@ public sealed class DictationSession
             return null;
         }
 
-        var audio = new DictationAudio(sessionId, range, copyAudio(range), reason);
+        var audio = new DictationAudio(sessionId, range, copyAudio(range), reason, Action: Action);
         events.Add(DictationEvent.Submitted(sessionId, reason, range));
         return audio;
     }

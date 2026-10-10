@@ -42,6 +42,8 @@
 
 `earlyWakeMs`（任意。Mac と Windows の入力モード。試すなら 300）を設定すると、発話が閉じる前に認識する。無音が 60 ms と 150 ms 続いた時点、および発話 `earlyWakeMs` ごとに認識し、`hangoverMs` を待たずにウェイクを確定する。長いウェイクワードの先頭でもある語（`音声入力` と並ぶ `音声`）は、150 ms の無音のあとでだけ確定する。そのまま続けて入力を始めるのも、直後に 150 ms の間があるときだけなので、`音声認識…` はウェイクにならない。未設定なら従来どおり。合成音声での計測は `.claude/hillclimb/wake-latency/` にある。実機での確認は両プラットフォームとも未実施。
 
+`windows.actions`（任意。Windows の入力モード。Mac の `macOS.actions` に当たる）を設定すると、ウェイクワードごとに専用の URL を開ける。各項目は `name`・`wakeWords`・`url` と、任意の `superwhisperMode`（無ければ `dictation.superwhisperMode`）。既定のウェイクワードが一致しなかったときだけ、設定順に試す。録音は通常の入力と同じで、Superwhisper の結果を URL の `input=` に入れて `rundll32 url.dll,FileProtocolHandler` で開く。ペインへの送信と貼り付けはしない。URL は `macOS.wakeURL` と同じ規則で読み込み時に検査する。早期ウェイクの判定は既定のウェイクワードだけを使う。例は [config.example.windows-url.json](config.example.windows-url.json)。Windows 実機での確認は未実施。
+
 メニューは、一時停止（マイクを放す）、マイク、設定ファイルを開く、ログを開く、ログイン時に起動、終了。
 
 ## ペインへの振り分け（tmux と Jev）

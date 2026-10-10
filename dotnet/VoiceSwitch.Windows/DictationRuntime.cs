@@ -313,7 +313,7 @@ public sealed class WindowsDictationRuntime
                         {
                             // Superwhisper pastes into whatever is frontmost, so remember where the user was when the wake word landed.
                             target = foregroundWindow();
-                            if (SkipReason(target) is { } skipped)
+                            if (SkipReason(target, session.Action) is { } skipped)
                             {
                                 Log.Info(skipped);
                                 session = ResetSession(pending, outcome.Recognition!.Source.End);
@@ -328,7 +328,8 @@ public sealed class WindowsDictationRuntime
                         var prefix = probe
                             ? DictationBoundaries.EarlyWake(outcome.Recognition!, config.Wakes())
                             : DictationBoundaries.LeadingWake(outcome.Recognition!, config.Wakes());
-                        var byReading = prefix?.ByReading is { } readingWake ? $" via=reading d={prefix.Distance} wake=\"{readingWake.Reading}\"" : "";
+                        var byReading = session.Action is { } action ? $" action={action.Name}"
+                            : prefix?.ByReading is { } readingWake ? $" via=reading d={prefix.Distance} wake=\"{readingWake.Reading}\"" : "";
                         if (probe && wasIdle && (session.IsActive || session.IsAwaitingBody))
                         {
                             Log.Info($"dictation session: early-wake id={outcome.Work.Request.Id} tail={outcome.Work.Request.TailSilenceSamples * 1000 / (long)Segmenter.Rate}ms");
@@ -336,7 +337,7 @@ public sealed class WindowsDictationRuntime
 
                         if (wasIdle && session.IsAwaitingBody)
                         {
-                            var via = prefix is not null ? byReading : $" via=rejected conf={outcome.Recognition!.Confidence:0.00} rejectedText=\"{outcome.Recognition.RejectedText}\"";
+                            var via = prefix is not null || session.Action is not null ? byReading : $" via=rejected conf={outcome.Recognition!.Confidence:0.00} rejectedText=\"{outcome.Recognition.RejectedText}\"";
                             Log.Info($"dictation session: wake-only id={outcome.Work.Request.Id} source={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End}{via}");
                         }
                         else if (!wasActive && session.PendingBody is { } started)
@@ -553,7 +554,16 @@ public sealed class WindowsDictationRuntime
     }
 
     private VoiceSwitchConfig WithWakeReadings(VoiceSwitchConfig c) =>
-        c with { WakeReadings = wakeReading is null ? ImeReadings.Of(c.WakeWords) : c.WakeWords.Select(wakeReading).ToArray() };
+        c with
+        {
+            WakeReadings = Readings(c.WakeWords),
+            Windows = c.Windows is { Actions: { } actions } windows
+                ? windows with { Actions = actions.Select(action => action with { WakeReadings = Readings(action.WakeWords) }).ToArray() }
+                : c.Windows
+        };
+
+    private string?[] Readings(string[] words) =>
+        wakeReading is null ? ImeReadings.Of(words) : words.Select(wakeReading).ToArray();
 
     private bool FlushOpenUtterance(
         ChannelWriter<RecognitionWork> requests,
@@ -655,15 +665,21 @@ public sealed class WindowsDictationRuntime
     }
 
     // Mac order: a recorder already taking the microphone first, then an excluded app in front.
-    private string? SkipReason(nint window)
+    // Mac URL actions check a handoff in flight and the microphone only: they paste nowhere, so the app in front does not matter.
+    private string? SkipReason(nint window, WakeAction? action)
     {
+        if (action is not null && inflight is { IsCompleted: false })
+        {
+            return "action skipped: previous dictation still in flight";
+        }
+
         if (micInUseBy(config.SkipWhileMicInUseBy ?? []) is { } busy)
         {
             // Superwhisper would be recording this speech already, and its record toggle would stop it.
             return $"skipped: {busy} is using the microphone";
         }
 
-        return config.Dictation?.ExcludeProcessNames is { Length: > 0 } excluded
+        return action is null && config.Dictation?.ExcludeProcessNames is { Length: > 0 } excluded
             && windowProcess(window) is { } app
             && excluded.Any(name => string.Equals(Path.GetFileNameWithoutExtension(name), app, StringComparison.OrdinalIgnoreCase))
                 ? $"dictation skipped: {app} is excluded"

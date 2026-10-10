@@ -1,6 +1,8 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Globalization;
+using System.Text;
+using System.Text.RegularExpressions;
 
 namespace VoiceSwitch.Windows.Core;
 
@@ -53,14 +55,15 @@ public sealed record VoiceSwitchConfig(
     DictationConfig? Dictation = null,
     // Parsed for cross-platform config compatibility; Windows does not run macrowhisper (macOS-only CLI hooks).
     System.Text.Json.JsonElement? Macrowhisper = null,
-    NoiseReductionOptions? NoiseReduction = null)
+    NoiseReductionOptions? NoiseReduction = null,
+    // Twin of Mac `macOS`: Windows-only settings.
+    WindowsActions? Windows = null)
 {
     // Parallel to WakeWords by index. The Windows runtime fills it from MS-IME; config files never carry it.
     [JsonIgnore]
     public string?[]? WakeReadings { get; init; }
 
-    public WakeWord[] Wakes() =>
-        WakeWords.Select((word, i) => WakeWord.From(word, WakeReadings is { } r && i < r.Length ? r[i] : null)).ToArray();
+    public WakeWord[] Wakes() => WakeWord.All(WakeWords, WakeReadings);
 
     public string EffectiveLocale => string.IsNullOrWhiteSpace(Locale) ? "ja-JP" : Locale.Replace('_', '-');
 
@@ -95,6 +98,52 @@ public sealed record WakeWord(string Text, string Reading)
     // Without a computed reading the word itself stands in, so a kana wake word still compares with SAPI's lexical forms.
     public static WakeWord From(string word, string? reading = null) =>
         new(TextMatching.Normalize(word), TextMatching.NormalizeReading(string.IsNullOrEmpty(reading) ? word : reading));
+
+    public static WakeWord[] All(string[] words, string?[]? readings) =>
+        words.Select((word, i) => From(word, readings is { } r && i < r.Length ? r[i] : null)).ToArray();
+}
+
+public sealed record WindowsActions(WakeAction[]? Actions = null);
+
+/// <summary>A wake phrase whose dictation opens its own URL with the text as `input=` instead of being pasted or routed.</summary>
+public sealed record WakeAction(string Name, string[] WakeWords, string Url, string? SuperwhisperMode = null)
+{
+    [JsonIgnore]
+    public string?[]? WakeReadings { get; init; }
+
+    public WakeWord[] Wakes() => WakeWord.All(WakeWords, WakeReadings);
+
+    // Mac WakeAction.openArguments: every `input` item is replaced by one percent-encoded item; other items stay as written.
+    public string InputUrl(string input)
+    {
+        var hash = Url.IndexOf('#');
+        var head = hash < 0 ? Url : Url[..hash];
+        var fragment = hash < 0 ? "" : Url[hash..];
+        var question = head.IndexOf('?');
+        var query = question < 0 ? "" : head[(question + 1)..];
+        var items = query.Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Where(item => item.Split('=', 2)[0] != "input")
+            .Append("input=" + EncodeUnreserved(input));
+        return (question < 0 ? head : head[..question]) + "?" + string.Join('&', items) + fragment;
+    }
+
+    private static string EncodeUnreserved(string value)
+    {
+        var builder = new StringBuilder();
+        foreach (var b in Encoding.UTF8.GetBytes(value))
+        {
+            if (char.IsAsciiLetterOrDigit((char)b) || b is (byte)'-' or (byte)'.' or (byte)'_' or (byte)'~')
+            {
+                builder.Append((char)b);
+            }
+            else
+            {
+                builder.Append('%').Append(b.ToString("X2", CultureInfo.InvariantCulture));
+            }
+        }
+
+        return builder.ToString();
+    }
 }
 
 public sealed record RecognitionKey(string Locale, string WakeWords, string StopWords);
@@ -161,6 +210,26 @@ public static class ConfigLoader
             throw new InvalidDataException("command must not be empty.");
         }
 
+        var actions = config.Windows?.Actions ?? [];
+        for (var i = 0; i < actions.Length; i++)
+        {
+            var field = $"windows.actions[{i}]";
+            if (actions[i] is not { } action || string.IsNullOrWhiteSpace(action.Name))
+            {
+                throw new InvalidDataException($"{field}.name must not be empty.");
+            }
+
+            if (action.WakeWords is not { Length: > 0 } || action.WakeWords.Any(word => string.IsNullOrWhiteSpace(word) || TextMatching.Normalize(word).Length == 0))
+            {
+                throw new InvalidDataException($"{field}.wakeWords must contain at least one word, each with a word character.");
+            }
+
+            if (!IsActionUrl(action.Url))
+            {
+                throw new InvalidDataException($"{field}.url must be an absolute application URL (for example superwhisper://record); encode spaces as %20, use valid percent escapes, and do not use file/data/javascript URLs.");
+            }
+        }
+
         if (config.NoiseReduction is { MaxAttenuationDb: < 0 or > 6 })
         {
             throw new InvalidDataException("noiseReduction.maxAttenuationDb must be between 0 and 6.");
@@ -175,5 +244,42 @@ public static class ConfigLoader
                 throw new InvalidDataException($"locale is not valid: {config.Locale}");
             }
         }
+    }
+
+    // Mac ActionURL. The explicit RFC 3986 character set stands in for Swift URLComponents' strict parse, which .NET Uri
+    // lacks; it also keeps the URL free of anything a command line would need to quote.
+    private static bool IsActionUrl(string? raw)
+    {
+        const string allowed = "-._~:/?#[]@!$&'()*+,;=%";
+        if (string.IsNullOrEmpty(raw) || !raw.All(c => char.IsAsciiLetterOrDigit(c) || allowed.Contains(c)))
+        {
+            return false;
+        }
+
+        var colon = raw.IndexOf(':');
+        if (colon < 0)
+        {
+            return false;
+        }
+
+        var scheme = raw[..colon];
+        var destination = raw[(colon + 1)..];
+        if (!Regex.IsMatch(scheme, "^[A-Za-z][A-Za-z0-9+.-]*$")
+            || scheme.ToLowerInvariant() is "file" or "data" or "javascript"
+            || destination.Length == 0
+            || destination == "//")
+        {
+            return false;
+        }
+
+        for (var i = 0; i < raw.Length; i++)
+        {
+            if (raw[i] == '%' && !(i + 2 < raw.Length && char.IsAsciiHexDigit(raw[i + 1]) && char.IsAsciiHexDigit(raw[i + 2])))
+            {
+                return false;
+            }
+        }
+
+        return Uri.TryCreate(raw, UriKind.Absolute, out _);
     }
 }

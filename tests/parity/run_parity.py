@@ -588,6 +588,11 @@ def check_config_fields(result: Result, repo: SourceTree) -> None:
         result.fail("macOS URL action config is missing")
     swift_config.discard("macOS")
     result.note("Config.macOS is intentionally Mac-only; Windows keeps command / stopCommand.")
+    # The mirror object: Windows dictation URL actions, read only by the .NET runtime.
+    if "windows" not in cs_config:
+        result.fail("Windows URL action config is missing")
+    cs_config.discard("windows")
+    result.note("VoiceSwitchConfig.Windows is intentionally Windows-only; macOS reads its actions from macOS.actions.")
     compare_sets(result, "Config fields", swift_config, cs_config)
     compare_sets(result, "DictationConfig fields", swift_dictation, cs_dictation)
 
@@ -1147,7 +1152,7 @@ def check_platform_only_cli_mutation(result: Result, repo: SourceTree, contract:
 def check_platform_only_config_mutation(result: Result, repo: SourceTree) -> None:
     target = "dotnet/VoiceSwitch.Windows.Core/VoiceSwitchConfig.cs"
     original = repo.read(target)
-    mutated = original.replace("NoiseReductionOptions? NoiseReduction = null)", "NoiseReductionOptions? NoiseReduction = null,\n    string? WindowsOnly = null)", 1)
+    mutated = original.replace("WindowsActions? Windows = null)", "WindowsActions? Windows = null,\n    string? WindowsOnly = null)", 1)
     if mutated == original:
         result.fail("mutation setup failed: could not add a Windows-only config member")
         return

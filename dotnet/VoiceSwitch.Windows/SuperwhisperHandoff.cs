@@ -75,7 +75,8 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
                 $"Superwhisper file intake needs an ASCII path without spaces; nothing was written or sent: {Path.GetFullPath(wavPath)}");
         }
 
-        var (modeRequested, previousMode) = await EnterModeAsync(audio.Target);
+        var actionMode = string.IsNullOrWhiteSpace(audio.Action?.SuperwhisperMode) ? null : audio.Action.SuperwhisperMode.Trim();
+        var (modeRequested, previousMode) = await EnterModeAsync(actionMode ?? superwhisperMode, audio.Target);
         string? text = null;
         try
         {
@@ -137,6 +138,22 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         }
 
         TryDelete(wavPath);
+        if (audio.Action is { } action)
+        {
+            // Mac parity: an action's text goes only to its URL, never to a tmux pane or a paste.
+            try
+            {
+                LaunchUrl(action.InputUrl(text));
+                Log.Info($"dictation delivered: action {action.Name}");
+            }
+            catch (Exception ex)
+            {
+                Log.Info($"dictation action {action.Name} failed to open: {ex.Message}");
+            }
+
+            return new HandoffResult(HandoffStatus.Transcribed, audio.SessionId, null, "Superwhisper result found; WAV deleted");
+        }
+
         var route = RouteResult.NotRouted;
         if (onTranscribed is not null)
         {
@@ -177,7 +194,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
     // Requested is true only when the configured mode is confirmed active; Previous is the mode to switch back to.
     // Without a readable activeMode there would be nothing to switch back to, so the mode is left alone.
     // A failed 3 s poll must leave Requested false so Decide stays on Superwhisper (no paste) — B2 double-delivery guard.
-    private async Task<(bool Requested, string? Previous)> EnterModeAsync(nint target)
+    private async Task<(bool Requested, string? Previous)> EnterModeAsync(string? superwhisperMode, nint target)
     {
         if (superwhisperMode is null)
         {
@@ -275,6 +292,20 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
             CreateNoWindow = true
         };
         psi.ArgumentList.Add(argument);
+        (startProcess(psi) ?? throw new InvalidOperationException("Process.Start returned null")).Dispose();
+    }
+
+    // Same launcher as PlatformDefaults.SuperwhisperToggle, without a shell; the URL is validated and percent-encoded, so it
+    // needs no quoting.
+    private void LaunchUrl(string url)
+    {
+        var psi = new ProcessStartInfo("rundll32.exe")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        psi.ArgumentList.Add("url.dll,FileProtocolHandler");
+        psi.ArgumentList.Add(url);
         (startProcess(psi) ?? throw new InvalidOperationException("Process.Start returned null")).Dispose();
     }
 

@@ -56,6 +56,8 @@ The top-level `maxSeconds` (sample 2.5) caps a short wake-word utterance. It is 
 
 Optional `earlyWakeMs` (Mac + Windows dictation mode; try 300) recognizes the utterance while it is still open: at 60 ms and 150 ms of silence, and every `earlyWakeMs` of speech. A wake word then fires without waiting for `hangoverMs`. A wake word that also starts a longer one (`音声` beside `音声入力`) fires only after 150 ms of silence, and starts a one-breath dictation only when a 150 ms pause follows it, so `音声認識…` is not a wake. Absent keeps the old timing. Synthetic-speech results are in `.claude/hillclimb/wake-latency/`; a live hand test is still pending on both platforms.
 
+Optional `windows.actions` (Windows dictation mode; the Windows twin of Mac `macOS.actions`) gives a wake phrase its own URL. Each entry has `name`, `wakeWords`, `url`, and an optional `superwhisperMode` (else `dictation.superwhisperMode`). It is tried only when no default wake word matched, in config order. Its dictation is recorded like any other, and Superwhisper's result is opened as the URL's `input=` query item through `rundll32 url.dll,FileProtocolHandler`, with no pane route and no paste. URLs are checked at load like `macOS.wakeURL`; early wake probes use only the default wake words. See [config.example.windows-url.json](config.example.windows-url.json); a live hand test on Windows is still pending.
+
 The menu items are 一時停止 (releases the microphone), マイク, 設定ファイルを開く, ログを開く, ログイン時に起動, and 終了.
 
 ## Pane routing (tmux and Jev)

@@ -136,6 +136,10 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("superwhisper mode decide pastes only when requested and not routed", () => Check(SuperwhisperModeDecidePastesOnlyWhenNotRouted())),
     ("superwhisper mode decide does not paste after no-body skip", () => Check(SuperwhisperModeDecideDoesNotPasteAfterNoBodySkip())),
     ("config loads optional dictation.superwhisperMode", () => Check(ConfigLoadsOptionalSuperwhisperMode())),
+    ("config loads windows.actions and rejects invalid ones", () => Check(ConfigLoadsWindowsActions())),
+    ("wake action URL carries the text as one input item", () => Check(WakeActionUrlCarriesInput())),
+    ("dictation action wake selects its action after the default wakes", () => Check(DictationActionWakeSelectsAction())),
+    ("dictation handoff with an action opens its URL instead of routing or pasting", () => Check(DictationHandoffActionOpensUrl())),
     ("dictation handoff switches mode before launch and restores after", () => Check(DictationHandoffSwitchesModeBeforeLaunchAndRestoresAfter())),
     ("dictation handoff pastes only when mode requested and not routed", () => Check(DictationHandoffPastesOnlyWhenModeRequestedAndNotRouted())),
     ("dictation handoff does not paste when mode switch fails", () => Check(DictationHandoffDoesNotPasteWhenModeSwitchFails())),
@@ -3730,6 +3734,135 @@ static bool ConfigLoadsOptionalSuperwhisperMode()
     var plain = ConfigLoader.Load(withoutMode);
     return loaded.Dictation!.SuperwhisperMode == "voice_switch"
         && plain.Dictation!.SuperwhisperMode is null;
+}
+
+static bool ConfigLoadsWindowsActions()
+{
+    const string uuid = "alter://action/26B00BAB-5655-4581-BCA0-F3880E746CC9";
+    static string WithActions(string actions) =>
+        $$$"""{"wakeWords":["音声入力"],"command":"wake","windows":{"actions":[{{{actions}}}]}}""";
+    using var temp = RuntimeTemp();
+    VoiceSwitchConfig Load(string json)
+    {
+        var path = Path.Combine(temp.Dir, $"{Guid.NewGuid():N}.json");
+        File.WriteAllText(path, json);
+        return ConfigLoader.Load(path);
+    }
+
+    var plain = Load("""{"wakeWords":["音声入力"],"command":"wake"}""");
+    var action = Load(WithActions($$"""{"name":"progress","wakeWords":["progress","プログレス"],"url":"{{uuid}}"}""")).Windows?.Actions?.Single();
+    var moded = Load(WithActions($$"""{"name":"p","wakeWords":["p"],"url":"{{uuid}}","superwhisperMode":"input-voice-switch"}""")).Windows!.Actions!.Single();
+    return plain.Windows?.Actions is null
+        && action is { Name: "progress", Url: uuid, SuperwhisperMode: null }
+        && action.WakeWords.SequenceEqual(["progress", "プログレス"])
+        && moded.SuperwhisperMode == "input-voice-switch"
+        && Rejects(WithActions("""{"name":"a","wakeWords":["x"],"url":"file:///tmp/a"}"""), "windows.actions[0].url")
+        && Rejects(WithActions("""{"name":"a","wakeWords":["x"],"url":""}"""), "windows.actions[0].url")
+        && Rejects(WithActions("""{"name":"a","wakeWords":["x"],"url":"alter://a b"}"""), "windows.actions[0].url")
+        && Rejects(WithActions("""{"name":"a","wakeWords":["x"],"url":"alter://a%2"}"""), "windows.actions[0].url")
+        && Rejects(WithActions("""{"name":"a","wakeWords":["x"],"url":"alter://"}"""), "windows.actions[0].url")
+        && Rejects(WithActions($$"""{"name":"a","wakeWords":[],"url":"{{uuid}}"}"""), "windows.actions[0].wakeWords");
+}
+
+static bool WakeActionUrlCarriesInput()
+{
+    const string uuid = "alter://action/26B00BAB-5655-4581-BCA0-F3880E746CC9";
+    static string[] InputValues(string url) =>
+        url[(url.IndexOf('?') + 1)..].Split('&').Where(item => item.StartsWith("input=", StringComparison.Ordinal)).Select(item => item["input=".Length..]).ToArray();
+    const string sentence = "今日 a&b=c+d#e?f";
+    var built = new WakeAction("progress", ["progress"], uuid).InputUrl(sentence);
+    var rebuilt = new WakeAction("p", ["p"], uuid + "?input=Sample%20text&k=v").InputUrl("new");
+    return InputValues(built) is [var value]
+        && Uri.UnescapeDataString(value) == sentence
+        && built.IndexOfAny(['&', '+', '#', ' ']) < 0
+        && new WakeAction("p", ["p"], uuid).InputUrl("!*'()") == uuid + "?input=%21%2A%27%28%29"
+        && InputValues(rebuilt).SequenceEqual(["new"])
+        && rebuilt == uuid + "?k=v&input=new";
+}
+
+static bool DictationActionWakeSelectsAction()
+{
+    var progress = new WakeAction("progress", ["プログレス"], "alter://action/1");
+    var shadowed = new WakeAction("memo", ["音声入力メモ"], "alter://action/2");
+    var config = DictationConfig() with { Windows = new WindowsActions([shadowed, progress]) };
+    var store = StoreWithRamp(0, 40000);
+
+    var leading = new DictationSession(config);
+    leading.Apply(Recognized(1, RecognitionExtent.PrefixHead, 0, 20000, "プログレス今日は", false, Run("プログレス", 0, 4000), Run("今日は", 6000, 20000)), store.Copy);
+    var leadingAudio = leading.Finish(FinishReason.Silence, store.Copy);
+
+    var bare = new DictationSession(config);
+    bare.Apply(Recognized(2, RecognitionExtent.ClosedUtterance, 0, 8000, "プログレス", false, Run("プログレス", 0, 8000)), store.Copy);
+    var bareWaiting = bare.IsAwaitingBody && bare.Action == progress;
+    bare.Apply(Recognized(3, RecognitionExtent.ClosedUtterance, 12000, 20000, "プログレス今日は", false, Run("プログレス", 12000, 15000), Run("今日は", 16000, 20000)), store.Copy);
+
+    var byDefault = new DictationSession(config);
+    byDefault.Apply(Recognized(4, RecognitionExtent.PrefixHead, 0, 20000, "音声入力メモ今日", false, Run("音声入力", 0, 4000), Run("メモ", 4000, 6000), Run("今日", 8000, 20000)), store.Copy);
+
+    var probe = new DictationSession(config);
+    probe.Apply(new RecognizedUtterance(5, RecognitionExtent.Probe, new SampleRange(0, 8000), "プログレス", [Run("プログレス", 0, 5000)], TailSilenceSamples: 3000), store.Copy);
+
+    return leadingAudio is { Action: var a, Range: var r } && a == progress && r == new SampleRange(6000, 20000)
+        && bareWaiting && bare.IsActive && bare.PendingBody == new SampleRange(16000, 20000)
+        && byDefault.IsActive && byDefault.Action is null && byDefault.PendingBody?.Start == 4000
+        && !probe.IsActive && !probe.IsAwaitingBody;
+}
+
+static bool DictationHandoffActionOpensUrl()
+{
+    using var temp = RuntimeTemp();
+    var root = Path.Combine(temp.Dir, "handoff");
+    var recordings = Path.Combine(temp.Dir, "recordings");
+    var modes = Path.Combine(temp.Dir, "modes");
+    var preferences = Path.Combine(temp.Dir, "preferences.json");
+    Directory.CreateDirectory(modes);
+    File.WriteAllText(Path.Combine(modes, "dedicated.json"), """{"key":"new-mode-1","name":"voice_switch"}""");
+    File.WriteAllText(Path.Combine(modes, "action.json"), """{"key":"action-mode","name":"input-voice-switch"}""");
+    File.WriteAllText(Path.Combine(modes, "default.json"), """{"key":"default","name":"Default"}""");
+    var launches = new List<string>();
+    var pastes = 0;
+    var routes = 0;
+    Func<ProcessStartInfo, Process?> start = psi =>
+    {
+        var argument = psi.ArgumentList[0];
+        if (argument.StartsWith("superwhisper://mode?key=", StringComparison.Ordinal))
+        {
+            var key = Uri.UnescapeDataString(argument["superwhisper://mode?key=".Length..]);
+            File.WriteAllText(preferences, $$"""{"activeMode":"{{key}}"}""");
+            launches.Add("mode " + key);
+        }
+        else if (argument.StartsWith("superwhisper://file//", StringComparison.Ordinal))
+        {
+            WriteSuperwhisperMeta(recordings, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(), """{"llmResult":"今日 a&b"}""");
+            launches.Add("file");
+        }
+        else
+        {
+            launches.Add($"{psi.FileName} {string.Join(' ', psi.ArgumentList)}");
+        }
+
+        return Process.GetCurrentProcess();
+    };
+    List<string> Submit(string? handoffMode, string? actionMode)
+    {
+        launches.Clear();
+        File.WriteAllText(preferences, """{"activeMode":"default"}""");
+        var handoff = new RegisteredSuperwhisperHandoff(root, recordings, start, delay: _ => Task.CompletedTask,
+            onTranscribed: _ => { routes++; return Task.FromResult(RouteResult.NotRouted); },
+            superwhisperMode: handoffMode,
+            paste: (_, _) => { pastes++; return true; },
+            preferencesPath: preferences,
+            modesDir: modes);
+        var action = new WakeAction("progress", ["プログレス"], "alter://action/1?input=old&k=v", actionMode);
+        var result = SubmitHandoff(handoff, new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2), Target: 0x42, Action: action));
+        return result.Status == HandoffStatus.Transcribed ? [.. launches] : ["status " + result.Status];
+    }
+
+    const string opened = "rundll32.exe url.dll,FileProtocolHandler alter://action/1?k=v&input=%E4%BB%8A%E6%97%A5%20a%26b";
+    return Submit("voice_switch", "input-voice-switch").SequenceEqual(["mode action-mode", "file", "mode default", opened])
+        && Submit("voice_switch", null).SequenceEqual(["mode new-mode-1", "file", "mode default", opened])
+        && pastes == 0
+        && routes == 0;
 }
 
 static bool DictationHandoffSwitchesModeBeforeLaunchAndRestoresAfter()
