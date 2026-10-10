@@ -835,6 +835,12 @@ internal static class Replay
             return null;
         }
 
+        // A probe line carries no tail silence, so EarlyWake cannot be replayed from it; its closed utterance follows anyway.
+        if (extentRaw == "Probe")
+        {
+            return null;
+        }
+
         var live = bool.Parse(lwRaw);
         var extent = extentRaw == "PrefixHead" ? RecognitionExtent.PrefixHead : RecognitionExtent.ClosedUtterance;
         fields.TryGetValue("text", out var text);

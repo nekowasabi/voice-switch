@@ -43,6 +43,7 @@ public interface IDictationRuntimeObserver
 public sealed class WindowsDictationRuntime
 {
     private const int MaxPendingRecognition = 8;
+    private const int MaxPendingProbes = 2;
     private VoiceSwitchConfig config;
     private readonly IPcmCapture capture;
     private readonly IDictationRecognizer recognizer;
@@ -280,6 +281,13 @@ public sealed class WindowsDictationRuntime
                             continue;
                         }
 
+                        // Mac drops a failed probe and keeps listening; resetting here would also discard the closed utterance of the same audio.
+                        if (outcome.Error is not null && outcome.Work.Request.Extent == RecognitionExtent.Probe)
+                        {
+                            Log.Info($"dictation recognition: probe failed id={outcome.Work.Request.Id}: {outcome.Error.Message}");
+                            continue;
+                        }
+
                         if (outcome.Error is not null)
                         {
                             Log.Info($"dictation recognition failed: {outcome.Error.Message}");
@@ -316,8 +324,16 @@ public sealed class WindowsDictationRuntime
                             hotkeys?.Begin(DictationHotkeys.Load(readShortcuts()));
                         }
 
-                        var prefix = DictationBoundaries.LeadingWake(outcome.Recognition!, config.Wakes());
+                        var probe = outcome.Work.Request.Extent == RecognitionExtent.Probe;
+                        var prefix = probe
+                            ? DictationBoundaries.EarlyWake(outcome.Recognition!, config.Wakes())
+                            : DictationBoundaries.LeadingWake(outcome.Recognition!, config.Wakes());
                         var byReading = prefix?.ByReading is { } readingWake ? $" via=reading d={prefix.Distance} wake=\"{readingWake.Reading}\"" : "";
+                        if (probe && wasIdle && (session.IsActive || session.IsAwaitingBody))
+                        {
+                            Log.Info($"dictation session: early-wake id={outcome.Work.Request.Id} tail={outcome.Work.Request.TailSilenceSamples * 1000 / (long)Segmenter.Rate}ms");
+                        }
+
                         if (wasIdle && session.IsAwaitingBody)
                         {
                             var via = prefix is not null ? byReading : $" via=rejected conf={outcome.Recognition!.Confidence:0.00} rejectedText=\"{outcome.Recognition.RejectedText}\"";
@@ -470,6 +486,16 @@ public sealed class WindowsDictationRuntime
 
         if (ev is null)
         {
+            // Only while idle, and at most two probes in flight: the serial SAPI queue (8) exits the runtime when it overflows,
+            // yet the 150 ms probe must not be dropped while the 60 ms one is still decoding (prefix wakes fire only from it).
+            if (!session.IsActive
+                && !session.IsAwaitingBody
+                && pending.Values.Count(work => work.Request.Extent == RecognitionExtent.Probe) < MaxPendingProbes
+                && segmenter.Probe() is { } probe)
+            {
+                _ = QueueRecognition(RecognitionExtent.Probe, probe.Samples.Length, frame.Start + frame.Analysis.Length, requests, pending, probe.TailSilenceSamples);
+            }
+
             return true;
         }
 
@@ -487,6 +513,13 @@ public sealed class WindowsDictationRuntime
 
         return QueueRecognition(ev, frame.Start + frame.Analysis.Length, requests, pending);
     }
+
+    private bool QueueRecognition(
+        SegmenterEvent ev,
+        long rangeEnd,
+        ChannelWriter<RecognitionWork> requests,
+        Dictionary<long, RecognitionWork> pending) =>
+        QueueRecognition(ev.Kind == "head" ? RecognitionExtent.PrefixHead : RecognitionExtent.ClosedUtterance, ev.Samples.Length, rangeEnd, requests, pending, 0);
 
     private void ApplyConfig(VoiceSwitchConfig next)
     {
@@ -531,17 +564,20 @@ public sealed class WindowsDictationRuntime
     }
 
     private bool QueueRecognition(
-        SegmenterEvent ev,
+        RecognitionExtent extent,
+        int length,
         long rangeEnd,
         ChannelWriter<RecognitionWork> requests,
-        Dictionary<long, RecognitionWork> pending)
+        Dictionary<long, RecognitionWork> pending,
+        long tailSilenceSamples)
     {
-        var range = new SampleRange(rangeEnd - ev.Samples.Length, rangeEnd);
+        var range = new SampleRange(rangeEnd - length, rangeEnd);
         var request = new RecognitionRequest(
             Interlocked.Increment(ref nextRecognitionId),
-            ev.Kind == "head" ? RecognitionExtent.PrefixHead : RecognitionExtent.ClosedUtterance,
+            extent,
             range,
-            analysisStore.Copy(range));
+            analysisStore.Copy(range),
+            tailSilenceSamples);
         var work = new RecognitionWork(request);
         if (!requests.TryWrite(work))
         {
@@ -550,7 +586,7 @@ public sealed class WindowsDictationRuntime
 
         pending[request.Id] = work;
         observer?.RecognitionQueued(request, pending.Count, analysisStore.Start, analysisStore.Next);
-        Log.Info($"dictation recognition: enqueued id={request.Id} extent={request.Extent} range={request.Range.Start}..{request.Range.End} pending={pending.Count}");
+        Log.Info($"dictation recognition: enqueued id={request.Id} extent={request.Extent} range={request.Range.Start}..{request.Range.End} pending={pending.Count}{(extent == RecognitionExtent.Probe ? $" tail={tailSilenceSamples * 1000 / (long)Segmenter.Rate}ms" : "")}");
         return true;
     }
 
@@ -1495,7 +1531,8 @@ public sealed class SpeechPowerShellDictationRecognizer : IDictationRecognizer, 
             dto.Confidence >= 0 ? dto.Confidence : null,
             string.IsNullOrEmpty(dto.RejectedText) ? null : dto.RejectedText,
             dto.StopGrammar,
-            (dto.Alternates ?? []).Select(item => new RecognitionAlternate(item.Text ?? "", item.Reading ?? "")).ToImmutableArray());
+            (dto.Alternates ?? []).Select(item => new RecognitionAlternate(item.Text ?? "", item.Reading ?? "")).ToImmutableArray(),
+            request.TailSilenceSamples);
     }
 
     internal static async Task RetainUntilProcessExitedAsync(Func<bool> hasExited, Action requestKill, TimeSpan? retryDelay = null)

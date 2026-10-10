@@ -192,6 +192,8 @@ public static class CheckMode
             var samples = Pcm16Wav.DecodeStrict(new FileInfo(path), maxSamples: 16000 * 600).AddRange(new short[16000]);
             var segmenter = new Segmenter(config);
             var verdicts = new List<string>();
+            // One early verdict per utterance; the hangover verdict still follows for comparison.
+            var earlyHit = false;
             for (var end = Segmenter.FrameLength; end <= samples.Length; end += Segmenter.FrameLength)
             {
                 var frame = new float[Segmenter.FrameLength];
@@ -202,9 +204,24 @@ public static class CheckMode
 
                 if (segmenter.Push(frame) is not { } ev)
                 {
+                    if (!earlyHit && segmenter.Probe() is { } probe)
+                    {
+                        var probeRange = new SampleRange(end - probe.Samples.Length, end);
+                        var began = Stopwatch.GetTimestamp();
+                        var early = await recognizer.RecognizeAsync(new RecognitionRequest(++id, RecognitionExtent.Probe, probeRange, samples[(int)probeRange.Start..(int)probeRange.End], probe.TailSilenceSamples), CancellationToken.None);
+                        var stt = (long)Stopwatch.GetElapsedTime(began).TotalMilliseconds;
+                        if (DictationBoundaries.EarlyWake(early, config.Wakes()) is { } hit)
+                        {
+                            var at = end * 1000L / (long)Segmenter.Rate;
+                            verdicts.Add(hit.BodyStart is null ? $"early-wake@{at}ms+stt{stt}" : $"early-dictate@{at}ms+stt{stt}:{AfterWakes(TextMatching.Normalize(early.Text), config)}");
+                            earlyHit = true;
+                        }
+                    }
+
                     continue;
                 }
 
+                earlyHit = false;
                 var range = new SampleRange(end - ev.Samples.Length, end);
                 var extent = ev.Kind == "head" ? RecognitionExtent.PrefixHead : RecognitionExtent.ClosedUtterance;
                 var heard = await recognizer.RecognizeAsync(new RecognitionRequest(++id, extent, range, samples[(int)range.Start..(int)range.End]), CancellationToken.None);
@@ -231,13 +248,18 @@ public static class CheckMode
             return text;
         }
 
-        var rest = text;
-        while (wakes.FirstOrDefault(wake => rest.StartsWith(wake, StringComparison.Ordinal)) is { } wake)
+        return "dictate:" + AfterWakes(text, config);
+    }
+
+    private static string AfterWakes(string text, VoiceSwitchConfig config)
+    {
+        var wakes = config.WakeWords.Select(TextMatching.Normalize).OrderByDescending(wake => wake.Length).ToArray();
+        while (wakes.FirstOrDefault(wake => text.StartsWith(wake, StringComparison.Ordinal)) is { } wake)
         {
-            rest = rest[wake.Length..];
+            text = text[wake.Length..];
         }
 
-        return "dictate:" + rest;
+        return text;
     }
 }
 

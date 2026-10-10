@@ -58,6 +58,14 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation runtime start timeout resets for next session", () => Check(DictationRuntimeStartTimeoutResetsForNextSession())),
     ("dictation runtime max uses live speech while recognition is delayed", () => Check(DictationRuntimeMaxUsesLiveSpeechWhileRecognitionIsDelayed())),
     ("dictation runtime stop after lone wake cancels empty session", () => Check(DictationRuntimeStopAfterLoneWakeCancelsEmptySession())),
+    ("config loads earlyWakeMs and leaves it null when absent", () => Check(ConfigLoadsEarlyWakeMs())),
+    ("segmenter probe fires at the 60 and 150 ms gaps and after earlyWakeMs of audio", () => Check(SegmenterProbeFiresAtGapsAndGrowth())),
+    ("early wake fires a prefix wake only after the prefix gap and never from a fuzzy reading", () => Check(EarlyWakeFiresOnlySafeProbes())),
+    ("leading wake needs a pause after a wake that starts a longer wake", () => Check(LeadingWakeNeedsPauseAfterShortWake())),
+    ("dictation session keeps probe wake audio out of the body", () => Check(DictationSessionKeepsProbeWakeOutOfBody())),
+    ("dictation runtime opens the wait from a probe before the closed utterance", () => Check(DictationRuntimeOpensWaitFromProbe())),
+    ("dictation runtime queues the 150 ms probe while the 60 ms probe still decodes", () => Check(DictationRuntimeQueuesPauseProbeWhileGapProbeDecodes())),
+    ("check mode prints one early verdict per utterance when earlyWakeMs is set", () => Check(CheckModePrintsEarlyVerdict())),
     ("dictation runtime body before timeout waits for delayed recognition", () => Check(DictationRuntimeBodyBeforeTimeoutWaitsForDelayedRecognition())),
     ("dictation runtime recovers after long nonwake audio", () => Check(DictationRuntimeRecoversAfterLongNonwakeAudio())),
     ("dictation runtime waits for open stop utterance before silence", () => Check(DictationRuntimeWaitsForOpenStopUtteranceBeforeSilence())),
@@ -1014,6 +1022,207 @@ static bool DictationSessionOpensWaitOnFuzzyWake()
     var waiting = session.IsAwaitingBody && !session.IsActive && session.AwaitingWakeEnd == 8000;
     session.Apply(Recognized(2, RecognitionExtent.ClosedUtterance, 10000, 14000, "本文", false, Run("本文", 10000, 14000, "ほんぶん")), store.Copy);
     return waiting && session.IsActive && session.PendingBody == new SampleRange(10000, 14000);
+}
+
+static bool ConfigLoadsEarlyWakeMs()
+{
+    using var temp = RuntimeTemp();
+    var on = Path.Combine(temp.Dir, "on.json");
+    var off = Path.Combine(temp.Dir, "off.json");
+    File.WriteAllText(on, """{"wakeWords":["音声入力"],"command":"wake","earlyWakeMs":300}""");
+    File.WriteAllText(off, """{"wakeWords":["音声入力"],"command":"wake"}""");
+    return ConfigLoader.Load(on).EarlyWakeMs == 300 && ConfigLoader.Load(off).EarlyWakeMs is null;
+}
+
+static bool SegmenterProbeFiresAtGapsAndGrowth()
+{
+    var quiet = Enumerable.Repeat(0.0001f, Segmenter.FrameLength).ToArray();
+    var loud = Enumerable.Range(0, Segmenter.FrameLength).Select(i => (float)(0.2 * Math.Sin(i * 0.5))).ToArray();
+    VoiceSwitchConfig Config(int? earlyWakeMs, double maxSeconds = 2.5) =>
+        new(["test"], null, "true", MaxSeconds: maxSeconds, HangoverMs: 300, PrerollMs: 300, MinSpeechMs: 300, VadRatio: 3, VadMinRMS: 0.005f, EarlyWakeMs: earlyWakeMs);
+    // "frame:samples:tail" for each probe; the frame index counts from the first push.
+    List<string> Trace(Segmenter segmenter, params (int Count, bool Loud)[] runs)
+    {
+        var fired = new List<string>();
+        var index = 0;
+        foreach (var (count, isLoud) in runs)
+        {
+            for (var i = 0; i < count; i++, index++)
+            {
+                if (segmenter.Push(isLoud ? loud : quiet) is null && segmenter.Probe() is { } probe)
+                {
+                    fired.Add($"{index}:{probe.Samples.Length}:{probe.TailSilenceSamples}");
+                }
+            }
+        }
+
+        return fired;
+    }
+
+    var gaps = Trace(new Segmenter(Config(10000)), (7, false), (17, true), (12, false));
+    var off = Trace(new Segmenter(Config(null)), (7, false), (17, true), (12, false));
+    var growth = new Segmenter(Config(300));
+    var beforeReset = Trace(growth, (7, false), (17, true));
+    growth.Reset();
+    var afterReset = Trace(growth, (7, false), (3, true));
+    var capped = new Segmenter(Config(10000, maxSeconds: 0.5));
+    var skippedProbes = Trace(capped, (7, false), (40, true), (2, false));
+    return gaps.SequenceEqual(["25:12480:960", "28:13920:2400"])
+        && off.Count == 0
+        && beforeReset.SequenceEqual(["9:4800:0", "19:9600:0"])
+        && afterReset.SequenceEqual(["9:4800:0"])
+        && capped.IsSkipping
+        && skippedProbes.Count == 0;
+}
+
+static bool EarlyWakeFiresOnlySafeProbes()
+{
+    WakeWord[] wakes = [WakeWord.From("音声", "おんせい"), WakeWord.From("音声入力", "おんせいにゅうりょく"), WakeWord.From("音声に入る", "おんせいにはいる")];
+    WakePrefix? Early(string text, long tail, params LexicalRun[] runs) =>
+        DictationBoundaries.EarlyWake(new RecognizedUtterance(1, RecognitionExtent.Probe, new SampleRange(0, 8000), text, runs.ToImmutableArray(), TailSilenceSamples: tail), wakes);
+    LexicalRun[] onsei = [Run("音声", 0, 3000)];
+    LexicalRun[] onseiNyu = [Run("音声", 0, 2000), Run("入", 2000, 3000)];
+    LexicalRun[] onseiNyuryoku = [Run("音声", 0, 2000), Run("入力", 2000, 4000)];
+    LexicalRun[] kanaOnsei = [Run("音性", 0, 3000, "おんせい")];
+    LexicalRun[] onsenNiHairu = [Run("温泉", 0, 2000, "おんせん"), Run("に", 2000, 3000, "に"), Run("入", 3000, 4000, "はい"), Run("る", 4000, 5000, "る")];
+    return Early("音声", 960, onsei) is null
+        && Early("音声", 2400, onsei) == new WakePrefix(3000, null)
+        && Early("音声入", 0, onseiNyu) is null
+        && Early("音声入", 2400, onseiNyu) is null
+        && Early("音声入力", 960, onseiNyuryoku) == new WakePrefix(4000, null)
+        && Early("音声入力", 0, onseiNyuryoku) is null
+        && Early("音声入力明日", 0, Run("音声入力", 0, 4000), Run("明日", 4500, 7000)) == new WakePrefix(4000, 4500)
+        && Early("音性", 960, kanaOnsei) is null
+        && Early("音性", 2400, kanaOnsei) is { WakeEnd: 3000, BodyStart: null, Distance: 0 }
+        && Early("温泉に入る", 2400, onsenNiHairu) is null;
+}
+
+static bool LeadingWakeNeedsPauseAfterShortWake()
+{
+    string[] wakes = ["音声", "音声入力"];
+    var noun = Recognized(1, RecognitionExtent.ClosedUtterance, 0, 8000, "音声認識の精度を上げたい", false,
+        Run("音声", 0, 2000), Run("認識", 2000, 4000), Run("の", 4000, 4500), Run("精度", 4500, 6000), Run("を上げたい", 6000, 8000));
+    var paused = Recognized(2, RecognitionExtent.ClosedUtterance, 0, 9000, "音声明日", false, Run("音声", 0, 2000), Run("明日", 5200, 7000));
+    var fusedNoun = Recognized(3, RecognitionExtent.ClosedUtterance, 0, 6000, "音声認識", false, Run("音声認識", 0, 6000));
+    var fusedWake = Recognized(4, RecognitionExtent.PrefixHead, 0, 6000, "音声入力今日", false, Run("音声入力今日", 0, 6000));
+    var longWake = Recognized(5, RecognitionExtent.ClosedUtterance, 0, 6000, "音声入力今日", false, Run("音声入力", 0, 4000), Run("今日", 4100, 6000));
+    return DictationBoundaries.LeadingWake(noun, wakes) is null
+        && DictationBoundaries.LeadingWake(paused, wakes) == new WakePrefix(2000, 5200)
+        && DictationBoundaries.LeadingWake(fusedNoun, wakes) is null
+        && DictationBoundaries.LeadingWake(fusedWake, wakes) == new WakePrefix(4000, 4000)
+        && DictationBoundaries.LeadingWake(longWake, wakes) == new WakePrefix(4000, 4100);
+}
+
+static bool DictationSessionKeepsProbeWakeOutOfBody()
+{
+    var config = DictationConfig();
+    var store = StoreWithRamp(0, 20000);
+    RecognizedUtterance Probe(long id, string text, long sourceEnd, long tail, params LexicalRun[] runs) =>
+        new(id, RecognitionExtent.Probe, new SampleRange(0, sourceEnd), text, runs.ToImmutableArray(), TailSilenceSamples: tail);
+    var probeWake = Probe(1, "音声入力", 8000, 960, Run("音声入力", 1000, 6000));
+
+    var duplicate = new DictationSession(config);
+    duplicate.Apply(probeWake, store.Copy);
+    var waited = duplicate.IsAwaitingBody && duplicate.AwaitingWakeEnd == 6000;
+    duplicate.Apply(Recognized(2, RecognitionExtent.ClosedUtterance, 0, 14000, "テスト", false, Run("テスト", 1000, 12000)), store.Copy);
+
+    var shorter = new DictationSession(config);
+    shorter.Apply(probeWake, store.Copy);
+    shorter.Apply(Recognized(3, RecognitionExtent.ClosedUtterance, 0, 5000, "テスト", false, Run("テスト", 1000, 4000)), store.Copy);
+
+    var earlyBody = new DictationSession(config);
+    earlyBody.Apply(probeWake, store.Copy);
+    earlyBody.Apply(Probe(4, "音声入力", 9000, 0, Run("音声入力", 1000, 6000)), store.Copy);
+    var bareIgnored = earlyBody.IsAwaitingBody && !earlyBody.IsActive;
+    earlyBody.Apply(Probe(5, "音声入力明日", 9000, 0, Run("音声入力", 1000, 6000), Run("明日", 6500, 8500)), store.Copy);
+
+    var midWord = new DictationSession(config);
+    midWord.Apply(Probe(6, "音声入", 6000, 2400, Run("音声", 1000, 4000), Run("入", 4000, 5000)), store.Copy);
+
+    return waited
+        && duplicate.IsActive && duplicate.PendingBody == new SampleRange(6000, 14000)
+        && shorter.IsAwaitingBody && !shorter.IsActive
+        && bareIgnored && earlyBody.PendingBody == new SampleRange(6500, 9000)
+        && !midWord.IsAwaitingBody && !midWord.IsActive;
+}
+
+static bool DictationRuntimeOpensWaitFromProbe()
+{
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 40, loud: false);
+    (int Code, IReadOnlyList<RecognitionRequest> Requests, string Output) Run(int? earlyWakeMs, bool probeFails = false)
+    {
+        var recognizer = new ScriptedDictationRecognizer(request => probeFails && request.Extent == RecognitionExtent.Probe
+            ? Task.FromException<RecognizedUtterance>(new InvalidOperationException("probe decode failed"))
+            : Task.FromResult(Utterance(request, "wake")));
+        // A large earlyWakeMs leaves only the silence gaps; the first gap (frame 16) carries 60 ms of tail silence.
+        var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig() with { EarlyWakeMs = earlyWakeMs }, new FixturePcmCapture(frames, [16]), recognizer, new RecordingDictationHandoff(), dryRun: true);
+        var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output);
+        return (code, recognizer.Requests, output);
+    }
+
+    var on = Run(10000);
+    var off = Run(null);
+    var failed = Run(10000, probeFails: true);
+    return on.Code == 0
+        && on.Requests.Select(request => $"{request.Extent}:{request.TailSilenceSamples}").SequenceEqual(["Probe:960", "ClosedUtterance:0"])
+        && on.Output.Contains("dictation recognition: enqueued id=1 extent=Probe", StringComparison.Ordinal)
+        && on.Output.Contains("dictation session: early-wake id=1 tail=60ms", StringComparison.Ordinal)
+        && on.Output.Contains("dictation session: wake-only id=1", StringComparison.Ordinal)
+        && !on.Output.Contains("body-start", StringComparison.Ordinal)
+        && off.Code == 0
+        && off.Requests.Select(request => request.Extent).SequenceEqual([RecognitionExtent.ClosedUtterance])
+        && !off.Output.Contains("extent=Probe", StringComparison.Ordinal)
+        && off.Output.Contains("dictation session: wake-only id=1", StringComparison.Ordinal)
+        && failed.Code == 0
+        && failed.Output.Contains("dictation recognition: probe failed id=1", StringComparison.Ordinal)
+        && failed.Requests[^1].Extent == RecognitionExtent.ClosedUtterance
+        && failed.Output.Contains($"dictation session: wake-only id={failed.Requests[^1].Id}", StringComparison.Ordinal);
+}
+
+static bool DictationRuntimeQueuesPauseProbeWhileGapProbeDecodes()
+{
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 40, loud: false);
+    RecognizedUtterance Heard(RecognitionRequest request) =>
+        new(request.Id, request.Extent, request.Range, "音声", [Run("音声", request.Range.Start, request.Range.End, "おんせい")], TailSilenceSamples: request.TailSilenceSamples);
+    var recognizer = new ScriptedDictationRecognizer(async request =>
+    {
+        if (request.TailSilenceSamples == 2 * Segmenter.FrameLength)
+        {
+            await Task.Delay(300);
+        }
+
+        return Heard(request);
+    });
+    var config = DictationRuntimeTestConfig() with { EarlyWakeMs = 10000, WakeWords = ["音声", "音声入力"] };
+    var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(frames), recognizer, new RecordingDictationHandoff(), dryRun: true, wakeReading: word => word);
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output);
+    return code == 0
+        && recognizer.Requests.Select(request => $"{request.Extent}:{request.TailSilenceSamples}").SequenceEqual(["Probe:960", "Probe:2400", "ClosedUtterance:0"])
+        && output.Contains("dictation session: early-wake id=2 tail=150ms", StringComparison.Ordinal);
+}
+
+static bool CheckModePrintsEarlyVerdict()
+{
+    using var temp = RuntimeTemp();
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 12, loud: false);
+    var wav = Path.Combine(temp.Dir, "early.wav");
+    File.WriteAllBytes(wav, Pcm16Wav.Encode(frames.SelectMany(frame => frame.Samples).ToArray()));
+    var recognizer = Recognizing("wake");
+    using var output = new StringWriter();
+    var code = CheckMode.RunAsync([wav], DictationRuntimeTestConfig() with { EarlyWakeMs = 10000 }, recognizer, output).GetAwaiter().GetResult();
+    // The 60 ms gap probe fires at frame 16 (510 ms); the 150 ms gap is skipped once the utterance has its early verdict.
+    return code == 0
+        && recognizer.Requests.Select(request => request.Extent).SequenceEqual([RecognitionExtent.Probe, RecognitionExtent.ClosedUtterance])
+        && System.Text.RegularExpressions.Regex.IsMatch(output.ToString(), $"^{System.Text.RegularExpressions.Regex.Escape(wav)}\\t\\[\"early-wake@510ms\\+stt\\d+\", \"wake\"\\]\\r?\\n$");
 }
 
 static bool DictationRuntimeLogsReadingWakeOnly()
@@ -2394,10 +2603,10 @@ static bool DictationWakeSoundDeafensVad()
 
 static RecognizedUtterance Utterance(RecognitionRequest request, string kind) => kind switch
 {
-    "wake" => new(request.Id, request.Extent, request.Range, "音声入力", [Run("音声入力", request.Range.Start, request.Range.End, "おんせい にゅうりょく")]),
-    "body" => new(request.Id, request.Extent, request.Range, "本文", [Run("本文", request.Range.Start + Segmenter.FrameLength, request.Range.End, "ほんぶん")]),
-    "stop" => new(request.Id, request.Extent, request.Range, "入力ストップ", [Run("入力ストップ", request.Range.Start + Segmenter.FrameLength, request.Range.Start + Segmenter.FrameLength * 3)]),
-    _ => new(request.Id, request.Extent, request.Range, "音声入力本文", [Run("音声入力", request.Range.Start, request.Range.Start + Segmenter.FrameLength), Run("本文", request.Range.Start + Segmenter.FrameLength, request.Range.End)])
+    "wake" => new(request.Id, request.Extent, request.Range, "音声入力", [Run("音声入力", request.Range.Start, request.Range.End, "おんせい にゅうりょく")], TailSilenceSamples: request.TailSilenceSamples),
+    "body" => new(request.Id, request.Extent, request.Range, "本文", [Run("本文", request.Range.Start + Segmenter.FrameLength, request.Range.End, "ほんぶん")], TailSilenceSamples: request.TailSilenceSamples),
+    "stop" => new(request.Id, request.Extent, request.Range, "入力ストップ", [Run("入力ストップ", request.Range.Start + Segmenter.FrameLength, request.Range.Start + Segmenter.FrameLength * 3)], TailSilenceSamples: request.TailSilenceSamples),
+    _ => new(request.Id, request.Extent, request.Range, "音声入力本文", [Run("音声入力", request.Range.Start, request.Range.Start + Segmenter.FrameLength), Run("本文", request.Range.Start + Segmenter.FrameLength, request.Range.End)], TailSilenceSamples: request.TailSilenceSamples)
 };
 
 // kinds[i] answers request i+1; the last kind repeats for any later request.

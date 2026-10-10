@@ -13,6 +13,7 @@ public sealed class Segmenter
     private int utteranceSamples;
     private int silentSamples;
     private int silent;
+    private int lastProbeSamples;
     private bool skipping;
     private float lastRms;
     private double levelSum;
@@ -51,8 +52,30 @@ public sealed class Segmenter
         utteranceSamples = 0;
         silentSamples = 0;
         silent = 0;
+        lastProbeSamples = 0;
         skipping = false;
         LastWasSpeech = false;
+    }
+
+    // Mac probe(). Exact equality fires each gap once per pause, not on every silent frame after it.
+    public SegmenterProbe? Probe()
+    {
+        if (config.EarlyWakeMs is not int every
+            || utterance.Count == 0
+            || skipping
+            || utteranceSamples < MsToSamples(config.MinSpeechMs ?? 300))
+        {
+            return null;
+        }
+
+        var gap = silentSamples == 2 * FrameLength || silentSamples == DictationBoundaries.PrefixGapSamples;
+        if (!gap && utteranceSamples - lastProbeSamples < MsToSamples(every))
+        {
+            return null;
+        }
+
+        lastProbeSamples = utteranceSamples;
+        return new SegmenterProbe(Flatten(utterance), silentSamples);
     }
 
     public SegmenterEvent? Push(float[] frame)
@@ -116,6 +139,7 @@ public sealed class Segmenter
         ringSamples = 0;
         utteranceSamples = 0;
         silentSamples = 0;
+        lastProbeSamples = 0;
         skipping = false;
         return done ?? head;
     }
@@ -137,6 +161,7 @@ public sealed class Segmenter
         utteranceSamples = 0;
         silentSamples = 0;
         silent = 0;
+        lastProbeSamples = 0;
         skipping = false;
         LastWasSpeech = false;
         return done;
@@ -170,3 +195,5 @@ public sealed record SegmenterEvent(string Kind, float[] Samples)
     public static SegmenterEvent Utterance(float[] samples) => new("utterance", samples);
     public static SegmenterEvent Head(float[] samples) => new("head", samples);
 }
+
+public sealed record SegmenterProbe(float[] Samples, long TailSilenceSamples);

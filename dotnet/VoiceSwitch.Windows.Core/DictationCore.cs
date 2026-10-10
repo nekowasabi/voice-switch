@@ -26,7 +26,9 @@ public readonly record struct SampleRange
 public enum RecognitionExtent
 {
     PrefixHead,
-    ClosedUtterance
+    ClosedUtterance,
+    // Audio of a still-open utterance taken before the hangover closed it (earlyWakeMs).
+    Probe
 }
 
 public enum FinishReason
@@ -65,7 +67,7 @@ public sealed record LexicalRun(string Text, SampleRange Range, string? Reading 
 
 public sealed record RecognitionAlternate(string Text, string Reading);
 
-public sealed record RecognitionRequest(long Id, RecognitionExtent Extent, SampleRange Range, ImmutableArray<short> Samples);
+public sealed record RecognitionRequest(long Id, RecognitionExtent Extent, SampleRange Range, ImmutableArray<short> Samples, long TailSilenceSamples = 0);
 
 public sealed record RecognizedUtterance(
     long Id,
@@ -80,7 +82,9 @@ public sealed record RecognizedUtterance(
     // Every accepted result came from the constrained stop-word grammar, none from free dictation.
     bool FromStopGrammar = false,
     // SAPI's runner-up readings of the same audio; diagnostics only.
-    ImmutableArray<RecognitionAlternate> Alternates = default);
+    ImmutableArray<RecognitionAlternate> Alternates = default,
+    // Silence at the end of a Probe's audio; 0 while speech continues.
+    long TailSilenceSamples = 0);
 
 public sealed record DictationEvent(string Kind, FinishReason? Reason, SampleRange? Range, Guid? SessionId = null)
 {
@@ -170,6 +174,36 @@ public sealed class SampleStore
 
 public static class DictationBoundaries
 {
+    // Mac prefixGapFrames: 150 ms is longer than the ~90 ms gaps inside 音声入力, so 音声 followed by this much silence
+    // is the whole word, not the start of 音声入力 or the noun in 音声認識.
+    // ponytail: fixed from synthetic speech on Mac; make it a config knob if real voices pause longer inside the word.
+    public const int PrefixGapSamples = 2400;
+
+    // Mac earlyWake(). A probe whose text is the start of a longer wake (音声入 or 音声 for 音声入力) may be mid-word,
+    // so it fires only as a bare wake word after the prefix gap. Fuzzy readings never fire from a probe.
+    public static WakePrefix? EarlyWake(RecognizedUtterance recognition, IReadOnlyList<WakeWord> wakes)
+    {
+        var text = TextMatching.Normalize(recognition.Text);
+        if (wakes.Any(wake => wake.Text.Length > text.Length && wake.Text.StartsWith(text, StringComparison.Ordinal)))
+        {
+            if (recognition.TailSilenceSamples < PrefixGapSamples || !wakes.Any(wake => wake.Text == text))
+            {
+                return null;
+            }
+
+            var last = recognition.Lexemes.LastOrDefault(run => TextMatching.Normalize(run.Text).Length > 0);
+            return new WakePrefix(last?.Range.End ?? recognition.Source.End, null);
+        }
+
+        return LeadingWake(recognition, wakes) switch
+        {
+            { Distance: > 0 } => null,
+            { BodyStart: not null } hit => hit,
+            { } hit when recognition.TailSilenceSamples > 0 => hit,
+            _ => null
+        };
+    }
+
     public static WakePrefix? LeadingWake(RecognizedUtterance recognition, IEnumerable<string> wakeWords) =>
         LeadingWake(recognition, wakeWords.Select(word => WakeWord.From(word)).ToArray());
 
@@ -188,9 +222,16 @@ public static class DictationBoundaries
             .OrderByDescending(value => value.Length)
             .ToArray();
 
+        bool StartsLongerWake(string wake) =>
+            normalizedWake.Any(value => value.Length > wake.Length && value.StartsWith(wake, StringComparison.Ordinal));
+
+        // A probe that has ended in the prefix gap is read like a closed utterance, so an exact おんせい can fire early.
+        var closed = recognition.Extent == RecognitionExtent.ClosedUtterance
+            || (recognition.Extent == RecognitionExtent.Probe && recognition.TailSilenceSamples >= PrefixGapSamples);
         var index = 0;
         var consumedEnd = lexemes[0].Range.Start;
         var consumedAny = false;
+        string? lastExact = null;
         WakeWord? byReading = null;
         while (index < lexemes.Length)
         {
@@ -212,12 +253,14 @@ public static class DictationBoundaries
                     matched = true;
                     consumedEnd = lexemes[end - 1].Range.End;
                     index = end;
+                    lastExact = wake;
                     break;
                 }
 
                 // SAPI sometimes fuses the wake word's tail with the first body characters into one word ("音声" + "入力今日").
-                // That word's audio is split by character count, so the body starts inside it.
-                if (fusedSplit is null && built.Length > wake.Length && built.StartsWith(wake, StringComparison.Ordinal))
+                // That word's audio is split by character count, so the body starts inside it. A fused word cannot show the
+                // pause a short wake (音声 beside 音声入力) needs, so 音声認識 never splits.
+                if (fusedSplit is null && built.Length > wake.Length && built.StartsWith(wake, StringComparison.Ordinal) && !StartsLongerWake(wake))
                 {
                     var last = lexemes[end - 1];
                     var lastLength = TextMatching.Normalize(last.Text).Length;
@@ -237,7 +280,7 @@ public static class DictationBoundaries
             }
 
             // A fuzzy second wake must not turn "音声入力 温泉…" into a wait, so it is tried only before anything is consumed.
-            if (ReadingWake(lexemes, index, wakes, allowFuzzy: !consumedAny, closed: recognition.Extent == RecognitionExtent.ClosedUtterance) is not { } hit)
+            if (ReadingWake(lexemes, index, wakes, allowFuzzy: !consumedAny, closed: closed) is not { } hit)
             {
                 break;
             }
@@ -255,6 +298,7 @@ public static class DictationBoundaries
             consumedAny = true;
             consumedEnd = hit.End;
             index = next;
+            lastExact = null;
             byReading = hit.Wake;
         }
 
@@ -264,6 +308,13 @@ public static class DictationBoundaries
         }
 
         var bodyStart = index < lexemes.Length ? lexemes[index].Range.Start : (long?)null;
+        // Mac Transcript v3: 音声 is also an ordinary noun (音声認識の…), so as the start of a longer wake it is a wake only
+        // when a pause follows it.
+        if (bodyStart is long body && lastExact is { } word && StartsLongerWake(word) && body - consumedEnd < PrefixGapSamples)
+        {
+            return null;
+        }
+
         return new WakePrefix(consumedEnd, bodyStart, byReading);
     }
 
@@ -456,6 +507,16 @@ public sealed class DictationSession
                 return null;
             }
 
+            if (recognition.Extent == RecognitionExtent.Probe)
+            {
+                if (DictationBoundaries.EarlyWake(recognition, wakes) is { BodyStart: long early } && early > wakeEnd)
+                {
+                    StartBody(early, recognition.Source.End, now);
+                }
+
+                return null;
+            }
+
             var wake = DictationBoundaries.LeadingWake(recognition, wakes) ?? DictationBoundaries.RejectedWake(recognition, config.WakeWords);
             if (wake is { BodyStart: null })
             {
@@ -465,14 +526,22 @@ public sealed class DictationSession
                 return null;
             }
 
-            var start = wake?.BodyStart ?? recognition.Source.Start;
+            // After a probe wake the closed utterance of the same audio still arrives; the wake audio stays out of the body.
+            if (wake is null && recognition.Source.End <= wakeEnd)
+            {
+                return null;
+            }
+
+            var start = Math.Max(wake?.BodyStart ?? recognition.Source.Start, wakeEnd);
             StartBody(start, recognition.Source.End, now);
             return null;
         }
 
         if (bodyStart is null)
         {
-            var wake = DictationBoundaries.LeadingWake(recognition, wakes) ?? DictationBoundaries.RejectedWake(recognition, config.WakeWords);
+            var wake = recognition.Extent == RecognitionExtent.Probe
+                ? DictationBoundaries.EarlyWake(recognition, wakes)
+                : DictationBoundaries.LeadingWake(recognition, wakes) ?? DictationBoundaries.RejectedWake(recognition, config.WakeWords);
             if (wake is null)
             {
                 return null;
@@ -492,6 +561,12 @@ public sealed class DictationSession
                 awaitingBody = true;
             }
 
+            return null;
+        }
+
+        // The closed utterance of the same audio follows and carries the stop and speech-end rules.
+        if (recognition.Extent == RecognitionExtent.Probe)
+        {
             return null;
         }
 
