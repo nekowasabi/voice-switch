@@ -1,0 +1,1 @@
+[{"role": "user", "content": "音声に入る [[slnc 800]] このメールに返信して  (wake-pause, p0, clean, wake_end=1550ms)"}, {"role": "assistant", "content": "[\"early-wake@1680ms+stt63\", \"wake@1830ms+stt64\", \"このメールに返信して\"]"}]

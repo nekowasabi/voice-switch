@@ -1,0 +1,1 @@
+[{"role": "user", "content": "おんせい [[slnc 800]] ログの最後を見せて  (wake-pause, p1, noisy, wake_end=1100ms)"}, {"role": "assistant", "content": "[\"early-wake@1230ms+stt58\", \"wake@1380ms+stt61\", \"ログの最後を見せて\"]"}]

@@ -1,0 +1,1 @@
+[{"role": "user", "content": "音声ファイルを送ってください  (nonwake, p5, clean, wake_end=Nonems)"}, {"role": "assistant", "content": "[\"early-dictate@2700ms+stt75:バイルを送ってください\", \"dictate@2940ms+stt76:バイルを送ってください\"]"}]

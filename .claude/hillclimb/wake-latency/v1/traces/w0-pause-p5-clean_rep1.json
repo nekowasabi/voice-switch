@@ -1,0 +1,1 @@
+[{"role": "user", "content": "音声入力 [[slnc 800]] 来週の予定を確認したい  (wake-pause, p5, clean, wake_end=1610ms)"}, {"role": "assistant", "content": "[\"early-wake@1680ms+stt60\", \"wake@1920ms+stt60\", \"来週の予定を確認したい\"]"}]

@@ -1,0 +1,1 @@
+[{"role": "user", "content": "おんせい、明日の会議の議事録をまとめてください  (wake-comma, p6, noisy, wake_end=950ms)"}, {"role": "assistant", "content": "[\"early-dictate@1620ms+stt56:明日の\", \"dictate@3090ms+stt73:明日の会議の議事録をまとめて\"]"}]

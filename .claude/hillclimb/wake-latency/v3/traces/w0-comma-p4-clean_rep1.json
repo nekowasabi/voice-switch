@@ -1,0 +1,1 @@
+[{"role": "user", "content": "音声入力、このメールに返信して  (wake-comma, p4, clean, wake_end=1610ms)"}, {"role": "assistant", "content": "[\"early-wake@1440ms+stt63\", \"dictate@3090ms+stt76:このメールに返信\"]"}]

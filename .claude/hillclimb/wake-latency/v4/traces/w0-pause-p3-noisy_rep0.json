@@ -1,0 +1,1 @@
+[{"role": "user", "content": "音声入力 [[slnc 800]] さっきの関数名を変えて  (wake-pause, p3, noisy, wake_end=1250ms)"}, {"role": "assistant", "content": "[\"early-wake@1290ms+stt66\", \"wake@1530ms+stt58\", \"さっきの関数名を変えて\"]"}]

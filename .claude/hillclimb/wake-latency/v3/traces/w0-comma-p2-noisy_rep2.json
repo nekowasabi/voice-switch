@@ -1,0 +1,1 @@
+[{"role": "user", "content": "音声入力、テストを全部実行してください  (wake-comma, p2, noisy, wake_end=1370ms)"}, {"role": "assistant", "content": "[\"early-wake@1260ms+stt58\", \"dictate@3090ms+stt77:テストを全部実行してくれ\"]"}]

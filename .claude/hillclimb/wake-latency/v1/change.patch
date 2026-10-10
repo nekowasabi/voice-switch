@@ -1,0 +1,10 @@
+--- configs/baseline.json	2026-10-10 12:07:47
++++ configs/v1.json	2026-10-10 12:10:59
+@@ -11,6 +11,7 @@
+   "minSpeechMs": 300,
+   "vadRatio": 3.0,
+   "vadMinRMS": 0.005,
++  "earlyWakeMs": 300,
+   "dictation": {
+     "recordingsDir": "~/Documents/superwhisper/recordings",
+     "endSilenceMs": 2500, "startTimeoutMs": 3000,

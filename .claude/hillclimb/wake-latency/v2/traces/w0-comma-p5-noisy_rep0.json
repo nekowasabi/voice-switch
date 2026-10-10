@@ -1,0 +1,1 @@
+[{"role": "user", "content": "音声入力、ログの最後を見せて  (wake-comma, p5, noisy, wake_end=1610ms)"}, {"role": "assistant", "content": "[\"early-wake@1440ms+stt58\", \"dictate@3090ms+stt75:ログの番号を見せ\"]"}]

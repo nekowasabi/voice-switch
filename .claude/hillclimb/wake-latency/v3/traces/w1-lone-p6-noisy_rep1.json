@@ -1,0 +1,1 @@
+[{"role": "user", "content": "音声に入る  (wake-lone, p6, noisy, wake_end=1400ms)"}, {"role": "assistant", "content": "[\"early-wake@1560ms+stt67\", \"wake@1710ms+stt71\"]"}]

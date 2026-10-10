@@ -1,0 +1,1 @@
+[{"role": "user", "content": "音声に入る [[slnc 800]] 明日の会議の議事録をまとめてください  (wake-pause, p2, clean, wake_end=1310ms)"}, {"role": "assistant", "content": "[\"early-wake@1470ms+stt64\", \"wake@1620ms+stt67\", \"明日の会議の議事録をまとめてください\"]"}]

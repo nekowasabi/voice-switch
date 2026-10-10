@@ -1,0 +1,1 @@
+[{"role": "user", "content": "おんせい [[slnc 800]] テストを全部実行してください  (wake-pause, p4, noisy, wake_end=1040ms)"}, {"role": "assistant", "content": "[\"early-wake@1170ms+stt57\", \"wake@1320ms+stt56\", \"テストを全部実行してください\"]"}]

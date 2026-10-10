@@ -1,0 +1,1 @@
+[{"role": "user", "content": "音声入力、さっきの関数名を変えて  (wake-comma, p1, clean, wake_end=1730ms)"}, {"role": "assistant", "content": "[\"wake@2010ms+stt63\", \"さっきの関数名を変えて\"]"}]

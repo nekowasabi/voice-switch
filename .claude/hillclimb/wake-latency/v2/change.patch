@@ -1,0 +1,60 @@
+--- a/Sources/voice-switch/Segmenter.swift	2026-10-10 12:17:53
++++ b/Sources/voice-switch/Segmenter.swift	2026-10-10 12:17:53
+@@ -56,11 +56,15 @@
+     /// buffered audio when a short internal gap (2 silent frames, 60 ms) just closed or `earlyWakeMs` of audio
+     /// accumulated since the last probe, so the caller can run STT before the hangover. nil when off or not due.
+     private var lastProbe = 0
++    /// Silence that closes a wake word which is also the start of a longer one ("音声" / "音声入力"). 150 ms is longer
++    /// than the ~90 ms gaps inside 音声入力, so "音声" followed by this much silence is the whole word.
++    // ponytail: fixed 150 ms from synthetic speech; make it a config knob if real voices pause longer inside the word.
++    static let prefixGapFrames = 5
+     mutating func probe() -> [Float]? {
+         guard let every = cfg.earlyWakeMs, !utt.isEmpty, !skipping else { return nil }
+         let minFrames = frames(ms: cfg.minSpeechMs ?? 300)
+         guard utt.count >= minFrames else { return nil }
+-        let gap = silent == 2
++        let gap = silent == 2 || silent == Segmenter.prefixGapFrames
+         guard gap || utt.count - lastProbe >= frames(ms: every) else { return nil }
+         lastProbe = utt.count
+         return Array(utt.joined())
+@@ -69,13 +73,15 @@
+     /// Frames of silence at the tail of the open utterance (0 while speech continues).
+     var tailSilentFrames: Int { silent }
+ 
+-    /// Early-probe verdict. A transcript that is itself the start of a longer wake word ("音声入" for "音声入力") is
+-    /// mid-word and must not be read as "音声" + "入"; wait for the next probe.
+-    static func earlyWake(_ tr: Transcript, cfg: Config, atGap: Bool) -> (cutAt: Double, rest: String)?? {
++    /// Early-probe verdict. A transcript that is the start of a longer wake word ("音声入" or "音声" for "音声入力")
++    /// may be mid-word: it fires only as a bare wake word, and only after `prefixGapFrames` of silence.
++    static func earlyWake(_ tr: Transcript, cfg: Config, tailSilentFrames: Int) -> (cutAt: Double, rest: String)?? {
+         let words = cfg.wakeWords.map(normalize)
+-        guard !words.contains(where: { $0.count > tr.text.count && $0.hasPrefix(tr.text) }) else { return nil }
++        if words.contains(where: { $0.count > tr.text.count && $0.hasPrefix(tr.text) }) {
++            return tailSilentFrames >= prefixGapFrames && words.contains(tr.text) ? .some(nil) : nil
++        }
+         if let start = dictationStart(tr, wakeWords: cfg.wakeWords) { return .some(start) }
+-        if atGap, words.contains(tr.text) { return .some(nil) }
++        if tailSilentFrames > 0, words.contains(tr.text) { return .some(nil) }
+         return nil
+     }
+ 
+--- a/Sources/voice-switch/MacApp.swift	2026-10-10 12:17:30
++++ b/Sources/voice-switch/MacApp.swift	2026-10-10 12:17:53
+@@ -138,7 +138,7 @@
+                 let tr = try await transcribe(buf, locale: locale)
+                 let stt = Int(Date().timeIntervalSince(began) * 1000)
+                 let at = (i + frameLen) * 1000 / Int(rate) // audio ms at which this probe could fire
+-                if let hit = Segmenter.earlyWake(tr, cfg: cfg, atGap: seg.tailSilentFrames > 0) {
++                if let hit = Segmenter.earlyWake(tr, cfg: cfg, tailSilentFrames: seg.tailSilentFrames) {
+                     verdicts.append(hit.map { "early-dictate@\(at)ms+stt\(stt):\($0.rest)" } ?? "early-wake@\(at)ms+stt\(stt)")
+                     earlyHit = true
+                 }
+@@ -680,7 +680,7 @@
+                 let began = Date()
+                 guard let tr = try? await transcribe(buf, locale: Locale(identifier: config.cfg.locale ?? "ja_JP")) else { continue }
+                 let stt = Int(Date().timeIntervalSince(began) * 1000)
+-                guard let hit = Segmenter.earlyWake(tr, cfg: config.cfg, atGap: seg.tailSilentFrames > 0) else { continue }
++                guard let hit = Segmenter.earlyWake(tr, cfg: config.cfg, tailSilentFrames: seg.tailSilentFrames) else { continue }
+                 let start = config.cfg.dictation == nil ? nil : hit
+                 guard start != nil || hit == nil else { continue } // a continuing transcript without dictation is not a wake
+                 if let busy = micInUse(by: config.cfg.skipWhileMicInUseBy ?? []) { log("skipped: \(busy) is using the microphone"); continue }

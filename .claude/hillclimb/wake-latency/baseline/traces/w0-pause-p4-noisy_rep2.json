@@ -1,0 +1,1 @@
+[{"role": "user", "content": "音声入力 [[slnc 800]] テストを全部実行してください  (wake-pause, p4, noisy, wake_end=1610ms)"}, {"role": "assistant", "content": "[\"wake@1920ms+stt61\", \"テストを全部実行してください\"]"}]

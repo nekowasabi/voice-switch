@@ -1,0 +1,1 @@
+[{"role": "user", "content": "音声合成を試したい  (nonwake, p1, clean, wake_end=Nonems)"}, {"role": "assistant", "content": "[\"early-dictate@1380ms+stt56:合\", \"dictate@2790ms+stt73:合成を試したい\"]"}]

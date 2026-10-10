@@ -1,0 +1,1 @@
+[{"role": "user", "content": "おんせい、来週の予定を確認したい  (wake-comma, p3, noisy, wake_end=860ms)"}, {"role": "assistant", "content": "[\"early-dictate@1500ms+stt55:来週の\", \"dictate@2760ms+stt71:来週の予定を確認したい\"]"}]

@@ -1,0 +1,1 @@
+[{"role": "user", "content": "音声認識の精度を上げたい  (nonwake, p2, clean, wake_end=Nonems)"}, {"role": "assistant", "content": "[\"dictate@2520ms+stt72:認識の精度を上げたい\"]"}]
