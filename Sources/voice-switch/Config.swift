@@ -15,6 +15,9 @@ struct Config: Decodable {
     var minSpeechMs: Int?
     var vadRatio: Float?
     var vadMinRMS: Float?
+    /// Experimental: probe the open utterance with STT every this many ms of speech (and at short internal gaps),
+    /// firing a wake as soon as the transcript starts with a wake word, before hangoverMs. Absent turns it off.
+    var earlyWakeMs: Int?
     /// Bundle IDs / process names whose microphone use blocks firing.
     var skipWhileMicInUseBy: [String]?
     /// Said on their own, these end the current input.

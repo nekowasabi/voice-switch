@@ -130,14 +130,28 @@ func check(_ paths: [String], cfg: Config) async throws {
         let samples = try loadSamples(path) + [Float](repeating: 0, count: Int(rate)) // trailing silence ends the utterance
         var seg = Segmenter(cfg: cfg)
         var verdicts: [String] = []
+        var earlyHit = false // one early verdict per utterance; the hangover verdict still follows for comparison
         for i in stride(from: 0, to: samples.count - frameLen + 1, by: frameLen) {
-            guard let event = seg.push(Array(samples[i ..< i + frameLen])) else { continue }
+            let event = seg.push(Array(samples[i ..< i + frameLen]))
+            if event == nil, !earlyHit, let buf = seg.probe() {
+                let began = Date()
+                let tr = try await transcribe(buf, locale: locale)
+                let stt = Int(Date().timeIntervalSince(began) * 1000)
+                let at = (i + frameLen) * 1000 / Int(rate) // audio ms at which this probe could fire
+                if let hit = Segmenter.earlyWake(tr, cfg: cfg, tailSilentFrames: seg.tailSilentFrames) {
+                    verdicts.append(hit.map { "early-dictate@\(at)ms+stt\(stt):\($0.rest)" } ?? "early-wake@\(at)ms+stt\(stt)")
+                    earlyHit = true
+                }
+            }
+            guard let event else { continue }
+            earlyHit = false
             let (u, isHead) = switch event { case let .utterance(u): (u, false); case let .head(u): (u, true) }
+            let began = Date()
             let tr = try await transcribe(u, locale: locale)
             if !isHead, targets.contains(tr.text) {
-                verdicts.append("wake")
+                verdicts.append("wake@\((i + frameLen) * 1000 / Int(rate))ms+stt\(Int(Date().timeIntervalSince(began) * 1000))")
             } else if let start = dictationStart(tr, wakeWords: cfg.wakeWords) {
-                verdicts.append("dictate:\(start.rest)")
+                verdicts.append("dictate@\((i + frameLen) * 1000 / Int(rate))ms+stt\(Int(Date().timeIntervalSince(began) * 1000)):\(start.rest)")
             } else {
                 verdicts.append(tr.text)
             }
@@ -658,6 +672,32 @@ final class Listener {
                 dictation = nil; Hotkeys.end(); endedByUser = key == .finish
                 log("dictation ended by \(reason) after \(d.samples.count * 1000 / Int(rate)) ms of audio")
                 submit(d, cfg: dc)
+                continue
+            }
+            // Experimental early wake (cfg.earlyWakeMs): STT on the open utterance before the hangover. A transcript that
+            // starts with a wake word and continues opens the dictation now; a bare wake word at a short gap fires now.
+            if event == nil, let buf = seg.probe() {
+                let began = Date()
+                guard let tr = try? await transcribe(buf, locale: Locale(identifier: config.cfg.locale ?? "ja_JP")) else { continue }
+                let stt = Int(Date().timeIntervalSince(began) * 1000)
+                guard let hit = Segmenter.earlyWake(tr, cfg: config.cfg, tailSilentFrames: seg.tailSilentFrames) else { continue }
+                let start = config.cfg.dictation == nil ? nil : hit
+                guard start != nil || hit == nil else { continue } // a continuing transcript without dictation is not a wake
+                if let busy = micInUse(by: config.cfg.skipWhileMicInUseBy ?? []) { log("skipped: \(busy) is using the microphone"); continue }
+                log("early: \(tr.text)  [buf \(buf.count * 1000 / Int(rate)) ms, stt \(stt) ms]")
+                seg.reset()
+                if let start {
+                    dictation = Dictation(samples: trimmed(buf, cutAt: start.cutAt), silentFrames: 0, heardSpeech: true)
+                    log("dictation started early (cut at \(Int(start.cutAt * 1000)) ms)")
+                    Hotkeys.begin()
+                } else if config.cfg.dictation != nil {
+                    dictation = Dictation(samples: [], silentFrames: 0, heardSpeech: false)
+                    log("dictation started early (waiting for text)")
+                    Hotkeys.begin()
+                } else {
+                    Macrowhisper.prepare(config.cfg.macrowhisper)
+                    Platform.runMacAction(config.cfg)
+                }
                 continue
             }
             guard let event else { continue }

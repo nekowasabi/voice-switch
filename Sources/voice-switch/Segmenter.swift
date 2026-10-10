@@ -52,6 +52,45 @@ struct Segmenter {
         return speech
     }
 
+    /// Early wake probe (experimental, cfg.earlyWakeMs). While an utterance is open and under the cap, returns the
+    /// buffered audio when a short internal gap (2 silent frames, 60 ms) just closed or `earlyWakeMs` of audio
+    /// accumulated since the last probe, so the caller can run STT before the hangover. nil when off or not due.
+    private var lastProbe = 0
+    /// Silence that closes a wake word which is also the start of a longer one ("音声" / "音声入力"). 150 ms is longer
+    /// than the ~90 ms gaps inside 音声入力, so "音声" followed by this much silence is the whole word.
+    // ponytail: fixed 150 ms from synthetic speech; make it a config knob if real voices pause longer inside the word.
+    static let prefixGapFrames = 5
+    mutating func probe() -> [Float]? {
+        guard let every = cfg.earlyWakeMs, !utt.isEmpty, !skipping else { return nil }
+        let minFrames = frames(ms: cfg.minSpeechMs ?? 300)
+        guard utt.count >= minFrames else { return nil }
+        let gap = silent == 2 || silent == Segmenter.prefixGapFrames
+        guard gap || utt.count - lastProbe >= frames(ms: every) else { return nil }
+        lastProbe = utt.count
+        return Array(utt.joined())
+    }
+
+    /// Frames of silence at the tail of the open utterance (0 while speech continues).
+    var tailSilentFrames: Int { silent }
+
+    /// Early-probe verdict. A transcript that is the start of a longer wake word ("音声入" or "音声" for "音声入力")
+    /// may be mid-word: it fires only as a bare wake word, and only after `prefixGapFrames` of silence.
+    static func earlyWake(_ tr: Transcript, cfg: Config, tailSilentFrames: Int) -> (cutAt: Double, rest: String)?? {
+        let words = cfg.wakeWords.map(normalize)
+        if words.contains(where: { $0.count > tr.text.count && $0.hasPrefix(tr.text) }) {
+            return tailSilentFrames >= prefixGapFrames && words.contains(tr.text) ? .some(nil) : nil
+        }
+        if let start = dictationStart(tr, wakeWords: cfg.wakeWords) { return .some(start) }
+        if tailSilentFrames > 0, words.contains(tr.text) { return .some(nil) }
+        return nil
+    }
+
+    /// Drop the open utterance after an early wake fired, so the hangover does not report it a second time.
+    mutating func reset() {
+        utt = []; ring = []; skipping = false; silent = 0; lastProbe = 0
+        levelSum = 0; levelCount = 0
+    }
+
     mutating func push(_ f: [Float]) -> Event? {
         let preroll = frames(ms: cfg.prerollMs ?? 300)
         let hangover = frames(ms: cfg.hangoverMs ?? 300)
@@ -85,7 +124,7 @@ struct Segmenter {
         }
         guard silent >= hangover else { return head }
         let done = !skipping && utt.count - hangover >= minFrames ? Event.utterance(Array(utt.joined())) : nil
-        utt = []; ring = []; skipping = false
+        utt = []; ring = []; skipping = false; lastProbe = 0
         levelSum = 0; levelCount = 0
         return done ?? head
     }
