@@ -1,6 +1,7 @@
 // macOS app: menu bar, Apple Speech, CoreAudio, CGEvent hotkeys.
 #if os(macOS)
 import AppKit
+import Carbon
 import os
 import AVFoundation
 import Foundation
@@ -264,43 +265,83 @@ func enterSuperwhisperMode(_ wanted: String?, target: NSRunningApplication?) asy
 
 /// Clipboard + Cmd+V into the wake-time app. Used when mode auto-paste is off and pane did not take it.
 func pasteDictation(_ text: String, target: NSRunningApplication?) -> Bool {
-    guard let target else { return false }
+    guard AXIsProcessTrusted(), let target, let idle = MacInputActivity.idleSeconds(), idle >= 1 else { return false }
+    let lastInput = ProcessInfo.processInfo.systemUptime - idle
+    guard target.activate(), NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier else { return false }
     let pb = NSPasteboard.general
-    let previous = pb.string(forType: .string)
+    let previous = pb.pasteboardItems ?? []
+    var snapshot: [[NSPasteboard.PasteboardType: Data]] = []
+    var bytes = 0
+    for item in previous {
+        var values: [NSPasteboard.PasteboardType: Data] = [:]
+        for type in item.types {
+            guard let data = item.data(forType: type) else { return false }
+            bytes += data.count
+            guard bytes <= 8 * 1024 * 1024 else { return false }
+            values[type] = data
+        }
+        snapshot.append(values)
+    }
+    guard macPasteSafety(target: target, lastInput: lastInput).allowsPaste else { return false }
     pb.clearContents()
-    guard pb.setString(text, forType: .string) else {
-        log("dictation paste: clipboard failed")
+    let copied = pb.setString(text, forType: .string)
+    let owned = pb.changeCount
+    func restore() {
+        guard pb.changeCount == owned else { return }
+        let items = snapshot.map { values in
+            let item = NSPasteboardItem()
+            for (type, data) in values { item.setData(data, forType: type) }
+            return item
+        }
+        pb.clearContents()
+        if !items.isEmpty { pb.writeObjects(items) }
+    }
+    guard copied, macPasteSafety(target: target, lastInput: lastInput).allowsPaste,
+          let source = CGEventSource(stateID: .hidSystemState),
+          let down = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true),
+          let up = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false) else {
+        restore()
         return false
     }
-    let ok = target.activate()
-    if !ok {
-        log("dictation paste: could not bring target to the front")
-    }
-    let source = CGEventSource(stateID: .hidSystemState)
-    let keyV: CGKeyCode = 0x09 // kVK_ANSI_V
-    if let down = CGEvent(keyboardEventSource: source, virtualKey: keyV, keyDown: true),
-       let up = CGEvent(keyboardEventSource: source, virtualKey: keyV, keyDown: false) {
-        down.flags = .maskCommand
-        up.flags = .maskCommand
-        down.post(tap: .cghidEventTap)
-        up.post(tap: .cghidEventTap)
-    }
-    if let previous {
-        Task {
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            if pb.string(forType: .string) == text {
-                pb.clearContents()
-                _ = pb.setString(previous, forType: .string)
-            }
+    down.flags = .maskCommand
+    up.flags = .maskCommand
+    down.post(tap: .cghidEventTap)
+    up.post(tap: .cghidEventTap)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { restore() }
+    return true
+}
+
+func macPasteSafety(target: NSRunningApplication, lastInput: TimeInterval) -> PasteSafety {
+    let app = AXUIElementCreateApplication(target.processIdentifier)
+    var focused: CFTypeRef?
+    var plain = false
+    if AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+       let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() {
+        let element = focused as! AXUIElement
+        var role: CFTypeRef?
+        var subrole: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role) == .success,
+           AXUIElementCopyAttributeValue(element, kAXSubroleAttribute as CFString, &subrole) == .success {
+            plain = ["AXTextField", "AXTextArea"].contains(role as? String ?? "") && (subrole as? String) != "AXSecureTextField"
         }
     }
-    return true
+    var compositionClear = false
+    if let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+       let property = TISGetInputSourceProperty(source, kTISPropertyInputSourceType) {
+        let type = unsafeBitCast(property, to: CFString.self)
+        compositionClear = CFEqual(type, kTISTypeKeyboardLayout)
+    }
+    let currentInput = MacInputActivity.idleSeconds().map { ProcessInfo.processInfo.systemUptime - $0 }
+    return PasteSafety(targetFocused: NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier,
+        plainTextField: plain && !IsSecureEventInputEnabled(), compositionClear: compositionClear,
+        clipboardRestorable: true, inputUnchanged: currentInput.map { abs($0 - lastInput) < 0.02 } ?? false)
 }
 
 /// superwhisper transcribes the file. With `dictation.superwhisperMode` set, switches to that mode
 /// (auto-paste off), restores after, and voice-switch pastes only when the pane route did not deliver.
 /// Unset keeps the old behavior (Superwhisper may auto-paste).
-func handoff(_ samples: [Float], cfg: DictationConfig, macrowhisper: MacrowhisperConfig?, target: NSRunningApplication?, action: WakeAction?) async {
+func handoff(_ samples: [Float], cfg: DictationConfig, macrowhisper: MacrowhisperConfig?, target: NSRunningApplication?, action: WakeAction?, origin: WakeOrigin = WakeOrigin(rule: .strict, inputIdleSeconds: nil), sessionID: UUID = UUID()) async {
+    guard !origin.isAutomatic else { log("automatic audio cannot enter Superwhisper"); return }
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("voice-switch")
     let wav = dir.appendingPathComponent("\(UUID().uuidString).wav")
     defer { try? FileManager.default.removeItem(at: wav) }
@@ -340,6 +381,7 @@ func handoff(_ samples: [Float], cfg: DictationConfig, macrowhisper: Macrowhispe
         log("dictation: no superwhisper result within 30 s"); return
     }
     log("dictation: \(result.count) chars in \(Int(Date().timeIntervalSince(submitted) * 1000)) ms")
+    DictationHistory.shared.add(id: sessionID, text: result, origin: origin)
     if let action {
         let p = Platform.urlProcess(action.url)
         p.arguments = action.openArguments(input: result)
@@ -463,16 +505,14 @@ enum Hotkeys {
         return Shortcut(keyCode: Int64(code), flags: flags.rawValue)
     }
 
-    private static var prompted = false
-
     static func installTap() {
         guard !triedTap else { return }
         triedTap = true
-        // The system prompt is modal and steals focus mid-dictation, so show it at most once per launch.
-        if !AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue(): !prompted] as CFDictionary) {
-            log("hotkey: Accessibility not granted yet")
+        guard AXIsProcessTrusted() else {
+            triedTap = false
+            log("hotkey interception disabled: Accessibility is not granted")
+            return
         }
-        prompted = true
         let mask = CGEventMask(1 << CGEventType.keyDown.rawValue) | CGEventMask(1 << CGEventType.keyUp.rawValue)
         guard let port = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
                                            eventsOfInterest: mask, callback: { _, type, event, _ in Hotkeys.handle(type, event) },
@@ -487,6 +527,7 @@ enum Hotkeys {
     }
 
     static func handle(_ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
+        guard AXIsProcessTrusted() else { return Unmanaged.passUnretained(event) }
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             return Unmanaged.passUnretained(event)
@@ -623,6 +664,8 @@ final class Listener {
         /// Frames during which the mic hears our own confirmation sound, so it cannot count as the text starting.
         var deafFrames = 0
         var action: WakeAction? = nil
+        let origin = WakeOrigin(rule: .strict, inputIdleSeconds: MacInputActivity.idleSeconds())
+        let sessionID = UUID()
     }
 
     enum Phase { case idle, waiting, recording, ended }
@@ -847,13 +890,22 @@ final class Listener {
     }
 
     private func submit(_ d: Dictation, cfg: DictationConfig) {
+        if d.origin.isAutomatic {
+            Task {
+                do {
+                    let transcript = try await transcribe(d.samples, locale: Locale(identifier: config.cfg.locale ?? "ja_JP"))
+                    DictationHistory.shared.add(id: d.sessionID, text: transcript.runs.map(\.text).joined(), origin: d.origin)
+                } catch { log("local history transcription failed") }
+            }
+            return
+        }
         let claimed = handoffBusy.withLock { busy in
             defer { busy = true }
             return !busy
         }
         guard claimed else { log("dictation dropped: previous one still in flight"); return }
         Task {
-            await handoff(d.samples, cfg: cfg, macrowhisper: config.cfg.macrowhisper, target: d.target, action: d.action)
+            await handoff(d.samples, cfg: cfg, macrowhisper: config.cfg.macrowhisper, target: d.target, action: d.action, origin: d.origin, sessionID: d.sessionID)
             handoffBusy.withLock { $0 = false }
         }
     }
@@ -900,7 +952,7 @@ final class HUD {
         let p = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
         p.level = .statusBar
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        p.ignoresMouseEvents = true
+        p.ignoresMouseEvents = false
         p.isOpaque = false
         p.backgroundColor = .clear
         p.hasShadow = true
@@ -911,6 +963,7 @@ final class HUD {
         bg.layer?.cornerRadius = 12
         label.font = .systemFont(ofSize: 15, weight: .semibold)
         label.translatesAutoresizingMaskIntoConstraints = false
+        bg.addGestureRecognizer(NSClickGestureRecognizer(target: HistoryPanel.shared, action: #selector(HistoryPanel.show)))
         bg.addSubview(label)
         NSLayoutConstraint.activate([
             label.centerXAnchor.constraint(equalTo: bg.centerXAnchor),
@@ -958,7 +1011,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_: Notification) {
         let menu = NSMenu()
+        MacWakeShortcuts.install()
         menu.addItem(toggle)
+        menu.addItem(NSMenuItem(title: "文字起こし履歴", action: #selector(showHistory), keyEquivalent: ""))
         menu.addItem(.separator())
         let mic = NSMenuItem(title: "マイク", action: nil, keyEquivalent: "")
         micMenu.delegate = self
@@ -1009,6 +1064,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         sound.state = UserDefaults.standard.bool(forKey: soundKey) ? .on : .off
     }
+
+    @objc func showHistory() { HistoryPanel.shared.show() }
 
     @objc func toggleSound() {
         UserDefaults.standard.set(!UserDefaults.standard.bool(forKey: soundKey), forKey: soundKey)

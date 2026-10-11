@@ -10,7 +10,6 @@ namespace VoiceSwitch.Windows.Tray;
 public sealed class DictationHud : Form
 {
     private const int WsExTopMost = 0x8;
-    private const int WsExTransparent = 0x20;
     private const int WsExToolWindow = 0x80;
     private const int WsExNoActivate = 0x8000000;
     private const int SwHide = 0;
@@ -26,6 +25,8 @@ public sealed class DictationHud : Form
     };
     private readonly System.Windows.Forms.Timer hide = new() { Interval = 1500 };
 
+    public event Action? HistoryRequested;
+
     public DictationHud()
     {
         FormBorderStyle = FormBorderStyle.None;
@@ -35,6 +36,7 @@ public sealed class DictationHud : Form
         Size = new Size(160, 40);
         BackColor = Color.FromArgb(32, 32, 32);
         Controls.Add(label);
+        label.Click += (_, _) => HistoryRequested?.Invoke();
         var region = CreateRoundRectRgn(0, 0, Width, Height, 12, 12);
         Region = Region.FromHrgn(region);
         DeleteObject(region);
@@ -54,7 +56,7 @@ public sealed class DictationHud : Form
         get
         {
             var parameters = base.CreateParams;
-            parameters.ExStyle |= WsExNoActivate | WsExToolWindow | WsExTransparent | WsExTopMost;
+            parameters.ExStyle |= WsExNoActivate | WsExToolWindow | WsExTopMost;
             return parameters;
         }
     }

@@ -264,7 +264,7 @@ public sealed class WindowsDictationRuntime
                         var pendingBefore = pending.Count;
                         if (outcome.Recognition is { } observed)
                         {
-                            var origin = new WakeOrigin(WakeRule.Strict, this.inputIdleSeconds());
+                            var origin = session.IsActive || session.IsAwaitingBody ? session.Origin : new WakeOrigin(WakeRule.Strict, this.inputIdleSeconds());
                             WakeMissLabel.Observe(outcome.Work.Request.Id, origin);
                             var leadingWake = DictationBoundaries.LeadingWake(observed, config.Wakes()) is not null;
                             var stopRange = DictationBoundaries.StandaloneStopRange(observed, config.StopWords ?? []);
@@ -309,7 +309,7 @@ public sealed class WindowsDictationRuntime
                         var wasAwaiting = session.IsAwaitingBody;
                         var wasIdle = !wasActive && !wasAwaiting;
                         var stopBeforeApply = DictationBoundaries.StandaloneStopRange(outcome.Recognition!, config.StopWords ?? []);
-                        var audio = session.Apply(outcome.Recognition!, originalStore.Copy, analysisStore.Next);
+                        var audio = session.Apply(outcome.Recognition!, originalStore.Copy, analysisStore.Next, new WakeOrigin(WakeRule.Strict, inputIdleSeconds()));
                         if (wasIdle && !session.IsActive && !session.IsAwaitingBody && outcome.Work.Request.Extent == RecognitionExtent.PrefixHead)
                         {
                             var floorBefore = segmenter.Floor;

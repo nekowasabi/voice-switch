@@ -116,6 +116,7 @@ public static class Program
                         capture = WinMmCapture.Open();
                     }
 
+                    if (!effectiveDryRun && options.OutputDir is null) handoff = LocalHistoryHandoff.Wrap(handoff, config);
                     return new WindowsDictationRuntime(
                             config,
                             capture,

@@ -39,6 +39,7 @@ public sealed class ProductionRuntimeFactory(string configPath, TrayRuntimeHooks
                 superwhisperMode: config.Dictation.SuperwhisperMode, paste: WindowFocus.Paste)
             : new LocalRecordingHandoff(source.RecordOnlyDir, source.WavPath);
 
+        if (source.RecordOnlyDir is null) handoff = LocalHistoryHandoff.Wrap(handoff, config);
         var observer = new TrayRuntimeObserver(hooks);
         var recognizer = new SpeechPowerShellDictationRecognizer(config, observer.RecordSapiTiming);
         var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation);

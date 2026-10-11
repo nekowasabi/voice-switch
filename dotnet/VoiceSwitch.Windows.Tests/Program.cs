@@ -16,6 +16,9 @@ if (args is ["--child", var mode])
 
 var tests = new (string Name, Func<TestOutcome> Test)[]
 {
+    ("manual paste requires every safety observation", () => Check(NoWakeTests.PasteGuards())),
+    ("local history expires, evicts, deduplicates and clears", () => Check(NoWakeTests.History())),
+    ("automatic delivery remains local while manual delivery uses its adapter", () => Check(NoWakeTests.AutomaticDelivery())),
     ("wake telemetry records idle contexts without transcript text", () => Check(NoWakeTests.Telemetry())),
     ("normalizes punctuation and spaces", () => Check(Normalizes())),
     ("reading normalization folds katakana and width", () => Check(ReadingNormalizationFoldsKatakanaAndWidth())),

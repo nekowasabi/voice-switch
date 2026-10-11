@@ -7,20 +7,27 @@ public sealed class WakeLabelHotkey : NativeWindow, IDisposable
 {
     private const int Id = 0x5653;
     private readonly bool registered;
-    public WakeLabelHotkey()
+    private readonly bool historyRegistered;
+    private readonly Action? showHistory;
+    public WakeLabelHotkey(Action? showHistory = null)
     {
+        this.showHistory = showHistory;
         CreateHandle(new CreateParams { Parent = new nint(-3) });
         registered = RegisterHotKey(Handle, Id, 0x4000 | 0x2 | 0x4, 0x77);
+        historyRegistered = RegisterHotKey(Handle, Id + 1, 0x4000 | 0x2 | 0x4, 0x78);
+        if (!historyRegistered) Log.Info("history hotkey unavailable: Ctrl+Shift+F9 is already registered");
         if (!registered) Log.Info("wake MISS hotkey unavailable: Ctrl+Shift+F8 is already registered");
     }
     protected override void WndProc(ref Message message)
     {
         if (message.Msg == 0x0312 && message.WParam == Id) WakeMissLabel.Record();
+        if (message.Msg == 0x0312 && message.WParam == Id + 1) showHistory?.Invoke();
         base.WndProc(ref message);
     }
     public void Dispose()
     {
         if (registered) UnregisterHotKey(Handle, Id);
+        if (historyRegistered) UnregisterHotKey(Handle, Id + 1);
         DestroyHandle();
     }
     [DllImport("user32.dll", SetLastError = true)]

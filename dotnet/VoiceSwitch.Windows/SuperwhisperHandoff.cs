@@ -61,6 +61,8 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
 
     public async Task<HandoffResult> SubmitAsync(DictationAudio audio, CancellationToken cancellation)
     {
+        if (audio.Wake.IsAutomatic)
+            return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, "automatic audio cannot enter Superwhisper");
         // Keeps the file write and process launch off the runtime loop even though they start synchronously.
         await Task.Yield();
         if (dryRun)
@@ -138,6 +140,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         }
 
         TryDelete(wavPath);
+        DictationHistory.Shared.Add(audio.SessionId, text, audio.Wake);
         if (audio.Action is { } action)
         {
             // Mac parity: an action's text goes only to its URL, never to a tmux pane or a paste.

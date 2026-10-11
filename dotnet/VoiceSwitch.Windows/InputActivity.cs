@@ -12,6 +12,13 @@ public static class InputActivity
         return GetLastInputInfo(ref info) ? ElapsedSeconds(unchecked((uint)Environment.TickCount64), info.Time) : null;
     }
 
+    public static uint? LastInputTick()
+    {
+        if (!OperatingSystem.IsWindows()) return null;
+        var info = new LastInputInfo { Size = (uint)Marshal.SizeOf<LastInputInfo>() };
+        return GetLastInputInfo(ref info) ? info.Time : null;
+    }
+
     public static double ElapsedSeconds(uint now, uint lastInput) => unchecked(now - lastInput) / 1000.0;
 
     [StructLayout(LayoutKind.Sequential)]

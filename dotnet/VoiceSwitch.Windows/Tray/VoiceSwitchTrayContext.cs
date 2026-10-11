@@ -31,6 +31,7 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
     private TraySnapshot snapshot;
     private TrayDiagnostics cachedDiagnostics = null!;
     private bool disposed;
+    private HistoryWindow? historyWindow;
 
     public VoiceSwitchTrayContext(TrayRuntimeSupervisor supervisor)
     {
@@ -45,6 +46,9 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
         micItem.DropDownItems.Add(new ToolStripMenuItem("-"));
         micItem.DropDownOpening += (_, _) => FillMicMenu();
 
+        var historyItem = new ToolStripMenuItem("文字起こし履歴") { Name = "history" };
+        historyItem.Click += (_, _) => ShowHistory();
+        menu.Items.Insert(3, historyItem);
         statusItem.Enabled = false;
         soundItem.Checked = TraySettings.ConfirmationSound;
         soundItem.CheckedChanged += (_, _) => TraySettings.ConfirmationSound = soundItem.Checked;
@@ -93,6 +97,13 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
             }
         };
         diagnosticsTimer.Start();
+    }
+
+    public void ShowHistory()
+    {
+        if (historyWindow is null || historyWindow.IsDisposed) historyWindow = new HistoryWindow();
+        historyWindow.Show();
+        historyWindow.Activate();
     }
 
     public TrayDiagnostics Diagnostics()
@@ -153,6 +164,7 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
             supervisor.SnapshotChanged -= OnSnapshotChanged;
             if (disposing)
             {
+                historyWindow?.Dispose();
                 diagnosticsTimer.Stop();
                 diagnosticsTimer.Dispose();
                 notifyIcon.Visible = false;

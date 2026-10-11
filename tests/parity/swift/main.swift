@@ -1,5 +1,30 @@
 import Foundation
 
+func checkWakeHistory() {
+    for mask in 0..<32 {
+        let safety = PasteSafety(targetFocused: mask & 1 != 0, plainTextField: mask & 2 != 0,
+            compositionClear: mask & 4 != 0, clipboardRestorable: mask & 8 != 0, inputUnchanged: mask & 16 != 0)
+        precondition(safety.allowsPaste == (mask == 31))
+    }
+    var time = Date(timeIntervalSince1970: 0)
+    let history = DictationHistory(now: { time }, capacity: 2, retention: 30)
+    let first = UUID(), second = UUID(), third = UUID()
+    let origin = WakeOrigin(rule: .autoB, inputIdleSeconds: 4)
+    precondition(history.add(id: first, text: "first", origin: origin))
+    precondition(history.add(id: second, text: "second", origin: origin))
+    precondition(!history.add(id: second, text: "replaced", origin: origin))
+    history.add(id: third, text: "third", origin: origin)
+    precondition(history.snapshot().map(\.text) == ["third", "second"])
+    precondition(history.select(first) == nil)
+    time = Date(timeIntervalSince1970: 30)
+    precondition(history.select(third) == nil)
+    history.add(id: first, text: "new", origin: origin)
+    history.clear()
+    precondition(history.snapshot().isEmpty)
+    precondition(WakeOrigin(rule: .relaxedD2, inputIdleSeconds: .nan).fields == "rule=relaxed_d2 inputIdleSeconds=-1")
+}
+checkWakeHistory()
+
 struct TextFixture: Decodable {
     struct Normalization: Decodable {
         var name: String

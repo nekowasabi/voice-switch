@@ -94,7 +94,10 @@ public sealed record DictationEvent(string Kind, FinishReason? Reason, SampleRan
     public static DictationEvent Error(FinishReason reason) => new("error", reason, null);
 }
 
-public sealed record DictationAudio(Guid SessionId, SampleRange Range, ImmutableArray<short> Samples, FinishReason Reason = FinishReason.Silence, nint Target = 0, WakeAction? Action = null);
+public sealed record DictationAudio(Guid SessionId, SampleRange Range, ImmutableArray<short> Samples, FinishReason Reason = FinishReason.Silence, nint Target = 0, WakeAction? Action = null, WakeOrigin? Origin = null)
+{
+    public WakeOrigin Wake => Origin ?? new WakeOrigin(WakeRule.Strict, null);
+}
 
 public sealed record HandoffResult(HandoffStatus Status, Guid Id, string? Path, string Message);
 
@@ -489,6 +492,7 @@ public sealed class DictationSession
 
     public IReadOnlyList<DictationEvent> Events => events;
     public WakeAction? Action { get; private set; }
+    public WakeOrigin Origin { get; private set; } = new(WakeRule.Strict, null);
     public SampleRange? PendingBody => bodyStart is long start && !terminal ? new SampleRange(start, lastSpeechEnd) : null;
     public bool IsActive => bodyStart is not null && !terminal;
     public bool IsAwaitingBody => awaitingBody && !terminal;
@@ -499,7 +503,7 @@ public sealed class DictationSession
     public long? SilenceDeadline => bodyStart is not null && !terminal ? silenceFrom + MsToSamples(config.Dictation?.EndSilenceMs ?? 1200) : null;
 
     // now: the capture clock (sample position) when this recognition is applied; it trails the audio by the recognizer's latency.
-    public DictationAudio? Apply(RecognizedUtterance recognition, Func<SampleRange, ImmutableArray<short>> copyAudio, long now = 0)
+    public DictationAudio? Apply(RecognizedUtterance recognition, Func<SampleRange, ImmutableArray<short>> copyAudio, long now = 0, WakeOrigin? origin = null)
     {
         if (terminal)
         {
@@ -570,6 +574,7 @@ public sealed class DictationSession
                 return null;
             }
 
+            Origin = origin ?? new WakeOrigin(WakeRule.Strict, null);
             sessionId = Guid.NewGuid();
             maxEnd = (wake.BodyStart ?? wake.WakeEnd) + SecondsToSamples(config.Dictation?.MaxSeconds ?? config.MaxSeconds ?? 60);
             if (wake.BodyStart is long start)
@@ -700,7 +705,7 @@ public sealed class DictationSession
             return null;
         }
 
-        var audio = new DictationAudio(sessionId, range, copyAudio(range), reason, Action: Action);
+        var audio = new DictationAudio(sessionId, range, copyAudio(range), reason, Action: Action, Origin: Origin);
         events.Add(DictationEvent.Submitted(sessionId, reason, range));
         return audio;
     }
