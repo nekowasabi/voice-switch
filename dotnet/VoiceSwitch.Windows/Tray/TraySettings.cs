@@ -46,22 +46,30 @@ public static class TraySettings
     }
 
     // Any thread. True when a sound was played, so the runtime can ignore the microphone while it rings.
-    public static bool PlayStopSound()
+    // Wake is one A5; stop falls A5 -> E5, so the two read differently without looking.
+    public static bool PlayWakeSound() => Play(WakeChime);
+
+    public static bool PlayStopSound() => Play(StopChime);
+
+    private static bool Play(Lazy<SoundPlayer> chime)
     {
         if (!ConfirmationSound)
         {
             return false;
         }
 
-        Chime.Value.Play();
+        chime.Value.Play();
         return true;
     }
 
-    // Soft single A5 "pop" synthesized in memory: reads as "heard you" without the system error-ish beeps, and needs no file on disk.
-    private static readonly Lazy<SoundPlayer> Chime = new(() =>
+    private static readonly Lazy<SoundPlayer> WakeChime = new(() => Synthesize(880.0));
+
+    private static readonly Lazy<SoundPlayer> StopChime = new(() => Synthesize(880.0, 659.25));
+
+    // Soft "pop" notes synthesized in memory: reads as "heard you" without the system error-ish beeps, and needs no file on disk.
+    private static SoundPlayer Synthesize(params double[] notes)
     {
         const int rate = 16000;
-        var notes = new[] { 880.0 };
         const int noteSamples = rate * 120 / 1000;
         var pcm = new short[noteSamples * notes.Length];
         for (var i = 0; i < pcm.Length; i++)
@@ -83,5 +91,5 @@ public static class TraySettings
 
         ms.Position = 0;
         return new SoundPlayer(ms);
-    });
+    }
 }

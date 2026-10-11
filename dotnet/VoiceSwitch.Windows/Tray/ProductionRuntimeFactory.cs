@@ -6,6 +6,7 @@ namespace VoiceSwitch.Windows.Tray;
 public sealed record TrayRuntimeHooks(
     Action<DictationPhase>? OnPhase = null,
     Func<bool>? PlayStopSound = null,
+    Func<bool>? PlayWakeSound = null,
     Func<nint>? ForegroundWindow = null,
     Action<nint>? RestoreFocus = null,
     DictationHotkeys? Hotkeys = null,
@@ -124,6 +125,8 @@ public sealed class ProductionRuntimeFactory(string configPath, TrayRuntimeHooks
 
         public void PhaseChanged(DictationPhase phase) => hooks.OnPhase?.Invoke(phase);
         public bool PlayStopSound() => hooks.PlayStopSound?.Invoke() ?? false;
+
+        public bool PlayWakeSound() => hooks.PlayWakeSound?.Invoke() ?? false;
 
         public RecognitionProcessIdentity? OwnedChild
         {

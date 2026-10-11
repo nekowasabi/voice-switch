@@ -38,6 +38,9 @@ public interface IDictationRuntimeObserver
     void PhaseChanged(DictationPhase phase) { }
     // A stop word or finish key just ended the recording, before the handoff starts. Return true when a sound was played so the runtime ignores the microphone briefly.
     bool PlayStopSound() => false;
+
+    // Lone wake word only. Return true when a sound was played so the runtime ignores the microphone briefly.
+    bool PlayWakeSound() => false;
 }
 
 public sealed class WindowsDictationRuntime
@@ -757,6 +760,12 @@ public sealed class WindowsDictationRuntime
         if (phase == shownPhase || (shownPhase == DictationPhase.Ended && phase == DictationPhase.Idle))
         {
             return;
+        }
+
+        // Only a lone wake word: in a one-breath dictation the user is already talking and the sound would be recorded.
+        if (phase == DictationPhase.Waiting && observer?.PlayWakeSound() == true)
+        {
+            deafUntil = analysisStore.Next + MsToSamples(600);
         }
 
         shownPhase = phase;
