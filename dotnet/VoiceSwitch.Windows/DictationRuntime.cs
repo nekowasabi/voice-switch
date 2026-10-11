@@ -304,13 +304,13 @@ public sealed class WindowsDictationRuntime
                         // Mac drops a failed probe and keeps listening; resetting here would also discard the closed utterance of the same audio.
                         if (outcome.Error is not null && outcome.Work.Request.Extent == RecognitionExtent.Probe)
                         {
-                            Log.Info($"dictation recognition: probe failed id={outcome.Work.Request.Id}: {outcome.Error.Message}");
+                            Log.Info($"dictation recognition: probe failed id={outcome.Work.Request.Id}: {ErrorDetail(outcome.Error, wakeOrigin)}");
                             continue;
                         }
 
                         if (outcome.Error is not null)
                         {
-                            Log.Info($"dictation recognition failed: {outcome.Error.Message}");
+                            Log.Info($"dictation recognition failed: {ErrorDetail(outcome.Error, wakeOrigin)}");
                             session.Cancel(FinishReason.RecognitionFailed);
                             session = ResetSession(pending, outcome.Work.Request.Range.End);
                             TrimStore(session, pending);
@@ -955,13 +955,16 @@ public sealed class WindowsDictationRuntime
         {
             var result = await handoff.SubmitAsync(audio, audio.Wake.IsAutomatic ? localCancellation : CancellationToken.None);
             observer?.HandoffSubmitted(audio, result);
-            Log.Info($"dictation handoff: {result.Status} {result.Id} wav={result.Path ?? "-"} reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End} {result.Message}");
+            Log.Info($"dictation handoff: {result.Status} {result.Id} wav={result.Path ?? "-"} reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End} {(config.Dictation?.NoWakeWord?.Enabled == true || audio.Wake.IsAutomatic ? "details suppressed" : result.Message)}");
         }
         catch (Exception ex)
         {
-            Log.Info($"dictation handoff failed: {ex.Message} reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End}");
+            Log.Info($"dictation handoff failed: {ErrorDetail(ex, audio.Wake)} reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End}");
         }
     }
+
+    private string ErrorDetail(Exception error, WakeOrigin origin) =>
+        config.Dictation?.NoWakeWord?.Enabled == true || origin.IsAutomatic ? error.GetType().Name : error.Message;
 
     private async Task PumpCaptureAsync(ChannelWriter<AnalysisFrame> writer, CancellationToken cancellation)
     {

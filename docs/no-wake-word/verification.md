@@ -24,3 +24,9 @@ The baseline WakeReplay self-test failed because its expectations predated the e
 Mac build, native UI/layout, permission behavior, hotkey conflicts, microphone/Speech behavior, Windows foreground/IME/clipboard behavior, installed Superwhisper mode metadata and URL timing, and real-world false-wake/MISS results remain unverified. Follow [the native checklist](native-validation.md) and [the frozen acceptance gates](../wake-acceptance.md). Automatic rules remain disabled by default.
 
 Manual behavior is deliberately more conservative: without a confirmed no-auto-paste Superwhisper mode, use local transcription/history. Unsupported text controls, uncertain IME state, or unsafe clipboard restoration also leave the result in history. Mac Japanese input-method sources require explicit history copy/paste.
+
+## Final production-path review
+
+A bounded review traced the C# capture/session/adapter calls and Swift capture-generation/local-history calls, rather than treating static markers as proof. Automatic origins remain attached to completed audio; Superwhisper rejects them at its boundary, local adapters cannot call paste for them, and no local-history path calls Jev or an action URL. Default-off configuration and pending-work clear/cancellation guards were rechecked.
+
+The review reproduced a Windows error-log leak using a fake local recognizer exception containing a synthetic private-text sentinel. That test failed before the correction. Experimental recognition and automatic handoff errors now log only an error type or a generic failure; matching Swift experimental error paths suppress detail. The behavior test covers both local-transcription and recognition exceptions as well as successful transcripts. This does not claim native Swift execution.

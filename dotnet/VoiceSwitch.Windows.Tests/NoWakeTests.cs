@@ -105,7 +105,7 @@ internal static class NoWakeTests
 
     public static bool AutomaticRuntime()
     {
-        async Task<(int Entries, int Manual, int Code, bool Leaked, bool Preroll)> Run(double? idle, string? busy = null)
+        async Task<(int Entries, int Manual, int Code, bool Leaked, bool Preroll)> Run(double? idle, string? busy = null, bool failLocal = false, bool failRecognition = false)
         {
             var frames = new List<PcmFrame>();
             void Add(int count, short value)
@@ -121,8 +121,8 @@ internal static class NoWakeTests
             var manual = new CountingHandoff();
             var history = new DictationHistory();
             var captured = new List<DictationAudio>();
-            var handoff = new LocalHistoryHandoff(manual, (audio, _) => { captured.Add(audio); return Task.FromResult("local body"); }, history);
-            var recognizer = new ScriptedDictationRecognizer(request => Task.FromResult(new RecognizedUtterance(
+            var handoff = new LocalHistoryHandoff(manual, (audio, _) => { captured.Add(audio); return failLocal ? Task.FromException<string>(new InvalidOperationException("PRIVATE_NO_WAKE_BODY")) : Task.FromResult("local body"); }, history);
+            var recognizer = new ScriptedDictationRecognizer(request => failRecognition ? Task.FromException<RecognizedUtterance>(new InvalidOperationException("PRIVATE_NO_WAKE_BODY")) : Task.FromResult(new RecognizedUtterance(
                 request.Id, request.Extent, request.Range, "PRIVATE_NO_WAKE_BODY", [new LexicalRun("PRIVATE_NO_WAKE_BODY", request.Range)])));
             var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(frames, new[] { 22, 36, 56, 70 }),
                 recognizer, handoff, false, inputIdleSeconds: () => idle, wakeReading: value => value,
@@ -142,7 +142,9 @@ internal static class NoWakeTests
             }
             finally { Console.SetOut(previousOutput); }
         }
-        return Run(4).GetAwaiter().GetResult() == (2, 0, 0, false, true)
+        return !Run(4, failLocal: true).GetAwaiter().GetResult().Leaked
+            && !Run(4, failRecognition: true).GetAwaiter().GetResult().Leaked
+            && Run(4).GetAwaiter().GetResult() == (2, 0, 0, false, true)
             && Run(null).GetAwaiter().GetResult() == (0, 0, 0, false, true)
             && Run(0).GetAwaiter().GetResult() == (0, 0, 0, false, true)
             && Run(4, "other recorder").GetAwaiter().GetResult() == (0, 0, 0, false, true);

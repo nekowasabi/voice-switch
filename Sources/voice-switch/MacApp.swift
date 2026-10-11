@@ -406,7 +406,7 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
         }
         result = await awaitResult(in: recordings, since: Int(submitted.timeIntervalSince1970) - 2, excluding: previousRuns)
     } catch {
-        log("dictation: handing off to superwhisper failed: \(error)")
+        log(cfg.noWakeWord?.enabled == true ? "dictation: handing off to superwhisper failed" : "dictation: handing off to superwhisper failed: \(error)")
     }
     if previousMode != nil { _ = await recoverSuperwhisperMode(target: target) }
     guard launched else { return false }
@@ -875,7 +875,7 @@ final class Listener {
             let transcript: Transcript
             let began = Date()
             do { transcript = try await transcribe(u, locale: Locale(identifier: config.cfg.locale ?? "ja_JP")) } catch {
-                log("transcribe failed: \(error)")
+                log(config.cfg.dictation?.noWakeWord?.enabled == true ? "transcribe failed" : "transcribe failed: \(error)")
                 // Over-cap head that timed out / failed STT: same trap as empty/no-wake; lift the floor (Windows RebaseFloor).
                 if isHead { rebaseFloorAfterNoWake(&seg) }
                 continue
