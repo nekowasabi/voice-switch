@@ -53,7 +53,35 @@ public static class TraySettings
             return false;
         }
 
-        SystemSounds.Asterisk.Play();
+        Chime.Value.Play();
         return true;
     }
+
+    // Soft single A5 "pop" synthesized in memory: reads as "heard you" without the system error-ish beeps, and needs no file on disk.
+    private static readonly Lazy<SoundPlayer> Chime = new(() =>
+    {
+        const int rate = 16000;
+        var notes = new[] { 880.0 };
+        const int noteSamples = rate * 120 / 1000;
+        var pcm = new short[noteSamples * notes.Length];
+        for (var i = 0; i < pcm.Length; i++)
+        {
+            var n = i / noteSamples;
+            var t = i % noteSamples;
+            var env = Math.Min(1.0, t / 80.0) * Math.Pow(1.0 - (double)t / noteSamples, 3);
+            pcm[i] = (short)(Math.Sin(2 * Math.PI * notes[n] * i / rate) * env * 9000);
+        }
+
+        var ms = new MemoryStream();
+        using (var w = new BinaryWriter(ms, System.Text.Encoding.ASCII, leaveOpen: true))
+        {
+            w.Write("RIFF"u8.ToArray()); w.Write(36 + pcm.Length * 2); w.Write("WAVEfmt "u8.ToArray());
+            w.Write(16); w.Write((short)1); w.Write((short)1); w.Write(rate); w.Write(rate * 2); w.Write((short)2); w.Write((short)16);
+            w.Write("data"u8.ToArray()); w.Write(pcm.Length * 2);
+            foreach (var x in pcm) w.Write(x);
+        }
+
+        ms.Position = 0;
+        return new SoundPlayer(ms);
+    });
 }
