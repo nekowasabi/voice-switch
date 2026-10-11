@@ -48,7 +48,7 @@ public static class TrayHost
                         hud.Show(phase);
                         hook.PhaseChanged(phase);
                     }),
-                    PlayWakeSound: TraySettings.PlayWakeSound,
+                    PlayStopSound: TraySettings.PlayStopSound,
                     ForegroundWindow: WindowFocus.Foreground,
                     RestoreFocus: target => hud.Post(() => WindowFocus.RestoreIfSuperwhisperForeground(target)),
                     Hotkeys: hotkeys,

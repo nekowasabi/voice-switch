@@ -101,7 +101,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation hotkey finish while waiting without speech is ignored", () => Check(DictationHotkeyFinishWhileWaitingIsIgnored())),
     ("dictation hotkey finish after speech hands off before the body is recognized", () => Check(DictationHotkeyFinishAfterSpeechHandsOffBeforeBody())),
     ("dictation hotkeys disarm when the runtime stops mid-dictation", () => Check(DictationHotkeysDisarmWhenRuntimeStopsMidDictation())),
-    ("dictation wake sound deafens the VAD for 600 ms", () => Check(DictationWakeSoundDeafensVad())),
+    ("dictation stop sound rings once on stop and not on a lone wake", () => Check(DictationStopSoundRingsOnStopOnly())),
     ("dictation WinMM native layout and callback message", () => Check(DictationWinMmNativeLayoutAndInputDataMessage())),
     ("dictation capture follows a pinned microphone only while it is connected", () => Check(DictationCaptureFollowsPinnedMicrophoneWhileConnected())),
     ("dictation capture lists input devices and the default on Windows", DictationCaptureListsInputDevicesOnWindows),
@@ -2567,42 +2567,19 @@ static bool DictationHotkeysDisarmWhenRuntimeStopsMidDictation()
         && !hotkeys.OnKey(0x20, KeyMods.Control, down: true, nowMs: 0);
 }
 
-static bool DictationWakeSoundDeafensVad()
+static bool DictationStopSoundRingsOnStopOnly()
 {
-    // Wake, 12 loud frames inside the 600 ms window after the wake is recognized, then a body after the window.
-    var frames = new List<PcmFrame>();
-    AddFrames(frames, 3, loud: false);
-    AddFrames(frames, 12, loud: true);
-    AddFrames(frames, 12, loud: false);
-    AddFrames(frames, 12, loud: true);
-    AddFrames(frames, 12, loud: false);
-    AddFrames(frames, 12, loud: true);
-    AddFrames(frames, 12, loud: false);
-    (int Requests, long BodyStart, int WakeSounds, List<DictationPhase> Phases) Run(bool sound)
-    {
-        var observer = new PhaseRecorder { WakeSound = sound };
-        var recognizer = Recognizing("wake", "body");
-        var handoff = new RecordingDictationHandoff();
-        var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 5000), new FixturePcmCapture(frames, [24, 28, 52]), recognizer, handoff, dryRun: true, observer);
-        if (RunWithTimeout(runtime, TimeSpan.FromSeconds(5)) != 0)
-        {
-            throw new InvalidOperationException("runtime failed");
-        }
+    var observer = new PhaseRecorder { StopSound = true };
+    var handoff = new RecordingDictationHandoff();
+    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 5000), new FixturePcmCapture(ThreeUtteranceFrames(), [24, 28]), Recognizing("wake", "body", "stop"), handoff, dryRun: true, observer);
+    var stopped = RunWithTimeout(runtime, TimeSpan.FromSeconds(5)) == 0 && observer.StopSounds == 1 && handoff.Submissions.Single().Reason == FinishReason.StandaloneStop;
 
-        return (recognizer.Requests.Count, handoff.Submissions.Single().Range.Start, observer.WakeSounds, observer.Phases);
-    }
-
-    var deaf = Run(sound: true);
-    var hearing = Run(sound: false);
-    // Bodies start two preroll frames before the first loud frame (51 and 27 respectively).
-    return deaf.Requests == 2
-        && deaf.BodyStart == 49 * Segmenter.FrameLength
-        && deaf.WakeSounds == 1
-        && deaf.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Recording, DictationPhase.Idle])
-        && hearing.Requests == 3
-        && hearing.BodyStart == 25 * Segmenter.FrameLength
-        && hearing.WakeSounds == 1
-        && hearing.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Recording, DictationPhase.Idle]);
+    // A lone wake that times out never reaches a stop, so it stays silent.
+    var silent = new PhaseRecorder { StopSound = true };
+    var wakeOnly = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 5000), new FixturePcmCapture(TwoUtteranceFrames(), [24]), Recognizing("wake"), new RecordingDictationHandoff(), dryRun: true, silent);
+    using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(700));
+    wakeOnly.RunAsync(cts.Token).GetAwaiter().GetResult();
+    return stopped && silent.StopSounds == 0;
 }
 
 static RecognizedUtterance Utterance(RecognitionRequest request, string kind) => kind switch

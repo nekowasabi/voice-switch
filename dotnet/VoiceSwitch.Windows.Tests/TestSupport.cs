@@ -355,8 +355,8 @@ sealed class PhaseRecorder : IDictationRuntimeObserver
     }
 
     public List<DictationPhase> Phases { get; } = new();
-    public bool WakeSound { get; init; }
-    public int WakeSounds { get; private set; }
+    public bool StopSound { get; init; }
+    public int StopSounds { get; private set; }
 
     public void PhaseChanged(DictationPhase phase)
     {
@@ -364,10 +364,10 @@ sealed class PhaseRecorder : IDictationRuntimeObserver
         onPhase?.Invoke(phase);
     }
 
-    public bool PlayWakeSound()
+    public bool PlayStopSound()
     {
-        WakeSounds++;
-        return WakeSound;
+        StopSounds++;
+        return StopSound;
     }
 
     public void RecognitionQueued(RecognitionRequest request, int pending, long retainedStart, long retainedEnd) { }

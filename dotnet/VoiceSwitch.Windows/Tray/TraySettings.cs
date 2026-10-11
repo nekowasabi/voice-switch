@@ -46,7 +46,7 @@ public static class TraySettings
     }
 
     // Any thread. True when a sound was played, so the runtime can ignore the microphone while it rings.
-    public static bool PlayWakeSound()
+    public static bool PlayStopSound()
     {
         if (!ConfirmationSound)
         {

@@ -5,7 +5,7 @@ namespace VoiceSwitch.Windows.Tray;
 // What the tray lends the dictation runtime, as plain delegates so this factory stays free of WinForms types.
 public sealed record TrayRuntimeHooks(
     Action<DictationPhase>? OnPhase = null,
-    Func<bool>? PlayWakeSound = null,
+    Func<bool>? PlayStopSound = null,
     Func<nint>? ForegroundWindow = null,
     Action<nint>? RestoreFocus = null,
     DictationHotkeys? Hotkeys = null,
@@ -123,7 +123,7 @@ public sealed class ProductionRuntimeFactory(string configPath, TrayRuntimeHooks
         private RecognitionProcessIdentity? liveChild;
 
         public void PhaseChanged(DictationPhase phase) => hooks.OnPhase?.Invoke(phase);
-        public bool PlayWakeSound() => hooks.PlayWakeSound?.Invoke() ?? false;
+        public bool PlayStopSound() => hooks.PlayStopSound?.Invoke() ?? false;
 
         public RecognitionProcessIdentity? OwnedChild
         {

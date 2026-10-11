@@ -36,8 +36,8 @@ public interface IDictationRuntimeObserver
     void NoiseProcessorCompleted(NoiseProcessorStatus status);
     // Called on the runtime thread after a frame or recognition batch changes the phase; Ended -> Idle is not reported.
     void PhaseChanged(DictationPhase phase) { }
-    // Lone wake word only. Return true when a sound was played so the runtime ignores the microphone briefly.
-    bool PlayWakeSound() => false;
+    // A stop word or finish key just ended the recording, before the handoff starts. Return true when a sound was played so the runtime ignores the microphone briefly.
+    bool PlayStopSound() => false;
 }
 
 public sealed class WindowsDictationRuntime
@@ -759,12 +759,6 @@ public sealed class WindowsDictationRuntime
             return;
         }
 
-        // Only a lone wake word: in a one-breath dictation the user is already talking and the sound would be recorded.
-        if (phase == DictationPhase.Waiting && observer?.PlayWakeSound() == true)
-        {
-            deafUntil = analysisStore.Next + MsToSamples(600);
-        }
-
         shownPhase = phase;
         Log.Info($"dictation phase: {phase}");
         observer?.PhaseChanged(phase);
@@ -842,12 +836,19 @@ public sealed class WindowsDictationRuntime
     // and the loop keeps listening while Superwhisper transcribes.
     private void Submit(DictationAudio audio)
     {
-        endedByUser |= audio.Reason is FinishReason.StandaloneStop or FinishReason.FinishCommand;
+        var stopped = audio.Reason is FinishReason.StandaloneStop or FinishReason.FinishCommand;
+        endedByUser |= stopped;
         audio = audio with { Target = target };
         if (inflight is { IsCompleted: false })
         {
             Log.Info($"dictation dropped: previous one still in flight reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End}");
             return;
+        }
+
+        // The user wants to know the recording is over, so ring before Superwhisper is launched.
+        if (stopped && observer?.PlayStopSound() == true)
+        {
+            deafUntil = analysisStore.Next + MsToSamples(600);
         }
 
         inflight = RunHandoffAsync(audio);
