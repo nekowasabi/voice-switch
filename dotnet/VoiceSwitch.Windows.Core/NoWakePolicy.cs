@@ -22,11 +22,14 @@ public static class NoWakePolicy
             || recognition.FromStopGrammar || string.IsNullOrWhiteSpace(recognition.Text)) return null;
         var reading = string.Concat(recognition.Lexemes.Select(run =>
             TextMatching.NormalizeReading(string.IsNullOrEmpty(run.Reading) ? run.Text : run.Reading)));
-        foreach (var wake in wakes.Where(wake => wake.Reading.Length is >= 5 and <= 9).OrderByDescending(wake => wake.Reading.Length))
+        if (!KanaOnly(reading)) return null;
+        foreach (var wake in wakes.Where(wake => wake.Reading.Length is >= 5 and <= 9 && KanaOnly(wake.Reading)).OrderByDescending(wake => wake.Reading.Length))
         {
             if (TextMatching.EditDistance(reading, wake.Reading) == 2)
                 return new WakePrefix(recognition.Source.End, null, wake, 2);
         }
         return null;
     }
+
+    private static bool KanaOnly(string text) => text.Length > 0 && text.All(character => character is >= 'ぁ' and <= 'ゖ' or 'ー');
 }

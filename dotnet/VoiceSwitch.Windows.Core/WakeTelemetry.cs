@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using System.Text.Json.Serialization;
 
 namespace VoiceSwitch.Windows.Core;
 
@@ -25,28 +26,38 @@ public sealed record WakeOrigin(WakeRule Rule, double? InputIdleSeconds)
 
 public sealed class WakeTelemetrySummary
 {
-    private static readonly Regex Rule = new(@"\brule=(strict|relaxed_d2|followup|auto_b)\b");
-    private static readonly Regex Idle = new(@"\binputIdleSeconds=(-?\d+(?:\.\d+)?)\b");
+    private static readonly Regex Fields = new(@"\brule=(strict|relaxed_d2|followup|auto_b)\s+inputIdleSeconds=(-?[0-9]+(?:\.[0-9]+)?)(?=\s|$)");
+    [JsonPropertyName("rules")]
     public Dictionary<string, int> Rules { get; } = new();
+    [JsonPropertyName("contexts")]
     public Dictionary<string, int> Contexts { get; } = new();
+    [JsonPropertyName("miss_contexts")]
+    public Dictionary<string, int> MissContexts { get; } = new();
+    [JsonPropertyName("missing_fields")]
     public int MissingFields { get; private set; }
+    [JsonPropertyName("miss_labels")]
     public int MissLabels { get; private set; }
 
     public void Observe(string line)
     {
-        if (line.Contains("wake label: MISS ", StringComparison.Ordinal)) MissLabels++;
-        if (!line.Contains("recognition: complete ", StringComparison.Ordinal)) return;
-        var rule = Rule.Match(line);
-        var idle = Idle.Match(line);
-        if (!rule.Success || !idle.Success)
+        var miss = line.Contains("wake label: MISS ", StringComparison.Ordinal);
+        if (miss) MissLabels++;
+        if (!miss && !line.Contains("recognition: complete ", StringComparison.Ordinal)) return;
+        var fields = Fields.Matches(line).LastOrDefault();
+        if (fields is null)
         {
-            MissingFields++;
+            if (!miss) MissingFields++;
             return;
         }
-        var name = rule.Groups[1].Value;
-        var seconds = double.Parse(idle.Groups[1].Value, CultureInfo.InvariantCulture);
-        Rules[name] = Rules.GetValueOrDefault(name) + 1;
+        var name = fields.Groups[1].Value;
+        var seconds = double.Parse(fields.Groups[2].Value, CultureInfo.InvariantCulture);
         var context = name + ":" + WakeOrigin.Context(seconds);
+        if (miss)
+        {
+            MissContexts[context] = MissContexts.GetValueOrDefault(context) + 1;
+            return;
+        }
+        Rules[name] = Rules.GetValueOrDefault(name) + 1;
         Contexts[context] = Contexts.GetValueOrDefault(context) + 1;
     }
 }

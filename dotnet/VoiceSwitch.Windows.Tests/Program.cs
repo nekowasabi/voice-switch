@@ -16,6 +16,11 @@ if (args is ["--child", var mode])
 
 var tests = new (string Name, Func<TestOutcome> Test)[]
 {
+    ("controlled handoff ignores results already present before launch", () => Check(NoWakeTests.FreshResultsOnly())),
+    ("overlapping handoffs restore modes serially and suppress duplicate delivery", () => Check(NoWakeTests.OverlappingHandoffs())),
+    ("mode recovery survives restart and preserves a user mode change", () => Check(NoWakeTests.ModeRecovery())),
+    ("controlled mode failure uses local history before guarded manual paste", () => Check(NoWakeTests.ControlledMode())),
+    ("clearing history invalidates pending transcription", () => Check(NoWakeTests.ClearPendingHistory())),
     ("automatic wake gates and immutable provenance", () => Check(NoWakeTests.WakeRules())),
     ("automatic runtime repeats local sessions and fails closed on idle or microphone uncertainty", () => Check(NoWakeTests.AutomaticRuntime())),
     ("manual paste requires every safety observation", () => Check(NoWakeTests.PasteGuards())),
@@ -3475,16 +3480,16 @@ static bool DictationHandoffRoutesResultText()
     };
     var routed = new List<string>();
     var recording = new RegisteredSuperwhisperHandoff(root, recordings, start, delay: _ => Task.CompletedTask,
-        onTranscribed: text => { routed.Add(text); return Task.FromResult(RouteResult.Sent); });
+        onTranscribed: text => { routed.Add(text); return Task.FromResult(RouteResult.Sent); }, requireControlledMode: false);
     var throwing = new RegisteredSuperwhisperHandoff(root, recordings, start, delay: _ => Task.CompletedTask,
-        onTranscribed: _ => throw new InvalidOperationException("wsl.exe is missing"));
+        onTranscribed: _ => throw new InvalidOperationException("wsl.exe is missing"), requireControlledMode: false);
     var audio = new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2));
     HandoffResult? first = null;
     HandoffResult? second = null;
     var (_, output) = CaptureConsole(() =>
     {
         first = SubmitHandoff(recording, audio);
-        second = SubmitHandoff(throwing, audio);
+        second = SubmitHandoff(throwing, audio with { SessionId = Guid.NewGuid() });
         return 0;
     });
     return routed.SequenceEqual(["dotfiles で変更をコミットして"])
@@ -3835,7 +3840,7 @@ static bool DictationHandoffActionOpensUrl()
             superwhisperMode: handoffMode,
             paste: (_, _) => { pastes++; return true; },
             preferencesPath: preferences,
-            modesDir: modes);
+            modesDir: modes, requireControlledMode: false);
         var action = new WakeAction("progress", ["プログレス"], "alter://action/1?input=old&k=v", actionMode);
         var result = SubmitHandoff(handoff, new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2), Target: 0x42, Action: action));
         return result.Status == HandoffStatus.Transcribed ? [.. launches] : ["status " + result.Status];
@@ -3885,7 +3890,7 @@ static bool DictationHandoffSwitchesModeBeforeLaunchAndRestoresAfter()
         onTranscribed: _ => Task.FromResult(RouteResult.Sent),
         superwhisperMode: "voice_switch",
         preferencesPath: preferences,
-        modesDir: modes);
+        modesDir: modes, requireControlledMode: false);
     var result = SubmitHandoff(handoff, new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2), Target: 0x42));
     return result.Status == HandoffStatus.Transcribed
         && launches.Count == 3
@@ -3919,7 +3924,7 @@ static bool DictationHandoffPastesOnlyWhenModeRequestedAndNotRouted()
             superwhisperMode: mode,
             paste: (text, target) => { pastes.Add((text, target)); return true; },
             preferencesPath: preferences,
-            modesDir: modes);
+            modesDir: modes, requireControlledMode: false);
         HandoffResult? result = null;
         (_, output) = CaptureConsole(() =>
         {
@@ -3988,7 +3993,7 @@ static bool DictationHandoffDoesNotPasteWhenModeSwitchFails()
         superwhisperMode: "voice_switch",
         paste: (text, target) => { pastes.Add((text, target)); return true; },
         preferencesPath: preferences,
-        modesDir: modes);
+        modesDir: modes, requireControlledMode: false);
     HandoffResult? result = null;
     var (_, output) = CaptureConsole(() =>
     {
@@ -4040,7 +4045,7 @@ static bool DictationHandoffDoesNotPasteFullTextAfterNoBodySkip()
         superwhisperMode: "voice_switch",
         paste: (text, _) => { pastes.Add(text); return true; },
         preferencesPath: preferences,
-        modesDir: modes);
+        modesDir: modes, requireControlledMode: false);
     HandoffResult? result = null;
     var (_, output) = CaptureConsole(() =>
     {
@@ -4088,7 +4093,7 @@ static bool DictationHandoffPastesExtractedBodyWhenSendKeysFailed()
         superwhisperMode: "voice_switch",
         paste: (text, _) => { pastes.Add(text); return true; },
         preferencesPath: preferences,
-        modesDir: modes);
+        modesDir: modes, requireControlledMode: false);
     HandoffResult? result = null;
     var (_, output) = CaptureConsole(() =>
     {
@@ -4138,7 +4143,7 @@ static bool DictationHandoffPastesUnquotedResolvedBodyWhenSendKeysFailed()
         superwhisperMode: "voice_switch",
         paste: (text, _) => { pastes.Add(text); return true; },
         preferencesPath: preferences,
-        modesDir: modes);
+        modesDir: modes, requireControlledMode: false);
     HandoffResult? result = null;
     var (_, output) = CaptureConsole(() =>
     {
@@ -4155,7 +4160,7 @@ static bool DictationHandoffPastesUnquotedResolvedBodyWhenSendKeysFailed()
 }
 
 static RegisteredSuperwhisperHandoff FakeSuperwhisper(string root, string recordings, Func<ProcessStartInfo, Process?> start, Action<nint>? restoreFocus = null) =>
-    new(root, recordings, start, restoreFocus: restoreFocus, delay: _ => Task.CompletedTask);
+    new(root, recordings, start, restoreFocus: restoreFocus, delay: _ => Task.CompletedTask, requireControlledMode: false);
 
 static void WriteSuperwhisperMeta(string recordings, string run, string json)
 {

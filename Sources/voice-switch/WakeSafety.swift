@@ -24,6 +24,8 @@ final class DictationHistory {
     static let shared = DictationHistory()
     private let lock = NSLock()
     private var entries: [DictationHistoryEntry] = []
+    private var currentGeneration = 0
+    var generation: Int { lock.lock(); defer { lock.unlock() }; return currentGeneration }
     private let now: () -> Date
     private let capacity: Int
     private let retention: TimeInterval
@@ -37,10 +39,11 @@ final class DictationHistory {
     }
 
     @discardableResult
-    func add(id: UUID, text: String, origin: WakeOrigin) -> Bool {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+    func add(id: UUID, text: String, origin: WakeOrigin, expectedGeneration: Int? = nil) -> Bool {
+        guard text.utf16.count <= 100_000, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         lock.lock()
         prune()
+        guard expectedGeneration == nil || expectedGeneration == currentGeneration else { lock.unlock(); return false }
         guard !entries.contains(where: { $0.id == id }) else { lock.unlock(); return false }
         entries.append(DictationHistoryEntry(id: id, text: text, origin: origin, createdAt: now()))
         if entries.count > capacity { entries.removeFirst(entries.count - capacity) }
@@ -66,11 +69,15 @@ final class DictationHistory {
     func clear() {
         lock.lock()
         entries.removeAll()
+        currentGeneration += 1
         lock.unlock()
         onChange?()
     }
 
-    private func prune() { entries.removeAll { now().timeIntervalSince($0.createdAt) >= retention } }
+    private func prune() {
+        let instant = now()
+        entries.removeAll { instant < $0.createdAt || instant.timeIntervalSince($0.createdAt) >= retention }
+    }
 }
 
 struct PasteSafety {
@@ -104,7 +111,11 @@ enum NoWakePolicy {
 
     static func relaxedWake(_ text: String, readings: [String]) -> Bool {
         let heard = normalizedReading(text)
-        return readings.map(normalizedReading).contains { (5...9).contains($0.count) && editDistance(heard, $0) == 2 }
+        func kanaOnly(_ value: String) -> Bool {
+            !value.isEmpty && value.unicodeScalars.allSatisfy { (0x3041...0x3096).contains($0.value) || $0.value == 0x30FC }
+        }
+        guard kanaOnly(heard) else { return false }
+        return readings.map(normalizedReading).contains { (5...9).contains($0.count) && kanaOnly($0) && editDistance(heard, $0) == 2 }
     }
 
     static func normalizedReading(_ text: String) -> String {
@@ -124,3 +135,14 @@ enum NoWakePolicy {
         return previous[b.count]
     }
 }
+
+struct ModeRestore: Codable {
+    let previous: String
+    let temporary: String
+    var valid: Bool { !previous.isEmpty && !temporary.isEmpty && previous != temporary }
+    func decide(_ active: String?) -> ModeRecovery {
+        guard valid, let active else { return .unknown }
+        return active == temporary ? .restore : .clear
+    }
+}
+enum ModeRecovery { case unknown, restore, clear }

@@ -39,3 +39,19 @@ Set individual fields in `dictation.noWakeWord` after native validation. `follow
 Automatic recording keeps the configured preroll and starts only after the existing minimum speech duration. It has no near-voice score. A strict wake word spoken after an automatic recording starts does not grant paste permission. A follow-up recording does not renew the window indefinitely. Unknown idle time and excluded applications block the start. Mac additionally requires a nonempty `dictation.superwhisperMode`.
 
 Ctrl+Shift+F10 starts a manual recording while the listener is running. Repeating it inside an automatic session does not upgrade the session. The recording still finishes through the existing stop word, silence, or finish command.
+
+## Controlled handoff and recovery
+
+Production manual handoff now requires a mode whose JSON explicitly has `autoPaste: false`, and a confirmed switch to that mode. Missing or ambiguous metadata falls back to local transcription and history. A safe manual paste can then run from that history entry. This changes legacy configurations that previously let Superwhisper paste without checks. Configure a dedicated no-auto-paste mode to keep the Superwhisper path.
+
+Mode switches write a recovery record before the switch. Startup and the next handoff check it. If the active mode is still the temporary mode, the app requests the previous mode and verifies it. If the user selected another mode, recovery preserves that choice. Unknown state blocks external handoff and uses local history. Both platforms serialize in-process handoffs and take a filesystem lock across processes. Native crash, delayed URL handling, and Superwhisper mode-schema tests remain required.
+
+Clear all invalidates pending local transcription results. Pause invalidates queued Mac capture frames and in-flight local results by capture generation; Windows cancels its local handoff task. Neither operation can cancel an already-dispatched manual Superwhisper operation.
+
+## Reproduce VM checks
+
+With .NET 8 and Swift 6 on PATH, run `scripts/verify_no_wake_word.sh`. It builds the Windows app and native probe projects, runs the C# behavior suite, pure Swift parity and URL-action suites, evaluation tests, and a Mac-target syntax parse. It does not open a microphone or run the GUI. The Mac parse checks syntax only. Use the separate native checklist for a real macOS build and Windows runtime tests.
+
+Controlled handoff ignores every Superwhisper recording directory that existed before dispatch. If Superwhisper reuses a directory rather than creating a fresh one, the result times out rather than pasting an old transcript. This conservative behavior needs a native check against the installed Superwhisper version.
+
+Macrowhisper preparation remains available for command-mode actions. Controlled dictation does not run it, because a hook could change the verified no-auto-paste mode before file intake.

@@ -211,3 +211,18 @@ $build='C:\temp\voice-switch-validation'
 Windows command mode dispatches configured custom stop commands only when `stopCommand` is an operator-supplied idempotent stop command. Missing `stopCommand` and the older Superwhisper record toggle sample are suppressed. That is distinct from the dictation runtime, which has session-gated stop handling. See [Windows feature parity audit](./docs/windows-feature-parity.md), [Windows DSP evaluation method](./docs/windows-dsp-evaluation-method.md), and [Windows DSP evaluation results 2026-10-03](./docs/windows-dsp-evaluation-results-20261003.md) for the current limits.
 
 Do not run CLI and tray concurrent capture. The default sample now runs live microphone capture and Superwhisper file intake, but neither has been confirmed by a hand test on Windows yet. The external app path may involve clipboard, selected text, active-application context, and focus behavior, so future validation must check those boundaries directly. A `Transcribed` handoff means Superwhisper wrote a result, not that the paste landed. A `NoResult` WAV is kept for manual recovery until the 10 minute sweep.
+
+
+## No-wake-word recording (experimental)
+
+`dictation.noWakeWord` provides independent `followup`, `autoIdle`, and `relaxedReadingDistance2` switches. All default to false. Mac also requires `dictation.superwhisperMode`.
+
+Automatically started recordings use local transcription and in-memory history only. They never reach Superwhisper, Jev, tmux, action URLs, or automatic paste. History keeps at most 50 entries for 30 minutes and disappears on exit. Only an explicit selection copies text.
+
+- Ctrl+Shift+F10 starts a manual recording
+- Ctrl+Shift+F9 or a HUD click opens history
+- On Windows, Ctrl+Shift+F8 labels the latest missed recognition
+
+Manual recording also falls back to local history unless the Superwhisper mode explicitly disables auto-paste. Unknown field, IME, focus, or clipboard safety prevents automatic paste. Mac conservatively declines automatic paste with an input-method source, including Japanese IME.
+
+Mac native build and runtime are unverified. Audio, permission, UI, and real-world accuracy checks are still required. Read the [implementation and settings](docs/no-wake-word/implementation.md), [native checklist](docs/no-wake-word/native-validation.md), and [acceptance gates](docs/wake-acceptance.md) before enabling this feature.

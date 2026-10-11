@@ -90,7 +90,7 @@ def main() -> int:
         "enterSuperwhisperMode(cfg.superwhisperMode",
         "decideDictationDelivery(modeRequested:",
         "pasteDictation(payload, target:",
-        "superwhisper mode restored:",
+        "superwhisper mode restored from recovery state",
         "guard readSuperwhisperActiveMode() == key else",
     ):
         check(needle in mac, f"missing in MacApp.swift: {needle}")

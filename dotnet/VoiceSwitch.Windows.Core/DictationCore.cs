@@ -570,7 +570,8 @@ public sealed class DictationSession
                 }
             }
 
-            if (wake is null && config.Dictation?.NoWakeWord?.RelaxedReadingDistance2 == true)
+            if (wake is null && config.Dictation?.NoWakeWord?.RelaxedReadingDistance2 == true
+                && origin?.InputIdleSeconds is >= 0 && double.IsFinite(origin.InputIdleSeconds.Value))
             {
                 wake = NoWakePolicy.RelaxedWake(recognition, wakes);
                 if (wake is not null) origin = new WakeOrigin(WakeRule.RelaxedD2, origin?.InputIdleSeconds);
@@ -626,7 +627,8 @@ public sealed class DictationSession
 
     public bool StartAutomatic(SampleRange initialAudio, WakeOrigin origin, long now)
     {
-        if (!origin.IsAutomatic || terminal || IsActive || IsAwaitingBody || config.Dictation?.NoWakeWord is not { Valid: true } options) return false;
+        if (!origin.IsAutomatic || origin.InputIdleSeconds is null or < 0 || !double.IsFinite(origin.InputIdleSeconds.Value)
+            || terminal || IsActive || IsAwaitingBody || config.Dictation?.NoWakeWord is not { Valid: true } options) return false;
         if (!(origin.Rule switch { WakeRule.AutoB => options.AutoIdle, WakeRule.Followup => options.Followup,
             WakeRule.RelaxedD2 => options.RelaxedReadingDistance2, _ => false })) return false;
         sessionId = Guid.NewGuid();

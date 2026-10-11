@@ -16,7 +16,7 @@ public sealed class ProductionRuntimeFactory(string configPath, TrayRuntimeHooks
 {
     private readonly TrayRuntimeHooks hooks = hooks ?? new TrayRuntimeHooks();
 
-    public Task<ITrayRuntimeRun> StartAsync(VoiceSwitchConfig config, TrayInputSource source, CancellationToken cancellation)
+    public async Task<ITrayRuntimeRun> StartAsync(VoiceSwitchConfig config, TrayInputSource source, CancellationToken cancellation)
     {
         cancellation.ThrowIfCancellationRequested();
         ValidateSource(config, source);
@@ -27,26 +27,28 @@ public sealed class ProductionRuntimeFactory(string configPath, TrayRuntimeHooks
             var commandCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
             var resident = new ResidentRuntime(configPath, config, null, SpeechPowerShell.Start, CommandRunner.Run, _ => { }, false, commandCancellation.Token);
             var commandCompletion = Task.Factory.StartNew(resident.Run, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
-            return Task.FromResult<ITrayRuntimeRun>(new ProductionRuntimeRun(commandCompletion, commandCancellation, null));
+            return new ProductionRuntimeRun(commandCompletion, commandCancellation, null);
         }
 
-        IPcmCapture capture = source.WavPath is null
-            ? WinMmCapture.Open(hooks.MicDevice?.Invoke())
-            : new WavPcmCapture(source.WavPath, paced: true);
         IDictationHandoff handoff = source.RecordOnlyDir is null
             ? new RegisteredSuperwhisperHandoff(RegisteredSuperwhisperHandoff.DefaultRoot(), WindowsPaths.SuperwhisperRecordingsPath(config.Dictation),
                 restoreFocus: hooks.RestoreFocus, onTranscribed: TmuxPaneRouter.RouteAsync,
-                superwhisperMode: config.Dictation.SuperwhisperMode, paste: WindowFocus.Paste)
+                superwhisperMode: config.Dictation.SuperwhisperMode, paste: WindowFocus.Paste, requireControlledMode: true)
             : new LocalRecordingHandoff(source.RecordOnlyDir, source.WavPath);
 
-        if (source.RecordOnlyDir is null) handoff = LocalHistoryHandoff.Wrap(handoff, config);
+        if (handoff is RegisteredSuperwhisperHandoff registered && !await registered.RecoverAsync(cancellation))
+            Log.Info("superwhisper mode recovery pending; manual dictation will use local history");
+        IPcmCapture capture = source.WavPath is null
+            ? WinMmCapture.Open(hooks.MicDevice?.Invoke())
+            : new WavPcmCapture(source.WavPath, paced: true);
+        if (source.RecordOnlyDir is null) handoff = LocalHistoryHandoff.Wrap(handoff, config, WindowFocus.Paste);
         var observer = new TrayRuntimeObserver(hooks);
         var recognizer = new SpeechPowerShellDictationRecognizer(config, observer.RecordSapiTiming);
         var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         var runtime = new WindowsDictationRuntime(config, capture, recognizer, handoff, dryRun: false, observer, hooks.ForegroundWindow, hooks.Hotkeys,
             reloadConfig: new ConfigFile(configPath).ReloadIfChanged);
         var completion = Task.Run(() => runtime.RunAsync(linked.Token), CancellationToken.None);
-        return Task.FromResult<ITrayRuntimeRun>(new ProductionRuntimeRun(completion, linked, observer));
+        return new ProductionRuntimeRun(completion, linked, observer);
     }
 
     private static void ValidateSource(VoiceSwitchConfig config, TrayInputSource source)

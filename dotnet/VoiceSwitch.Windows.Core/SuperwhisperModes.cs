@@ -43,6 +43,22 @@ public static class SuperwhisperModes
             ?? modes.FirstOrDefault(mode => string.Equals(mode.Name, wanted, StringComparison.OrdinalIgnoreCase)).Key;
     }
 
+    public static bool HasAutoPasteDisabled(string? wanted, IEnumerable<string> modeJsons)
+    {
+        if (string.IsNullOrWhiteSpace(wanted)) return false;
+        var jsons = modeJsons.ToArray();
+        var key = ResolveKey(wanted, jsons);
+        if (key is null) return false;
+        var matches = jsons.Where(json => Field(json, "key") == key).ToArray();
+        if (matches.Length != 1) return false;
+        try
+        {
+            using var document = JsonDocument.Parse(matches[0]);
+            return document.RootElement.TryGetProperty("autoPaste", out var value) && value.ValueKind == JsonValueKind.False;
+        }
+        catch (JsonException) { return false; }
+    }
+
     public static string? ActiveMode(string? preferencesJson) =>
         preferencesJson is null ? null : Field(preferencesJson, "activeMode");
 

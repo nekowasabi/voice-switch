@@ -467,7 +467,7 @@ def check_mac_superwhisper_mode_handoff(result: Result, repo: SourceTree) -> Non
         [
             "enterSuperwhisperMode(cfg.superwhisperMode, target: target)",
             "superwhisper://mode?key=",
-            "superwhisper mode restored:",
+            "superwhisper mode restored from recovery state",
             "let route = await routeDictation(result)",
             "decideDictationDelivery(modeRequested: modeRequested, route: route.disposition)",
             "pasteDictation(payload, target: target)",

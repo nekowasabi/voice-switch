@@ -9,6 +9,8 @@ public sealed class DictationHistory
     private readonly List<DictationHistoryEntry> entries = new();
     private readonly Func<DateTimeOffset> now;
     private readonly int capacity;
+    private long generation;
+    public long Generation { get { lock (sync) return generation; } }
     private readonly TimeSpan retention;
     public event Action? Changed;
 
@@ -21,12 +23,13 @@ public sealed class DictationHistory
         this.capacity = capacity;
     }
 
-    public bool Add(Guid id, string text, WakeOrigin origin)
+    public bool Add(Guid id, string text, WakeOrigin origin, long? expectedGeneration = null)
     {
-        if (string.IsNullOrWhiteSpace(text)) return false;
+        if (string.IsNullOrWhiteSpace(text) || text.Length > 100_000) return false;
         lock (sync)
         {
             Prune();
+            if (expectedGeneration is not null && expectedGeneration != generation) return false;
             if (entries.Any(entry => entry.Id == id)) return false;
             entries.Add(new(id, text, origin, now()));
             while (entries.Count > capacity) entries.RemoveAt(0);
@@ -47,9 +50,13 @@ public sealed class DictationHistory
 
     public void Clear()
     {
-        lock (sync) entries.Clear();
+        lock (sync) { entries.Clear(); generation++; }
         Changed?.Invoke();
     }
 
-    private void Prune() => entries.RemoveAll(entry => now() - entry.CreatedAt >= retention);
+    private void Prune()
+    {
+        var instant = now();
+        entries.RemoveAll(entry => instant < entry.CreatedAt || instant - entry.CreatedAt >= retention);
+    }
 }

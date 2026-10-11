@@ -25,7 +25,16 @@ public sealed class DictationHud : Form
     };
     private readonly System.Windows.Forms.Timer hide = new() { Interval = 1500 };
 
+    private DictationPhase phase = DictationPhase.Idle;
     public event Action? HistoryRequested;
+
+    public void HistoryAvailable()
+    {
+        if (phase is DictationPhase.Waiting or DictationPhase.Recording or DictationPhase.Followup
+            || DictationHistory.Shared.Snapshot().Count == 0) return;
+        Show(DictationPhase.Ended);
+        label.Text = "履歴に保存・クリック";
+    }
 
     public DictationHud()
     {
@@ -81,6 +90,7 @@ public sealed class DictationHud : Form
     // UI thread only.
     public void Show(DictationPhase phase)
     {
+        this.phase = phase;
         // A new phase replaces the pending auto-hide, like Mac's `shown` generation counter.
         hide.Stop();
         switch (phase)

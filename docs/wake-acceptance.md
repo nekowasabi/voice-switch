@@ -30,3 +30,11 @@ Before enabling automatic wake in daily use, complete `docs/no-wake-word/native-
 Press Ctrl+Shift+F8 within 10 seconds of a missed recognition in the tray app. The shortcut logs `wake label: MISS id=N rule=... inputIdleSeconds=...` once for that recognition. It uses RegisterHotKey, does not monitor arbitrary keys, and reports a registration conflict instead of stealing another application's shortcut. A MISS label marks intent only. It neither starts recording nor authorizes delivery.
 
 `inputIdleSeconds=-1` means unavailable. Old log lines remain readable and are counted in `missing_fields`. Do not count those as idle observations.
+
+## Evaluate a reviewed manifest
+
+Run `python3 scripts/wake_acceptance.py manifest.json --out report.json`. Exit 0 means the supplied labels meet the numeric gates. Exit 1 means failure. Exit 3 means insufficient evidence. A numeric pass does not replace native checks or a review of label quality.
+
+The manifest has `rules`, `negativeExposureHours`, `safetyIncidents`, and `attempts`. Rules are selected from `relaxed_d2`, `followup`, and `auto_b`. Exposure has `after_input` and `idle` hours. Every attempt has a unique `id`, a `context`, a human-reviewed boolean `intent`, the baseline boolean `strictWake`, and a `wakes` object with one boolean per candidate rule. No transcript or audio belongs in the manifest. Evaluate both contexts on the same paired exposure. Keep failed candidates disabled rather than changing the acceptance thresholds.
+
+An empty evaluation is intentionally inconclusive. The repository's synthetic test manifests test the evaluator, not real-world wake accuracy.

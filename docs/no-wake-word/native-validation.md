@@ -8,11 +8,11 @@ Status: Mac 未検証. Windows native runtime is also unverified. VM builds and 
 4. Inspect the configured Superwhisper transcription model and mode. Record local or cloud, whether auto-paste is disabled, and whether mode restoration survives a crash and overlapping handoffs.
 5. Test manual paste in a plain text editor, an active Japanese IME conversion, a password field, a rich clipboard, an empty clipboard, a changed clipboard, and a window that refuses focus. Verify no paste when a safety check fails and no clipboard loss.
 6. Test Pause, Resume, Reload, Quit, microphone loss, cancellation, repeated hotkeys, and a second wake while transcription is pending. Automatic results must never change a document, call Jev, or reach tmux.
-7. Test history expiry, maximum count, Clear all, repeated selection, and restart. Confirm only explicit selection changes the clipboard.
+7. Test history expiry, maximum count, Clear all during transcription, repeated selection, and restart. Pause while the Mac consumer awaits recognition, then resume; old queued frames and old local results must be discarded. Confirm automatic results change the clipboard only after explicit selection.
 8. Run paired strict and candidate sessions with reviewed intent and false-wake labels. Use the frozen acceptance gates in `docs/wake-acceptance.md`. Record hours of negative exposure separately from intended attempts.
 
 ## Conservative paste support
 
-Windows automatic paste currently accepts only a native `Edit` control with no password style and no active IMM composition. Browsers, custom controls, and rich clipboard formats fall back to history. Mac paste checks focused Accessibility role and subrole without reading the field's contents. It declines input-method sources, including Japanese IME, because the target's composition cannot be proven inactive without a reliable native observation. Select the history entry and paste yourself in those cases.
+After a manual start, Windows paste currently accepts only a native `Edit` control with no password style and no active IMM composition. Browsers, custom controls, and rich clipboard formats fall back to history. Mac paste checks focused Accessibility role and subrole without reading the field's contents. It declines input-method sources, including Japanese IME, because the target's composition cannot be proven inactive without a reliable native observation. Select the history entry and paste yourself in those cases.
 
 Ctrl+Shift+F9 opens history on both platforms. A HUD click also opens history. Windows requires selecting an entry and clicking Copy or pressing Enter. Mac has an explicit Copy button per entry. No history selection synthesizes a paste.

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -104,11 +105,22 @@ def iter_lines(path: Path, tail: Optional[int]) -> Iterable[str]:
         yield line.rstrip("\n")
 
 
+def wake_fields(line: str) -> tuple[str, str] | None:
+    matches = re.findall(r"\brule=(strict|relaxed_d2|followup|auto_b)\s+inputIdleSeconds=(-?[0-9]+(?:\.[0-9]+)?)(?=\s|$)", line)
+    if not matches:
+        return None
+    rule, raw = matches[-1]
+    seconds = float(raw)
+    context = "unknown" if not math.isfinite(seconds) or seconds < 0 else "after_input" if seconds < 3 else "idle"
+    return rule, context
+
+
 def parse_metrics(path: Path, tail: Optional[int] = None) -> dict[str, Any]:
     wake_rules: Counter[str] = Counter()
     wake_contexts: Counter[str] = Counter()
     wake_missing_fields = 0
     miss_labels = 0
+    miss_contexts: Counter[str] = Counter()
     stt_ms: list[int] = []
     complete_count = 0
     leading_wake_true = 0
@@ -141,6 +153,10 @@ def parse_metrics(path: Path, tail: Optional[int] = None) -> dict[str, Any]:
         lines_scanned += 1
         if "wake label: MISS " in line:
             miss_labels += 1
+            fields = wake_fields(line)
+            if fields:
+                rule, context = fields
+                miss_contexts[f"{rule}:{context}"] += 1
 
         if RE_STT.search(line):
             m = RE_STT_MS.search(line)
@@ -152,13 +168,11 @@ def parse_metrics(path: Path, tail: Optional[int] = None) -> dict[str, Any]:
 
         if RE_COMPLETE.search(line):
             complete_count += 1
-            rule = re.search(r"\brule=(strict|relaxed_d2|followup|auto_b)\b", line)
-            idle = re.search(r"\binputIdleSeconds=(-?\d+(?:\.\d+)?)\b", line)
-            if rule and idle:
-                seconds = float(idle.group(1))
-                context = "unknown" if seconds < 0 else "after_input" if seconds < 3 else "idle"
-                wake_rules[rule.group(1)] += 1
-                wake_contexts[f"{rule.group(1)}:{context}"] += 1
+            fields = wake_fields(line)
+            if fields:
+                rule, context = fields
+                wake_rules[rule] += 1
+                wake_contexts[f"{rule}:{context}"] += 1
             else:
                 wake_missing_fields += 1
             lw = RE_LEADING_WAKE.search(line)
@@ -284,7 +298,7 @@ def parse_metrics(path: Path, tail: Optional[int] = None) -> dict[str, Any]:
 
     return {
         "wake_telemetry": {"rules": dict(wake_rules), "contexts": dict(wake_contexts),
-                           "missing_fields": wake_missing_fields, "miss_labels": miss_labels},
+                           "missing_fields": wake_missing_fields, "miss_labels": miss_labels, "miss_contexts": dict(miss_contexts)},
         "path": str(path),
         "tail": tail,
         "lines_scanned": lines_scanned,

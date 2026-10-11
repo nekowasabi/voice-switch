@@ -45,7 +45,8 @@ def check_wiring(repo):
     submit = extract_braced_body(mac, r"private func submit[^\{]*\{")
     assert "action: d.action" in submit
     handoff = extract_braced_body(mac, r"func handoff[^\{]*\{")
-    assert "if action == nil, Macrowhisper.shouldPrepareHandoff(macrowhisper)" in handoff
+    assert "Macrowhisper.prepare" not in handoff
+    assert "guard modeRequested, superwhisperAutoPasteDisabled" in handoff
     mode_override = "if let mode = action?.superwhisperMode { cfg.superwhisperMode = mode }"
     enter_mode = "enterSuperwhisperMode(cfg.superwhisperMode, target: target)"
     assert mode_override in handoff and enter_mode in handoff
@@ -80,7 +81,7 @@ mutations = [
     ("MacApp.swift", "dictationStart(transcript, wakeWords: action.wakeWords)"),
     ("MacApp.swift", "var action: WakeAction? = nil"),
     ("MacApp.swift", "action: d.action"),
-    ("MacApp.swift", "if action == nil, Macrowhisper.shouldPrepareHandoff(macrowhisper)"),
+    ("MacApp.swift", "guard modeRequested, superwhisperAutoPasteDisabled"),
     ("MacApp.swift", "if let mode = action?.superwhisperMode { cfg.superwhisperMode = mode }"),
     ("MacApp.swift", "Platform.urlProcess(action.url)"),
     ("MacApp.swift", "Platform.runURLProcess(p, wait: false)"),

@@ -61,6 +61,7 @@ public sealed class WindowsDictationRuntime
     private readonly Func<nint, string?> windowProcess;
     private readonly Func<IReadOnlyCollection<string>, string?> micInUseBy;
     private readonly Func<string, string?>? wakeReading;
+    private readonly Func<IReadOnlyCollection<string>, string?> automaticMicInUseBy;
     private readonly Func<double?> inputIdleSeconds;
     private readonly SampleStore originalStore;
     private readonly SampleStore analysisStore;
@@ -118,6 +119,7 @@ public sealed class WindowsDictationRuntime
         this.reloadConfig = reloadConfig ?? (() => null);
         this.windowProcess = windowProcess ?? ProcessOfWindow;
         this.micInUseBy = micInUseBy ?? MicInUse.By;
+        automaticMicInUseBy = micInUseBy ?? MicInUse.BlockingAutomatic;
         originalStore = new SampleStore(RetainedSamples(config, 10));
         analysisStore = new SampleStore(RetainedSamples(config, 10));
         // Mac parity: the segmenter caps at the top-level maxSeconds (2.5 s) so steady room noise is judged within seconds;
@@ -269,10 +271,13 @@ public sealed class WindowsDictationRuntime
                     while (recognitions.Reader.TryRead(out var outcome))
                     {
                         var pendingBefore = pending.Count;
+                        var wakeOrigin = outcome.Recognition is { } candidate ? RecognitionOrigin(session, candidate) : session.Origin;
                         if (outcome.Recognition is { } observed)
                         {
-                            var origin = RecognitionOrigin(session, observed);
-                            WakeMissLabel.Observe(outcome.Work.Request.Id, origin);
+                            var origin = wakeOrigin;
+                            if (!session.IsActive && !session.IsAwaitingBody && observed.Extent == RecognitionExtent.ClosedUtterance
+                                && pending.ContainsKey(outcome.Work.Request.Id) && outcome.Work.Request.Range.Start >= eligibleRecognitionStart)
+                                WakeMissLabel.Observe(outcome.Work.Request.Id, origin);
                             var leadingWake = DictationBoundaries.LeadingWake(observed, config.Wakes()) is not null;
                             var stopRange = DictationBoundaries.StandaloneStopRange(observed, config.StopWords ?? []);
                             // Mac logs "heard:" for what it transcribes while idle and never transcribes the body. Here a body longer
@@ -316,7 +321,7 @@ public sealed class WindowsDictationRuntime
                         var wasAwaiting = session.IsAwaitingBody;
                         var wasIdle = !wasActive && !wasAwaiting;
                         var stopBeforeApply = DictationBoundaries.StandaloneStopRange(outcome.Recognition!, config.StopWords ?? []);
-                        var audio = session.Apply(outcome.Recognition!, originalStore.Copy, analysisStore.Next, RecognitionOrigin(session, outcome.Recognition!));
+                        var audio = session.Apply(outcome.Recognition!, originalStore.Copy, analysisStore.Next, wakeOrigin);
                         if (wasIdle && !session.IsActive && !session.IsAwaitingBody && outcome.Work.Request.Extent == RecognitionExtent.PrefixHead)
                         {
                             var floorBefore = segmenter.Floor;
@@ -328,7 +333,7 @@ public sealed class WindowsDictationRuntime
                         {
                             // Superwhisper pastes into whatever is frontmost, so remember where the user was when the wake word landed.
                             target = foregroundWindow();
-                            if (SkipReason(target, session.Action) is { } skipped)
+                            if ((session.Origin.IsAutomatic ? AutomaticSkipReason(target) : SkipReason(target, session.Action)) is { } skipped)
                             {
                                 Log.Info(skipped);
                                 session = ResetSession(pending, outcome.Recognition!.Source.End);
@@ -506,16 +511,16 @@ public sealed class WindowsDictationRuntime
 
         if (!segmenter.LastWasSpeech) speechRunStart = -1;
         if (config.Dictation?.NoWakeWord is { Enabled: true } && speechRunStart >= 0 && !automaticConsidered && !session.IsActive && !session.IsAwaitingBody
-            && lastLiveSpeechEnd - speechRunStart >= MsToSamples(config.MinSpeechMs ?? 300))
+            && lastLiveSpeechEnd - speechRunStart >= Segmenter.Frames(config.MinSpeechMs ?? 300) * Segmenter.FrameLength)
         {
             automaticConsidered = true;
             var origin = NoWakePolicy.OnSpeech(config.Dictation?.NoWakeWord, speechIdle, speechRunStart < followupUntil);
             var currentIdle = inputIdleSeconds();
             var inputUnchanged = currentIdle is >= 0 && speechIdle is >= 0 && currentIdle >= speechIdle;
-            var window = foregroundWindow();
-            if (origin is not null && inputUnchanged && localInflight is not { IsCompleted: false } && SkipReason(window, null) is null)
+            var window = origin is not null && inputUnchanged ? foregroundWindow() : 0;
+            if (origin is not null && inputUnchanged && localInflight is not { IsCompleted: false } && AutomaticSkipReason(window) is null)
             {
-                var start = Math.Max(originalStore.Start, speechRunStart - MsToSamples(config.PrerollMs ?? 300));
+                var start = Math.Max(originalStore.Start, speechRunStart - Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength);
                 if (session.StartAutomatic(new SampleRange(start, lastLiveSpeechEnd), origin, analysisStore.Next))
                 {
                     target = window;
@@ -737,6 +742,16 @@ public sealed class WindowsDictationRuntime
             && excluded.Any(name => string.Equals(Path.GetFileNameWithoutExtension(name), app, StringComparison.OrdinalIgnoreCase))
                 ? $"dictation skipped: {app} is excluded"
                 : null;
+    }
+
+    private string? AutomaticSkipReason(nint window)
+    {
+        if (automaticMicInUseBy(config.SkipWhileMicInUseBy ?? []) is { } busy) return $"automatic wake blocked: {busy}";
+        if (config.Dictation?.ExcludeProcessNames is not { Length: > 0 } excluded) return null;
+        var app = windowProcess(window);
+        if (window == 0 || app is null) return "automatic wake blocked: foreground process unavailable";
+        return excluded.Any(name => string.Equals(Path.GetFileNameWithoutExtension(name), app, StringComparison.OrdinalIgnoreCase))
+            ? "automatic wake blocked: excluded foreground process" : null;
     }
 
     private WakeOrigin RecognitionOrigin(DictationSession session, RecognizedUtterance recognition)

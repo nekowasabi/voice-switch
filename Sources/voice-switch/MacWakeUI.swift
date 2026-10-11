@@ -1,6 +1,7 @@
 #if os(macOS)
 import AppKit
 import Carbon
+import Darwin
 
 final class HistoryCopyButton: NSButton {
     var entryID = UUID()
@@ -9,6 +10,16 @@ final class HistoryCopyButton: NSButton {
 final class HistoryPanel: NSObject {
     static let shared = HistoryPanel()
     private var panel: NSPanel?
+    private var refresh: Timer?
+    private var renderedIDs: [UUID]?
+
+    override init() {
+        super.init()
+        refresh = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self, let panel = self.panel, panel.isVisible else { return }
+            self.render(panel)
+        }
+    }
 
     @objc func show() {
         let window = panel ?? NSPanel(contentRect: NSRect(x: 0, y: 0, width: 620, height: 380),
@@ -16,6 +27,16 @@ final class HistoryPanel: NSObject {
         panel = window
         window.title = "voice-switch 履歴（30分・最大50件）"
         window.isReleasedWhenClosed = false
+        render(window)
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    private func render(_ window: NSPanel) {
+        let entries = DictationHistory.shared.snapshot()
+        let ids = entries.map(\.id)
+        guard renderedIDs != ids else { return }
+        renderedIDs = ids
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -23,7 +44,6 @@ final class HistoryPanel: NSObject {
         stack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
         let clear = NSButton(title: "すべて消去", target: self, action: #selector(clearAll))
         stack.addArrangedSubview(clear)
-        let entries = DictationHistory.shared.snapshot()
         if entries.isEmpty { stack.addArrangedSubview(NSTextField(labelWithString: "履歴はありません")) }
         for entry in entries {
             let preview = String(entry.text.replacingOccurrences(of: "\n", with: " ").prefix(100))
@@ -35,11 +55,9 @@ final class HistoryPanel: NSObject {
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
         scroll.documentView = stack
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor).isActive = true
+        stack.frame = NSRect(x: 0, y: 0, width: 600, height: max(340, stack.fittingSize.height))
+        stack.autoresizingMask = [.width]
         window.contentView = scroll
-        window.center()
-        window.makeKeyAndOrderFront(nil)
     }
 
     @objc private func clearAll() { DictationHistory.shared.clear(); show() }
@@ -94,7 +112,7 @@ func macReading(_ text: String) -> String? {
     }
     if kanaOnly(normalized) { return normalized }
     guard let tokenizer = CFStringTokenizerCreate(nil, text as CFString, CFRange(location: 0, length: text.utf16.count),
-        kCFStringTokenizerUnitWord, Locale(identifier: "ja_JP") as CFLocale) else { return nil }
+        kCFStringTokenizerUnitWord, CFLocaleCreate(nil, "ja_JP" as CFString)) else { return nil }
     var result = ""
     while true {
         _ = CFStringTokenizerAdvanceToNextToken(tokenizer)
@@ -109,5 +127,50 @@ func macReading(_ text: String) -> String? {
 func macRelaxedWake(_ text: String, wakeWords: [String]) -> Bool {
     guard let heard = macReading(text) else { return false }
     return NoWakePolicy.relaxedWake(heard, readings: wakeWords.compactMap(macReading))
+}
+#endif
+
+#if os(macOS)
+final class MacModeOwnership {
+    private let descriptor: Int32
+    init(_ descriptor: Int32) { self.descriptor = descriptor }
+    deinit { _ = Darwin.close(descriptor) }
+}
+
+enum MacModeRestoreStore {
+    private static var directory: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/voice-switch", isDirectory: true)
+    }
+    private static var file: URL { directory.appendingPathComponent("mode-restore.json") }
+    static func acquire() throws -> MacModeOwnership {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        guard directory.resolvingSymlinksInPath().standardizedFileURL == directory.standardizedFileURL else {
+            throw CocoaError(.fileWriteNoPermission)
+        }
+        let path = directory.appendingPathComponent("mode-owner.lock").path
+        let descriptor = Darwin.open(path, O_CREAT | O_RDWR | O_NOFOLLOW, mode_t(0o600))
+        guard descriptor >= 0 else { throw CocoaError(.fileWriteNoPermission) }
+        guard Darwin.flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            _ = Darwin.close(descriptor)
+            throw CocoaError(.fileLocking)
+        }
+        return MacModeOwnership(descriptor)
+    }
+    static func read() throws -> ModeRestore? {
+        guard FileManager.default.fileExists(atPath: file.path) else { return nil }
+        guard file.resolvingSymlinksInPath().standardizedFileURL == file.standardizedFileURL,
+              let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 8192 else {
+            throw CocoaError(.fileReadNoPermission)
+        }
+        return try JSONDecoder().decode(ModeRestore.self, from: Data(contentsOf: file))
+    }
+    static func write(_ state: ModeRestore) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        guard directory.resolvingSymlinksInPath().standardizedFileURL == directory.standardizedFileURL else {
+            throw CocoaError(.fileWriteNoPermission)
+        }
+        try JSONEncoder().encode(state).write(to: file, options: .atomic)
+    }
+    static func clear() throws { try FileManager.default.removeItem(at: file) }
 }
 #endif

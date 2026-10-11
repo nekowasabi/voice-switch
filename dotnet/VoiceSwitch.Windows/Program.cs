@@ -96,9 +96,11 @@ public static class Program
                             dryRun: effectiveDryRun,
                             onTranscribed: TmuxPaneRouter.RouteAsync,
                             superwhisperMode: config.Dictation.SuperwhisperMode,
-                            paste: Tray.WindowFocus.Paste);
+                            paste: Tray.WindowFocus.Paste, requireControlledMode: true);
                     }
 
+                    if (handoff is RegisteredSuperwhisperHandoff registered)
+                        _ = registered.RecoverAsync(interrupt.Token).GetAwaiter().GetResult();
                     IPcmCapture capture;
                     if (options.InputWavPath is not null)
                     {
@@ -116,7 +118,7 @@ public static class Program
                         capture = WinMmCapture.Open();
                     }
 
-                    if (!effectiveDryRun && options.OutputDir is null) handoff = LocalHistoryHandoff.Wrap(handoff, config);
+                    if (!effectiveDryRun && options.OutputDir is null) handoff = LocalHistoryHandoff.Wrap(handoff, config, Tray.WindowFocus.Paste);
                     return new WindowsDictationRuntime(
                             config,
                             capture,

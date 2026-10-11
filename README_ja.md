@@ -119,3 +119,18 @@ LaunchServices、実マイク、Superwhisper の録音・文字起こし・貼�
 開始専用・停止専用 URL を使います。`superwhisper://record` はトグルなので、
 繰り返すと状態を反転させます。`--fire` の再実行で開始状態が維持されることを確認し、
 停止は Superwhisper の UI、またはテスト用コピーの `wakeURL` を `/record/stop` に変更して確認してください。
+
+
+## ウェイクワードなしの録音（実験的）
+
+`dictation.noWakeWord` の `followup`、`autoIdle`、`relaxedReadingDistance2` は個別に指定できます。すべて既定では無効です。Mac では `dictation.superwhisperMode` も必須です。
+
+自動で始まった録音は端末内の文字起こしと履歴だけに進みます。Superwhisper、Jev、tmux、アクション URL、自動貼り付けには渡しません。履歴はメモリ上の最大50件で、30分後またはアプリ終了時に消えます。選んだものだけコピーできます。
+
+- Ctrl+Shift+F10 は手動録音の開始
+- Ctrl+Shift+F9 または HUD のクリックは履歴
+- Windows の Ctrl+Shift+F8 は直近の取りこぼしに MISS ラベルを付ける
+
+手動録音も、Superwhisper の `autoPaste: false` を確認できない場合は端末内の履歴へ戻します。貼り付けの安全を確かめられない入力欄や IME では履歴からコピーしてください。Mac の日本語入力ソースは保守的に自動貼り付けを控えます。
+
+Mac 未検証。実機での音声・権限・UI と精度の評価はまだ必要です。[実装と設定](docs/no-wake-word/implementation.md)、[実機チェック](docs/no-wake-word/native-validation.md)、[合格ライン](docs/wake-acceptance.md) を確認してから有効にしてください。
