@@ -69,6 +69,12 @@ public sealed class WindowsDictationRuntime
     private long nextRecognitionId;
     private long eligibleRecognitionStart;
     private Task? inflight;
+    private Task? localInflight;
+    private CancellationToken localCancellation;
+    private long speechRunStart = -1;
+    private double? speechIdle;
+    private bool automaticConsidered;
+    private long followupUntil;
     private bool lastVadSpeech;
     private string? lastSilenceDiagnosticKey;
     private DictationPhase shownPhase;
@@ -126,6 +132,7 @@ public sealed class WindowsDictationRuntime
     public async Task<int> RunAsync(CancellationToken cancellation)
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        localCancellation = linked.Token;
         var frames = Channel.CreateBounded<AnalysisFrame>(new BoundedChannelOptions(64)
         {
             FullMode = BoundedChannelFullMode.Wait,
@@ -264,14 +271,14 @@ public sealed class WindowsDictationRuntime
                         var pendingBefore = pending.Count;
                         if (outcome.Recognition is { } observed)
                         {
-                            var origin = session.IsActive || session.IsAwaitingBody ? session.Origin : new WakeOrigin(WakeRule.Strict, this.inputIdleSeconds());
+                            var origin = RecognitionOrigin(session, observed);
                             WakeMissLabel.Observe(outcome.Work.Request.Id, origin);
                             var leadingWake = DictationBoundaries.LeadingWake(observed, config.Wakes()) is not null;
                             var stopRange = DictationBoundaries.StandaloneStopRange(observed, config.StopWords ?? []);
                             // Mac logs "heard:" for what it transcribes while idle and never transcribes the body. Here a body longer
                             // than the segmenter cap arrives as PrefixHead and stays private; a closed utterance inside a session is
                             // a stop-word candidate, so its text, grammar and confidence are logged to make stop misses tunable.
-                            var heard = (session.IsActive || session.IsAwaitingBody) && observed.Extent != RecognitionExtent.ClosedUtterance
+                            var heard = config.Dictation?.NoWakeWord?.Enabled == true || (session.IsActive || session.IsAwaitingBody) && observed.Extent != RecognitionExtent.ClosedUtterance
                                 ? ""
                                 : $" text=\"{observed.Text}\" conf={(observed.Confidence is double conf ? conf.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) : "-")}{(observed.RejectedText is { } rejectedText ? $" rejectedText=\"{rejectedText}\"" : "")} grammar={(observed.FromStopGrammar ? "stop" : "dictation")} reading=\"{string.Join(' ', observed.Lexemes.Where(lexeme => lexeme.Reading is not null).Select(lexeme => lexeme.Reading))}\"{(observed.Alternates.IsDefaultOrEmpty ? "" : $" alts=\"{string.Join('|', observed.Alternates.Select(alternate => $"{alternate.Text}/{alternate.Reading}"))}\"")}";
                             Log.Info($"dictation recognition: complete id={outcome.Work.Request.Id} extent={outcome.Work.Request.Extent} range={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End} rejected={observed.HadRejectedSpeech} leadingWake={leadingWake} standaloneStop={stopRange is not null} stopRange={(stopRange is null ? "-" : $"{stopRange.Value.Start}..{stopRange.Value.End}")} pendingBefore={pendingBefore}{heard} {origin.Fields}");
@@ -309,7 +316,7 @@ public sealed class WindowsDictationRuntime
                         var wasAwaiting = session.IsAwaitingBody;
                         var wasIdle = !wasActive && !wasAwaiting;
                         var stopBeforeApply = DictationBoundaries.StandaloneStopRange(outcome.Recognition!, config.StopWords ?? []);
-                        var audio = session.Apply(outcome.Recognition!, originalStore.Copy, analysisStore.Next, new WakeOrigin(WakeRule.Strict, inputIdleSeconds()));
+                        var audio = session.Apply(outcome.Recognition!, originalStore.Copy, analysisStore.Next, RecognitionOrigin(session, outcome.Recognition!));
                         if (wasIdle && !session.IsActive && !session.IsAwaitingBody && outcome.Work.Request.Extent == RecognitionExtent.PrefixHead)
                         {
                             var floorBefore = segmenter.Floor;
@@ -336,7 +343,7 @@ public sealed class WindowsDictationRuntime
                         var prefix = probe
                             ? DictationBoundaries.EarlyWake(outcome.Recognition!, config.Wakes())
                             : DictationBoundaries.LeadingWake(outcome.Recognition!, config.Wakes());
-                        var byReading = session.Action is { } action ? $" action={action.Name}"
+                        var byReading = config.Dictation?.NoWakeWord?.Enabled == true ? "" : session.Action is { } action ? $" action={action.Name}"
                             : prefix?.ByReading is { } readingWake ? $" via=reading d={prefix.Distance} wake=\"{readingWake.Reading}\"" : "";
                         if (probe && wasIdle && (session.IsActive || session.IsAwaitingBody))
                         {
@@ -345,7 +352,7 @@ public sealed class WindowsDictationRuntime
 
                         if (wasIdle && session.IsAwaitingBody)
                         {
-                            var via = prefix is not null || session.Action is not null ? byReading : $" via=rejected conf={outcome.Recognition!.Confidence:0.00} rejectedText=\"{outcome.Recognition.RejectedText}\"";
+                            var via = config.Dictation?.NoWakeWord?.Enabled == true ? "" : prefix is not null || session.Action is not null ? byReading : $" via=rejected conf={outcome.Recognition!.Confidence:0.00} rejectedText=\"{outcome.Recognition.RejectedText}\"";
                             Log.Info($"dictation session: wake-only id={outcome.Work.Request.Id} source={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End}{via}");
                         }
                         else if (!wasActive && session.PendingBody is { } started)
@@ -410,6 +417,7 @@ public sealed class WindowsDictationRuntime
                         TrimStore(session, pending);
                     }
 
+                    if (localInflight is not null) await localInflight.WaitAsync(linked.Token);
                     if (inflight is not null)
                     {
                         await inflight.WaitAsync(linked.Token);
@@ -438,7 +446,7 @@ public sealed class WindowsDictationRuntime
                 linked.Cancel();
                 requests.Writer.TryComplete();
                 recognitions.Writer.TryComplete();
-                try { await Task.WhenAll(captureTask, recognitionTask); }
+                try { await Task.WhenAll(captureTask, recognitionTask, localInflight ?? Task.CompletedTask); }
                 catch (OperationCanceledException) { }
             }
             finally
@@ -485,12 +493,36 @@ public sealed class WindowsDictationRuntime
             if (lastVadSpeech)
             {
                 speechOnsets.Add(frame.Start);
+                speechRunStart = frame.Start;
+                speechIdle = inputIdleSeconds();
+                automaticConsidered = false;
             }
         }
 
         if (segmenter.LastWasSpeech)
         {
             lastLiveSpeechEnd = frame.Start + frame.Analysis.Length;
+        }
+
+        if (!segmenter.LastWasSpeech) speechRunStart = -1;
+        if (config.Dictation?.NoWakeWord is { Enabled: true } && speechRunStart >= 0 && !automaticConsidered && !session.IsActive && !session.IsAwaitingBody
+            && lastLiveSpeechEnd - speechRunStart >= MsToSamples(config.MinSpeechMs ?? 300))
+        {
+            automaticConsidered = true;
+            var origin = NoWakePolicy.OnSpeech(config.Dictation?.NoWakeWord, speechIdle, speechRunStart < followupUntil);
+            var currentIdle = inputIdleSeconds();
+            var inputUnchanged = currentIdle is >= 0 && speechIdle is >= 0 && currentIdle >= speechIdle;
+            var window = foregroundWindow();
+            if (origin is not null && inputUnchanged && localInflight is not { IsCompleted: false } && SkipReason(window, null) is null)
+            {
+                var start = Math.Max(originalStore.Start, speechRunStart - MsToSamples(config.PrerollMs ?? 300));
+                if (session.StartAutomatic(new SampleRange(start, lastLiveSpeechEnd), origin, analysisStore.Next))
+                {
+                    target = window;
+                    hotkeys?.Begin(DictationHotkeys.Load(readShortcuts()));
+                    Log.Info($"dictation session: automatic {origin.Fields} range={start}..{lastLiveSpeechEnd}");
+                }
+            }
         }
 
         if (ev is null)
@@ -632,9 +664,22 @@ public sealed class WindowsDictationRuntime
         }
 
         var command = hotkeys.Take();
+        if (command == DictationCommand.Start)
+        {
+            var window = foregroundWindow();
+            if (SkipReason(window, null) is null && session.StartManual(analysisStore.Next, inputIdleSeconds()))
+            {
+                target = window;
+                hotkeys?.Begin(DictationHotkeys.Load(readShortcuts()));
+                Log.Info($"dictation session: manual-hotkey {session.Origin.Fields}");
+                return true;
+            }
+            return false;
+        }
         if (command == DictationCommand.Cancel && (session.IsActive || session.IsAwaitingBody))
         {
             session.Cancel(FinishReason.CancelCommand);
+            followupUntil = 0;
             Log.Info("dictation cancelled");
             session = ResetSession(pending, analysisStore.Next);
             return true;
@@ -694,6 +739,17 @@ public sealed class WindowsDictationRuntime
                 : null;
     }
 
+    private WakeOrigin RecognitionOrigin(DictationSession session, RecognizedUtterance recognition)
+    {
+        if (session.IsActive || session.IsAwaitingBody) return session.Origin;
+        var relaxed = config.Dictation?.NoWakeWord?.RelaxedReadingDistance2 == true
+            && DictationBoundaries.LeadingWake(recognition, config.Wakes()) is null
+            && DictationBoundaries.RejectedWake(recognition, config.WakeWords) is null
+            && !(config.Windows?.Actions ?? []).Any(action => DictationBoundaries.LeadingWake(recognition, action.Wakes()) is not null)
+            && NoWakePolicy.RelaxedWake(recognition, config.Wakes()) is not null;
+        return new(relaxed ? WakeRule.RelaxedD2 : WakeRule.Strict, inputIdleSeconds());
+    }
+
     private static string? ProcessOfWindow(nint window)
     {
         if (window == 0 || !OperatingSystem.IsWindows() || GetWindowThreadProcessId(window, out var pid) == 0)
@@ -733,6 +789,7 @@ public sealed class WindowsDictationRuntime
         PublishPhase(endedByUser ? DictationPhase.Ended
             : session.IsActive ? DictationPhase.Recording
             : session.IsAwaitingBody ? (HeardAfterWake(session, lastLiveSpeechEnd) ? DictationPhase.Recording : DictationPhase.Waiting)
+            : config.Dictation?.NoWakeWord?.Followup == true && analysisStore.Next < followupUntil ? DictationPhase.Followup
             : DictationPhase.Idle);
     }
 
@@ -853,6 +910,14 @@ public sealed class WindowsDictationRuntime
         var stopped = audio.Reason is FinishReason.StandaloneStop or FinishReason.FinishCommand;
         endedByUser |= stopped;
         audio = audio with { Target = target };
+        if (audio.Wake.IsAutomatic)
+        {
+            if (localInflight is { IsCompleted: false }) { Log.Info("local history transcription busy; recording discarded"); return; }
+            localInflight = RunHandoffAsync(audio);
+            return;
+        }
+        if (config.Dictation?.NoWakeWord is { Followup: true } followup && audio.Action is null)
+            followupUntil = analysisStore.Next + MsToSamples(followup.FollowupMs);
         if (inflight is { IsCompleted: false })
         {
             Log.Info($"dictation dropped: previous one still in flight reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End}");
@@ -873,7 +938,7 @@ public sealed class WindowsDictationRuntime
     {
         try
         {
-            var result = await handoff.SubmitAsync(audio, CancellationToken.None);
+            var result = await handoff.SubmitAsync(audio, audio.Wake.IsAutomatic ? localCancellation : CancellationToken.None);
             observer?.HandoffSubmitted(audio, result);
             Log.Info($"dictation handoff: {result.Status} {result.Id} wav={result.Path ?? "-"} reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End} {result.Message}");
         }

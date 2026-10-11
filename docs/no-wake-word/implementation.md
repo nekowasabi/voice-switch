@@ -31,3 +31,11 @@ An alternative was to send every recording through Superwhisper and check delive
 6. S6 preparation. Per-rule/context evaluation with explicit labels and exposure, without claiming live acceptance.
 
 Each slice ends with tests and a local commit. Native limitations are not counted as passing checks.
+
+## Opt-in controls
+
+Set individual fields in `dictation.noWakeWord` after native validation. `followup` opens an 8-second history-only window after a manual recording. `autoIdle` requires at least 3 seconds without keyboard or mouse input at speech onset. `relaxedReadingDistance2` accepts only whole closed readings of 5 through 9 characters at distance 2. The existing longer-reading matcher remains unchanged. Every field defaults to false.
+
+Automatic recording keeps the configured preroll and starts only after the existing minimum speech duration. It has no near-voice score. A strict wake word spoken after an automatic recording starts does not grant paste permission. A follow-up recording does not renew the window indefinitely. Unknown idle time and excluded applications block the start. Mac additionally requires a nonempty `dictation.superwhisperMode`.
+
+Ctrl+Shift+F10 starts a manual recording while the listener is running. Repeating it inside an automatic session does not upgrade the session. The recording still finishes through the existing stop word, silence, or finish command.

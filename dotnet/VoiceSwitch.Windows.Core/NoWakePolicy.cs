@@ -1,0 +1,32 @@
+namespace VoiceSwitch.Windows.Core;
+
+public sealed record NoWakeWordConfig(bool Followup = false, bool AutoIdle = false, bool RelaxedReadingDistance2 = false,
+    int FollowupMs = 8000, int IdleMs = 3000)
+{
+    public bool Valid => FollowupMs is >= 1000 and <= 30000 && IdleMs is >= 1000 and <= 60000;
+    public bool Enabled => Followup || AutoIdle || RelaxedReadingDistance2;
+}
+
+public static class NoWakePolicy
+{
+    public static WakeOrigin? OnSpeech(NoWakeWordConfig? options, double? idleSeconds, bool inFollowupWindow)
+    {
+        if (options is null || !options.Valid || idleSeconds is null or < 0 || !double.IsFinite(idleSeconds.Value)) return null;
+        if (options.Followup && inFollowupWindow) return new(WakeRule.Followup, idleSeconds);
+        return options.AutoIdle && idleSeconds * 1000 >= options.IdleMs ? new(WakeRule.AutoB, idleSeconds) : null;
+    }
+
+    public static WakePrefix? RelaxedWake(RecognizedUtterance recognition, IReadOnlyList<WakeWord> wakes)
+    {
+        if (recognition.Extent != RecognitionExtent.ClosedUtterance || recognition.HadRejectedSpeech
+            || recognition.FromStopGrammar || string.IsNullOrWhiteSpace(recognition.Text)) return null;
+        var reading = string.Concat(recognition.Lexemes.Select(run =>
+            TextMatching.NormalizeReading(string.IsNullOrEmpty(run.Reading) ? run.Text : run.Reading)));
+        foreach (var wake in wakes.Where(wake => wake.Reading.Length is >= 5 and <= 9).OrderByDescending(wake => wake.Reading.Length))
+        {
+            if (TextMatching.EditDistance(reading, wake.Reading) == 2)
+                return new WakePrefix(recognition.Source.End, null, wake, 2);
+        }
+        return null;
+    }
+}

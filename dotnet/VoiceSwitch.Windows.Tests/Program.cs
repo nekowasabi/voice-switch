@@ -16,6 +16,8 @@ if (args is ["--child", var mode])
 
 var tests = new (string Name, Func<TestOutcome> Test)[]
 {
+    ("automatic wake gates and immutable provenance", () => Check(NoWakeTests.WakeRules())),
+    ("automatic runtime repeats local sessions and fails closed on idle or microphone uncertainty", () => Check(NoWakeTests.AutomaticRuntime())),
     ("manual paste requires every safety observation", () => Check(NoWakeTests.PasteGuards())),
     ("local history expires, evicts, deduplicates and clears", () => Check(NoWakeTests.History())),
     ("automatic delivery remains local while manual delivery uses its adapter", () => Check(NoWakeTests.AutomaticDelivery())),

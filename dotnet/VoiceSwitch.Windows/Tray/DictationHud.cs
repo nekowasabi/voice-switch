@@ -88,6 +88,10 @@ public sealed class DictationHud : Form
             case DictationPhase.Idle:
                 ShowWindow(Handle, SwHide);
                 return;
+            case DictationPhase.Followup:
+                label.Text = "連続待受・履歴のみ";
+                label.ForeColor = Color.White;
+                break;
             case DictationPhase.Waiting:
                 label.Text = "🎙 どうぞ";
                 label.ForeColor = Color.White;

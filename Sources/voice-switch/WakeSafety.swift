@@ -81,3 +81,46 @@ struct PasteSafety {
     let inputUnchanged: Bool
     var allowsPaste: Bool { targetFocused && plainTextField && compositionClear && clipboardRestorable && inputUnchanged }
 }
+
+struct NoWakeWordConfig: Decodable {
+    var followup: Bool?
+    var autoIdle: Bool?
+    var relaxedReadingDistance2: Bool?
+    var followupMs: Int?
+    var idleMs: Int?
+    var enabled: Bool { followup == true || autoIdle == true || relaxedReadingDistance2 == true }
+    var valid: Bool { (1000...30000).contains(followupMs ?? 8000) && (1000...60000).contains(idleMs ?? 3000) }
+}
+
+enum NoWakePolicy {
+    static func onSpeech(_ options: NoWakeWordConfig?, idleSeconds: Double?, inFollowupWindow: Bool) -> WakeOrigin? {
+        guard let options, options.valid, let idleSeconds, idleSeconds.isFinite, idleSeconds >= 0 else { return nil }
+        if options.followup == true && inFollowupWindow { return WakeOrigin(rule: .followup, inputIdleSeconds: idleSeconds) }
+        if options.autoIdle == true && idleSeconds * 1000 >= Double(options.idleMs ?? 3000) {
+            return WakeOrigin(rule: .autoB, inputIdleSeconds: idleSeconds)
+        }
+        return nil
+    }
+
+    static func relaxedWake(_ text: String, readings: [String]) -> Bool {
+        let heard = normalizedReading(text)
+        return readings.map(normalizedReading).contains { (5...9).contains($0.count) && editDistance(heard, $0) == 2 }
+    }
+
+    static func normalizedReading(_ text: String) -> String {
+        normalize(text.applyingTransform(.hiraganaToKatakana, reverse: true) ?? text)
+    }
+
+    private static func editDistance(_ lhs: String, _ rhs: String) -> Int {
+        let a = Array(lhs), b = Array(rhs)
+        var previous = Array(0...b.count)
+        for (i, character) in a.enumerated() {
+            var current = [i + 1] + Array(repeating: 0, count: b.count)
+            for (j, other) in b.enumerated() {
+                current[j + 1] = min(current[j] + 1, previous[j + 1] + 1, previous[j] + (character == other ? 0 : 1))
+            }
+            previous = current
+        }
+        return previous[b.count]
+    }
+}

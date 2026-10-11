@@ -57,7 +57,7 @@ public static class TrayHost
                 instance.Key);
 
             using var context = new VoiceSwitchTrayContext(supervisor);
-            using var wakeLabelHotkey = new WakeLabelHotkey(context.ShowHistory);
+            using var wakeLabelHotkey = new WakeLabelHotkey(context.ShowHistory, hotkeys.RequestStart);
             hud.HistoryRequested += context.ShowHistory;
             var ipc = new TrayIpcServer(instance.PipeName, supervisor, context.Diagnostics, context.QuitRuntimeAsync, context.RequestExitThread);
             try

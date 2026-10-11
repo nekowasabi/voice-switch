@@ -66,6 +66,68 @@ internal static class NoWakeTests
         return blocked.Status == HandoffStatus.FailedBeforeDispatch && launched == 0 && !Directory.Exists(root);
     }
 
+
+    public static bool WakeRules()
+    {
+        if (NoWakePolicy.OnSpeech(new(), 10, true) is not null
+            || NoWakePolicy.OnSpeech(new(AutoIdle: true), null, false) is not null
+            || NoWakePolicy.OnSpeech(new(AutoIdle: true), double.NaN, false) is not null
+            || NoWakePolicy.OnSpeech(new(AutoIdle: true), 2.999, false) is not null
+            || NoWakePolicy.OnSpeech(new(AutoIdle: true), 3, false)?.Rule != WakeRule.AutoB
+            || NoWakePolicy.OnSpeech(new(Followup: true, AutoIdle: true), 4, true)?.Rule != WakeRule.Followup) return false;
+        RecognizedUtterance Heard(string reading, RecognitionExtent extent = RecognitionExtent.ClosedUtterance) =>
+            new(1, extent, new(0, 100), "candidate", [new LexicalRun("candidate", new(0, 100), reading)]);
+        WakeWord[] wakes = [WakeWord.From("音声に入る", "おんせいにはいる")];
+        if (NoWakePolicy.RelaxedWake(Heard("ほうせいにはいる"), wakes)?.Distance != 2
+            || NoWakePolicy.RelaxedWake(Heard("ほうせいにはいるよ本文"), wakes) is not null
+            || NoWakePolicy.RelaxedWake(Heard("ほうせいにはいる", RecognitionExtent.PrefixHead), wakes) is not null
+            || NoWakePolicy.RelaxedWake(Heard("ほうせい"), [WakeWord.From("音声", "おんせい")]) is not null) return false;
+        var config = new VoiceSwitchConfig(["wake"], null, "unused", Dictation: new(NoWakeWord: new(AutoIdle: true)));
+        var session = new DictationSession(config);
+        var origin = new WakeOrigin(WakeRule.AutoB, 5);
+        if (!session.StartAutomatic(new(10, 100), origin, 100) || session.StartManual(100, 0)) return false;
+        session.Apply(new(1, RecognitionExtent.ClosedUtterance, new(100, 200), "wake body",
+            [new LexicalRun("wake", new(100, 150)), new LexicalRun("body", new(150, 200))]),
+            range => Enumerable.Repeat((short)7, (int)range.Length).ToImmutableArray(), 200, new(WakeRule.Strict, 0));
+        var audio = session.Finish(FinishReason.FinishCommand, range => Enumerable.Repeat((short)7, (int)range.Length).ToImmutableArray());
+        return audio?.Wake == origin && audio.Range == new SampleRange(10, 200) && audio.Samples.Length == 190
+            && session.Finish(FinishReason.FinishCommand, _ => []) is null
+            && !new DictationSession(config with { Dictation = null }).StartAutomatic(new(0, 100), origin, 100);
+    }
+
+    public static bool AutomaticRuntime()
+    {
+        async Task<(int Entries, int Manual, int Code)> Run(double? idle, string? busy = null)
+        {
+            var frames = new List<PcmFrame>();
+            void Add(int count, short value)
+            {
+                for (var i = 0; i < count; i++)
+                    frames.Add(new(frames.Count * Segmenter.FrameLength,
+                        Enumerable.Range(0, Segmenter.FrameLength).Select(j => (short)(j % 2 == 0 ? value : -value)).ToImmutableArray()));
+            }
+            Add(4, 0); Add(12, 9000); Add(22, 0); Add(12, 9000); Add(22, 0);
+            var config = new VoiceSwitchConfig(["wake"], "en-US", "unused", MaxSeconds: 2.5,
+                HangoverMs: 120, PrerollMs: 60, MinSpeechMs: 90, VadMinRMS: 0.005f,
+                Dictation: new(EndSilenceMs: 240, NoWakeWord: new(AutoIdle: true)));
+            var manual = new CountingHandoff();
+            var history = new DictationHistory();
+            var handoff = new LocalHistoryHandoff(manual, (_, _) => Task.FromResult("local body"), history);
+            var recognizer = new ScriptedDictationRecognizer(request => Task.FromResult(new RecognizedUtterance(
+                request.Id, request.Extent, request.Range, "body", [new LexicalRun("body", request.Range)])));
+            var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(frames, new[] { 22, 36, 56, 70 }),
+                recognizer, handoff, false, inputIdleSeconds: () => idle, wakeReading: value => value,
+                micInUseBy: _ => busy);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var code = await runtime.RunAsync(timeout.Token);
+            return (history.Snapshot().Count, manual.Count, code);
+        }
+        return Run(4).GetAwaiter().GetResult() == (2, 0, 0)
+            && Run(null).GetAwaiter().GetResult() == (0, 0, 0)
+            && Run(0).GetAwaiter().GetResult() == (0, 0, 0)
+            && Run(4, "other recorder").GetAwaiter().GetResult() == (0, 0, 0);
+    }
+
     private sealed class CountingHandoff : IDictationHandoff
     {
         public int Count;

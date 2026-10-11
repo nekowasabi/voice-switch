@@ -1,6 +1,13 @@
 import Foundation
 
 func checkWakeHistory() {
+    precondition(NoWakePolicy.onSpeech(NoWakeWordConfig(autoIdle: true), idleSeconds: 3, inFollowupWindow: false)?.rule == .autoB)
+    precondition(NoWakePolicy.onSpeech(NoWakeWordConfig(autoIdle: true), idleSeconds: nil, inFollowupWindow: false) == nil)
+    precondition(NoWakePolicy.onSpeech(NoWakeWordConfig(autoIdle: true), idleSeconds: 2.999, inFollowupWindow: false) == nil)
+    precondition(NoWakePolicy.onSpeech(NoWakeWordConfig(followup: true, autoIdle: true), idleSeconds: 4, inFollowupWindow: true)?.rule == .followup)
+    precondition(NoWakePolicy.relaxedWake("ほうせいにはいる", readings: ["おんせいにはいる"]))
+    precondition(!NoWakePolicy.relaxedWake("ほうせい", readings: ["おんせい"]))
+    precondition(!NoWakePolicy.relaxedWake("ほうせいにはいる本文", readings: ["おんせいにはいる"]))
     for mask in 0..<32 {
         let safety = PasteSafety(targetFocused: mask & 1 != 0, plainTextField: mask & 2 != 0,
             compositionClear: mask & 4 != 0, clipboardRestorable: mask & 8 != 0, inputUnchanged: mask & 16 != 0)

@@ -60,7 +60,8 @@ public enum DictationPhase
     Idle,
     Waiting,
     Recording,
-    Ended
+    Ended,
+    Followup
 }
 
 public sealed record LexicalRun(string Text, SampleRange Range, string? Reading = null);
@@ -569,6 +570,11 @@ public sealed class DictationSession
                 }
             }
 
+            if (wake is null && config.Dictation?.NoWakeWord?.RelaxedReadingDistance2 == true)
+            {
+                wake = NoWakePolicy.RelaxedWake(recognition, wakes);
+                if (wake is not null) origin = new WakeOrigin(WakeRule.RelaxedD2, origin?.InputIdleSeconds);
+            }
             if (wake is null)
             {
                 return null;
@@ -616,6 +622,29 @@ public sealed class DictationSession
         }
 
         return null;
+    }
+
+    public bool StartAutomatic(SampleRange initialAudio, WakeOrigin origin, long now)
+    {
+        if (!origin.IsAutomatic || terminal || IsActive || IsAwaitingBody || config.Dictation?.NoWakeWord is not { Valid: true } options) return false;
+        if (!(origin.Rule switch { WakeRule.AutoB => options.AutoIdle, WakeRule.Followup => options.Followup,
+            WakeRule.RelaxedD2 => options.RelaxedReadingDistance2, _ => false })) return false;
+        sessionId = Guid.NewGuid();
+        Origin = origin;
+        StartBody(initialAudio.Start, initialAudio.End, now);
+        return true;
+    }
+
+    public bool StartManual(long now, double? idleSeconds)
+    {
+        if (terminal || IsActive || IsAwaitingBody || config.Dictation is null) return false;
+        sessionId = Guid.NewGuid();
+        Origin = new(WakeRule.Strict, idleSeconds);
+        wakeEnd = wakeSourceEnd = now;
+        maxEnd = now + SecondsToSamples(config.Dictation.MaxSeconds ?? config.MaxSeconds ?? 60);
+        startTimeoutEnd = now + MsToSamples(config.Dictation.StartTimeoutMs ?? 3000);
+        awaitingBody = true;
+        return true;
     }
 
     public DictationAudio? AdvanceTo(long sampleEnd, Func<SampleRange, ImmutableArray<short>> copyAudio)

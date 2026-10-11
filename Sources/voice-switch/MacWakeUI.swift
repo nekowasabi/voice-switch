@@ -74,14 +74,40 @@ enum MacWakeShortcuts {
                                            nil, MemoryLayout<EventHotKeyID>.size, nil, &id)
             guard result == noErr, id.signature == signature else { return OSStatus(eventNotHandledErr) }
             if id.id == 1 { HistoryPanel.shared.show() }
+            if id.id == 2 { Hotkeys.requestStart() }
             return noErr
         }, 1, &event, nil, &handler)
         guard status == noErr else { log("history hotkey handler unavailable status=\(status)"); return }
-        var key: EventHotKeyRef?
-        let registered = RegisterEventHotKey(UInt32(kVK_F9), UInt32(controlKey | shiftKey),
-                                             EventHotKeyID(signature: signature, id: 1), GetApplicationEventTarget(), 0, &key)
-        if registered == noErr, let key { keys.append(key) }
-        else { log("history hotkey unavailable status=\(registered)") }
+        for (code, id) in [(kVK_F9, UInt32(1)), (kVK_F10, UInt32(2))] {
+            var key: EventHotKeyRef?
+            let registered = RegisterEventHotKey(UInt32(code), UInt32(controlKey | shiftKey),
+                EventHotKeyID(signature: signature, id: id), GetApplicationEventTarget(), 0, &key)
+            if registered == noErr, let key { keys.append(key) }
+            else { log("voice-switch hotkey unavailable id=\(id) status=\(registered)") }
+        }
     }
+}
+func macReading(_ text: String) -> String? {
+    let normalized = NoWakePolicy.normalizedReading(text)
+    func kanaOnly(_ value: String) -> Bool {
+        !value.isEmpty && value.unicodeScalars.allSatisfy { (0x3041...0x3096).contains($0.value) || $0.value == 0x30FC }
+    }
+    if kanaOnly(normalized) { return normalized }
+    guard let tokenizer = CFStringTokenizerCreate(nil, text as CFString, CFRange(location: 0, length: text.utf16.count),
+        kCFStringTokenizerUnitWord, Locale(identifier: "ja_JP") as CFLocale) else { return nil }
+    var result = ""
+    while true {
+        _ = CFStringTokenizerAdvanceToNextToken(tokenizer)
+        if CFStringTokenizerGetCurrentTokenRange(tokenizer).location == kCFNotFound { break }
+        guard let latin = CFStringTokenizerCopyCurrentTokenAttribute(tokenizer, kCFStringTokenizerAttributeLatinTranscription) as? String,
+              let reading = latin.applyingTransform(.latinToHiragana, reverse: false) else { return nil }
+        result += NoWakePolicy.normalizedReading(reading)
+    }
+    return kanaOnly(result) ? result : nil
+}
+
+func macRelaxedWake(_ text: String, wakeWords: [String]) -> Bool {
+    guard let heard = macReading(text) else { return false }
+    return NoWakePolicy.relaxedWake(heard, readings: wakeWords.compactMap(macReading))
 }
 #endif
