@@ -16,6 +16,7 @@ if (args is ["--child", var mode])
 
 var tests = new (string Name, Func<TestOutcome> Test)[]
 {
+    ("wake telemetry records idle contexts without transcript text", () => Check(NoWakeTests.Telemetry())),
     ("normalizes punctuation and spaces", () => Check(Normalizes())),
     ("reading normalization folds katakana and width", () => Check(ReadingNormalizationFoldsKatakanaAndWidth())),
     ("decides wake and stop commands", () => Check(DecidesCommands())),

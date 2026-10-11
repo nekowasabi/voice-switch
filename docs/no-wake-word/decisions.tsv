@@ -1,0 +1,5 @@
+ts	phase	decision	why	evidence	result
+2026-10-11T13:53:00Z	frame	Use current main as the base	Main contains the squash-merged pane-route work and newer replay tools	8c11668277b629dd70432ed21c6ff22ee03d8e87	baseline checks running
+2026-10-11T13:53:00Z	design	Keep automatic audio on the local recognizer path	Superwhisper may upload or paste before the result is observed	docs/no-wake-word/implementation.md	chosen
+2026-10-11T13:57:51Z	s1a	Add numeric rule and idle telemetry plus MISS shortcut	Make the existing replay evidence usable without adding transcript data	dotnet/VoiceSwitch.Windows.Core/WakeTelemetry.cs; tests/test_wake_metrics.py	183 C# tests passed; 11 native skips; parity 106 passed
+2026-10-11T13:57:51Z	verification	Use a temporary Swift module cache	Default cache is read-only in the VM	tests/parity/run_parity.py	pure Swift baseline and parity passed

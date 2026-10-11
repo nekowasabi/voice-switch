@@ -38,6 +38,7 @@ public static class TrayHost
             // Built on this STA thread before the runtime exists; the runtime reaches them only through the hooks below.
             var hotkeys = new DictationHotkeys();
             using var hud = new DictationHud();
+            using var wakeLabelHotkey = new WakeLabelHotkey();
             using var hook = new KeyboardHook(hotkeys, hud);
             var supervisor = new TrayRuntimeSupervisor(
                 options.ConfigPath,

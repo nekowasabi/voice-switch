@@ -1,0 +1,33 @@
+# No-wake-word implementation plan
+
+The branch starts at main `8c11668277b629dd70432ed21c6ff22ee03d8e87`. Main already contains the pane-route branch through squash merges and the replay tools required by issue #17. No AGENTS.md exists in this revision.
+
+## Definition of done
+
+The VM deliverable is a local branch with tested telemetry, bounded local history, immutable wake provenance, fail-closed delivery, and opt-in wake rules. All supported logic and build checks must pass. Native UI, permission, audio, and measured accuracy checks stay explicitly unverified for the human. No push, PR, merge, deployment, new credentials, or nested model calls are part of this run.
+
+## Design
+
+A wake has one immutable rule, an input-idle sample, and a session identity. The recording carries that value through completion. Delivery uses that recorded value, never the current configuration or the last button pressed. Automatic results use local recognition and local history, so uncertain Superwhisper model metadata cannot leak automatic audio.
+
+History is process-local, expires after 30 minutes, and holds at most 50 entries. Restart and Clear all remove it. Only an explicit selection copies text. No audio is persisted for automatic sessions.
+
+An alternative was to send every recording through Superwhisper and check delivery afterward. It was rejected because Superwhisper can paste or upload before voice-switch sees the result. Another alternative was to infer safety from whichever mode is currently configured. It was rejected because reloads and overlapping work would change an already-open session's authority.
+
+## Throughput checkpoint
+
+- Blocking first steps. Freeze acceptance criteria, capture baseline tests, and inspect recording and delivery paths before changing behavior.
+- Independent workstreams. C#, Swift, and evaluation code are separate files, but cross-platform contracts are verified together after each slice.
+- Shared mutable state. One worker owns this checkout. Recognition state stays on its runtime loop. History and handoff ownership have explicit synchronization.
+- Smallest safe decomposition. One worker is required by the task. Implement and review each slice sequentially without nested agents.
+
+## Ordered slices
+
+1. S1a. Input-idle and rule telemetry, explicit MISS labels, replay and metrics support, frozen acceptance gates.
+2. S1b preparation. Native validation checklist. Actual Mac and Windows observations remain a human gate.
+3. S2 and S3. Bounded local history, selection UI, immutable delivery, and guarded manual paste.
+4. S4. No permission prompt or event-tap interception when Accessibility is absent.
+5. S5a through S5c. Disabled-by-default follow-up, input-idle wake, and reading distance 2 for 5 through 9 characters. Existing preroll supplies onset audio. No unsupported near-voice heuristic.
+6. S6 preparation. Per-rule/context evaluation with explicit labels and exposure, without claiming live acceptance.
+
+Each slice ends with tests and a local commit. Native limitations are not counted as passing checks.

@@ -61,6 +61,7 @@ public sealed class WindowsDictationRuntime
     private readonly Func<nint, string?> windowProcess;
     private readonly Func<IReadOnlyCollection<string>, string?> micInUseBy;
     private readonly Func<string, string?>? wakeReading;
+    private readonly Func<double?> inputIdleSeconds;
     private readonly SampleStore originalStore;
     private readonly SampleStore analysisStore;
     private readonly Segmenter segmenter;
@@ -93,9 +94,11 @@ public sealed class WindowsDictationRuntime
         Func<VoiceSwitchConfig?>? reloadConfig = null,
         Func<nint, string?>? windowProcess = null,
         Func<IReadOnlyCollection<string>, string?>? micInUseBy = null,
-        Func<string, string?>? wakeReading = null)
+        Func<string, string?>? wakeReading = null,
+        Func<double?>? inputIdleSeconds = null)
     {
         this.wakeReading = wakeReading;
+        this.inputIdleSeconds = inputIdleSeconds ?? InputActivity.IdleSeconds;
         config = WithWakeReadings(config);
         this.config = config;
         this.capture = capture;
@@ -261,6 +264,8 @@ public sealed class WindowsDictationRuntime
                         var pendingBefore = pending.Count;
                         if (outcome.Recognition is { } observed)
                         {
+                            var origin = new WakeOrigin(WakeRule.Strict, this.inputIdleSeconds());
+                            WakeMissLabel.Observe(outcome.Work.Request.Id, origin);
                             var leadingWake = DictationBoundaries.LeadingWake(observed, config.Wakes()) is not null;
                             var stopRange = DictationBoundaries.StandaloneStopRange(observed, config.StopWords ?? []);
                             // Mac logs "heard:" for what it transcribes while idle and never transcribes the body. Here a body longer
@@ -269,7 +274,7 @@ public sealed class WindowsDictationRuntime
                             var heard = (session.IsActive || session.IsAwaitingBody) && observed.Extent != RecognitionExtent.ClosedUtterance
                                 ? ""
                                 : $" text=\"{observed.Text}\" conf={(observed.Confidence is double conf ? conf.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) : "-")}{(observed.RejectedText is { } rejectedText ? $" rejectedText=\"{rejectedText}\"" : "")} grammar={(observed.FromStopGrammar ? "stop" : "dictation")} reading=\"{string.Join(' ', observed.Lexemes.Where(lexeme => lexeme.Reading is not null).Select(lexeme => lexeme.Reading))}\"{(observed.Alternates.IsDefaultOrEmpty ? "" : $" alts=\"{string.Join('|', observed.Alternates.Select(alternate => $"{alternate.Text}/{alternate.Reading}"))}\"")}";
-                            Log.Info($"dictation recognition: complete id={outcome.Work.Request.Id} extent={outcome.Work.Request.Extent} range={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End} rejected={observed.HadRejectedSpeech} leadingWake={leadingWake} standaloneStop={stopRange is not null} stopRange={(stopRange is null ? "-" : $"{stopRange.Value.Start}..{stopRange.Value.End}")} pendingBefore={pendingBefore}{heard}");
+                            Log.Info($"dictation recognition: complete id={outcome.Work.Request.Id} extent={outcome.Work.Request.Extent} range={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End} rejected={observed.HadRejectedSpeech} leadingWake={leadingWake} standaloneStop={stopRange is not null} stopRange={(stopRange is null ? "-" : $"{stopRange.Value.Start}..{stopRange.Value.End}")} pendingBefore={pendingBefore}{heard} {origin.Fields}");
                         }
                         observer?.RecognitionCompleted(outcome.Work.Request, outcome.Recognition, outcome.Error);
 

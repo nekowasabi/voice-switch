@@ -71,7 +71,9 @@ if (logPath is null)
 }
 
 var report = Replay.Run(logPath, label, gainedCap, examplesCap);
+foreach (var line in File.ReadLines(logPath)) report.WakeTelemetry.Observe(line);
 report.WriteHuman(Console.Out);
+Console.WriteLine("wake telemetry " + System.Text.Json.JsonSerializer.Serialize(report.WakeTelemetry));
 if (jsonOut is not null)
 {
     File.WriteAllText(jsonOut, report.ToJson(), Encoding.UTF8);
@@ -319,6 +321,7 @@ static int RunSelfTest()
 
     Console.WriteLine("OK wake_log_replay self-test");
     report.WriteHuman(Console.Out);
+Console.WriteLine("wake telemetry " + System.Text.Json.JsonSerializer.Serialize(report.WakeTelemetry));
     return 0;
 }
 
@@ -965,6 +968,7 @@ internal sealed record Report(
 {
     // No reading= line at all → the old/current split is unknown (not "everything is old").
     public bool BuildSplitKnown => CutoverLine != 0;
+    public WakeTelemetrySummary WakeTelemetry { get; } = new();
 
 
     public void WriteHuman(TextWriter w)
@@ -1044,6 +1048,7 @@ internal sealed record Report(
     {
         var sb = new StringBuilder();
         sb.Append('{');
+        sb.Append("\"wake_telemetry\":").Append(System.Text.Json.JsonSerializer.Serialize(WakeTelemetry)).Append(',');
         void Num(string k, int v) => sb.Append(CultureInfo.InvariantCulture, $"\"{k}\":{v},");
         Num("scored", Scored);
         Num("unscored", Unscored);
