@@ -23,9 +23,9 @@ public sealed class DictationHistory
         this.capacity = capacity;
     }
 
-    public bool Add(Guid id, string text, WakeOrigin origin, long? expectedGeneration = null)
+    public bool Add(Guid id, string text, WakeOrigin origin, long? expectedGeneration = null, AutomaticTranscriptPolicy policy = default)
     {
-        if (string.IsNullOrWhiteSpace(text) || text.Length > 100_000) return false;
+        if (string.IsNullOrWhiteSpace(text) || text.Length > 100_000 || policy.Rejects(text, origin)) return false;
         lock (sync)
         {
             Prune();

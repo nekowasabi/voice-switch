@@ -55,6 +55,7 @@ internal static class NoWakeTests
 
     public static bool AutomaticDelivery()
     {
+        if (!FilteredLocalDelivery() || !FilteredSuperwhisperDelivery()) return false;
         var history = new DictationHistory();
         var manual = new CountingHandoff { Status = HandoffStatus.FailedBeforeDispatch };
         var local = new LocalHistoryHandoff(manual, (_, _) => Task.FromResult("local words"), history);
@@ -112,7 +113,7 @@ internal static class NoWakeTests
 
     public static bool AutomaticRuntime()
     {
-        async Task<(int Entries, int Manual, int Code, bool Leaked, bool Preroll, bool Replaced)> Run(double? idle, string? busy = null, bool failLocal = false, bool failRecognition = false, bool spokenWake = false, bool fragmented = false)
+        async Task<(int Entries, int Manual, int Code, bool Leaked, bool Preroll, bool Replaced)> Run(double? idle, string? busy = null, bool failLocal = false, bool failRecognition = false, bool spokenWake = false, bool fragmented = false, bool filterInterjections = false)
         {
             var frames = new List<PcmFrame>();
             void Add(int count, short value)
@@ -126,11 +127,13 @@ internal static class NoWakeTests
             else { Add(12, 9000); Add(22, 0); Add(12, 9000); Add(22, 0); }
             var config = new VoiceSwitchConfig(["wake"], "en-US", "unused", MaxSeconds: 2.5,
                 HangoverMs: 120, PrerollMs: 60, MinSpeechMs: 90, VadMinRMS: 0.005f,
-                Dictation: new(EndSilenceMs: 240, NoWakeWord: new(AutoIdle: true)));
+                Dictation: new(EndSilenceMs: 240, NoWakeWord: new(AutoIdle: true, FilterInterjections: filterInterjections)));
             var manual = Unverified();
             var history = new DictationHistory();
             var captured = new List<DictationAudio>();
-            var handoff = new LocalHistoryHandoff(manual, (audio, _) => { captured.Add(audio); return failLocal ? Task.FromException<string>(new InvalidOperationException("PRIVATE_NO_WAKE_BODY")) : Task.FromResult("local body"); }, history);
+            var pasted = new List<string>();
+            var handoff = new LocalHistoryHandoff(manual, (audio, _) => { captured.Add(audio); return failLocal ? Task.FromException<string>(new InvalidOperationException("PRIVATE_NO_WAKE_BODY")) : Task.FromResult(filterInterjections ? "あっ" : "local body"); }, history,
+                filterInterjections ? (text, _) => { pasted.Add(text); return true; } : null);
             var recognizer = new ScriptedDictationRecognizer(request => failRecognition ? Task.FromException<RecognizedUtterance>(new InvalidOperationException("PRIVATE_NO_WAKE_BODY")) : Task.FromResult(new RecognizedUtterance(
                 request.Id, request.Extent, request.Range, spokenWake ? "wake body" : "PRIVATE_NO_WAKE_BODY", spokenWake
                     ? [new LexicalRun("wake", new(request.Range.Start, request.Range.Start + request.Range.Length / 2)), new LexicalRun("body", new(request.Range.Start + request.Range.Length / 2, request.Range.End))]
@@ -145,6 +148,14 @@ internal static class NoWakeTests
             {
                 Console.SetOut(output);
                 var code = await runtime.RunAsync(timeout.Token);
+                if (filterInterjections)
+                {
+                    var retained = history.Snapshot();
+                    if (spokenWake ? retained.Count == 0 || retained.Any(entry => entry.Text != "あっ" || entry.Origin.IsAutomatic)
+                        || pasted.Count != retained.Count || pasted.Any(text => text != "あっ")
+                        : retained.Count != 0 || pasted.Count != 0)
+                        throw new InvalidOperationException("automatic filtering changed strict wake priority or transcript delivery");
+                }
                 var preroll = fragmented ? captured is [{ Range.Start: 960 }] : captured.Select((audio, index) => audio.Range == new SampleRange(index == 0 ? 960 : 17280, index == 0 ? 9600 : 25920)
                     && audio.Samples.Take(960).All(value => value == 0)
                     && audio.Samples.Skip(960).Take(5760).Select((value, index) => value == (index % 2 == 0 ? 9000 : -9000)).All(value => value)
@@ -161,7 +172,9 @@ internal static class NoWakeTests
             && Run(0).GetAwaiter().GetResult() == (0, 0, 0, false, true, false)
             && Run(4, "other recorder").GetAwaiter().GetResult() == (0, 0, 0, false, true, false)
             && Run(4, spokenWake: true).GetAwaiter().GetResult() is (0, > 0, 0, _, _, true)
-            && Run(4, fragmented: true).GetAwaiter().GetResult() == (1, 1, 0, false, true, false);
+            && Run(4, fragmented: true).GetAwaiter().GetResult() == (1, 1, 0, false, true, false)
+            && Run(4, filterInterjections: true).GetAwaiter().GetResult() == (0, 2, 0, false, true, false)
+            && Run(4, spokenWake: true, filterInterjections: true).GetAwaiter().GetResult() is (> 0, > 0, 0, false, _, true);
     }
 
 
@@ -317,6 +330,119 @@ internal static class NoWakeTests
             return RegisteredSuperwhisperHandoff.FindResult(root, 99, new HashSet<string> { "100" }) == "new words";
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    private static bool FilteredLocalDelivery()
+    {
+        async Task<bool> Run()
+        {
+            var path = Path.Combine(Path.GetTempPath(), "voice-filter-config-" + Guid.NewGuid().ToString("N") + ".json");
+            try
+            {
+                VoiceSwitchConfig Load(bool enabled)
+                {
+                    File.WriteAllText(path, "{\"wakeWords\":[\"wake\"],\"command\":\"unused\",\"dictation\":{\"noWakeWord\":{\"autoIdle\":true,\"filterInterjections\":" + (enabled ? "true" : "false") + "}}}");
+                    return ConfigLoader.Load(path);
+                }
+                foreach (var enabled in new[] { false, true })
+                {
+                    var session = new DictationSession(Load(enabled));
+                    if (!session.StartAutomatic(new(0, 2), new(WakeRule.AutoB, 4), 2)) return false;
+                    var audio = session.Finish(FinishReason.FinishCommand, _ => [1, 2])!;
+                    var pending = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    var history = new DictationHistory();
+                    var changes = 0;
+                    history.Changed += () => changes++;
+                    var pasted = new List<string>();
+                    var wrapper = new LocalHistoryHandoff(Unverified(), (_, _) => pending.Task, history,
+                        (text, _) => { pasted.Add(text); return true; });
+                    var result = wrapper.SubmitAsync(audio, CancellationToken.None);
+                    _ = new DictationSession(Load(!enabled));
+                    pending.SetResult(" あっ。\n");
+                    if ((await result).Status != HandoffStatus.RecordedLocally
+                        || history.Select(audio.SessionId) != (enabled ? null : " あっ。\n")
+                        || history.Snapshot().Count != (enabled ? 0 : 1) || changes != (enabled ? 0 : 1)
+                        || pasted.Count != 0) return false;
+                    var strict = audio with { SessionId = Guid.NewGuid(), Origin = new(WakeRule.Strict, 0) };
+                    await wrapper.SubmitAsync(strict, CancellationToken.None);
+                    if (history.Select(strict.SessionId) != " あっ。\n" || !pasted.SequenceEqual([" あっ。\n"])) return false;
+                }
+                return true;
+            }
+            finally { File.Delete(path); }
+        }
+        return Run().GetAwaiter().GetResult();
+    }
+
+    private static bool FilteredSuperwhisperDelivery()
+    {
+        async Task<bool> Run()
+        {
+            var directory = Path.Combine(Path.GetTempPath(), "voice-filter-handoff-" + Guid.NewGuid().ToString("N"));
+            var root = Path.Combine(directory, "handoff");
+            var modes = Path.Combine(directory, "modes");
+            var recordings = Path.Combine(directory, "recordings");
+            var prefs = Path.Combine(directory, "preferences.json");
+            Directory.CreateDirectory(modes);
+            File.WriteAllText(Path.Combine(modes, "safe.json"), "{\"key\":\"safe\",\"autoPaste\":false}");
+            File.WriteAllText(prefs, "{\"activeMode\":\"before\"}");
+            var history = DictationHistory.Shared;
+            history.Clear();
+            var changes = 0;
+            void Changed() => changes++;
+            history.Changed += Changed;
+            try
+            {
+                var files = 0;
+                var routes = new List<string>();
+                var fallback = 0;
+                var launched = new List<string>();
+                var handoff = new RegisteredSuperwhisperHandoff(root, recordings, psi =>
+                {
+                    var argument = psi.ArgumentList[0];
+                    launched.Add(argument);
+                    if (argument.Contains("mode?key="))
+                        File.WriteAllText(prefs, JsonSerializer.Serialize(new { activeMode = argument.Split("key=")[1] }));
+                    else
+                    {
+                        files++;
+                        var run = Path.Combine(recordings, (DateTimeOffset.UtcNow.ToUnixTimeSeconds() + files).ToString());
+                        Directory.CreateDirectory(run);
+                        File.WriteAllText(Path.Combine(run, "meta.json"), JsonSerializer.Serialize(new { result = " ああ！\n" }));
+                    }
+                    return new Process();
+                }, delay: _ => Task.CompletedTask, onTranscribed: text => { routes.Add(text); return Task.FromResult(RouteResult.NotRouted); },
+                    superwhisperMode: "safe", preferencesPath: prefs, modesDir: modes);
+                var wrapper = new LocalHistoryHandoff(handoff, (_, _) => { fallback++; return Task.FromResult("fallback"); });
+                foreach (var rule in new[] { WakeRule.AutoB, WakeRule.Followup, WakeRule.RelaxedD2 })
+                {
+                    var audio = new DictationAudio(Guid.NewGuid(), new(0, 2), [1, 2],
+                        Origin: new(rule, 4), TranscriptPolicy: new(true));
+                    if ((await wrapper.SubmitAsync(audio, CancellationToken.None)).Status != HandoffStatus.RecordedLocally
+                        || history.Select(audio.SessionId) is not null || history.Snapshot().Count != 0 || changes != 0) return false;
+                }
+                if (fallback != 0 || routes.Count != 0 || files != 3 || Directory.GetFiles(root, "*.wav").Length != 0
+                    || SuperwhisperModes.ActiveMode(File.ReadAllText(prefs)) != "before"
+                    || File.Exists(Path.Combine(root, "mode-restore.json"))) return false;
+                var strict = new DictationAudio(Guid.NewGuid(), new(0, 2), [1, 2],
+                    Origin: new(WakeRule.Strict, 0), TranscriptPolicy: new(true));
+                if ((await wrapper.SubmitAsync(strict, CancellationToken.None)).Status != HandoffStatus.Transcribed
+                    || history.Select(strict.SessionId) != " ああ！\n" || !routes.SequenceEqual([" ああ！\n"]) || changes != 1) return false;
+                var duplicate = await wrapper.SubmitAsync(strict, CancellationToken.None);
+                if (duplicate.Status != HandoffStatus.RecordedLocally || files != 4 || routes.Count != 1 || fallback != 0) return false;
+                var disabled = strict with { SessionId = Guid.NewGuid(), Origin = new(WakeRule.AutoB, 4), TranscriptPolicy = default };
+                return (await wrapper.SubmitAsync(disabled, CancellationToken.None)).Status == HandoffStatus.Transcribed
+                    && history.Select(disabled.SessionId) == " ああ！\n" && changes == 2 && routes.Count == 1 && fallback == 0
+                    && launched.Count(argument => argument.Contains("mode?key=")) == 8;
+            }
+            finally
+            {
+                history.Changed -= Changed;
+                history.Clear();
+                Directory.Delete(directory, true);
+            }
+        }
+        return Run().GetAwaiter().GetResult();
     }
 
     private static CountingHandoff Unverified() => new() { Status = HandoffStatus.FailedBeforeDispatch };

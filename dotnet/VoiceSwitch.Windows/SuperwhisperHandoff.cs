@@ -164,8 +164,8 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
 
         TryDelete(wavPath);
         cancellation.ThrowIfCancellationRequested();
-        if (!DictationHistory.Shared.Add(audio.SessionId, text, audio.Wake, historyGeneration))
-            return new HandoffResult(HandoffStatus.RecordedLocally, audio.SessionId, null, "result discarded after history clear or duplicate");
+        if (!DictationHistory.Shared.Add(audio.SessionId, text, audio.Wake, historyGeneration, audio.TranscriptPolicy))
+            return new HandoffResult(HandoffStatus.RecordedLocally, audio.SessionId, null, "transcript discarded");
         if (controlled)
             return new HandoffResult(HandoffStatus.Transcribed, audio.SessionId, null, "Superwhisper result added to history");
         if (audio.Action is { } action)

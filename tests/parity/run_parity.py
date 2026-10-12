@@ -47,6 +47,7 @@ def main() -> int:
     else:
         check_windows_core_behavior(result, text_fixture, segmenter_fixture, pane_route_fixture)
         check_swift_core_behavior(result, args.require_swift)
+        check_cough_policy_behavior(result)
     check_mutation_gate(result, repo, contract)
 
     result.note("macOS runtime execution skipped: Apple Speech, AVFoundation, and the macOS SDK are not available in this WSL environment.")
@@ -837,6 +838,24 @@ def check_swift_core_behavior(result: Result, require_swift: bool) -> None:
                 result.ok("Swift pure harness completed")
         else:
             result.fail("Swift pure harness failed:\n" + completed.stdout + completed.stderr)
+
+
+def check_cough_policy_behavior(result: Result) -> None:
+    language = "both" if shutil.which("swiftc") else "csharp"
+    completed = subprocess.run(
+        [sys.executable, str(ROOT / "tests/cough-filter/run_policy_tests.py"), "--language", language],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=180,
+    )
+    if completed.returncode != 0:
+        result.fail("automatic transcript policy checks failed:\n" + completed.stdout + completed.stderr)
+        return
+    for line in completed.stdout.splitlines():
+        if line.startswith("PASS "):
+            result.ok(line[5:])
 
 
 def core_project() -> str:
