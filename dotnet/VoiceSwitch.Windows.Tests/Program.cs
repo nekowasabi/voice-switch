@@ -165,6 +165,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation handoff switches mode only for automatic audio", () => Check(DictationHandoffSwitchesModeOnlyForAutomaticAudio())),
     ("automatic audio stays out of Superwhisper when the mode switch fails", () => Check(DictationHandoffKeepsAutomaticAudioOutOfSuperwhisperWhenModeSwitchFails())),
     ("dictation handoff keeps WAV when Superwhisper writes no result", () => Check(DictationHandoffKeepsWavWithoutResult())),
+    ("dictation handoff WAV keeps at most 120 ms of quiet before the first speech", () => Check(DictationHandoffWavTrimsQuietHead())),
     ("dictation handoff restores focus 20 times before polling", () => Check(DictationHandoffRestoresFocusBeforePolling())),
     ("superwhisper result lookup picks newest non-empty run", () => Check(SuperwhisperFindResultPicksNewestNonEmpty())),
     ("dictation handoff sweeps WAVs older than 10 minutes", () => Check(DictationHandoffSweepsOldFiles())),
@@ -3896,6 +3897,24 @@ static bool DictationHandoffKeepsWavWithoutResult()
         && result.Path == wav
         && output.Contains($"dictation: no superwhisper result within 30 s, kept {wav}", StringComparison.Ordinal)
         && Pcm16Wav.DecodeStrict(new FileInfo(wav), 100).SequenceEqual(audio.Samples);
+}
+
+// Superwhisper drops the first sentence of quiet speech behind the 300 ms preroll (voice-switch.log 2026-10-12, probes
+// with the real app); the file it reads must start at most 120 ms before the first speech sample.
+static bool DictationHandoffWavTrimsQuietHead()
+{
+    using var temp = RuntimeTemp();
+    var root = Path.Combine(temp.Dir, "handoff");
+    var recordings = Path.Combine(temp.Dir, "recordings");
+    var handoff = FakeSuperwhisper(root, recordings, _ => Process.GetCurrentProcess());
+    var quiet = Enumerable.Range(0, 4800).Select(i => (short)(i % 2 == 0 ? 20 : -20));
+    var speech = Enumerable.Range(0, 8000).Select(i => (short)(i % 2 == 0 ? 3000 : -3000));
+    var samples = quiet.Concat(speech).ToImmutableArray();
+    var audio = new DictationAudio(Guid.NewGuid(), new SampleRange(0, samples.Length), samples);
+    var (_, _) = CaptureConsole(() => { _ = SubmitHandoff(handoff, audio); return 0; });
+    var written = Pcm16Wav.DecodeStrict(new FileInfo(Path.Combine(root, $"{audio.SessionId:N}.wav")), samples.Length + 1);
+    var head = written.TakeWhile(sample => Math.Abs(sample) < 3000).Count();
+    return head == 1920 && written.Skip(head).SequenceEqual(speech);
 }
 
 static bool DictationHandoffRestoresFocusBeforePolling()
