@@ -10,6 +10,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\..\..\dotnet\VoiceSwitch.Windows\InputActivity.cs" Link="VoiceSwitch.Windows.InputActivity.cs" />
+    <Compile Include="..\..\..\dotnet\VoiceSwitch.Windows\LocalHistoryHandoff.cs" Link="VoiceSwitch.Windows.LocalHistoryHandoff.cs" />
     <Compile Include="..\..\..\dotnet\VoiceSwitch.Windows\DictationRuntime.cs" Link="VoiceSwitch.Windows.DictationRuntime.cs" />
     <Compile Include="..\..\..\dotnet\VoiceSwitch.Windows\ImeReadings.cs" Link="VoiceSwitch.Windows.ImeReadings.cs" />
     <Compile Include="..\..\..\dotnet\VoiceSwitch.Windows\MicInUse.cs" Link="VoiceSwitch.Windows.MicInUse.cs" />

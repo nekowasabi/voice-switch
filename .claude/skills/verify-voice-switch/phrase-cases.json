@@ -1,0 +1,17 @@
+[
+  { "name": "greeting-then-body", "parts": [
+    { "text": "おはようございます", "expect": ["おはよう"] }, { "pauseMs": 800 },
+    { "text": "今日は良い天気ですね", "expect": ["天気", "てんき"] } ] },
+  { "name": "short-lead", "parts": [
+    { "text": "はい", "expect": ["はい"] }, { "pauseMs": 700 },
+    { "text": "その件は明日までに確認します", "expect": ["明日", "あした"] } ] },
+  { "name": "three-phrases", "parts": [
+    { "text": "こんにちは", "expect": ["こんにちは"] }, { "pauseMs": 600 },
+    { "text": "会議の資料を送りました", "expect": ["資料", "しりょう"] }, { "pauseMs": 900 },
+    { "text": "確認をお願いします", "expect": ["確認", "かくにん"] } ] },
+  { "name": "long-pause-middle", "parts": [
+    { "text": "ありがとうございます", "expect": ["ありがとう"] }, { "pauseMs": 1800 },
+    { "text": "次の打ち合わせは金曜日です", "expect": ["金曜", "きんよう"] } ] },
+  { "name": "no-pause", "parts": [
+    { "text": "おはようございます今日は雨が降りそうです", "expect": ["おはよう"] } ] }
+]

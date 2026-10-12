@@ -15,7 +15,8 @@ public sealed record DictationConfig(
     // Windows twin of excludeBundleIDs: executable names (with or without .exe) whose window in front stops a wake.
     string[]? ExcludeProcessNames = null,
     // Superwhisper mode key or name used for voice-switch dictations; meant to be a mode with auto-paste off.
-    string? SuperwhisperMode = null);
+    string? SuperwhisperMode = null,
+    NoWakeWordConfig? NoWakeWord = null);
 
 /// <summary>Load-time guardrails for timing fields that are easy to mistype 10x. No clamp — warn only.</summary>
 public static class DictationTimingGuard
@@ -172,9 +173,22 @@ public static class ConfigLoader
             throw new InvalidDataException($"Config JSON is invalid: {ex.Message}", ex);
         }
 
+        config = WithDefaultStopWords(config);
         Validate(config);
         return config;
     }
+
+    // Per-locale defaults, used only when stopWords is absent. An explicit value (even []) is never replaced.
+    private static readonly Dictionary<string, string[]> DefaultStopWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["ja-JP"] = ["入力ストップ"],
+        ["en-US"] = ["stop dictation"],
+    };
+
+    public static VoiceSwitchConfig WithDefaultStopWords(VoiceSwitchConfig config) =>
+        config.StopWords is null && DefaultStopWords.TryGetValue(config.EffectiveLocale, out var words)
+            ? config with { StopWords = [.. words] }
+            : config;
 
     public static string ToJsonArray(IEnumerable<string> values) =>
         JsonSerializer.Serialize(values.ToArray(), Options);
@@ -229,6 +243,9 @@ public static class ConfigLoader
                 throw new InvalidDataException($"{field}.url must be an absolute application URL (for example superwhisper://record); encode spaces as %20, use valid percent escapes, and do not use file/data/javascript URLs.");
             }
         }
+
+        if (config.Dictation?.NoWakeWord is { } noWake && (noWake.FollowupMs is < 1000 or > 30000 || noWake.IdleMs is < 1000 or > 60000))
+            throw new InvalidDataException("dictation.noWakeWord requires followupMs 1000..30000 and idleMs 1000..60000.");
 
         if (config.NoiseReduction is { MaxAttenuationDb: < 0 or > 6 })
         {

@@ -52,6 +52,17 @@ struct Config: Decodable {
         self.dictation = dictation
         self.noiseReduction = noiseReduction
     }
+
+    /// Per-locale defaults, used only when stopWords is absent. An explicit value (even []) is kept.
+    private static let defaultStopWords = ["ja-JP": ["入力ストップ"], "en-US": ["stop dictation"]]
+
+    /// Same locale rule as Windows: unset -> ja-JP, "_" -> "-".
+    mutating func applyDefaultStopWords() {
+        guard stopWords == nil else { return }
+        let l = (locale?.trimmingCharacters(in: .whitespaces)).flatMap { $0.isEmpty ? nil : $0 } ?? "ja-JP"
+        let key = l.replacingOccurrences(of: "_", with: "-").lowercased()
+        stopWords = Self.defaultStopWords.first { $0.key.lowercased() == key }?.value
+    }
 }
 
 struct NoiseReductionOptions: Decodable {
@@ -94,6 +105,7 @@ struct DictationConfig: Decodable {
     /// Superwhisper mode key or display name for voice-switch dictations (Mac + Windows).
     /// Unset keeps auto-paste behavior; set switches mode around handoff and pastes when not routed.
     var superwhisperMode: String?
+    var noWakeWord: NoWakeWordConfig?
 
     init(recordingsDir: String? = nil, endSilenceMs: Int? = nil, maxSeconds: Double? = nil,
          excludeBundleIDs: [String]? = nil, startTimeoutMs: Int? = nil) {
@@ -158,7 +170,12 @@ final class ConfigFile {
     }
 
     private static func load(_ path: String) throws -> Config {
-        try JSONDecoder().decode(Config.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        var config = try JSONDecoder().decode(Config.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        if let options = config.dictation?.noWakeWord, !options.valid {
+            throw NSError(domain: "voice-switch.config", code: 1, userInfo: [NSLocalizedDescriptionKey: "noWakeWord requires followupMs 1000...30000 and idleMs 1000...60000"])
+        }
+        config.applyDefaultStopWords()
+        return config
     }
 
     private static func modified(_ path: String) -> Date? {

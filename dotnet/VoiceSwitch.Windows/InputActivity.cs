@@ -12,6 +12,13 @@ public static class InputActivity
         return GetLastInputInfo(ref info) ? ElapsedSeconds(unchecked((uint)Environment.TickCount64), info.Time) : null;
     }
 
+    public static uint? LastInputTick()
+    {
+        if (!OperatingSystem.IsWindows()) return null;
+        var info = new LastInputInfo { Size = (uint)Marshal.SizeOf<LastInputInfo>() };
+        return GetLastInputInfo(ref info) ? info.Time : null;
+    }
+
     public static double ElapsedSeconds(uint now, uint lastInput) => unchecked(now - lastInput) / 1000.0;
 
     [StructLayout(LayoutKind.Sequential)]
@@ -25,6 +32,7 @@ public static class WakeMissLabel
 {
     private static readonly object Sync = new();
     private static (long Id, WakeOrigin Origin, long At)? latest;
+    private static long? labeled;
     public static void Observe(long id, WakeOrigin origin)
     {
         lock (Sync) { latest = (id, origin, Environment.TickCount64); }
@@ -33,8 +41,8 @@ public static class WakeMissLabel
     {
         lock (Sync)
         {
-            if (latest is not { } value || Environment.TickCount64 - value.At > 10_000) return;
-            latest = null;
+            if (latest is not { } value || Environment.TickCount64 - value.At > 10_000 || labeled == value.At) return;
+            labeled = value.At;
             Log.Info($"wake label: MISS id={value.Id} {value.Origin.Fields}");
         }
     }

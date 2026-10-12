@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using System.Text;
+using VoiceSwitch.Windows.Core;
 
 namespace VoiceSwitch.Windows.Tray;
 
@@ -49,43 +51,99 @@ public static class WindowFocus
     // thread, and the wait before restoring it must not stall the HUD, so the paste runs on its own STA thread.
     public static bool Paste(string text, nint target)
     {
-        if (target == 0 || !OperatingSystem.IsWindows() || !IsWindow(target))
-        {
-            return false;
-        }
-
+        if (target == 0 || !OperatingSystem.IsWindows() || !IsWindow(target)) return false;
+        var pasted = false;
         var thread = new Thread(() =>
         {
+            string? previous = null;
+            uint? ownedClipboard = null;
             try
             {
-                var previous = Clipboard.ContainsText() ? Clipboard.GetText() : null;
-                Clipboard.SetText(text);
+                var input = InputActivity.LastInputTick();
+                if (input is null || InputActivity.IdleSeconds() is not >= 1) return;
                 var foreground = GetForegroundWindow();
-                if (foreground != 0 && foreground != target && !ForceForeground(GetWindowThreadProcessId(foreground, out _), target).Restored)
-                {
-                    Log.Info($"dictation paste: could not bring target=0x{target:X} to the front");
-                }
-
-                SendKeys.SendWait("^v");
-                // Ctrl+V is only queued; the target reads the clipboard when it handles it. 1 s outlasts a busy target.
+                if (foreground == 0) return;
+                if (foreground != target && !ForceForeground(GetWindowThreadProcessId(foreground, out _), target).Restored) return;
+                var data = Clipboard.GetDataObject();
+                var formats = data?.GetFormats(false) ?? [];
+                var restorable = formats.All(format => format is "UnicodeText" or "Text" or "System.String" or "Locale" or "OEMText");
+                if (!restorable) return;
+                previous = Clipboard.ContainsText() ? Clipboard.GetText() : null;
+                if (formats.Length != 0 && previous is null) return;
+                if (!CanPaste(target, input.Value, true, out _)) return;
+                Clipboard.SetText(text);
+                ownedClipboard = GetClipboardSequenceNumber();
+                if (!CanPaste(target, input.Value, true, out var control)) return;
+                pasted = SendMessageTimeout(control, 0x0302, 0, 0, 0x0003, 1000, out _) != 0;
                 Thread.Sleep(TimeSpan.FromSeconds(1));
-                if (previous is not null && Clipboard.ContainsText() && Clipboard.GetText() == text)
+            }
+            catch (Exception ex) when (ex is ExternalException or InvalidOperationException)
+            {
+                Log.Info("dictation paste: clipboard or target unavailable; retained in history");
+            }
+            finally
+            {
+                if (ownedClipboard is { } sequence && GetClipboardSequenceNumber() == sequence)
                 {
-                    Clipboard.SetText(previous);
+                    try
+                    {
+                        if (previous is null) Clipboard.Clear(); else Clipboard.SetText(previous);
+                    }
+                    catch (ExternalException) { Log.Info("dictation paste: clipboard restore failed"); }
                 }
             }
-            catch (ExternalException ex)
-            {
-                Log.Info($"dictation paste: clipboard failed: {ex.Message}");
-            }
-        })
-        {
-            IsBackground = true
-        };
+        }) { IsBackground = true };
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
-        return true;
+        thread.Join();
+        return pasted;
     }
+
+    private static bool CanPaste(nint target, uint input, bool clipboardRestorable, out nint control)
+    {
+        control = 0;
+        var focused = GetForegroundWindow() == target;
+        var info = new GuiThreadInfo { Size = (uint)Marshal.SizeOf<GuiThreadInfo>() };
+        if (!GetGUIThreadInfo(GetWindowThreadProcessId(target, out _), ref info) || info.Focus == 0) return false;
+        var name = new StringBuilder(256);
+        if (GetClassName(info.Focus, name, name.Capacity) == 0) return false;
+        var style = GetWindowLong(info.Focus, -16);
+        var plain = (style & 0x40000000) != 0 && name.ToString().Equals("Edit", StringComparison.OrdinalIgnoreCase)
+            && (style & 0x20) == 0 && GetAncestor(info.Focus, 2) == target;
+        var keyboard = GetKeyboardLayout(GetWindowThreadProcessId(target, out _));
+        var language = keyboard.ToInt64() & 0x3ff;
+        var imePossible = ImmIsIME(keyboard) || language is 0x04 or 0x11 or 0x12;
+        var context = ImmGetContext(info.Focus);
+        var compositionClear = context == 0 && !imePossible;
+        if (context != 0)
+        {
+            try { compositionClear = ImmGetCompositionString(context, 0x0008, 0, 0) == 0; }
+            finally { ImmReleaseContext(info.Focus, context); }
+        }
+        var allowed = new PasteSafety(focused, plain, compositionClear, clipboardRestorable,
+            InputActivity.LastInputTick() == input).AllowsPaste;
+        if (allowed) control = info.Focus;
+        return allowed;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct GuiThreadInfo
+    {
+        public uint Size, Flags;
+        public nint Active, Focus, Capture, MenuOwner, MoveSize, Caret;
+        public int Left, Top, Right, Bottom;
+    }
+    [DllImport("user32.dll")] private static extern bool GetGUIThreadInfo(uint thread, ref GuiThreadInfo info);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(nint window, StringBuilder name, int size);
+    [DllImport("user32.dll")] private static extern int GetWindowLong(nint window, int index);
+    [DllImport("user32.dll")] private static extern nint GetAncestor(nint window, uint flags);
+    [DllImport("user32.dll")] private static extern uint GetClipboardSequenceNumber();
+    [DllImport("user32.dll")] private static extern nint GetKeyboardLayout(uint thread);
+    [DllImport("imm32.dll")] private static extern bool ImmIsIME(nint layout);
+    [DllImport("user32.dll", SetLastError = true)] private static extern nint SendMessageTimeout(nint window, uint message, nint wParam, nint lParam, uint flags, uint timeout, out nint result);
+    [DllImport("imm32.dll")] private static extern nint ImmGetContext(nint window);
+    [DllImport("imm32.dll")] private static extern bool ImmReleaseContext(nint window, nint context);
+    [DllImport("imm32.dll", CharSet = CharSet.Unicode)] private static extern int ImmGetCompositionString(nint context, uint index, nint buffer, uint length);
 
     // AllowSetForegroundWindow can only be granted by the foreground process itself, and a synthetic Alt tap toggles
     // menu bars and can eat the paste; sharing the foreground thread's input queue is what lets SetForegroundWindow succeed.

@@ -9,3 +9,4 @@ tests/**/obj/
 .serena/
 .audit/
 .tgrep/
+__pycache__/

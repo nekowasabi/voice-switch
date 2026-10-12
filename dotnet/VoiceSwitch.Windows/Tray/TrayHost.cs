@@ -38,7 +38,6 @@ public static class TrayHost
             // Built on this STA thread before the runtime exists; the runtime reaches them only through the hooks below.
             var hotkeys = new DictationHotkeys();
             using var hud = new DictationHud();
-            using var wakeLabelHotkey = new WakeLabelHotkey();
             using var hook = new KeyboardHook(hotkeys, hud);
             var supervisor = new TrayRuntimeSupervisor(
                 options.ConfigPath,
@@ -58,6 +57,10 @@ public static class TrayHost
                 instance.Key);
 
             using var context = new VoiceSwitchTrayContext(supervisor);
+            using var wakeLabelHotkey = new WakeLabelHotkey(context.ShowHistory, hotkeys.RequestStart);
+            hud.HistoryRequested += context.ShowHistory;
+            void HistoryChanged() => hud.Post(hud.HistoryAvailable);
+            DictationHistory.Shared.Changed += HistoryChanged;
             var ipc = new TrayIpcServer(instance.PipeName, supervisor, context.Diagnostics, context.QuitRuntimeAsync, context.RequestExitThread);
             try
             {
@@ -70,6 +73,7 @@ public static class TrayHost
             }
             finally
             {
+                DictationHistory.Shared.Changed -= HistoryChanged;
                 ipc.DisposeAsync().AsTask().GetAwaiter().GetResult();
                 supervisor.QuitAsync(CancellationToken.None).GetAwaiter().GetResult();
             }
