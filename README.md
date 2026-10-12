@@ -46,7 +46,7 @@ If `dictation` is present:
 - An utterance that starts with a wake word and continues is recorded until about `endSilenceMs` of silence (sample 1200), a stop word, superwhisper's record shortcut, or `dictation.maxSeconds` (sample 60). The wake-word audio is cut.
 - The wav is opened in superwhisper. The app polls `dictation.recordingsDir` (sample `~/Documents/superwhisper/recordings`) for a new `meta.json`, reads `llmResult` or else `result`, and logs the length. That string then goes through the pane routing below. The code activates the app that was frontmost when the wake word was heard, while superwhisper is frontmost, so superwhisper does not skip its paste.
 
-`stopWords` said on their own end an in-progress dictation. If an app in `skipWhileMicInUseBy` is using the microphone instead, the same word runs `stopCommand`. The sample word is `入力ストップ`. The sample `stopCommand` is the same superwhisper record URL, which toggles.
+`stopWords` said on their own end an in-progress dictation. If an app in `skipWhileMicInUseBy` is using the microphone instead, the same word runs `stopCommand`. The sample word is `入力ストップ`. When `stopWords` is absent, the locale picks a default: `入力ストップ` for `ja-JP` (also when `locale` is unset) and `stop dictation` for `en-US`; other locales get none. A value you set, including `[]`, is never replaced. Pick a word in your locale that rarely appears in body text, so ordinary dictation does not end the input. (macOS default: not verified on a Mac.) The sample `stopCommand` is the same superwhisper record URL, which toggles.
 
 A wake word is ignored while an app in `skipWhileMicInUseBy` has the microphone open. Dictation is skipped when the frontmost bundle id is in `dictation.excludeBundleIDs`.
 

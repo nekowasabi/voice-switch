@@ -38,6 +38,8 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation wake prefix trims exact body start", () => Check(DictationWakePrefixTrimsExactBodyStart())),
     ("dictation wake and stop boundaries are explicit", () => Check(DictationWakeAndStopBoundariesAreExplicit())),
     ("dictation stop grammar result needs the confidence floor", () => Check(DictationStopGrammarResultNeedsConfidenceFloor())),
+    ("stop word judgement behaves the same for the default and another word", () => Check(StopWordJudgementIsWordIndependent())),
+    ("config fills locale default stop words only when absent", () => Check(ConfigFillsLocaleDefaultStopWords())),
     ("dictation lone wake waits for body", () => Check(DictationLoneWakeWaitsForBody())),
     ("dictation rejected wake hypothesis opens a wait but never a body", () => Check(DictationRejectedWakeOpensWaitOnly())),
     ("dictation lone wake body then stop submits body", () => Check(DictationLoneWakeBodyThenStopSubmitsBody())),
@@ -873,6 +875,48 @@ static bool DictationStopGrammarResultNeedsConfidenceFloor()
         && DictationBoundaries.StandaloneStopRange(FromGrammar(3, null), ["入力ストップ"]) is null
         && DictationBoundaries.StandaloneStopRange(FromGrammar(4, 0.99, RecognitionExtent.PrefixHead), ["入力ストップ"]) is null
         && DictationBoundaries.StandaloneStopRange(dictated, ["入力ストップ"]) == new SampleRange(10500, 13500);
+}
+
+static bool StopWordJudgementIsWordIndependent()
+{
+    // Same shape for any stop word: the judgement must not depend on which word it is.
+    static bool Behaves(string word, string head, string tail)
+    {
+        ImmutableArray<LexicalRun> runs = [Run(head, 10500, 12000), Run(tail, 12000, 13500)];
+        var alone = new RecognizedUtterance(1, RecognitionExtent.ClosedUtterance, new SampleRange(10000, 14000), word, runs, Confidence: 0.1);
+        var embedded = new RecognizedUtterance(2, RecognitionExtent.ClosedUtterance, new SampleRange(10000, 14000), "x " + word + " y",
+            [Run("x", 10000, 10500), .. runs, Run("y", 13500, 14000)], Confidence: 0.1);
+        var prefix = alone with { Id = 3, Extent = RecognitionExtent.PrefixHead };
+        var grammar = alone with { FromStopGrammar = true };
+        var floor = DictationBoundaries.StopGrammarMinConfidence;
+        return DictationBoundaries.StandaloneStopRange(alone, [word]) == new SampleRange(10500, 13500)
+            && DictationBoundaries.StandaloneStopRange(embedded, [word]) is null
+            && DictationBoundaries.StandaloneStopRange(prefix, [word]) is null
+            && DictationBoundaries.StandaloneStopRange(grammar with { Confidence = floor }, [word]) == new SampleRange(10500, 13500)
+            && DictationBoundaries.StandaloneStopRange(grammar with { Confidence = floor - 0.01 }, [word]) is null;
+    }
+
+    return Behaves("入力ストップ", "入力", "ストップ") && Behaves("おしまい終了", "おしまい", "終了");
+}
+
+static bool ConfigFillsLocaleDefaultStopWords()
+{
+    using var temp = RuntimeTemp();
+    string[]? Stop(string extra)
+    {
+        var path = Path.Combine(temp.Dir, $"{Guid.NewGuid():N}.json");
+        File.WriteAllText(path, $$"""{"wakeWords":["音声入力"],"command":"wake"{{extra}}}""");
+        return ConfigLoader.Load(path).StopWords;
+    }
+
+    var ja = Stop("");
+    var en = Stop(""","locale":"en_US" """.Trim());
+    return ja!.SequenceEqual(["入力ストップ"])
+        && en!.SequenceEqual(["stop dictation"])
+        && Stop(""","locale":"ja-JP" """.Trim())!.SequenceEqual(["入力ストップ"])
+        && Stop(""","stopWords":["おしまい終了"]""")!.SequenceEqual(["おしまい終了"])
+        && Stop(""","stopWords":[]""")!.Length == 0
+        && Stop(""","locale":"fr-FR" """.Trim()) is null;
 }
 
 static bool DictationLoneWakeWaitsForBody()
