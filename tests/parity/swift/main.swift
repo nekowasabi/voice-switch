@@ -53,6 +53,10 @@ func checkWakeHistory() {
     precondition(history.select(first) == nil)
     precondition(!history.add(id: first, text: String(repeating: "x", count: 100_001), origin: origin))
     precondition(WakeOrigin(rule: .relaxedD2, inputIdleSeconds: .nan).fields == "rule=relaxed_d2 inputIdleSeconds=-1")
+    precondition(sidField(nil) == "sid=-")
+    precondition(sidField(UUID(uuidString: "A0B1C2D3-E4F5-4678-89AB-CDEF01234567")!) == "sid=a0b1c2d3-e4f5-4678-89ab-cdef01234567")
+    precondition("\(WakeOrigin(rule: .strict, inputIdleSeconds: 1.5).fields) \(sidField(nil))" == "rule=strict inputIdleSeconds=1.500 sid=-")
+    precondition("\(WakeOrigin(rule: .autoB, inputIdleSeconds: 4).fields) \(sidField(UUID(uuidString: "A0B1C2D3-E4F5-4678-89AB-CDEF01234567")!))" == "rule=auto_b inputIdleSeconds=4.000 sid=a0b1c2d3-e4f5-4678-89ab-cdef01234567")
 }
 checkWakeHistory()
 

@@ -13,6 +13,11 @@ struct WakeOrigin: Equatable {
     }
 }
 
+func sidField(_ id: UUID?) -> String {
+    guard let id else { return "sid=-" }
+    return "sid=\(id.uuidString.lowercased())"
+}
+
 struct AutomaticTranscriptPolicy: Equatable {
     /// Whole transcripts an automatic recording is dropped for, after `token` trims it.
     var ignored: Set<String>
