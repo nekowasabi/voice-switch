@@ -95,6 +95,9 @@ struct DictationConfig: Decodable {
     /// Unset keeps auto-paste behavior; set switches mode around handoff and pastes when not routed.
     var superwhisperMode: String?
     var noWakeWord: NoWakeWordConfig?
+    /// Windows only. A second SAPI engine hears a stop word after body text.
+    /// macOS decodes the key and does not use it. Apple Speech is not covered. Absent stays off.
+    var dedicatedStopRecognizer: Bool? = nil
 
     init(recordingsDir: String? = nil, endSilenceMs: Int? = nil, maxSeconds: Double? = nil,
          excludeBundleIDs: [String]? = nil, startTimeoutMs: Int? = nil) {

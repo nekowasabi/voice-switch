@@ -48,6 +48,8 @@ If `dictation` is present:
 
 `stopWords` said on their own end an in-progress dictation. If an app in `skipWhileMicInUseBy` is using the microphone instead, the same word runs `stopCommand`. The sample word is `入力ストップ`. The sample `stopCommand` is the same superwhisper record URL, which toggles.
 
+On Windows, a stop word spoken after body text is often absorbed by the dictation grammar. `dictation.dedicatedStopRecognizer` (Windows only; sample `false`) sends the same PCM to a second SAPI engine that loads only a wildcard plus the stop words. When the normal path finds no standalone stop, the body ends at that stop word. Human voice and keyboard noise are unmeasured, so the sample stays off. macOS decodes the key and does not use it. See [docs/stop-word-recognizer.md](docs/stop-word-recognizer.md).
+
 A wake word is ignored while an app in `skipWhileMicInUseBy` has the microphone open. Dictation is skipped when the frontmost bundle id is in `dictation.excludeBundleIDs`.
 
 Optional `dictation.superwhisperMode` (Mac + Windows; key or display name) selects a Superwhisper mode that turns auto-paste off for voice-switch dictations. Unset keeps the old behavior (Superwhisper may auto-paste). When set, voice-switch switches to that mode before handoff and restores the previous mode after; if the pane route did not send, voice-switch pastes once into the wake-time app (SendFailed pastes the same resolved body send-keys tried, quoted or body-Jev, never the full dictation wrapper). A pane that matched but had no extractable send body does not paste the full dictation. Mac mode switch / paste are wired in source; live Mac runtime is unverified on this box (no swiftc / Apple Speech).

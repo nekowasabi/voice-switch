@@ -15,6 +15,11 @@
       "key": "dictation.excludeProcessNames",
       "platform": "macos",
       "reason": "The Windows twin of dictation.excludeBundleIDs, matching the executable of the window in front at the wake word."
+    },
+    {
+      "key": "dictation.dedicatedStopRecognizer",
+      "platform": "macos",
+      "reason": "Windows-only second SAPI engine for a stop word after body text. macOS decodes the key and does not run it. The sample stays false until human voice and keyboard noise are measured."
     }
   ],
   "allowed_cli_gaps": [

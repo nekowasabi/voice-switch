@@ -34,6 +34,8 @@
 
 `stopWords` を単体で言うと、進行中の入力を終える。代わりに `skipWhileMicInUseBy` のアプリがマイクを使っているときは、同じ語で `stopCommand` を実行する。見本の語は `入力ストップ`。見本の `stopCommand` は同じ superwhisper の録音 URL で、録音はトグルする。
 
+Windows では、本文のあとに続けた停止語を dictation が吸い込むことがある。`dictation.dedicatedStopRecognizer`（Windows だけ。見本は false）を true にすると、同じ PCM を停止語だけの別の SAPI 認識器に渡し、通常の経路が単独の停止を見つけなかったとき、その手前で入力を終える。人の声と打鍵音は未測定なので見本は false。Mac はこのキーを読んでも使わない。測定と実装は [docs/stop-word-recognizer.md](docs/stop-word-recognizer.md)。
+
 `skipWhileMicInUseBy` のアプリがマイクを開いているあいだ、ウェイクワードは無視する。前面アプリのバンドル ID が `dictation.excludeBundleIDs` にあるときは入力しない。
 
 任意の `dictation.superwhisperMode`（Mac + Windows。key または表示名）は、voice-switch の入力用に自動ペーストを切った Superwhisper の mode を選ぶ。未設定なら従来どおり（Superwhisper が自動ペーストしてもよい）。設定すると、handoff の前にその mode へ切り替え、結果のあと元の mode に戻す。pane へ送れなかったときだけ、voice-switch がウェイク時点のアプリへ一度ペーストする（SendFailed のときは send-keys に渡したのと同じ解決済み本文だけ。全文ラッパーは貼らない）。pane は当たったが送信本文を切り出せなかったときは、全文をペーストしない。Mac の mode 切替・paste はソースに配線済み。この box では Mac 実機ランタイムは未検証（swiftc / Apple Speech なし）。

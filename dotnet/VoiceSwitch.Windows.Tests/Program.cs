@@ -59,6 +59,11 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation session opens a wait on a fuzzy wake and starts the body on the next utterance", () => Check(DictationSessionOpensWaitOnFuzzyWake())),
     ("dictation runtime logs a reading-matched wake-only with its distance", () => Check(DictationRuntimeLogsReadingWakeOnly())),
     ("dictation standalone stop trims at absolute stop start", () => Check(DictationStandaloneStopTrimsAtAbsoluteStart())),
+    ("dedicated tail stop trims the garbled tail and honors the confidence floor", () => Check(DedicatedTailStopTrimsGarbledTailAndHonorsTheFloor())),
+    ("dedicated tail stop finishes the body only when the flag is on", () => Check(DedicatedTailStopFinishesTheBodyOnlyWhenEnabled())),
+    ("dictation runtime finishes on a dedicated tail stop and logs the range", () => Check(DictationRuntimeFinishesOnDedicatedTailStop())),
+    ("dictation runtime one-breath tail stop keeps the foreground window", () => Check(DictationRuntimeOneBreathTailStopKeepsForegroundWindow())),
+    ("dedicated stop script stays on its own engine", () => Check(DedicatedStopScriptStaysOnItsOwnEngine())),
     ("dictation prefix head stop is retained", () => Check(DictationPrefixHeadStopIsRetained())),
     ("dictation embedded stop is retained", () => Check(DictationEmbeddedStopIsRetained())),
     ("dictation rejected stop is retained", () => Check(DictationRejectedStopIsRetained())),
@@ -147,6 +152,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("superwhisper mode decide pastes only when requested and not routed", () => Check(SuperwhisperModeDecidePastesOnlyWhenNotRouted())),
     ("superwhisper mode decide does not paste after no-body skip", () => Check(SuperwhisperModeDecideDoesNotPasteAfterNoBodySkip())),
     ("config loads optional dictation.superwhisperMode", () => Check(ConfigLoadsOptionalSuperwhisperMode())),
+    ("config loads dictation.dedicatedStopRecognizer and defaults it off", () => Check(ConfigLoadsDedicatedStopRecognizer())),
     ("config loads windows.actions and rejects invalid ones", () => Check(ConfigLoadsWindowsActions())),
     ("wake action URL carries the text as one input item", () => Check(WakeActionUrlCarriesInput())),
     ("dictation action wake selects its action after the default wakes", () => Check(DictationActionWakeSelectsAction())),
@@ -1277,6 +1283,120 @@ static bool DictationStandaloneStopTrimsAtAbsoluteStart()
         && audio.Samples[^1] == 20999;
 }
 
+static bool DedicatedTailStopTrimsGarbledTailAndHonorsTheFloor()
+{
+    var stops = new[] { "入力ストップ", "おわり" };
+    var floor = DictationBoundaries.StopGrammarMinConfidence;
+    const long sourceStart = 19000;
+    const long sourceEnd = 30000;
+    var garbled = WithTail(
+        Recognized(2, RecognitionExtent.ClosedUtterance, sourceStart, sourceEnd, "まとめます有力紙TAP", false,
+            Run("まとめ", 19000, 21000),
+            Run("ます", 21000, 23000),
+            Run("有力", 23000, 25500),
+            Run("紙TAP", 25500, 28000)),
+        true, floor, "入力ストップ。", 24000, 27000);
+    var accepted = DictationBoundaries.TryDedicatedTailStop(garbled, stops, true);
+    var absent = Recognized(3, RecognitionExtent.ClosedUtterance, sourceStart, sourceEnd, "まとめます", false, Run("まとめます", 19000, 23000));
+
+    return floor == 0.4
+        && accepted is { Range: var range, BodyText: "まとめます", Confidence: var confidence, Word: "入力ストップ。" }
+        && range == new SampleRange(24000, 27000)
+        && confidence == floor
+        && accepted.BodyLexemes.Length == 2
+        && DictationBoundaries.TryDedicatedTailStop(garbled with { TailStopConfidence = floor - 0.01 }, stops, true) is null
+        && DictationBoundaries.TryDedicatedTailStop(garbled with { TailStopConfidence = null }, stops, true) is null
+        && DictationBoundaries.TryDedicatedTailStop(garbled, stops, false) is null
+        && DictationBoundaries.TryDedicatedTailStop(absent, stops, true) is null
+        && DictationBoundaries.TryDedicatedTailStop(garbled with { TailStop = false }, stops, true) is null
+        && DictationBoundaries.TryDedicatedTailStop(garbled with { TailStopStart = null, TailStopEnd = null }, stops, true) is null
+        && DictationBoundaries.TryDedicatedTailStop(garbled with { Extent = RecognitionExtent.PrefixHead }, stops, true) is null
+        && DictationBoundaries.TryDedicatedTailStop(garbled with { Extent = RecognitionExtent.Probe }, stops, true) is null
+        && DictationBoundaries.TryDedicatedTailStop(garbled with { TailStopWord = "おしまい" }, stops, true) is null
+        && DictationBoundaries.TryDedicatedTailStop(garbled with { TailStopEnd = sourceEnd + 1 }, stops, true) is null;
+}
+
+static bool DedicatedTailStopFinishesTheBodyOnlyWhenEnabled()
+{
+    var enabled = DictationConfig() with { Dictation = DictationConfig().Dictation! with { DedicatedStopRecognizer = true } };
+    var tail = WithTail(
+        Recognized(2, RecognitionExtent.ClosedUtterance, 19000, 30000, "本文有力紙TAP", false,
+            Run("本文", 19000, 22000),
+            Run("有力", 22000, 25000),
+            Run("紙TAP", 25000, 28000)),
+        true, 0.88, "入力ストップ", 24000, 27000);
+    var session = StartedSession(enabled, out var store);
+    var audio = session.Apply(tail, store.Copy);
+    var enabledOk = audio is not null
+        && audio.Reason == FinishReason.StandaloneStop
+        && audio.Range == new SampleRange(10000, 24000)
+        && audio.Samples.Length == 14000
+        && audio.Samples[0] == 10000
+        && audio.Samples[^1] == 23999
+        && session.IsTerminal;
+
+    var disabled = StartedSession(DictationConfig(), out var disabledStore);
+    var disabledOk = disabled.Apply(tail, disabledStore.Copy) is null
+        && disabled.PendingBody == new SampleRange(10000, 30000);
+
+    var low = StartedSession(enabled, out var lowStore);
+    var lowOk = low.Apply(tail with { TailStopConfidence = 0.39 }, lowStore.Copy) is null
+        && low.IsActive
+        && low.PendingBody == new SampleRange(10000, 30000);
+
+    var both = StartedSession(enabled, out var bothStore);
+    var bothAudio = both.Apply(WithTail(
+        Recognized(3, RecognitionExtent.ClosedUtterance, 19000, 30000, "入力ストップ", false,
+            Run("入力", 21000, 23000),
+            Run("ストップ", 23000, 26000)),
+        true, 0.9, "入力ストップ", 25000, 27000), bothStore.Copy);
+    var standaloneWins = bothAudio is { Reason: FinishReason.StandaloneStop, Range: var bothRange }
+        && bothRange == new SampleRange(10000, 21000);
+
+    var early = StartedSession(enabled, out var earlyStore);
+    var earlyOk = early.Apply(WithTail(
+        Recognized(9, RecognitionExtent.ClosedUtterance, 0, 18000, "前文", false, Run("前文", 0, 9000)),
+        true, 0.9, "入力ストップ", 9000, 14000), earlyStore.Copy) is null
+        && early.IsActive
+        && !early.IsTerminal
+        && early.PendingBody == new SampleRange(10000, 20000);
+
+    var breathStore = StoreWithRamp(0, 40000);
+    var breath = new DictationSession(enabled);
+    var breathAudio = breath.Apply(WithTail(
+        Recognized(4, RecognitionExtent.ClosedUtterance, 0, 30000, "音声入力本文有力", false,
+            Run("音声", 0, 4000),
+            Run("入力", 4000, 10000),
+            Run("本文", 10000, 18000),
+            Run("有力", 18000, 26000)),
+        true, 0.88, "入力ストップ", 22000, 28000), breathStore.Copy);
+    var kept = DictationBoundaries.TryDedicatedTailStop(WithTail(
+        Recognized(4, RecognitionExtent.ClosedUtterance, 0, 30000, "音声入力本文有力", false,
+            Run("音声", 0, 4000),
+            Run("入力", 4000, 10000),
+            Run("本文", 10000, 18000),
+            Run("有力", 18000, 26000)),
+        true, 0.88, "入力ストップ", 22000, 28000), enabled.StopWords ?? [], true);
+    var breathOk = breathAudio is { Reason: FinishReason.StandaloneStop, Range: var breathRange }
+        && breathRange == new SampleRange(10000, 22000)
+        && breathAudio.Samples[0] == 10000
+        && breathAudio.Samples[^1] == 21999
+        && kept is { BodyText: "音声入力本文" };
+
+    var empty = new DictationSession(enabled);
+    var emptyAudio = empty.Apply(WithTail(
+        Recognized(8, RecognitionExtent.ClosedUtterance, 0, 16000, "音声入力です", false,
+            Run("音声", 0, 4000),
+            Run("入力", 4000, 10000),
+            Run("です", 10000, 14000)),
+        true, 0.9, "入力ストップ", 10000, 14000), breathStore.Copy);
+    var emptyOk = emptyAudio is null
+        && empty.IsTerminal
+        && empty.Events.Last().Reason == FinishReason.Empty;
+
+    return enabledOk && disabledOk && lowOk && standaloneWins && earlyOk && breathOk && emptyOk;
+}
+
 static bool DictationPrefixHeadStopIsRetained()
 {
     var config = DictationConfig();
@@ -1702,6 +1822,125 @@ static bool DictationRuntimeWaitsForOpenStopUtteranceBeforeSilence()
         && audio.Range == new SampleRange(expectedStart, expectedStopStart)
         && audio.Samples.Length == expectedStopStart - expectedStart
         && recognizer.Requests.Count == 2;
+}
+
+static bool DictationRuntimeFinishesOnDedicatedTailStop()
+{
+    var config = DictationRuntimeTestConfig(startTimeoutMs: 3000, endSilenceMs: 1200, maxSeconds: 10) with
+    {
+        Dictation = DictationRuntimeTestConfig().Dictation! with { DedicatedStopRecognizer = true, EndSilenceMs = 1200, StartTimeoutMs = 3000, MaxSeconds = 10 }
+    };
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 30, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 50, loud: false);
+    long tailStart = -1;
+    long tailEnd = -1;
+    var recognizer = new ScriptedDictationRecognizer(request =>
+    {
+        if (request.Id == 1)
+        {
+            return Task.FromResult(new RecognizedUtterance(
+                request.Id,
+                request.Extent,
+                request.Range,
+                "音声入力本文",
+                ImmutableArray.Create(
+                    Run("音声", request.Range.Start, request.Range.Start + Segmenter.FrameLength),
+                    Run("入力", request.Range.Start + Segmenter.FrameLength, request.Range.Start + Segmenter.FrameLength * 2),
+                    Run("本文", request.Range.Start + Segmenter.FrameLength * 4, request.Range.End))));
+        }
+
+        var start = request.Range.Start;
+        var frame = Segmenter.FrameLength;
+        tailStart = start + 6 * frame;
+        tailEnd = start + 9 * frame;
+        return Task.FromResult(new RecognizedUtterance(
+            request.Id,
+            request.Extent,
+            request.Range,
+            "続きです有力紙TAP",
+            ImmutableArray.Create(
+                Run("続き", start, start + 2 * frame),
+                Run("です", start + 2 * frame, start + 4 * frame),
+                Run("有力", start + 4 * frame, start + 7 * frame),
+                Run("紙TAP", start + 7 * frame, start + 10 * frame)),
+            TailStop: true,
+            TailStopConfidence: 0.88,
+            TailStopWord: "入力ストップ",
+            TailStopStart: tailStart,
+            TailStopEnd: tailEnd));
+    });
+    var handoff = new RecordingDictationHandoff();
+    var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(frames), recognizer, handoff, dryRun: true);
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output);
+    var audio = handoff.Submissions.SingleOrDefault();
+    var expectedStart = recognizer.Requests[0].Range.Start + Segmenter.FrameLength * 4;
+    var stopLine = output.Split('\n').SingleOrDefault(line => line.Contains("dictation session: standalone-stop", StringComparison.Ordinal)) ?? "";
+    return code == 0
+        && recognizer.Requests.Count == 2
+        && tailEnd <= recognizer.Requests[1].Range.End
+        && audio is { Reason: FinishReason.StandaloneStop }
+        && audio.Range == new SampleRange(expectedStart, tailStart)
+        && audio.Samples.Length == tailStart - expectedStart
+        && stopLine.Contains("tailStop=True", StringComparison.Ordinal)
+        && stopLine.Contains("tailConf=0.88", StringComparison.Ordinal)
+        && stopLine.Contains($"tailRange={tailStart}..{tailEnd}", StringComparison.Ordinal)
+        && stopLine.Contains($"trimExcluded={tailStart}..{tailEnd}", StringComparison.Ordinal)
+        && !stopLine.Contains("有力", StringComparison.Ordinal)
+        && !stopLine.Contains("紙TAP", StringComparison.Ordinal)
+        && !stopLine.Contains("続き", StringComparison.Ordinal)
+        && !stopLine.Contains("入力ストップ", StringComparison.Ordinal)
+        && output.Contains($"tailStop=True tailConf=0.88 tailRange={tailStart}..{tailEnd}", StringComparison.Ordinal)
+        && output.Contains("tailStop=False tailConf=- tailRange=-", StringComparison.Ordinal)
+        && !output.Contains("tailStopWord", StringComparison.Ordinal)
+        && DictationDiagnosticsArePrivate(output);
+}
+
+static bool DictationRuntimeOneBreathTailStopKeepsForegroundWindow()
+{
+    var config = DictationRuntimeTestConfig(endSilenceMs: 1200) with
+    {
+        Dictation = DictationRuntimeTestConfig().Dictation! with { DedicatedStopRecognizer = true }
+    };
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 20, loud: true);
+    AddFrames(frames, 40, loud: false);
+    long tailStart = -1;
+    var recognizer = new ScriptedDictationRecognizer(request =>
+    {
+        var start = request.Range.Start;
+        var frame = Segmenter.FrameLength;
+        tailStart = start + 7 * frame;
+        return Task.FromResult(new RecognizedUtterance(
+            request.Id,
+            request.Extent,
+            request.Range,
+            "音声入力本文有力",
+            ImmutableArray.Create(
+                Run("音声", start, start + frame),
+                Run("入力", start + frame, start + 2 * frame),
+                Run("本文", start + 4 * frame, start + 6 * frame),
+                Run("有力", start + 6 * frame, start + 8 * frame)),
+            TailStop: true,
+            TailStopConfidence: 0.88,
+            TailStopWord: "入力ストップ",
+            TailStopStart: tailStart,
+            TailStopEnd: start + 9 * frame));
+    });
+    var handoff = new RecordingDictationHandoff();
+    var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(frames), recognizer, handoff, dryRun: true, foregroundWindow: () => 0x55);
+    var code = RunWithTimeout(runtime, TimeSpan.FromSeconds(5));
+    var audio = handoff.Submissions.SingleOrDefault();
+    var request = recognizer.Requests.Single();
+    var expectedStart = request.Range.Start + Segmenter.FrameLength * 4;
+    return code == 0
+        && audio is { Reason: FinishReason.StandaloneStop, Target: 0x55 }
+        && audio.Range == new SampleRange(expectedStart, tailStart)
+        && audio.Samples.Length == tailStart - expectedStart;
 }
 
 static bool DictationRuntimeIgnoresLateStopAfterSilenceFinish()
@@ -3727,6 +3966,71 @@ static bool ConfigLoadsOptionalSuperwhisperMode()
         && plain.Dictation!.SuperwhisperMode is null;
 }
 
+static bool ConfigLoadsDedicatedStopRecognizer()
+{
+    using var temp = RuntimeTemp();
+    string Write(string name, string json)
+    {
+        var path = Path.Combine(temp.Dir, name);
+        File.WriteAllText(path, json);
+        return path;
+    }
+
+    var on = ConfigLoader.Load(Write("on.json", """
+    {
+      "wakeWords": ["音声入力"],
+      "command": "wake",
+      "dictation": {
+        // Windows only
+        "dedicatedStopRecognizer": true
+      }
+    }
+    """));
+    var off = ConfigLoader.Load(Write("off.json", """
+    {
+      "wakeWords": ["音声入力"],
+      "command": "wake",
+      "dictation": { "dedicatedStopRecognizer": false }
+    }
+    """));
+    var absent = ConfigLoader.Load(Write("absent.json", """
+    {
+      "wakeWords": ["音声入力"],
+      "command": "wake",
+      "dictation": { "recordingsDir": "rec" }
+    }
+    """));
+    return on.Dictation!.DedicatedStopRecognizer
+        && !off.Dictation!.DedicatedStopRecognizer
+        && !absent.Dictation!.DedicatedStopRecognizer
+        && new DictationConfig().DedicatedStopRecognizer == false;
+}
+
+static bool DedicatedStopScriptStaysOnItsOwnEngine()
+{
+    var script = (string)typeof(SpeechPowerShellDictationRecognizer)
+        .GetField("Script", BindingFlags.NonPublic | BindingFlags.Static)!
+        .GetValue(null)!;
+    var dedicated = script.IndexOf("private void RunDedicatedStop", StringComparison.Ordinal);
+    var next = script.IndexOf("private void OnTailRecognized", StringComparison.Ordinal);
+    if (dedicated < 0 || next <= dedicated)
+    {
+        return false;
+    }
+
+    var body = script.Substring(dedicated, next - dedicated);
+    return script.Contains("VOICE_SWITCH_DEDICATED_STOP", StringComparison.Ordinal)
+        && script.Contains("VOICE_SWITCH_STOP_MIN_CONFIDENCE", StringComparison.Ordinal)
+        && script.Contains("tailStopStart=$collector.TailStopStart", StringComparison.Ordinal)
+        && script.Contains("tailStopEnd=$collector.TailStopEnd", StringComparison.Ordinal)
+        && body.Contains("AppendWildcard()", StringComparison.Ordinal)
+        && body.Contains("new Choices(stopWords)", StringComparison.Ordinal)
+        && !body.Contains("DictationGrammar", StringComparison.Ordinal)
+        && !body.Contains("?.", StringComparison.Ordinal)
+        && !body.Contains("out var", StringComparison.Ordinal)
+        && !script.Contains("$\"", StringComparison.Ordinal);
+}
+
 static bool ConfigLoadsWindowsActions()
 {
     const string uuid = "alter://action/26B00BAB-5655-4581-BCA0-F3880E746CC9";
@@ -4412,6 +4716,16 @@ static LexicalRun Run(string text, long start, long end, string? reading = null)
 
 static RecognizedUtterance Recognized(long id, RecognitionExtent extent, long start, long end, string text, bool rejected, params LexicalRun[] runs) =>
     new(id, extent, new SampleRange(start, end), text, runs.ToImmutableArray(), rejected);
+
+static RecognizedUtterance WithTail(RecognizedUtterance basis, bool tailStop, double? confidence, string? word, long? start, long? end) =>
+    basis with
+    {
+        TailStop = tailStop,
+        TailStopConfidence = confidence,
+        TailStopWord = word,
+        TailStopStart = start,
+        TailStopEnd = end
+    };
 
 static IReadOnlyList<PcmFrame> TwoUtteranceFrames()
 {

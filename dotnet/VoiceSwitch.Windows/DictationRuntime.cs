@@ -286,7 +286,7 @@ public sealed class WindowsDictationRuntime
                             var heard = config.Dictation?.NoWakeWord?.Enabled == true || (session.IsActive || session.IsAwaitingBody) && observed.Extent != RecognitionExtent.ClosedUtterance
                                 ? ""
                                 : $" text=\"{observed.Text}\" conf={(observed.Confidence is double conf ? conf.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) : "-")}{(observed.RejectedText is { } rejectedText ? $" rejectedText=\"{rejectedText}\"" : "")} grammar={(observed.FromStopGrammar ? "stop" : "dictation")} reading=\"{string.Join(' ', observed.Lexemes.Where(lexeme => lexeme.Reading is not null).Select(lexeme => lexeme.Reading))}\"{(observed.Alternates.IsDefaultOrEmpty ? "" : $" alts=\"{string.Join('|', observed.Alternates.Select(alternate => $"{alternate.Text}/{alternate.Reading}"))}\"")}";
-                            Log.Info($"dictation recognition: complete id={outcome.Work.Request.Id} extent={outcome.Work.Request.Extent} range={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End} rejected={observed.HadRejectedSpeech} leadingWake={leadingWake} standaloneStop={stopRange is not null} stopRange={(stopRange is null ? "-" : $"{stopRange.Value.Start}..{stopRange.Value.End}")} pendingBefore={pendingBefore}{heard} {origin.Fields}");
+                            Log.Info($"dictation recognition: complete id={outcome.Work.Request.Id} extent={outcome.Work.Request.Extent} range={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End} rejected={observed.HadRejectedSpeech} leadingWake={leadingWake} standaloneStop={stopRange is not null} stopRange={(stopRange is null ? "-" : $"{stopRange.Value.Start}..{stopRange.Value.End}")} pendingBefore={pendingBefore}{heard}{TailStopLog(observed)} {origin.Fields}");
                         }
                         observer?.RecognitionCompleted(outcome.Work.Request, outcome.Recognition, outcome.Error);
 
@@ -295,7 +295,7 @@ public sealed class WindowsDictationRuntime
                             if (outcome.Recognition is { } stale)
                             {
                                 var staleStop = DictationBoundaries.StandaloneStopRange(stale, config.StopWords ?? []) is not null;
-                                Log.Info($"dictation recognition: stale id={outcome.Work.Request.Id} range={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End} standaloneStop={staleStop} eligibleStart={eligibleRecognitionStart}");
+                                Log.Info($"dictation recognition: stale id={outcome.Work.Request.Id} range={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End} standaloneStop={staleStop}{TailStopLog(stale)} eligibleStart={eligibleRecognitionStart}");
                             }
 
                             continue;
@@ -321,6 +321,8 @@ public sealed class WindowsDictationRuntime
                         var wasAwaiting = session.IsAwaitingBody;
                         var wasIdle = !wasActive && !wasAwaiting;
                         var stopBeforeApply = DictationBoundaries.StandaloneStopRange(outcome.Recognition!, config.StopWords ?? []);
+                        var tailBeforeApply = DictationBoundaries.TryDedicatedTailStop(outcome.Recognition!, config.StopWords ?? [], config.Dictation?.DedicatedStopRecognizer == true);
+                        var effectiveStop = stopBeforeApply ?? tailBeforeApply?.Range;
                         var audio = session.Apply(outcome.Recognition!, originalStore.Copy, analysisStore.Next, wakeOrigin);
                         if (wasIdle && !session.IsActive && !session.IsAwaitingBody && outcome.Work.Request.Extent == RecognitionExtent.PrefixHead)
                         {
@@ -329,7 +331,9 @@ public sealed class WindowsDictationRuntime
                             Log.Info($"dictation vad: floor rebased id={outcome.Work.Request.Id} floor={floorBefore:0.0000}->{segmenter.Floor:0.0000} threshold={segmenter.Threshold:0.0000}");
                         }
 
-                        if (wasIdle && (session.IsActive || session.IsAwaitingBody))
+                        // A tail stop in the same utterance that opens the body finishes inside Apply, so the
+                        // session is already terminal here. The window in front is still the one the wake landed in.
+                        if (wasIdle && (session.IsActive || session.IsAwaitingBody || audio is not null))
                         {
                             // Superwhisper pastes into whatever is frontmost, so remember where the user was when the wake word landed.
                             target = foregroundWindow();
@@ -364,11 +368,11 @@ public sealed class WindowsDictationRuntime
                         {
                             Log.Info($"dictation session: body-start id={outcome.Work.Request.Id} range={started.Start}..{started.End}{byReading}");
                         }
-                        else if (wasIdle && stopBeforeApply is not null && !session.IsActive && !session.IsAwaitingBody)
+                        else if (wasIdle && effectiveStop is { } ignored && audio is null && !session.IsActive && !session.IsAwaitingBody)
                         {
-                            Log.Info($"dictation session: ignored-stop-no-active id={outcome.Work.Request.Id} stopRange={stopBeforeApply.Value.Start}..{stopBeforeApply.Value.End}");
+                            Log.Info($"dictation session: ignored-stop-no-active id={outcome.Work.Request.Id} stopRange={ignored.Start}..{ignored.End}");
                         }
-                        else if (wasAwaiting && stopBeforeApply is not null && session.IsTerminal)
+                        else if (wasAwaiting && effectiveStop is not null && audio is null && session.IsTerminal)
                         {
                             Log.Info($"dictation session: stop-while-waiting id={outcome.Work.Request.Id}");
                             endedByUser = true;
@@ -376,9 +380,12 @@ public sealed class WindowsDictationRuntime
 
                         if (audio is not null)
                         {
-                            if (audio.Reason == FinishReason.StandaloneStop && stopBeforeApply is { } stop)
+                            if (audio.Reason == FinishReason.StandaloneStop && effectiveStop is { } stop)
                             {
-                                Log.Info($"dictation session: standalone-stop id={outcome.Work.Request.Id} trimExcluded={audio.Range.End}..{stop.End}");
+                                var tailNote = stopBeforeApply is null && tailBeforeApply is { } tail
+                                    ? $" tailStop=True tailConf={tail.Confidence.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)} tailRange={tail.Range.Start}..{tail.Range.End}"
+                                    : "";
+                                Log.Info($"dictation session: standalone-stop id={outcome.Work.Request.Id} trimExcluded={audio.Range.End}..{stop.End}{tailNote}");
                             }
 
                             Submit(audio);
@@ -576,12 +583,29 @@ public sealed class WindowsDictationRuntime
             Log.Info("dictation config: locale and noiseReduction changes apply after Reload or a restart");
         }
 
+        if ((next.Dictation?.DedicatedStopRecognizer == true) != (config.Dictation?.DedicatedStopRecognizer == true))
+        {
+            Log.Info("dictation config: dedicatedStopRecognizer changes apply after Reload or a restart");
+        }
+
         config = next;
         segmenter.Config = next;
         originalStore.EnsureCapacity(RetainedSamples(next, 10));
         analysisStore.EnsureCapacity(RetainedSamples(next, 10));
         idleRetainSamples = RetainedSamples(next, 2);
         LogTiming();
+    }
+
+    // tailStop, confidence, and sample range only. The dictation text stays in the existing heard block.
+    private static string TailStopLog(RecognizedUtterance observed)
+    {
+        var conf = observed.TailStopConfidence is double value
+            ? value.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)
+            : "-";
+        var range = observed.TailStopStart is long start && observed.TailStopEnd is long end
+            ? start.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".." + end.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            : "-";
+        return $" tailStop={observed.TailStop} tailConf={conf} tailRange={range}";
     }
 
     private void LogTiming()
@@ -1635,6 +1659,17 @@ public sealed class SpeechPowerShellDictationRecognizer : IDictationRecognizer, 
             throw new InvalidOperationException("dictation recognizer returned lexical ranges outside the request.");
         }
 
+        long? tailStart = dto.TailStopStart >= 0 ? dto.TailStopStart : null;
+        long? tailEnd = dto.TailStopEnd >= 0 ? dto.TailStopEnd : null;
+        var tailStop = dto.TailStop;
+        if (tailStart is not long tailStartSample || tailEnd is not long tailEndSample || tailEndSample <= tailStartSample
+            || tailStartSample < request.Range.Start || tailEndSample > request.Range.End)
+        {
+            tailStop = false;
+            tailStart = null;
+            tailEnd = null;
+        }
+
         return new RecognizedUtterance(
             dto.Id,
             request.Extent,
@@ -1646,7 +1681,12 @@ public sealed class SpeechPowerShellDictationRecognizer : IDictationRecognizer, 
             string.IsNullOrEmpty(dto.RejectedText) ? null : dto.RejectedText,
             dto.StopGrammar,
             (dto.Alternates ?? []).Select(item => new RecognitionAlternate(item.Text ?? "", item.Reading ?? "")).ToImmutableArray(),
-            request.TailSilenceSamples);
+            request.TailSilenceSamples,
+            tailStop,
+            dto.TailStopConfidence >= 0 ? dto.TailStopConfidence : null,
+            string.IsNullOrEmpty(dto.TailStopWord) ? null : dto.TailStopWord,
+            tailStart,
+            tailEnd);
     }
 
     internal static async Task RetainUntilProcessExitedAsync(Func<bool> hasExited, Action requestKill, TimeSpan? retryDelay = null)
@@ -1735,6 +1775,8 @@ public sealed class SpeechPowerShellDictationRecognizer : IDictationRecognizer, 
             var psi = CreatePowerShell();
             psi.Environment["VOICE_SWITCH_LOCALE"] = config.EffectiveLocale;
             psi.Environment["VOICE_SWITCH_STOP_WORDS"] = ConfigLoader.ToJsonArray(config.StopWords ?? []);
+            psi.Environment["VOICE_SWITCH_DEDICATED_STOP"] = config.Dictation?.DedicatedStopRecognizer == true ? "1" : "0";
+            psi.Environment["VOICE_SWITCH_STOP_MIN_CONFIDENCE"] = DictationBoundaries.StopGrammarMinConfidence.ToString(System.Globalization.CultureInfo.InvariantCulture);
             var process = ChildProcessJob.Start(psi);
             Log.Info($"dictation recognizer: SAPI child started pid={process.Id}");
             return new SapiChild(process);
@@ -1863,7 +1905,7 @@ public sealed class SpeechPowerShellDictationRecognizer : IDictationRecognizer, 
         return bytes;
     }
 
-    private sealed record RecognitionDto(string? Type, string? Message, long Id, string? Text, bool Rejected, LexemeDto[] Lexemes, double Confidence = -1.0, string? RejectedText = null, bool StopGrammar = false, AlternateDto[]? Alternates = null);
+    private sealed record RecognitionDto(string? Type, string? Message, long Id, string? Text, bool Rejected, LexemeDto[] Lexemes, double Confidence = -1.0, string? RejectedText = null, bool StopGrammar = false, AlternateDto[]? Alternates = null, bool TailStop = false, double TailStopConfidence = -1.0, string? TailStopWord = null, long TailStopStart = -1, long TailStopEnd = -1);
     private sealed record LexemeDto(string? Text, long Start, long End, string? Reading = null);
     private sealed record AlternateDto(string? Text, string? Reading);
 
@@ -1878,6 +1920,18 @@ if ($env:VOICE_SWITCH_STOP_WORDS) {
   # Assigned before enumerating: piping ConvertFrom-Json straight into ForEach-Object hands over the array as one element.
   $parsedStopWords = $env:VOICE_SWITCH_STOP_WORDS | ConvertFrom-Json
   $stopWords = [string[]]@($parsedStopWords | ForEach-Object { [string]$_ })
+}
+$dedicatedStop = $false
+if ($env:VOICE_SWITCH_DEDICATED_STOP -eq '1') { $dedicatedStop = $true }
+# 0.4 matches DictationBoundaries.StopGrammarMinConfidence when the env var is missing.
+$stopMinConfidence = 0.4
+if ($env:VOICE_SWITCH_STOP_MIN_CONFIDENCE) {
+  $parsedConfidence = 0.0
+  $confidenceStyles = [System.Globalization.NumberStyles]::Float
+  $confidenceCulture = [System.Globalization.CultureInfo]::InvariantCulture
+  if ([double]::TryParse($env:VOICE_SWITCH_STOP_MIN_CONFIDENCE, $confidenceStyles, $confidenceCulture, [ref]$parsedConfidence)) {
+    $stopMinConfidence = $parsedConfidence
+  }
 }
 $stdout = [Console]::OpenStandardOutput()
 $reader = [System.IO.BinaryReader]::new([Console]::OpenStandardInput())
@@ -1911,6 +1965,12 @@ public sealed class VoiceSwitchSapiCollector
     private Grammar stopGrammar;
     private int stopResults;
     private int dictationResults;
+    private bool tailStop;
+    private double tailStopConfidence = -1.0;
+    private string tailStopWord;
+    private long tailStopStart = -1;
+    private long tailStopEnd = -1;
+    private double stopMinConfidence = 0.4;
 
     public VoiceSwitchSapiCollector(long requestId, long requestStart, long requestEnd)
     {
@@ -1930,9 +1990,19 @@ public sealed class VoiceSwitchSapiCollector
     public string Error { get { return error; } }
     // Every accepted result came from the stop-word grammar; a body phrase that also yielded a dictation result is not a stop.
     public bool StopGrammar { get { return stopResults > 0 && dictationResults == 0; } }
+    public bool TailStop { get { return tailStop; } }
+    public double TailStopConfidence { get { return tailStopConfidence; } }
+    public string TailStopWord { get { return tailStopWord; } }
+    public long TailStopStart { get { return tailStopStart; } }
+    public long TailStopEnd { get { return tailStopEnd; } }
 
-    public void Run(RecognizerInfo info, byte[] pcm, string[] stopWords)
+    public void Run(RecognizerInfo info, byte[] pcm, string[] stopWords, bool dedicatedStop, double stopMinConfidence)
     {
+        if (stopMinConfidence > 0)
+        {
+            this.stopMinConfidence = stopMinConfidence;
+        }
+
         using (var engine = new SpeechRecognitionEngine(info))
         using (var stream = new MemoryStream(pcm, false))
         {
@@ -1962,6 +2032,182 @@ public sealed class VoiceSwitchSapiCollector
                 done.Wait(TimeSpan.FromSeconds(2));
             }
         }
+
+        // Option C: a second engine whose only grammar is wildcard + stop word. It does not replace the dictation result.
+        if (dedicatedStop && stopWords != null && stopWords.Length > 0 && string.IsNullOrEmpty(error))
+        {
+            RunDedicatedStop(info, pcm, stopWords);
+        }
+    }
+
+    private void RunDedicatedStop(RecognizerInfo info, byte[] pcm, string[] stopWords)
+    {
+        stopWordsForTail = stopWords;
+        try
+        {
+            using (var engine = new SpeechRecognitionEngine(info))
+            using (var stream = new MemoryStream(pcm, false))
+            using (var finished = new ManualResetEventSlim(false))
+            {
+                var builder = new GrammarBuilder();
+                builder.Culture = info.Culture;
+                builder.AppendWildcard();
+                builder.Append(new Choices(stopWords));
+                var grammar = new Grammar(builder);
+                grammar.Name = "tailStop";
+                engine.LoadGrammar(grammar);
+                engine.SpeechRecognized += OnTailRecognized;
+                engine.RecognizeCompleted += delegate(object sender, RecognizeCompletedEventArgs args) { finished.Set(); };
+                var format = new SpeechAudioFormatInfo(16000, AudioBitsPerSample.Sixteen, AudioChannel.Mono);
+                engine.SetInputToAudioStream(stream, format);
+                engine.RecognizeAsync(RecognizeMode.Multiple);
+                if (!finished.Wait(TimeSpan.FromSeconds(Math.Max(10.0, pcm.Length / 32000.0 + 10.0))))
+                {
+                    try { engine.RecognizeAsyncCancel(); } catch { }
+                    finished.Wait(TimeSpan.FromSeconds(2));
+                }
+            }
+        }
+        catch
+        {
+            // A failure of the tail engine must not reject the dictation result already collected.
+        }
+    }
+
+    private void OnTailRecognized(object sender, SpeechRecognizedEventArgs args)
+    {
+        var result = args.Result;
+        int first;
+        int last;
+        string matched;
+        if (!TryStopSpan(result, stopWordsForTail, out first, out last, out matched))
+        {
+            return;
+        }
+
+        long start;
+        long end;
+        if (!TryTailRange(result, first, last, out start, out end))
+        {
+            return;
+        }
+
+        if (tailStopStart >= 0 && (start < tailStopStart || (start == tailStopStart && result.Confidence <= tailStopConfidence)))
+        {
+            return;
+        }
+
+        tailStopWord = matched;
+        tailStopConfidence = result.Confidence;
+        tailStopStart = start;
+        tailStopEnd = end;
+        tailStop = result.Confidence >= stopMinConfidence;
+    }
+
+    private string[] stopWordsForTail;
+
+    private bool TryStopSpan(RecognitionResult result, string[] stopWords, out int first, out int last, out string matched)
+    {
+        first = -1;
+        last = -1;
+        matched = null;
+        if (result == null || result.Words == null || stopWords == null || result.Words.Count == 0)
+        {
+            return false;
+        }
+
+        var end = result.Words.Count - 1;
+        while (end >= 0 && Compact(result.Words[end].Text).Length == 0)
+        {
+            end--;
+        }
+
+        if (end < 0)
+        {
+            return false;
+        }
+
+        var maxLen = 0;
+        for (var i = 0; i < stopWords.Length; i++)
+        {
+            var len = Compact(stopWords[i]).Length;
+            if (len > maxLen)
+            {
+                maxLen = len;
+            }
+        }
+
+        if (maxLen == 0)
+        {
+            return false;
+        }
+
+        var acc = "";
+        for (var k = end; k >= 0; k--)
+        {
+            acc = Compact(result.Words[k].Text) + acc;
+            for (var i = 0; i < stopWords.Length; i++)
+            {
+                if (acc == Compact(stopWords[i]))
+                {
+                    first = k;
+                    last = end;
+                    matched = stopWords[i];
+                }
+            }
+
+            if (acc.Length >= maxLen)
+            {
+                break;
+            }
+        }
+
+        return first >= 0;
+    }
+
+    private bool TryTailRange(RecognitionResult result, int first, int last, out long start, out long end)
+    {
+        start = 0;
+        end = 0;
+        try
+        {
+            var wordAudio = result.GetAudioForWordRange(result.Words[first], result.Words[last]);
+            if (wordAudio == null || result.Audio == null)
+            {
+                return false;
+            }
+
+            start = requestStart + TickSamples(result.Audio.AudioPosition.Ticks + wordAudio.AudioPosition.Ticks);
+            end = start + TickSamples(wordAudio.Duration.Ticks);
+            return start >= requestStart && end <= requestEnd && end > start;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string Compact(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return "";
+        }
+
+        var chars = new char[value.Length];
+        var count = 0;
+        for (var i = 0; i < value.Length; i++)
+        {
+            var c = value[i];
+            if (char.IsWhiteSpace(c) || c == '、' || c == '。' || c == ',' || c == '.' || c == '!' || c == '?' || c == '！' || c == '？' || c == '「' || c == '」')
+            {
+                continue;
+            }
+
+            chars[count++] = c;
+        }
+
+        return new string(chars, 0, count);
     }
 
     private void OnRecognized(object sender, SpeechRecognizedEventArgs args)
@@ -2132,9 +2378,9 @@ while ($true) {
   if ($pcm.Length -ne $length) { exit 0 }
   try {
     $collector = [VoiceSwitchSapiCollector]::new($requestId, $requestStart, $requestEnd)
-    $collector.Run($info, $pcm, $stopWords)
+    $collector.Run($info, $pcm, $stopWords, $dedicatedStop, $stopMinConfidence)
     if ($collector.Error) { Send-Json @{ type='error'; id=$requestId; message=$collector.Error }; continue }
-    Send-Json @{ id=$collector.Id; text=$collector.Text; rejected=$collector.Rejected; rejectedText=$collector.RejectedText; confidence=$collector.Confidence; stopGrammar=$collector.StopGrammar; lexemes=@($collector.Lexemes | ForEach-Object { @{ text=$_.Text; reading=$_.Reading; start=$_.Start; end=$_.End } }); alternates=@($collector.Alternates | ForEach-Object { @{ text=$_.Text; reading=$_.Reading } }) }
+    Send-Json @{ id=$collector.Id; text=$collector.Text; rejected=$collector.Rejected; rejectedText=$collector.RejectedText; confidence=$collector.Confidence; stopGrammar=$collector.StopGrammar; tailStop=$collector.TailStop; tailStopConfidence=$collector.TailStopConfidence; tailStopWord=$collector.TailStopWord; tailStopStart=$collector.TailStopStart; tailStopEnd=$collector.TailStopEnd; lexemes=@($collector.Lexemes | ForEach-Object { @{ text=$_.Text; reading=$_.Reading; start=$_.Start; end=$_.End } }); alternates=@($collector.Alternates | ForEach-Object { @{ text=$_.Text; reading=$_.Reading } }) }
   } catch {
     Send-Json @{ type='error'; id=$requestId; message=$_.Exception.Message }
   }

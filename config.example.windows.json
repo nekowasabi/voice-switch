@@ -16,6 +16,9 @@
     "maxSeconds": 60,
     "excludeProcessNames": [],
     "superwhisperMode": "voice_switch",
+    // Windows だけ。本文のあとに続けた停止語を、別の SAPI 認識器で拾う。
+    // 人の声と打鍵音は未測定なので既定は false。Mac は無視する。
+    "dedicatedStopRecognizer": false,
     "noWakeWord": {
       "followup": false,
       "autoIdle": false,

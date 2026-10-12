@@ -85,7 +85,13 @@ public sealed record RecognizedUtterance(
     // SAPI's runner-up readings of the same audio; diagnostics only.
     ImmutableArray<RecognitionAlternate> Alternates = default,
     // Silence at the end of a Probe's audio; 0 while speech continues.
-    long TailSilenceSamples = 0);
+    long TailSilenceSamples = 0,
+    // Dedicated stop recognizer (option C). False and null when that engine did not report a stop.
+    bool TailStop = false,
+    double? TailStopConfidence = null,
+    string? TailStopWord = null,
+    long? TailStopStart = null,
+    long? TailStopEnd = null);
 
 public sealed record DictationEvent(string Kind, FinishReason? Reason, SampleRange? Range, Guid? SessionId = null)
 {
@@ -424,7 +430,8 @@ public static class DictationBoundaries
 
     // ponytail: floor set from TTS fixtures. With both grammars loaded, real stop words scored 0.57-0.73 and no body
     // phrase was ever answered by the stop grammar; alone, the stop grammar force-matched "ストップしないで" at 0.24.
-    // Tune from the "grammar=stop conf=" log lines once real-voice data exists.
+    // Tune from the "grammar=stop conf=" and "tailConf=" log lines once real-voice data exists.
+    // The dedicated tail-stop recognizer (option C) uses this same floor.
     public const double StopGrammarMinConfidence = 0.4;
 
     public static SampleRange? StandaloneStopRange(RecognizedUtterance recognition, IEnumerable<string> stopWords)
@@ -455,7 +462,38 @@ public static class DictationBoundaries
 
         return new SampleRange(lexemes[0].Range.Start, lexemes[^1].Range.End);
     }
+
+    // Dedicated recognizer (option C): wildcard + stop-word grammar on its own engine.
+    // BodyText and BodyLexemes are the dictation hypothesis that ends before the stop.
+    // A lexeme that runs into the stop (End > stop start) is the garbled tail and is dropped.
+    public static TailStopDecision? TryDedicatedTailStop(RecognizedUtterance recognition, IEnumerable<string> stopWords, bool enabled)
+    {
+        if (!enabled
+            || recognition.Extent != RecognitionExtent.ClosedUtterance
+            || !recognition.TailStop
+            || !(recognition.TailStopConfidence >= StopGrammarMinConfidence)
+            || recognition.TailStopStart is not long start
+            || recognition.TailStopEnd is not long end
+            || end <= start
+            || start < recognition.Source.Start
+            || end > recognition.Source.End)
+        {
+            return null;
+        }
+
+        var word = TextMatching.Normalize(recognition.TailStopWord ?? "");
+        if (word.Length == 0 || !stopWords.Select(TextMatching.Normalize).Contains(word))
+        {
+            return null;
+        }
+
+        var lexemes = recognition.Lexemes.Where(run => run.Range.End <= start).ToImmutableArray();
+        return new TailStopDecision(new SampleRange(start, end), recognition.TailStopWord ?? "", recognition.TailStopConfidence.Value, string.Concat(lexemes.Select(run => run.Text)), lexemes);
+    }
 }
+
+// Accepted dedicated tail stop. BodyText is the dictation lexemes that end before Range.Start.
+public sealed record TailStopDecision(SampleRange Range, string Word, double Confidence, string BodyText, ImmutableArray<LexicalRun> BodyLexemes);
 
 // ByReading is set only when the reading pass matched; Distance is that match's edit distance.
 public sealed record WakePrefix(long WakeEnd, long? BodyStart, WakeWord? ByReading = null, int Distance = 0);
@@ -503,6 +541,8 @@ public sealed class DictationSession
     public long? AwaitingWakeSourceEnd => awaitingBody && !terminal ? wakeSourceEnd : null;
     public long? SilenceDeadline => bodyStart is not null && !terminal ? silenceFrom + MsToSamples(config.Dictation?.EndSilenceMs ?? 1200) : null;
 
+    private bool DedicatedStopEnabled => config.Dictation?.DedicatedStopRecognizer == true;
+
     // now: the capture clock (sample position) when this recognition is applied; it trails the audio by the recognizer's latency.
     public DictationAudio? Apply(RecognizedUtterance recognition, Func<SampleRange, ImmutableArray<short>> copyAudio, long now = 0, WakeOrigin? origin = null)
     {
@@ -546,6 +586,12 @@ public sealed class DictationSession
             }
 
             var start = Math.Max(wake?.BodyStart ?? recognition.Source.Start, wakeEnd);
+            var dedicated = TryFinishDedicatedTail(recognition, start, copyAudio, now);
+            if (dedicated is not null || terminal)
+            {
+                return dedicated;
+            }
+
             StartBody(start, recognition.Source.End, now);
             return null;
         }
@@ -586,6 +632,12 @@ public sealed class DictationSession
             maxEnd = (wake.BodyStart ?? wake.WakeEnd) + SecondsToSamples(config.Dictation?.MaxSeconds ?? config.MaxSeconds ?? 60);
             if (wake.BodyStart is long start)
             {
+                var dedicated = TryFinishDedicatedTail(recognition, start, copyAudio, now);
+                if (dedicated is not null || terminal)
+                {
+                    return dedicated;
+                }
+
                 StartBody(start, recognition.Source.End, now);
             }
             else
@@ -613,6 +665,12 @@ public sealed class DictationSession
         if (DictationBoundaries.StandaloneStopRange(recognition, config.StopWords ?? []) is { } stop)
         {
             return Finish(new SampleRange(bodyStart.Value, Math.Max(bodyStart.Value, stop.Start)), FinishReason.StandaloneStop, copyAudio);
+        }
+
+        var dedicatedTail = TryFinishDedicatedTail(recognition, bodyStart.Value, copyAudio, now);
+        if (dedicatedTail is not null || terminal)
+        {
+            return dedicatedTail;
         }
 
         lastSpeechEnd = Math.Min(Math.Max(lastSpeechEnd, recognition.Source.End), maxEnd);
@@ -746,6 +804,33 @@ public sealed class DictationSession
 
     private static long MsToSamples(int ms) =>
         checked((long)Math.Round(ms * Segmenter.Rate / 1000.0, MidpointRounding.AwayFromZero));
+
+    // Null and not terminal: no dedicated stop, caller keeps the normal path.
+    // Audio: the stop ends the body. Null and terminal: the stop left no body audio, so the session was cancelled.
+    private DictationAudio? TryFinishDedicatedTail(RecognizedUtterance recognition, long bodyCutStart, Func<SampleRange, ImmutableArray<short>> copyAudio, long now)
+    {
+        if (DictationBoundaries.TryDedicatedTailStop(recognition, config.StopWords ?? [], DedicatedStopEnabled) is not { } tail)
+        {
+            return null;
+        }
+
+        if (tail.Range.Start <= bodyCutStart)
+        {
+            if (bodyStart is null)
+            {
+                Cancel(FinishReason.Empty);
+            }
+
+            return null;
+        }
+
+        if (bodyStart is null)
+        {
+            StartBody(bodyCutStart, tail.Range.Start, now);
+        }
+
+        return Finish(new SampleRange(bodyStart ?? bodyCutStart, tail.Range.Start), FinishReason.StandaloneStop, copyAudio);
+    }
 
     private void StartBody(long start, long end, long now)
     {
