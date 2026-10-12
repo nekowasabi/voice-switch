@@ -93,16 +93,24 @@ enum MacWakeShortcuts {
             guard result == noErr, id.signature == signature else { return OSStatus(eventNotHandledErr) }
             if id.id == 1 { HistoryPanel.shared.show() }
             if id.id == 2 { Hotkeys.requestStart() }
+            if id.id == 3 { MacWakeShortcuts.copyNewestHistory() }
             return noErr
         }, 1, &event, nil, &handler)
         guard status == noErr else { log("history hotkey handler unavailable status=\(status)"); return }
-        for (code, id) in [(kVK_F9, UInt32(1)), (kVK_F10, UInt32(2))] {
+        for (code, id) in [(kVK_F9, UInt32(1)), (kVK_F10, UInt32(2)), (kVK_F11, UInt32(3))] {
             var key: EventHotKeyRef?
             let registered = RegisterEventHotKey(UInt32(code), UInt32(controlKey | shiftKey),
                 EventHotKeyID(signature: signature, id: id), GetApplicationEventTarget(), 0, &key)
             if registered == noErr, let key { keys.append(key) }
             else { log("voice-switch hotkey unavailable id=\(id) status=\(registered)") }
         }
+    }
+
+    // Copies only the newest retained entry. Pasting stays a manual step, as in the HUD.
+    static func copyNewestHistory() {
+        guard let text = DictationHistory.shared.snapshot().first?.text else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 }
 func macReading(_ text: String) -> String? {

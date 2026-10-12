@@ -25,6 +25,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("automatic runtime repeats sessions, fails closed on idle or microphone uncertainty, yields to a spoken wake word, and records fragmented speech from its start", () => Check(NoWakeTests.AutomaticRuntime())),
     ("manual paste requires every safety observation", () => Check(NoWakeTests.PasteGuards())),
     ("local history expires, evicts, deduplicates and clears", () => Check(NoWakeTests.History())),
+    ("history copy hotkey copies only the newest retained entry", () => Check(HistoryHotkeyCopiesNewest())),
     ("automatic delivery tries Superwhisper first and keeps only history; wake delivery skips history", () => Check(NoWakeTests.AutomaticDelivery())),
     ("wake telemetry records idle contexts without transcript text", () => Check(NoWakeTests.Telemetry())),
     ("normalizes punctuation and spaces", () => Check(Normalizes())),
@@ -252,6 +253,20 @@ foreach (var (name, test) in tests)
 return failed == 0 ? 0 : 1;
 
 static TestOutcome Check(bool ok) => ok ? TestOutcome.Pass() : TestOutcome.Fail();
+
+static bool HistoryHotkeyCopiesNewest()
+{
+    var time = DateTimeOffset.Parse("2026-10-11T00:00:00Z");
+    var history = new DictationHistory(() => time, capacity: 5, retention: TimeSpan.FromMinutes(30));
+    var origin = new WakeOrigin(WakeRule.AutoB, 4);
+    if (HistoryHotkey.NewestText(history) is not null) return false;
+    history.Add(Guid.NewGuid(), "older", origin);
+    time = time.AddMinutes(1);
+    history.Add(Guid.NewGuid(), "newer", origin);
+    if (HistoryHotkey.NewestText(history) != "newer") return false;
+    time = time.AddMinutes(30);
+    return HistoryHotkey.NewestText(history) is null;
+}
 
 static bool PaneRouteParsesCatalog()
 {
