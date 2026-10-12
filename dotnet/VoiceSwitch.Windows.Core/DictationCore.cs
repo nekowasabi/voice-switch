@@ -60,7 +60,8 @@ public enum DictationPhase
     Idle,
     Waiting,
     Recording,
-    Ended
+    Ended,
+    Followup
 }
 
 public sealed record LexicalRun(string Text, SampleRange Range, string? Reading = null);
@@ -94,7 +95,10 @@ public sealed record DictationEvent(string Kind, FinishReason? Reason, SampleRan
     public static DictationEvent Error(FinishReason reason) => new("error", reason, null);
 }
 
-public sealed record DictationAudio(Guid SessionId, SampleRange Range, ImmutableArray<short> Samples, FinishReason Reason = FinishReason.Silence, nint Target = 0, WakeAction? Action = null);
+public sealed record DictationAudio(Guid SessionId, SampleRange Range, ImmutableArray<short> Samples, FinishReason Reason = FinishReason.Silence, nint Target = 0, WakeAction? Action = null, WakeOrigin? Origin = null, AutomaticTranscriptPolicy TranscriptPolicy = default)
+{
+    public WakeOrigin Wake => Origin ?? new WakeOrigin(WakeRule.Strict, null);
+}
 
 public sealed record HandoffResult(HandoffStatus Status, Guid Id, string? Path, string Message);
 
@@ -418,10 +422,10 @@ public static class DictationBoundaries
         return StandaloneStopRange(recognition, stopWords) is not null;
     }
 
-    // ponytail: floor set from TTS fixtures. With both grammars loaded, real stop words scored 0.57-0.73 and no body
-    // phrase was ever answered by the stop grammar; alone, the stop grammar force-matched "ストップしないで" at 0.24.
-    // Tune from the "grammar=stop conf=" log lines once real-voice data exists.
-    public const double StopGrammarMinConfidence = 0.4;
+    // Real stop words said with a soft last mora scored 0.28-0.38 and were ignored at the old 0.4 floor (2026-10-05/07 logs).
+    // With both grammars loaded, 20 stop-like TTS phrases (スタッフ, スタート, ストップしないで, ...) were never answered by the
+    // stop grammar, so 0.25 adds no false stop there; it stays above the 0.24 the stop grammar alone gave "ストップしないで".
+    public const double StopGrammarMinConfidence = 0.25;
 
     public static SampleRange? StandaloneStopRange(RecognizedUtterance recognition, IEnumerable<string> stopWords)
     {
@@ -459,6 +463,7 @@ public sealed record WakePrefix(long WakeEnd, long? BodyStart, WakeWord? ByReadi
 public sealed class DictationSession
 {
     private readonly VoiceSwitchConfig config;
+    private readonly AutomaticTranscriptPolicy transcriptPolicy;
     // Default wakes first so they keep priority; then each windows.actions entry in config order.
     private readonly (WakeAction? Owner, WakeWord[] Wakes)[] wakeSets;
     // The set that opened this session; the awaiting branch strips a repeated wake of that same set.
@@ -480,6 +485,7 @@ public sealed class DictationSession
     public DictationSession(VoiceSwitchConfig config)
     {
         this.config = config;
+        transcriptPolicy = new(config.Dictation?.NoWakeWord?.FilterInterjections == true);
         wakes = config.Wakes();
         wakeSets = (config.Windows?.Actions ?? [])
             .Select(action => ((WakeAction?)action, action.Wakes()))
@@ -489,6 +495,7 @@ public sealed class DictationSession
 
     public IReadOnlyList<DictationEvent> Events => events;
     public WakeAction? Action { get; private set; }
+    public WakeOrigin Origin { get; private set; } = new(WakeRule.Strict, null);
     public SampleRange? PendingBody => bodyStart is long start && !terminal ? new SampleRange(start, lastSpeechEnd) : null;
     public bool IsActive => bodyStart is not null && !terminal;
     public bool IsAwaitingBody => awaitingBody && !terminal;
@@ -499,7 +506,7 @@ public sealed class DictationSession
     public long? SilenceDeadline => bodyStart is not null && !terminal ? silenceFrom + MsToSamples(config.Dictation?.EndSilenceMs ?? 1200) : null;
 
     // now: the capture clock (sample position) when this recognition is applied; it trails the audio by the recognizer's latency.
-    public DictationAudio? Apply(RecognizedUtterance recognition, Func<SampleRange, ImmutableArray<short>> copyAudio, long now = 0)
+    public DictationAudio? Apply(RecognizedUtterance recognition, Func<SampleRange, ImmutableArray<short>> copyAudio, long now = 0, WakeOrigin? origin = null)
     {
         if (terminal)
         {
@@ -565,11 +572,18 @@ public sealed class DictationSession
                 }
             }
 
+            if (wake is null && config.Dictation?.NoWakeWord?.RelaxedReadingDistance2 == true
+                && origin?.InputIdleSeconds is >= 0 && double.IsFinite(origin.InputIdleSeconds.Value))
+            {
+                wake = NoWakePolicy.RelaxedWake(recognition, wakes);
+                if (wake is not null) origin = new WakeOrigin(WakeRule.RelaxedD2, origin?.InputIdleSeconds);
+            }
             if (wake is null)
             {
                 return null;
             }
 
+            Origin = origin ?? new WakeOrigin(WakeRule.Strict, null);
             sessionId = Guid.NewGuid();
             maxEnd = (wake.BodyStart ?? wake.WakeEnd) + SecondsToSamples(config.Dictation?.MaxSeconds ?? config.MaxSeconds ?? 60);
             if (wake.BodyStart is long start)
@@ -611,6 +625,30 @@ public sealed class DictationSession
         }
 
         return null;
+    }
+
+    public bool StartAutomatic(SampleRange initialAudio, WakeOrigin origin, long now)
+    {
+        if (!origin.IsAutomatic || origin.InputIdleSeconds is null or < 0 || !double.IsFinite(origin.InputIdleSeconds.Value)
+            || terminal || IsActive || IsAwaitingBody || config.Dictation?.NoWakeWord is not { Valid: true } options) return false;
+        if (!(origin.Rule switch { WakeRule.AutoB => options.AutoIdle, WakeRule.Followup => options.Followup,
+            WakeRule.RelaxedD2 => options.RelaxedReadingDistance2, _ => false })) return false;
+        sessionId = Guid.NewGuid();
+        Origin = origin;
+        StartBody(initialAudio.Start, initialAudio.End, now);
+        return true;
+    }
+
+    public bool StartManual(long now, double? idleSeconds)
+    {
+        if (terminal || IsActive || IsAwaitingBody || config.Dictation is null) return false;
+        sessionId = Guid.NewGuid();
+        Origin = new(WakeRule.Strict, idleSeconds);
+        wakeEnd = wakeSourceEnd = now;
+        maxEnd = now + SecondsToSamples(config.Dictation.MaxSeconds ?? config.MaxSeconds ?? 60);
+        startTimeoutEnd = now + MsToSamples(config.Dictation.StartTimeoutMs ?? 3000);
+        awaitingBody = true;
+        return true;
     }
 
     public DictationAudio? AdvanceTo(long sampleEnd, Func<SampleRange, ImmutableArray<short>> copyAudio)
@@ -700,7 +738,7 @@ public sealed class DictationSession
             return null;
         }
 
-        var audio = new DictationAudio(sessionId, range, copyAudio(range), reason, Action: Action);
+        var audio = new DictationAudio(sessionId, range, copyAudio(range), reason, Action: Action, Origin: Origin, TranscriptPolicy: transcriptPolicy);
         events.Add(DictationEvent.Submitted(sessionId, reason, range));
         return audio;
     }

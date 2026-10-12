@@ -1,0 +1,184 @@
+{
+  "cases": [
+    {
+      "name": "small_tsu",
+      "text": "あっ",
+      "automaticExpectedText": null
+    },
+    {
+      "name": "long_vowel",
+      "text": "ああ",
+      "automaticExpectedText": null
+    },
+    {
+      "name": "spaces_and_newline",
+      "text": " \tあっ\r\n",
+      "automaticExpectedText": null
+    },
+    {
+      "name": "japanese_period",
+      "text": "ああ。",
+      "automaticExpectedText": null
+    },
+    {
+      "name": "ascii_period",
+      "text": "あっ.",
+      "automaticExpectedText": null
+    },
+    {
+      "name": "ascii_exclamation",
+      "text": "ああ!",
+      "automaticExpectedText": null
+    },
+    {
+      "name": "fullwidth_exclamation",
+      "text": "あっ！",
+      "automaticExpectedText": null
+    },
+    {
+      "name": "ascii_question",
+      "text": "ああ?",
+      "automaticExpectedText": null
+    },
+    {
+      "name": "fullwidth_question",
+      "text": "あっ？",
+      "automaticExpectedText": null
+    },
+    {
+      "name": "repeated_trailing_punctuation",
+      "text": "あっ。.!！?？",
+      "automaticExpectedText": null
+    },
+    {
+      "name": "mixed_trailing_spaces",
+      "text": "ああ。 \t！？\n",
+      "automaticExpectedText": null
+    },
+    {
+      "name": "next_line",
+      "text": "あっ",
+      "automaticExpectedText": null
+    },
+    {
+      "name": "nonbreaking_space",
+      "text": " ああ。 ",
+      "automaticExpectedText": null
+    },
+    {
+      "name": "ideographic_space",
+      "text": "　あっ！　",
+      "automaticExpectedText": null
+    },
+    {
+      "name": "yes",
+      "text": "はい",
+      "automaticExpectedText": "はい"
+    },
+    {
+      "name": "agreement",
+      "text": "うん",
+      "automaticExpectedText": "うん"
+    },
+    {
+      "name": "question",
+      "text": "何",
+      "automaticExpectedText": "何"
+    },
+    {
+      "name": "internal_comma",
+      "text": "あ、あ",
+      "automaticExpectedText": "あ、あ"
+    },
+    {
+      "name": "ascii_internal_comma",
+      "text": "あ,あ",
+      "automaticExpectedText": "あ,あ"
+    },
+    {
+      "name": "internal_period",
+      "text": "あ。あ",
+      "automaticExpectedText": "あ。あ"
+    },
+    {
+      "name": "internal_space",
+      "text": "あ あ",
+      "automaticExpectedText": "あ あ"
+    },
+    {
+      "name": "internal_tab",
+      "text": "あ\tあ",
+      "automaticExpectedText": "あ\tあ"
+    },
+    {
+      "name": "internal_newline",
+      "text": "あ\nあ",
+      "automaticExpectedText": "あ\nあ"
+    },
+    {
+      "name": "leading_punctuation",
+      "text": "。あっ",
+      "automaticExpectedText": "。あっ"
+    },
+    {
+      "name": "trailing_comma",
+      "text": "あっ、",
+      "automaticExpectedText": "あっ、"
+    },
+    {
+      "name": "quotes",
+      "text": "「あっ」",
+      "automaticExpectedText": "「あっ」"
+    },
+    {
+      "name": "ascii_quotes",
+      "text": "\"ああ\"",
+      "automaticExpectedText": "\"ああ\""
+    },
+    {
+      "name": "katakana",
+      "text": "アア",
+      "automaticExpectedText": "アア"
+    },
+    {
+      "name": "fullwidth_katakana",
+      "text": "アッ",
+      "automaticExpectedText": "アッ"
+    },
+    {
+      "name": "longer_speech",
+      "text": "あっ、そうです",
+      "automaticExpectedText": "あっ、そうです"
+    },
+    {
+      "name": "longer_vowel",
+      "text": "あああ",
+      "automaticExpectedText": "あああ"
+    },
+    {
+      "name": "other_interjection",
+      "text": "えっ",
+      "automaticExpectedText": "えっ"
+    },
+    {
+      "name": "literal_spacing",
+      "text": " \tはい。 \n",
+      "automaticExpectedText": " \tはい。 \n"
+    },
+    {
+      "name": "zero_width_space",
+      "text": "​ああ",
+      "automaticExpectedText": "​ああ"
+    },
+    {
+      "name": "combining_mark",
+      "text": "あっ゙",
+      "automaticExpectedText": "あっ゙"
+    },
+    {
+      "name": "punctuation_inside",
+      "text": "あ!あ!",
+      "automaticExpectedText": "あ!あ!"
+    }
+  ]
+}

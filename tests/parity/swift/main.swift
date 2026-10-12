@@ -1,5 +1,52 @@
 import Foundation
 
+func checkWakeHistory() {
+    let recovery = ModeRestore(previous: "before", temporary: "temporary")
+    precondition(recovery.decide("temporary") == .restore)
+    precondition(recovery.decide("user-choice") == .clear)
+    precondition(recovery.decide(nil) == .unknown)
+    let safeMode = #"{"key":"safe","name":"voice","autoPaste":false}"#
+    precondition(superwhisperAutoPasteDisabled("voice", modeJsons: [safeMode]))
+    precondition(!superwhisperAutoPasteDisabled("safe", modeJsons: [safeMode, safeMode]))
+    precondition(!superwhisperAutoPasteDisabled("safe", modeJsons: [#"{"key":"safe","autoPaste":0}"#]))
+    precondition(NoWakePolicy.onSpeech(NoWakeWordConfig(autoIdle: true), idleSeconds: 3, inFollowupWindow: false)?.rule == .autoB)
+    precondition(NoWakePolicy.onSpeech(NoWakeWordConfig(autoIdle: true), idleSeconds: nil, inFollowupWindow: false) == nil)
+    precondition(NoWakePolicy.onSpeech(NoWakeWordConfig(autoIdle: true), idleSeconds: 2.999, inFollowupWindow: false) == nil)
+    precondition(NoWakePolicy.onSpeech(NoWakeWordConfig(followup: true, autoIdle: true), idleSeconds: 4, inFollowupWindow: true)?.rule == .followup)
+    precondition(!NoWakePolicy.relaxedWake("hexxo", readings: ["hello"]))
+    precondition(NoWakePolicy.relaxedWake("ほうせいにはいる", readings: ["おんせいにはいる"]))
+    precondition(!NoWakePolicy.relaxedWake("ほうせい", readings: ["おんせい"]))
+    precondition(!NoWakePolicy.relaxedWake("ほうせいにはいる本文", readings: ["おんせいにはいる"]))
+    for mask in 0..<32 {
+        let safety = PasteSafety(targetFocused: mask & 1 != 0, plainTextField: mask & 2 != 0,
+            compositionClear: mask & 4 != 0, clipboardRestorable: mask & 8 != 0, inputUnchanged: mask & 16 != 0)
+        precondition(safety.allowsPaste == (mask == 31))
+    }
+    var time = Date(timeIntervalSince1970: 0)
+    let history = DictationHistory(now: { time }, capacity: 2, retention: 30)
+    let first = UUID(), second = UUID(), third = UUID()
+    let origin = WakeOrigin(rule: .autoB, inputIdleSeconds: 4)
+    precondition(history.add(id: first, text: "first", origin: origin))
+    precondition(history.add(id: second, text: "second", origin: origin))
+    precondition(!history.add(id: second, text: "replaced", origin: origin))
+    history.add(id: third, text: "third", origin: origin)
+    precondition(history.snapshot().map(\.text) == ["third", "second"])
+    precondition(history.select(first) == nil)
+    time = Date(timeIntervalSince1970: 30)
+    precondition(history.select(third) == nil)
+    history.add(id: first, text: "new", origin: origin)
+    let generation = history.generation
+    history.clear()
+    precondition(history.snapshot().isEmpty)
+    precondition(!history.add(id: first, text: "old completion", origin: origin, expectedGeneration: generation))
+    precondition(history.add(id: first, text: "new completion", origin: origin))
+    time = Date(timeIntervalSince1970: 29)
+    precondition(history.select(first) == nil)
+    precondition(!history.add(id: first, text: String(repeating: "x", count: 100_001), origin: origin))
+    precondition(WakeOrigin(rule: .relaxedD2, inputIdleSeconds: .nan).fields == "rule=relaxed_d2 inputIdleSeconds=-1")
+}
+checkWakeHistory()
+
 struct TextFixture: Decodable {
     struct Normalization: Decodable {
         var name: String

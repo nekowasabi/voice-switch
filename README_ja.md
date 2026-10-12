@@ -36,7 +36,7 @@
 
 `skipWhileMicInUseBy` のアプリがマイクを開いているあいだ、ウェイクワードは無視する。前面アプリのバンドル ID が `dictation.excludeBundleIDs` にあるときは入力しない。
 
-任意の `dictation.superwhisperMode`（Mac + Windows。key または表示名）は、voice-switch の入力用に自動ペーストを切った Superwhisper の mode を選ぶ。未設定なら従来どおり（Superwhisper が自動ペーストしてもよい）。設定すると、handoff の前にその mode へ切り替え、結果のあと元の mode に戻す。pane へ送れなかったときだけ、voice-switch がウェイク時点のアプリへ一度ペーストする（SendFailed のときは send-keys に渡したのと同じ解決済み本文だけ。全文ラッパーは貼らない）。pane は当たったが送信本文を切り出せなかったときは、全文をペーストしない。Mac の mode 切替・paste はソースに配線済み。この box では Mac 実機ランタイムは未検証（swiftc / Apple Speech なし）。
+任意の `dictation.superwhisperMode`（Mac + Windows。key または表示名）は、voice-switch の入力用に自動ペーストを切った Superwhisper の mode を選ぶ。未設定なら従来どおり（Superwhisper が自動ペーストしてもよい）。設定すると、handoff の前にその mode へ切り替え、結果のあと元の mode に戻す。この mode は自動録音と、自前の mode を持たない action の録音にだけ使う。ウェイクワードの録音では切り替えず、貼り付けは Superwhisper に任せる。Mac の mode 切替はソースに配線済み。この box では Mac 実機ランタイムは未検証（swiftc / Apple Speech なし）。
 
 トップレベルの `maxSeconds`（見本は 2.5）は、短いウェイクワード発話の上限。入力の上限ではない。
 
@@ -119,3 +119,18 @@ LaunchServices、実マイク、Superwhisper の録音・文字起こし・貼�
 開始専用・停止専用 URL を使います。`superwhisper://record` はトグルなので、
 繰り返すと状態を反転させます。`--fire` の再実行で開始状態が維持されることを確認し、
 停止は Superwhisper の UI、またはテスト用コピーの `wakeURL` を `/record/stop` に変更して確認してください。
+
+
+## ウェイクワードなしの録音（実験的）
+
+`dictation.noWakeWord` の `followup`、`autoIdle`、`relaxedReadingDistance2` は個別に指定できます。すべて既定では無効です。Mac では `dictation.superwhisperMode` も必須です。
+
+自動で始まった録音は履歴だけに進みます。`dictation.superwhisperMode` が `autoPaste: false` のモードなら、そのモードに切り替えて Superwhisper で変換します。そうでなければ端末内で文字起こしします。Jev、tmux、アクション URL、貼り付けには渡しません。自動録音中は Escape などの Superwhisper ショートカットを奪わず、無音か停止ワードで終わります。自動録音中にウェイクワードを話すと、自動録音を破棄して通常の録音に切り替えます。履歴はメモリ上の最大50件で、30分後またはアプリ終了時に消えます。選んだものだけコピーできます。
+
+- Ctrl+Shift+F10 は手動録音の開始
+- Ctrl+Shift+F9 または HUD のクリックは履歴
+- Windows の Ctrl+Shift+F8 は直近の取りこぼしに MISS ラベルを付ける
+
+ウェイクワードと Ctrl+Shift+F10 の録音はモードを切り替えず、その時点の Superwhisper のモードで変換し、貼り付けも Superwhisper に任せます。変換結果は履歴にも残りますが、停止時の HUD に「履歴に保存」と出るのは自動録音のときだけです。
+
+Mac 未検証。実機での音声・権限・UI と精度の評価はまだ必要です。[実装と設定](docs/no-wake-word/implementation.md)、[実機チェック](docs/no-wake-word/native-validation.md)、[合格ライン](docs/wake-acceptance.md) を確認してから有効にしてください。

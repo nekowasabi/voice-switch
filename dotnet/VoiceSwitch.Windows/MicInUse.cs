@@ -14,7 +14,10 @@ public static class MicInUse
     private const int SessionActive = 1;
 
     // processNames: executable names, with or without ".exe", compared without case.
-    public static string? By(IReadOnlyCollection<string> processNames)
+    public static string? By(IReadOnlyCollection<string> processNames) => Find(processNames, false);
+    public static string? BlockingAutomatic(IReadOnlyCollection<string> processNames) => Find(processNames, true);
+
+    private static string? Find(IReadOnlyCollection<string> processNames, bool failClosed)
     {
         if (processNames.Count == 0 || !OperatingSystem.IsWindows())
         {
@@ -23,7 +26,7 @@ public static class MicInUse
 
         try
         {
-            foreach (var pid in ActiveCapturePids())
+            foreach (var pid in ActiveCapturePids(failClosed))
             {
                 string name;
                 try
@@ -31,8 +34,9 @@ public static class MicInUse
                     using var process = Process.GetProcessById(pid);
                     name = process.ProcessName;
                 }
-                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
                 {
+                    if (failClosed) return "microphone process unavailable";
                     continue;
                 }
 
@@ -44,18 +48,19 @@ public static class MicInUse
         }
         catch (Exception ex) when (ex is COMException or InvalidCastException)
         {
-            // Not knowing must not block dictation; the guard then lets the wake through.
+            if (failClosed) return "microphone status unavailable";
             Log.Info($"mic-in-use check failed: {ex.Message}");
         }
 
         return null;
     }
 
-    private static IEnumerable<int> ActiveCapturePids()
+    private static IEnumerable<int> ActiveCapturePids(bool failClosed)
     {
         var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
         if (enumerator.EnumAudioEndpoints(CaptureFlow, DeviceStateActive, out var devices) < 0 || devices.GetCount(out var count) < 0)
         {
+            if (failClosed) throw new COMException("capture endpoint query failed");
             yield break;
         }
 
@@ -67,17 +72,24 @@ public static class MicInUse
                 || ((IAudioSessionManager2)activated).GetSessionEnumerator(out var sessions) < 0
                 || sessions.GetCount(out var sessionCount) < 0)
             {
+                if (failClosed) throw new COMException("capture session query failed");
                 continue;
             }
 
             for (var s = 0; s < sessionCount; s++)
             {
-                if (sessions.GetSession(s, out var session) >= 0
-                    && session.GetState(out var state) >= 0 && state == SessionActive
-                    && session.GetProcessId(out var pid) >= 0)
+                if (sessions.GetSession(s, out var session) < 0 || session.GetState(out var state) < 0)
                 {
-                    yield return (int)pid;
+                    if (failClosed) throw new COMException("capture session state unavailable");
+                    continue;
                 }
+                if (state != SessionActive) continue;
+                if (session.GetProcessId(out var pid) < 0)
+                {
+                    if (failClosed) throw new COMException("capture process unavailable");
+                    continue;
+                }
+                yield return (int)pid;
             }
         }
     }

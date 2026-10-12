@@ -72,6 +72,7 @@ if (logPath is null)
 
 var report = Replay.Run(logPath, label, gainedCap, examplesCap);
 report.WriteHuman(Console.Out);
+Console.WriteLine("wake telemetry " + System.Text.Json.JsonSerializer.Serialize(report.WakeTelemetry));
 if (jsonOut is not null)
 {
     File.WriteAllText(jsonOut, report.ToJson(), Encoding.UTF8);
@@ -90,8 +91,8 @@ static int RunSelfTest()
     }
 
     var report = Replay.Run(fixture, "self-test", gainedCap: 40, examplesCap: 40);
-    // Known counts on the fixture (main matcher, d≤1):
-    // - 縫製入力 (ほうせいにゅうりょく) → no hit (d=2 needs H2d); H5b near-miss example
+    // Main accepts whole closed readings at distance 2 when the wake has at least 10 kana.
+    // - 縫製入力 (ほうせいにゅうりょく) is gained against the older fixture log, not a remaining miss.
     // - 縫製入力の本文… → size±1 prefix d=2 but whole≫2 → not an H5b example
     // - 法政入力 (ほうぜいにゅうりょく) → no hit; whole d=3 vs おんせいにゅうりょく; H7 example
     // - 温泉 alone → hit short おんせい (d=1 whole closed); excluded from long+short+d3 examples (!hit)
@@ -115,9 +116,9 @@ static int RunSelfTest()
     Expect("scored", report.Scored == 10, $"got {report.Scored}");
     Expect("live_true", report.LiveTrue == 4, $"got {report.LiveTrue}");
     Expect("unscored_live_true", report.UnscoredLiveTrue == 2, $"got {report.UnscoredLiveTrue}");
-    Expect("wake_hits", report.WakeHits == 2, $"got {report.WakeHits}");
+    Expect("wake_hits", report.WakeHits == 3, $"got {report.WakeHits}");
     Expect("agreed_true", report.AgreedTrue == 2, $"got {report.AgreedTrue}");
-    Expect("gained", report.Gained == 0, $"got {report.Gained} (main must not gain 縫製)");
+    Expect("gained", report.Gained == 1, $"got {report.Gained} (long closed distance-2 wake)");
     Expect("lost", report.Lost == 0, $"got {report.Lost}");
     Expect("unscored", report.Unscored == 5, $"got {report.Unscored}");
     Expect("near_miss_d2_has_hosei", report.NearMissByDistance.GetValueOrDefault(2) >= 1,
@@ -127,17 +128,13 @@ static int RunSelfTest()
         string.Join(',', report.NearMissReadings));
 
     // H5b: long-wake near-miss examples = !hit ∧ whole-utterance d=1..2 ∧ Reading.Length>=10.
-    // Main matcher: 縫製入力 is a miss (d=2 needs H2d) → sole example. Hits (音声入力 / 温泉) excluded.
+    // The accepted 縫製入力, 音声入力, and 温泉 are excluded from remaining near-miss examples.
     // Prefix-of-longer (縫製入力の本文…) size±1 d=2 must NOT become an example (H2d d=2 is whole-only).
-    Expect("near_miss_examples_count", report.NearMissExamples.Count == 1,
+    Expect("near_miss_examples_count", report.NearMissExamples.Count == 0,
         $"got {report.NearMissExamples.Count}: {string.Join(" | ", report.NearMissExamples)}");
-    Expect("near_miss_example_housei",
-        report.NearMissExamples.Any(r => r.Contains("縫製入力", StringComparison.Ordinal)
-            && !r.Contains("縫製入力の本文", StringComparison.Ordinal)
-            && r.Contains("d=2", StringComparison.Ordinal)
-            && r.Contains("おんせいにゅうりょく", StringComparison.Ordinal)
-            && r.Contains("intentional=True", StringComparison.Ordinal)),
-        string.Join(" | ", report.NearMissExamples));
+    Expect("long_closed_distance2_is_gained", report.GainedRows.SequenceEqual([
+        "reading=\"ほうせい にゅうりょく\" d=2 via=おんせいにゅうりょく text=\"縫製入力\""]),
+        string.Join(" | ", report.GainedRows));
     Expect("near_miss_examples_exclude_hits",
         !report.NearMissExamples.Any(r => r.Contains("音声入力", StringComparison.Ordinal)
             || r.Contains("text=\"温泉\"", StringComparison.Ordinal)),
@@ -319,6 +316,7 @@ static int RunSelfTest()
 
     Console.WriteLine("OK wake_log_replay self-test");
     report.WriteHuman(Console.Out);
+Console.WriteLine("wake telemetry " + System.Text.Json.JsonSerializer.Serialize(report.WakeTelemetry));
     return 0;
 }
 
@@ -378,6 +376,7 @@ internal static class Replay
 
     public static Report Run(string logPath, string label, int gainedCap, int examplesCap = 40)
     {
+        var telemetry = new WakeTelemetrySummary();
         var wakes = DefaultWakes;
         var scored = 0;
         var unscored = 0;
@@ -431,6 +430,7 @@ internal static class Replay
         foreach (var line in File.ReadLines(logPath, Encoding.UTF8))
         {
             lineNo++;
+            telemetry.Observe(line);
             var wr = WakeReadings.Match(line);
             if (wr.Success && line.Contains("dictation timing:", StringComparison.Ordinal))
             {
@@ -748,7 +748,7 @@ internal static class Replay
             CurrentUnscoredPrefixHead: currentUnscoredPrefixHead,
             CurrentLiveTrueClosedNoText: currentLiveTrueClosedNoText,
             CurrentLiveTruePrefixHead: currentLiveTruePrefixHead,
-            PostCutoverTextWithoutReading: postCutoverTextWithoutReading);
+            PostCutoverTextWithoutReading: postCutoverTextWithoutReading) { WakeTelemetry = telemetry };
     }
 
     // H4b: explicit ambient/intentional goldens first so keep/revert is not locked only to
@@ -965,6 +965,7 @@ internal sealed record Report(
 {
     // No reading= line at all → the old/current split is unknown (not "everything is old").
     public bool BuildSplitKnown => CutoverLine != 0;
+    public WakeTelemetrySummary WakeTelemetry { get; init; } = new();
 
 
     public void WriteHuman(TextWriter w)
@@ -976,6 +977,7 @@ internal sealed record Report(
         var inBand = WakeHits >= bandLo && WakeHits <= bandHi;
         var scoredLiveTrue = LiveTrue - UnscoredLiveTrue;
         w.WriteLine($"label={Label}");
+        w.WriteLine("Intentional/ambient lexical categories are legacy text heuristics, not ground-truth labels. Use an explicitly reviewed manifest for acceptance.");
         w.WriteLine($"scored={Scored} unscored={Unscored} unscored_live_true={UnscoredLiveTrue} (no text=)");
         w.WriteLine($"live_true={LiveTrue} live_false={LiveFalse} scored_live_true={scoredLiveTrue}");
         w.WriteLine($"wake_hits={WakeHits} wake_hits_vs_live_true_pct={pct:0.00} band=[{bandLo},{bandHi}] in_band={inBand}");
@@ -1044,6 +1046,8 @@ internal sealed record Report(
     {
         var sb = new StringBuilder();
         sb.Append('{');
+        sb.Append("\"classification_note\":\"Legacy lexical categories are heuristics, not ground-truth intent labels\",");
+        sb.Append("\"wake_telemetry\":").Append(System.Text.Json.JsonSerializer.Serialize(WakeTelemetry)).Append(',');
         void Num(string k, int v) => sb.Append(CultureInfo.InvariantCulture, $"\"{k}\":{v},");
         Num("scored", Scored);
         Num("unscored", Unscored);
