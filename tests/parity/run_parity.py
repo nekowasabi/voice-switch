@@ -551,13 +551,13 @@ def check_swift_handoff_markers(result: Result, repo: SourceTree) -> None:
         result,
         "Swift handoff writes trimmed audio file",
         mac,
-        ["writeWAV(trimmedForHandoff"],
+        ["writeWAV(trimmedForHandoff", "trimQuietHead(samples"],
     )
     require_substrings(
         result,
         "Swift MISS label hotkey is id 4",
         wakeui,
-        ["id.id == 4", "WakeMissLabel.shared.record"],
+        ["id.id == 4", "WakeMissLabel.shared.record", "(kVK_F8, UInt32(4))"],
     )
 
 

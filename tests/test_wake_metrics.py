@@ -33,7 +33,7 @@ class WakeMetricsTests(unittest.TestCase):
                 "2026-10-12T13:00:00Z dictation session: automatic rule=auto_b inputIdleSeconds=4.000 sid=a0b1c2d3-e4f5-4678-89ab-cdef01234567",
                 "2026-10-12T13:00:02Z dictation recognition: complete id=1 rule=auto_b inputIdleSeconds=4.000 sid=a0b1c2d3-e4f5-4678-89ab-cdef01234567",
                 "2026-10-12T13:00:05Z dictation recognition: complete id=2 rule=strict inputIdleSeconds=0.250 sid=-",
-                "2026-10-12T13:00:06Z wake label: MISS id=1 rule=strict inputIdleSeconds=0.250",
+                "2026-10-12T13:00:06Z wake label: MISS id=2 rule=strict inputIdleSeconds=0.250",
             ]))
             telemetry = metrics.parse_metrics(path)["wake_telemetry"]
             self.assertEqual(telemetry["rules"], {"auto_b": 1, "strict": 1})

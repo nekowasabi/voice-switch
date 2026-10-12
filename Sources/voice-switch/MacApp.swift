@@ -610,8 +610,11 @@ final class Listener {
     /// AVAudioEngineConfigurationChange (2026-10-13 log), and every end condition counts frames, so a dictation open then never ends.
     private let lastBuffer = OSAllocatedUnfairLock(initialState: Date())
     private var stallRestarts = 0
-    /// Monotonic recognition counter for idle complete lines (Windows id=N parity), starting at 1.
-    private var nextRecognitionId = 1
+    /// Monotonic recognition counter for complete lines (Windows id=N parity), starting at 1.
+    private let nextRecognitionId = OSAllocatedUnfairLock(initialState: 1)
+    private func takeRecognitionId() -> Int {
+        nextRecognitionId.withLock { state in let id = state; state += 1; return id }
+    }
     /// CoreAudio device UID; nil follows the system default input. Set only while stopped.
     var deviceUID: String? {
         // A pinned input unit never follows the system default again, so start over with a fresh engine.
@@ -891,7 +894,7 @@ final class Listener {
                 guard let tr = try? await transcribe(buf, locale: Locale(identifier: config.cfg.locale ?? "ja_JP")) else { continue }
                 guard localHistoryState.withLock({ $0.generation == generation }) else { continue }
                 let earlyOrigin = WakeOrigin(rule: .strict, inputIdleSeconds: MacInputActivity.idleSeconds())
-                log("dictation recognition: complete \(earlyOrigin.fields) \(sidField(nil))")
+                log("dictation recognition: complete id=\(takeRecognitionId()) \(earlyOrigin.fields) \(sidField(nil))")
                 let stt = Int(Date().timeIntervalSince(began) * 1000)
                 guard let hit = Segmenter.earlyWake(tr, cfg: config.cfg, tailSilentFrames: seg.tailSilentFrames) else { continue }
                 let start = config.cfg.dictation == nil ? nil : hit
@@ -934,7 +937,7 @@ final class Listener {
                 && !(config.cfg.dictation?.superwhisperMode?.isEmpty ?? true)
                 && macRelaxedWake(t, wakeWords: config.cfg.wakeWords)
             let recognitionOrigin = WakeOrigin(rule: relaxed ? .relaxedD2 : .strict, inputIdleSeconds: MacInputActivity.idleSeconds())
-            let recognitionId = nextRecognitionId; nextRecognitionId += 1
+            let recognitionId = takeRecognitionId()
             if !isHead { WakeMissLabel.shared.observe(id: recognitionId, origin: recognitionOrigin, at: Date()) }
             log("dictation recognition: complete id=\(recognitionId) \(recognitionOrigin.fields) \(sidField(nil))")
             // Logged too, so misses that transcribe to nothing are visible when tuning.
@@ -1115,7 +1118,7 @@ final class Listener {
         do {
             let transcript = try await transcribe(d.samples, locale: Locale(identifier: config.cfg.locale ?? "ja_JP"))
             guard localHistoryState.withLock({ $0.generation == generation }) else { return }
-            log("dictation recognition: complete \(d.origin.fields) \(sidField(d.sessionID))")
+            log("dictation recognition: complete id=\(takeRecognitionId()) \(d.origin.fields) \(sidField(d.sessionID))")
             let text = transcript.runs.map(\.text).joined()
             let retained = DictationHistory.shared.add(id: d.sessionID, text: text, origin: d.origin, expectedGeneration: historyGeneration, policy: d.transcriptPolicy)
             if retained && !d.origin.isAutomatic && d.action == nil {
