@@ -76,7 +76,19 @@ func isStopWord(_ u: [Float], heard: Transcript?, stopWords: [String], locale: L
         tr = t
     }
     if !quiet { log("dictating: \(tr.text)  [utt \(u.count * 1000 / Int(rate)) ms]") }
-    return stopWords.contains(tr.text) ? u.count : 0
+    if stopWords.contains(tr.text) { return u.count }
+    // A stop word after other speech counts only when the recognition stays on this Mac.
+    guard await onDeviceInstalled(locale), let start = stopWordSuffixStart(tr, stopWords: stopWords) else { return 0 }
+    return u.count - min(u.count, Int(start * rate))
+}
+
+/// SpeechTranscriber recognizes on the device once the locale's assets are installed.
+/// (inferred from the SpeechTranscriber API; Mac-unverified. The issue's requiresOnDeviceRecognition is an
+/// SFSpeechRecognitionRequest property, and this code path does not use that framework.)
+func onDeviceInstalled(_ locale: Locale) async -> Bool {
+    let want = locale.identifier(.bcp47)
+    let installed = await SpeechTranscriber.installedLocales
+    return installed.contains { $0.identifier(.bcp47) == want }
 }
 
 /// Hard-stops SpeechAnalyzer on cancel (Windows KillProcess intent).

@@ -13,6 +13,19 @@ struct Transcript {
     var text: String { normalize(runs.map(\.text).joined()) }
 }
 
+/// Start time in seconds of a stop word that ends the transcript, taken at a run boundary. nil when the transcript
+/// does not end with one, so a stop word in the middle of a sentence never matches.
+/// `stopWords` must already be normalized.
+func stopWordSuffixStart(_ t: Transcript, stopWords: [String]) -> Double? {
+    var tail = ""
+    for run in t.runs.reversed() {
+        tail = normalize(run.text) + tail
+        // The first match found starts inside this run, since an earlier match would have been found a run sooner.
+        if stopWords.contains(where: { !$0.isEmpty && tail.hasSuffix($0) }) { return run.start }
+    }
+    return nil
+}
+
 /// Where to cut the audio so it starts after any leading wake words, plus the normalized text heard after them.
 /// nil if the transcript does not start with a wake word or has nothing after it.
 func dictationStart(_ t: Transcript, wakeWords: [String]) -> (cutAt: Double, rest: String)? {
