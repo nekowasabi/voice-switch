@@ -858,6 +858,8 @@ static bool DictationWakeAndStopBoundariesAreExplicit()
         Run("音声", 0, 2000), Run("認識", 2000, 8000));
     var standaloneStop = Recognized(3, RecognitionExtent.ClosedUtterance, 10000, 14000, "入力ストップ", false,
         Run("入力", 10500, 12000), Run("ストップ", 12000, 13500));
+    var punctuatedStop = Recognized(8, RecognitionExtent.ClosedUtterance, 10000, 14000, "入力ストップ。", false,
+        Run("入力", 10500, 12000), Run("ストップ。", 12000, 13500));
     var embeddedStop = Recognized(4, RecognitionExtent.ClosedUtterance, 15000, 22000, "今日は入力ストップです", false,
         Run("今日は", 15000, 17000), Run("入力", 17000, 18500), Run("ストップ", 18500, 20000), Run("です", 20000, 22000));
     var prefixStop = Recognized(5, RecognitionExtent.PrefixHead, 23000, 27000, "入力ストップ", false,
@@ -868,6 +870,7 @@ static bool DictationWakeAndStopBoundariesAreExplicit()
         && DictationBoundaries.LeadingWake(fusedRemainder, ["音声入力"]) == new WakePrefix(5000, 5000)
         && DictationBoundaries.LeadingWake(fusedNotWake, ["音声入力"]) is null
         && DictationBoundaries.StandaloneStopRange(standaloneStop, ["入力ストップ"]) == new SampleRange(10500, 13500)
+        && DictationBoundaries.StandaloneStopRange(punctuatedStop, ["入力ストップ"]) == new SampleRange(10500, 13500)
         && DictationBoundaries.StandaloneStopRange(embeddedStop, ["入力ストップ"]) is null
         && DictationBoundaries.StandaloneStopRange(prefixStop, ["入力ストップ"]) is null;
 }
