@@ -66,6 +66,19 @@ func transcribe(_ samples: [Float], locale: Locale) async throws -> Transcript {
     }
 }
 
+/// Trailing samples of `u` that are the stop word, to drop from the dictation body. 0 when `u` is not a stop word.
+/// Runs beside the frame loop, so it may wait on the recognizer.
+func isStopWord(_ u: [Float], heard: Transcript?, stopWords: [String], locale: Locale, quiet: Bool) async -> Int {
+    guard !stopWords.isEmpty else { return 0 }
+    let tr: Transcript
+    if let heard { tr = heard } else {
+        guard let t = try? await transcribe(u, locale: locale) else { return 0 }
+        tr = t
+    }
+    if !quiet { log("dictating: \(tr.text)  [utt \(u.count * 1000 / Int(rate)) ms]") }
+    return stopWords.contains(tr.text) ? u.count : 0
+}
+
 /// Hard-stops SpeechAnalyzer on cancel (Windows KillProcess intent).
 /// `withThrowingTaskGroup.cancelAll` still waits for children; analyzeSequence/finalize may ignore
 /// Task cancellation alone, so without cancelAndFinishNow the deadline never frees the group.
@@ -731,6 +744,10 @@ final class Listener {
         var recent: [Float] = []
         var speechFrames = 0
         var gapFrames = 0
+        // Stop-word judgement runs beside the frame loop; `stopJob` says which dictation and generation it belongs to.
+        let stopCheck = LatestRecognition<Int>()
+        var stopJob: (session: UUID, generation: Int)?
+        var stopFrames = 0
         func submitAndArm(_ d: Dictation, cfg: DictationConfig) {
             if !d.origin.isAutomatic && d.action == nil, let options = cfg.noWakeWord, options.followup == true, options.valid {
                 followupUntil = clock + Int(rate) * (options.followupMs ?? 8000) / 1000
@@ -767,7 +784,7 @@ final class Listener {
             let event = seg.push(f)
             // The automatic session opens on voice activity before any transcript, so a spoken wake word replaces it with the
             // dictation the user asked for. The idle path below transcribes the same utterance again and opens that dictation.
-            var heardDuringAutomatic: String?
+            var heardDuringAutomatic: Transcript?
             if dictation?.origin.isAutomatic == true, case let .utterance(u)? = event,
                let heard = try? await transcribe(u, locale: Locale(identifier: config.cfg.locale ?? "ja_JP")) {
                 guard localHistoryState.withLock({ $0.generation == generation }) else { continue }
@@ -775,7 +792,7 @@ final class Listener {
                     dictation = nil; speechFrames = 0
                     log("dictation session: automatic replaced by wake word")
                 } else {
-                    heardDuringAutomatic = heard.text
+                    heardDuringAutomatic = heard
                 }
             }
             if var d = dictation {
@@ -788,18 +805,31 @@ final class Listener {
                 }
                 d.samples += f
                 d.silentFrames = seg.lastWasSpeech ? 0 : d.silentFrames + 1
-                let stopUtterance: [Float]?
-                if case let .utterance(u)? = event { stopUtterance = await isStopWord(u, heard: heardDuringAutomatic) ? u : nil }
-                else { stopUtterance = nil }
-                guard localHistoryState.withLock({ $0.generation == generation }) else { continue }
-                if let u = stopUtterance {
-                    // The stop word arrived as its own utterance; its audio is the tail of the buffer.
-                    d.samples.removeLast(min(u.count, d.samples.count))
-                    dictation = nil; recent.removeAll(); speechFrames = 0; Hotkeys.end(); endedByUser = true
-                    log("dictation finished by stop word")
-                    if d.heardSpeech, !d.samples.isEmpty { submitAndArm(d, cfg: dc) }
-                    continue
+                stopFrames += f.count
+                // The stop word is judged beside the frame loop, on the newest utterance only. Frames keep flowing meanwhile,
+                // so the result is taken on a later frame, and the cut also drops the frames that arrived since.
+                if let tail = stopCheck.take(), let job = stopJob {
+                    stopJob = nil
+                    if tail > 0, job.session == d.sessionID, job.generation == generation {
+                        d.samples.removeLast(min(tail + stopFrames, d.samples.count))
+                        dictation = nil; recent.removeAll(); speechFrames = 0; Hotkeys.end(); endedByUser = true
+                        log("dictation finished by stop word")
+                        if d.heardSpeech, !d.samples.isEmpty { submitAndArm(d, cfg: dc) }
+                        continue
+                    }
                 }
+                if case let .utterance(u)? = event {
+                    let words = (config.cfg.stopWords ?? []).map(normalize)
+                    if !words.isEmpty {
+                        let locale = Locale(identifier: config.cfg.locale ?? "ja_JP")
+                        let quiet = config.cfg.dictation?.noWakeWord?.enabled == true
+                        let heard = heardDuringAutomatic
+                        stopCheck.submit { await isStopWord(u, heard: heard, stopWords: words, locale: locale, quiet: quiet) }
+                        stopJob = (d.sessionID, generation)
+                        stopFrames = 0
+                    }
+                }
+                guard localHistoryState.withLock({ $0.generation == generation }) else { continue }
                 if d.deafFrames > 0 { d.deafFrames -= 1 } else if !d.heardSpeech && seg.lastWasSpeech {
                     // Drop the wait before the text, keeping a preroll so the first syllable is whole.
                     d.samples = Array(d.samples.suffix(frames(ms: config.cfg.prerollMs ?? 300) * frameLen + frameLen))
@@ -813,8 +843,9 @@ final class Listener {
                     }
                     continue
                 }
-                guard key == .finish || d.silentFrames * frameLen * 1000 / Int(rate) >= dc.endSilenceMs ?? 1200
-                    || d.samples.count > Int((dc.maxSeconds ?? 60) * rate) else { continue }
+                // A pending stop check holds the end, so a stop word is not submitted as text.
+                guard key == .finish || (!stopCheck.pending && (d.silentFrames * frameLen * 1000 / Int(rate) >= dc.endSilenceMs ?? 1200
+                    || d.samples.count > Int((dc.maxSeconds ?? 60) * rate))) else { continue }
                 let reason = key == .finish ? "hotkey" : d.samples.count > Int((dc.maxSeconds ?? 60) * rate) ? "maxSeconds"
                     : "\(d.silentFrames * frameLen * 1000 / Int(rate)) ms silence"
                 d.samples.removeLast(d.silentFrames * frameLen)
@@ -1019,17 +1050,6 @@ final class Listener {
             if excluded.contains(id) { return false }
         }
         return true
-    }
-
-    /// `heard` is a transcript of `u` already taken this frame, so the utterance is not recognized twice.
-    private func isStopWord(_ u: [Float], heard: String? = nil) async -> Bool {
-        let words = (config.cfg.stopWords ?? []).map(normalize)
-        guard !words.isEmpty else { return false }
-        var t = heard
-        if t == nil { t = try? await transcribe(u, locale: Locale(identifier: config.cfg.locale ?? "ja_JP")).text }
-        guard let t else { return false }
-        if config.cfg.dictation?.noWakeWord?.enabled != true { log("dictating: \(t)  [utt \(u.count * 1000 / Int(rate)) ms]") }
-        return words.contains(t)
     }
 
     private func restart() { halt(); attemptStart() }
