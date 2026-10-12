@@ -1506,6 +1506,33 @@ public sealed class WinMmCapture : IPcmCapture
     }
 }
 
+// Scripts run from a file under %LOCALAPPDATA%\voice-switch: passed by -EncodedCommand, the dictation script alone put
+// 44,541 characters on the command line, past the Windows 32,767 limit, and Process.Start failed with Win32Exception.
+public static class PowerShellScript
+{
+    public static ProcessStartInfo StartInfo(string fileName, string script)
+    {
+        var dir = Path.Combine(Environment.GetEnvironmentVariable("LOCALAPPDATA") ?? Path.GetTempPath(), "voice-switch");
+        var path = Path.Combine(dir, fileName);
+        if (!File.Exists(path) || File.ReadAllText(path) != script)
+        {
+            Directory.CreateDirectory(dir);
+            // BOM: Windows PowerShell reads a BOM-less .ps1 in the ANSI code page.
+            File.WriteAllText(path, script, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+        }
+
+        return new ProcessStartInfo("powershell.exe", $"-NoProfile -NonInteractive -OutputFormat Text -ExecutionPolicy Bypass -File \"{path}\"")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+    }
+}
+
 // Children started here die with voice-switch.exe, even when it crashes or is killed: we never close the job handle,
 // so the kernel closes it at our exit and JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE ends every process still in the job.
 public static class ChildProcessJob
@@ -1908,17 +1935,9 @@ public sealed class SpeechPowerShellDictationRecognizer : IDictationRecognizer, 
 
     internal static ProcessStartInfo CreatePowerShell()
     {
-        var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(Script));
-        return new ProcessStartInfo("powershell.exe", $"-NoProfile -NonInteractive -OutputFormat Text -EncodedCommand {encoded}")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            RedirectStandardInput = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
+        var psi = PowerShellScript.StartInfo("dictation.ps1", Script);
+        psi.RedirectStandardInput = true;
+        return psi;
     }
 
     private static void KillProcess(Process process)

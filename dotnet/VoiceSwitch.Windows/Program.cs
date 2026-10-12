@@ -621,20 +621,8 @@ public static class SpeechPowerShell
         return new SpeechProcess(process);
     }
 
-    internal static ProcessStartInfo CreatePowerShell()
-    {
-        // Why: Use Windows PowerShell System.Speech instead of a NuGet package so WSL builds stay offline.
-        var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(Script));
-        return new ProcessStartInfo("powershell.exe", $"-NoProfile -NonInteractive -OutputFormat Text -EncodedCommand {encoded}")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-    }
+    // Why: Use Windows PowerShell System.Speech instead of a NuGet package so WSL builds stay offline.
+    internal static ProcessStartInfo CreatePowerShell() => PowerShellScript.StartInfo("wake.ps1", Script);
 
     internal const string Script = """
 $ProgressPreference = 'SilentlyContinue'
