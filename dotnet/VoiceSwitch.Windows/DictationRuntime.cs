@@ -1012,9 +1012,10 @@ public sealed class WindowsDictationRuntime
             (loopbackLevels ?? loopbackCapture?.Levels)?.Between(LoopbackShadow.LoopbackMs(range.Start, sampleEpochMs) - 2 * LoopbackShadow.BinMs, LoopbackShadow.LoopbackMs(range.End, sampleEpochMs) + 2 * LoopbackShadow.BinMs),
             sampleEpochMs);
 
-    // "-" while no session is open: a recognition heard while idle belongs to no session yet.
+    // "-" before any session opened: a recognition heard while idle belongs to no session yet. A terminal session keeps its
+    // id until the loop resets it, so stop-while-waiting and the like still name the session they closed.
     private static string Sid(DictationSession session) =>
-        $"sid={(session.SessionId == Guid.Empty || !(session.IsActive || session.IsAwaitingBody) ? "-" : session.SessionId.ToString())}";
+        $"sid={(session.SessionId == Guid.Empty ? "-" : session.SessionId.ToString())}";
 
     private void Submit(DictationAudio audio)
     {
