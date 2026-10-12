@@ -422,10 +422,10 @@ public static class DictationBoundaries
         return StandaloneStopRange(recognition, stopWords) is not null;
     }
 
-    // ponytail: floor set from TTS fixtures. With both grammars loaded, real stop words scored 0.57-0.73 and no body
-    // phrase was ever answered by the stop grammar; alone, the stop grammar force-matched "ストップしないで" at 0.24.
-    // Tune from the "grammar=stop conf=" log lines once real-voice data exists.
-    public const double StopGrammarMinConfidence = 0.4;
+    // Real stop words said with a soft last mora scored 0.28-0.38 and were ignored at the old 0.4 floor (2026-10-05/07 logs).
+    // With both grammars loaded, 20 stop-like TTS phrases (スタッフ, スタート, ストップしないで, ...) were never answered by the
+    // stop grammar, so 0.25 adds no false stop there; it stays above the 0.24 the stop grammar alone gave "ストップしないで".
+    public const double StopGrammarMinConfidence = 0.25;
 
     public static SampleRange? StandaloneStopRange(RecognizedUtterance recognition, IEnumerable<string> stopWords)
     {

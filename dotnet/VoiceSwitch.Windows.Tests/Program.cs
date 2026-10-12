@@ -882,6 +882,7 @@ static bool DictationStopGrammarResultNeedsConfidenceFloor()
         && DictationBoundaries.StandaloneStopRange(FromGrammar(2, floor - 0.01), ["入力ストップ"]) is null
         && DictationBoundaries.StandaloneStopRange(FromGrammar(3, null), ["入力ストップ"]) is null
         && DictationBoundaries.StandaloneStopRange(FromGrammar(4, 0.99, RecognitionExtent.PrefixHead), ["入力ストップ"]) is null
+        && DictationBoundaries.StandaloneStopRange(FromGrammar(6, 0.28), ["入力ストップ"]) == new SampleRange(10500, 13500)
         && DictationBoundaries.StandaloneStopRange(dictated, ["入力ストップ"]) == new SampleRange(10500, 13500);
 }
 
