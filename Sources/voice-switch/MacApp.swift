@@ -396,7 +396,7 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     var launched = false
     do {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try writeWAV(samples, to: wav)
+        try writeWAV(Array(trimQuietHead(samples, rate: rate)), to: wav)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         p.arguments = ["-g", "-a", "superwhisper", wav.path]
