@@ -532,6 +532,9 @@ public sealed class DictationSession
     }
 
     public IReadOnlyList<DictationEvent> Events => events;
+    // The id DictationAudio and HandoffResult carry; Guid.Empty before a session opens. Sample indices restart with the capture,
+    // so this is what joins a session's log lines.
+    public Guid SessionId => sessionId;
     public WakeAction? Action { get; private set; }
     public WakeOrigin Origin { get; private set; } = new(WakeRule.Strict, null);
     public SampleRange? PendingBody => bodyStart is long start && !terminal ? new SampleRange(start, lastSpeechEnd) : null;

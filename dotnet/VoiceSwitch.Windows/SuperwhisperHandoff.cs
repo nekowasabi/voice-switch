@@ -148,7 +148,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
 
             if (text is not null)
             {
-                Log.Info($"dictation: {text.Length} chars in {clock.ElapsedMilliseconds} ms audio={audio.Samples.Length / (double)Pcm16Wav.Rate:F2}s");
+                Log.Info($"dictation: {text.Length} chars in {clock.ElapsedMilliseconds} ms audio={audio.Samples.Length / (double)Pcm16Wav.Rate:F2}s sid={audio.SessionId}");
             }
         }
         finally

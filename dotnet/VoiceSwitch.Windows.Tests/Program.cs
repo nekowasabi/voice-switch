@@ -24,6 +24,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("automatic wake gates and immutable provenance", () => Check(NoWakeTests.WakeRules())),
     ("automatic runtime repeats sessions, fails closed on idle or microphone uncertainty, yields to a spoken wake word, records fragmented speech from its start, and logs playback-vs-mic levels at start and end", () => Check(NoWakeTests.AutomaticRuntime())),
     ("loopback shadow fields give medians, the above-zero share, silent and unknown", () => Check(NoWakeTests.LoopbackShadowFields())),
+    ("transcript shape counts letters and spots filler-only text without the text", () => Check(NoWakeTests.TranscriptShapeFields())),
     ("manual paste requires every safety observation", () => Check(NoWakeTests.PasteGuards())),
     ("local history expires, evicts, deduplicates and clears", () => Check(NoWakeTests.History())),
     ("history copy hotkey copies only the newest retained entry", () => Check(HistoryHotkeyCopiesNewest())),

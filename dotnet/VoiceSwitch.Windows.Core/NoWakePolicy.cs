@@ -19,6 +19,31 @@ public readonly record struct AutomaticTranscriptPolicy(bool FilterInterjections
     }
 }
 
+// Shape of a transcript for the log when the text itself stays private.
+public static class TranscriptShape
+{
+    // Interjections SAPI returns for a breath, a cough or a laugh. Longest spelling first so the greedy match takes "あっ" before "あ".
+    public static readonly string[] Fillers = ["あっ", "ああ", "あ", "うん", "はい", "ええ", "えー", "えっ", "え", "おお", "お", "んー", "ん", "はは", "は", "ふふ", "ふ", "笑"];
+
+    // Letters and digits only: no punctuation, no spaces.
+    public static int Length(string text) => text.Count(char.IsLetterOrDigit);
+
+    // True when the letters of the text are nothing but a run of fillers.
+    public static bool IsFiller(string text)
+    {
+        var core = string.Concat(text.Where(char.IsLetterOrDigit));
+        var index = 0;
+        while (index < core.Length)
+        {
+            var hit = Fillers.FirstOrDefault(filler => core.AsSpan(index).StartsWith(filler));
+            if (hit is null) return false;
+            index += hit.Length;
+        }
+
+        return core.Length > 0;
+    }
+}
+
 public static class NoWakePolicy
 {
     public static WakeOrigin? OnSpeech(NoWakeWordConfig? options, double? idleSeconds, bool inFollowupWindow)

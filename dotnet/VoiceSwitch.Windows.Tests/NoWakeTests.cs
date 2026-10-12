@@ -157,6 +157,18 @@ internal static class NoWakeTests
                     || (idle == 4 && busy is null && ends.Length == 0)
                     || (loopbackDb is > LoopbackShadow.SilentDb && !ends.Any(line => line.Contains(" micOverLoopbackGe0=0."))))
                     throw new InvalidOperationException($"session logs lack '{expectedLevels}'");
+                // Every automatic session is traceable by sid from its start through recognition, the end line and the handoff result,
+                // and its recognitions describe the transcript's shape without the text.
+                var sids = lines.Where(line => line.Contains("dictation session: automatic ") && line.Contains(" range="))
+                    .Select(line => System.Text.RegularExpressions.Regex.Match(line, @" sid=([0-9a-f-]{36})").Groups[1].Value).ToArray();
+                if (sids.Any(sid => sid.Length == 0
+                        || (spokenWake
+                            ? !lines.Any(line => line.Contains("dictation session: automatic replaced by wake word ") && line.Contains($" sid={sid}"))
+                            : !lines.Any(line => line.Contains("dictation session: end reason=") && line.Contains($" sid={sid} ") && line.Contains(" seconds="))
+                                || !lines.Any(line => (line.Contains("dictation handoff: ") || line.Contains("dictation handoff failed: ")) && line.Contains($" sid={sid}")))
+                        || (!failRecognition && !lines.Any(line => line.Contains("dictation recognition: complete ") && line.Contains($" sid={sid}") && line.Contains($" textLen={(spokenWake ? 8 : 17)} filler=0 conf="))))
+                    || lines.Any(line => line.Contains("dictation recognition: complete ") && line.Contains("PRIVATE_NO_WAKE_BODY")))
+                    throw new InvalidOperationException($"session logs are not joined by sid (idle={idle} busy={busy} failLocal={failLocal} failRecognition={failRecognition} spokenWake={spokenWake} fragmented={fragmented} filter={filterInterjections})");
                 if (filterInterjections)
                 {
                     var retained = history.Snapshot();
@@ -219,6 +231,13 @@ internal static class NoWakeTests
             && LoopbackShadow.Dbfs(new short[480]) == LoopbackShadow.FloorDb
             && Math.Abs(LoopbackShadow.Dbfs(Enumerable.Repeat((short)9000, 480).ToArray()) - -11.2f) < 0.05f;
     }
+
+    public static bool TranscriptShapeFields() =>
+        TranscriptShape.Length("あ、うん。 はい！") == 5 && TranscriptShape.IsFiller("あ、うん。 はい！")
+        && TranscriptShape.Length("PRIVATE_NO_WAKE_BODY") == 17 && !TranscriptShape.IsFiller("PRIVATE_NO_WAKE_BODY")
+        && TranscriptShape.IsFiller("ははは") && TranscriptShape.IsFiller("あっ") && TranscriptShape.IsFiller("えーっと") == false
+        && !TranscriptShape.IsFiller("はい、了解") && !TranscriptShape.IsFiller("") && !TranscriptShape.IsFiller("。")
+        && TranscriptShape.Length("") == 0;
 
     public static bool ModeRecovery()
     {
