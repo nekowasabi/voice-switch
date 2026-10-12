@@ -173,9 +173,22 @@ public static class ConfigLoader
             throw new InvalidDataException($"Config JSON is invalid: {ex.Message}", ex);
         }
 
+        config = WithDefaultStopWords(config);
         Validate(config);
         return config;
     }
+
+    // Per-locale defaults, used only when stopWords is absent. An explicit value (even []) is never replaced.
+    private static readonly Dictionary<string, string[]> DefaultStopWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["ja-JP"] = ["入力ストップ"],
+        ["en-US"] = ["stop dictation"],
+    };
+
+    public static VoiceSwitchConfig WithDefaultStopWords(VoiceSwitchConfig config) =>
+        config.StopWords is null && DefaultStopWords.TryGetValue(config.EffectiveLocale, out var words)
+            ? config with { StopWords = [.. words] }
+            : config;
 
     public static string ToJsonArray(IEnumerable<string> values) =>
         JsonSerializer.Serialize(values.ToArray(), Options);

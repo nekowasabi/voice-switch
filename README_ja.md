@@ -32,7 +32,7 @@
 - ウェイクワードで始まり、続きがある発話は、およそ `endSilenceMs` の無音（見本は 1200）、停止語、superwhisper の録音ショートカット、または `dictation.maxSeconds`（見本は 60）まで録音する。ウェイクワード部分の音声は切る。
 - wav は superwhisper で開く。`dictation.recordingsDir`（見本は `~/Documents/superwhisper/recordings`）の新しい `meta.json` から `llmResult`、無ければ `result` を読み、長さだけログする。その文字列は下のペイン振り分けに渡す。superwhisper が前面にいるあいだ、ウェイクワードを聞いたときの前面アプリを activate する。これは superwhisper がペーストを飛ばさないようにするため。
 
-`stopWords` を単体で言うと、進行中の入力を終える。代わりに `skipWhileMicInUseBy` のアプリがマイクを使っているときは、同じ語で `stopCommand` を実行する。見本の語は `入力ストップ`。見本の `stopCommand` は同じ superwhisper の録音 URL で、録音はトグルする。
+`stopWords` を単体で言うと、進行中の入力を終える。代わりに `skipWhileMicInUseBy` のアプリがマイクを使っているときは、同じ語で `stopCommand` を実行する。見本の語は `入力ストップ`。`stopWords` を書かないときは locale ごとの既定が入る。`ja-JP`（`locale` 省略時も）は `入力ストップ`、`en-US` は `stop dictation`、それ以外の locale は既定なし。自分で書いた値は `[]` も含めて上書きしない。停止ワードは、その locale の言葉で、本文に出にくい言葉を選ぶ。（macOS の既定は Mac 未検証。）見本の `stopCommand` は同じ superwhisper の録音 URL で、録音はトグルする。
 
 `skipWhileMicInUseBy` のアプリがマイクを開いているあいだ、ウェイクワードは無視する。前面アプリのバンドル ID が `dictation.excludeBundleIDs` にあるときは入力しない。
 
