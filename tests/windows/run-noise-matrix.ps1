@@ -52,8 +52,36 @@ function Get-Cer([string]$Expected, [string]$Actual) {
   return [Math]::Round($prev[$b.Length] / [double]$a.Length, 6)
 }
 
+function Remove-JsonLineComments([string]$Text) {
+  $sb = New-Object System.Text.StringBuilder
+  $inString = $false
+  $escape = $false
+  for ($i = 0; $i -lt $Text.Length; $i++) {
+    $ch = $Text[$i]
+    if ($inString) {
+      [void]$sb.Append($ch)
+      if ($escape) { $escape = $false }
+      elseif ($ch -eq '\') { $escape = $true }
+      elseif ($ch -eq '"') { $inString = $false }
+      continue
+    }
+    if ($ch -eq '"') {
+      $inString = $true
+      [void]$sb.Append($ch)
+      continue
+    }
+    if ($ch -eq '/' -and ($i + 1) -lt $Text.Length -and $Text[$i + 1] -eq '/') {
+      while ($i -lt $Text.Length -and $Text[$i] -ne "`n" -and $Text[$i] -ne "`r") { $i++ }
+      $i--
+      continue
+    }
+    [void]$sb.Append($ch)
+  }
+  return $sb.ToString()
+}
+
 function Write-Config($Path, $Mode) {
-  $base = Get-Content (Join-Path $repo "config.example.windows.json") -Raw | ConvertFrom-Json
+  $base = Remove-JsonLineComments (Get-Content (Join-Path $repo "config.example.windows.json") -Raw) | ConvertFrom-Json
   $base | Add-Member -Force -NotePropertyName noiseReduction -NotePropertyValue ([pscustomobject]@{
     mode = $Mode
     maxAttenuationDb = 6

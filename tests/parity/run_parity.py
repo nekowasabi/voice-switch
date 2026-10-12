@@ -59,6 +59,42 @@ def load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def strip_json_line_comments(text: str) -> str:
+    """Drop // comments that sit outside JSON strings. ConfigLoader allows them; json.loads does not."""
+    out: list[str] = []
+    in_string = False
+    escape = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if in_string:
+            out.append(char)
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            index += 1
+            continue
+        if char == '"':
+            in_string = True
+            out.append(char)
+            index += 1
+            continue
+        if char == "/" and index + 1 < len(text) and text[index + 1] == "/":
+            while index < len(text) and text[index] not in "\r\n":
+                index += 1
+            continue
+        out.append(char)
+        index += 1
+    return "".join(out)
+
+
+def load_example_config(path: Path) -> dict:
+    return json.loads(strip_json_line_comments(path.read_text(encoding="utf-8")))
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run voice-switch platform parity checks.")
     parser.add_argument(
@@ -658,8 +694,8 @@ def compare_sets(result: Result, label: str, swift_fields: set[str], cs_fields: 
 
 
 def check_example_config_fields(result: Result, contract: dict) -> None:
-    mac = load_json(ROOT / "config.example.json")
-    win = load_json(ROOT / "config.example.windows.json")
+    mac = load_example_config(ROOT / "config.example.json")
+    win = load_example_config(ROOT / "config.example.windows.json")
     mac_keys = flatten_keys(mac)
     win_keys = flatten_keys(win)
     allowed = {

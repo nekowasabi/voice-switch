@@ -16,7 +16,9 @@ public sealed record DictationConfig(
     string[]? ExcludeProcessNames = null,
     // Superwhisper mode key or name used for voice-switch dictations; meant to be a mode with auto-paste off.
     string? SuperwhisperMode = null,
-    NoWakeWordConfig? NoWakeWord = null);
+    NoWakeWordConfig? NoWakeWord = null,
+    // Windows only. Second SAPI engine for a stop word after body text. Default false until human voice is measured. macOS ignores it.
+    bool DedicatedStopRecognizer = false);
 
 /// <summary>Load-time guardrails for timing fields that are easy to mistype 10x. No clamp — warn only.</summary>
 public static class DictationTimingGuard
