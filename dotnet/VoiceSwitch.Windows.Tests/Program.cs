@@ -33,6 +33,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("decides wake and stop commands", () => Check(DecidesCommands())),
     ("segments one utterance from synthetic frames", () => Check(SegmentsSyntheticUtterance())),
     ("expands Windows environment paths", () => Check(ExpandsPaths())),
+    ("PowerShell command lines stay short and run the script from a file", PowerShellCommandLinesStayShort),
     ("parses CLI diagnostics mode", () => Check(ParsesCli())),
     ("rejects fire with dry-run", () => Check(RejectsFireDryRun())),
     ("parses --check with one or more WAV paths", () => Check(ParsesCheckPaths())),
@@ -644,6 +645,54 @@ static bool ExpandsPaths()
     Environment.SetEnvironmentVariable("LOCALAPPDATA", @"C:\Users\me\AppData\Local");
     return WindowsPaths.ExpandPath(@"%LOCALAPPDATA%\voice-switch")
         == @"C:\Users\me\AppData\Local\voice-switch";
+}
+
+static TestOutcome PowerShellCommandLinesStayShort()
+{
+    using var temp = RuntimeTemp();
+    var originalLocalAppData = Environment.GetEnvironmentVariable("LOCALAPPDATA");
+    Environment.SetEnvironmentVariable("LOCALAPPDATA", temp.Dir);
+    try
+    {
+        foreach (var (name, create, script) in new (string, Func<ProcessStartInfo>, string)[]
+        {
+            ("wake.ps1", SpeechPowerShell.CreatePowerShell, SpeechPowerShell.Script),
+            ("dictation.ps1", SpeechPowerShellDictationRecognizer.CreatePowerShell, SpeechPowerShellDictationRecognizer.Script),
+        })
+        {
+            var psi = create();
+            var commandLine = $"{psi.FileName} {psi.Arguments}";
+            if (commandLine.Length > 4096)
+            {
+                return TestOutcome.Fail($"{name}: command line is {commandLine.Length} chars (Windows limit 32767)");
+            }
+
+            var path = Path.Combine(temp.Dir, "voice-switch", name);
+            if (!psi.Arguments.EndsWith($"-File \"{path}\"", StringComparison.Ordinal))
+            {
+                return TestOutcome.Fail($"{name}: arguments do not end with -File \"{path}\": {psi.Arguments}");
+            }
+
+            if (File.ReadAllText(path) != script)
+            {
+                return TestOutcome.Fail($"{name}: file content differs from Script");
+            }
+
+            var stamp = new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            File.SetLastWriteTimeUtc(path, stamp);
+            create();
+            if (File.GetLastWriteTimeUtc(path) != stamp)
+            {
+                return TestOutcome.Fail($"{name}: rewritten although the content was unchanged");
+            }
+        }
+
+        return TestOutcome.Pass();
+    }
+    finally
+    {
+        Environment.SetEnvironmentVariable("LOCALAPPDATA", originalLocalAppData);
+    }
 }
 
 static bool ParsesCli()

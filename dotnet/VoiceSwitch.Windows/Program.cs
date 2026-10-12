@@ -621,7 +621,7 @@ public static class SpeechPowerShell
         return new SpeechProcess(process);
     }
 
-    private static ProcessStartInfo CreatePowerShell()
+    internal static ProcessStartInfo CreatePowerShell()
     {
         // Why: Use Windows PowerShell System.Speech instead of a NuGet package so WSL builds stay offline.
         var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(Script));
@@ -636,7 +636,7 @@ public static class SpeechPowerShell
         };
     }
 
-    private const string Script = """
+    internal const string Script = """
 $ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)

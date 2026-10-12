@@ -1906,7 +1906,7 @@ public sealed class SpeechPowerShellDictationRecognizer : IDictationRecognizer, 
         }
     }
 
-    private static ProcessStartInfo CreatePowerShell()
+    internal static ProcessStartInfo CreatePowerShell()
     {
         var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(Script));
         return new ProcessStartInfo("powershell.exe", $"-NoProfile -NonInteractive -OutputFormat Text -EncodedCommand {encoded}")
@@ -1948,7 +1948,7 @@ public sealed class SpeechPowerShellDictationRecognizer : IDictationRecognizer, 
 
 // Protocol: each request is a 28-byte little-endian header (int64 id, int64 start, int64 end, int32 pcmLength) followed by
 // the PCM bytes; each answer is one JSON line. A "ready" line precedes the first answer; EOF on stdin ends the child.
-private const string Script = """
+internal const string Script = """
 $ProgressPreference = 'SilentlyContinue'
 Add-Type -AssemblyName System.Speech
 $locale = $env:VOICE_SWITCH_LOCALE
