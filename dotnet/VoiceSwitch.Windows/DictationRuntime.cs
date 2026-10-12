@@ -959,6 +959,12 @@ public sealed class WindowsDictationRuntime
     {
         var stopped = audio.Reason is FinishReason.StandaloneStop or FinishReason.FinishCommand;
         endedByUser |= stopped;
+        // The user wants to know the recording is over, so ring before Superwhisper is launched, automatic sessions included.
+        if (stopped && observer?.PlayStopSound() == true)
+        {
+            deafUntil = analysisStore.Next + MsToSamples(600);
+        }
+
         audio = audio with { Target = target };
         if (audio.Wake.IsAutomatic)
         {
@@ -974,12 +980,6 @@ public sealed class WindowsDictationRuntime
         {
             Log.Info($"dictation dropped: previous one still in flight reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End}");
             return;
-        }
-
-        // The user wants to know the recording is over, so ring before Superwhisper is launched.
-        if (stopped && observer?.PlayStopSound() == true)
-        {
-            deafUntil = analysisStore.Next + MsToSamples(600);
         }
 
         inflight = RunHandoffAsync(audio);
