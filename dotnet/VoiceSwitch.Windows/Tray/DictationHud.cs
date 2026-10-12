@@ -30,8 +30,9 @@ public sealed class DictationHud : Form
 
     public void HistoryAvailable()
     {
+        // Wake-word dictation also keeps a copy in history, but its output was delivered, so only an automatic entry earns this label.
         if (phase is DictationPhase.Waiting or DictationPhase.Recording or DictationPhase.Followup
-            || DictationHistory.Shared.Snapshot().Count == 0) return;
+            || DictationHistory.Shared.Snapshot() is not [{ Origin.IsAutomatic: true }, ..]) return;
         Show(DictationPhase.Ended);
         label.Text = "履歴に保存・クリック";
     }

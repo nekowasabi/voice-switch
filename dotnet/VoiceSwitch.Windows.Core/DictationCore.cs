@@ -101,7 +101,7 @@ public sealed record DictationEvent(string Kind, FinishReason? Reason, SampleRan
     public static DictationEvent Error(FinishReason reason) => new("error", reason, null);
 }
 
-public sealed record DictationAudio(Guid SessionId, SampleRange Range, ImmutableArray<short> Samples, FinishReason Reason = FinishReason.Silence, nint Target = 0, WakeAction? Action = null, WakeOrigin? Origin = null)
+public sealed record DictationAudio(Guid SessionId, SampleRange Range, ImmutableArray<short> Samples, FinishReason Reason = FinishReason.Silence, nint Target = 0, WakeAction? Action = null, WakeOrigin? Origin = null, AutomaticTranscriptPolicy TranscriptPolicy = default)
 {
     public WakeOrigin Wake => Origin ?? new WakeOrigin(WakeRule.Strict, null);
 }
@@ -428,11 +428,11 @@ public static class DictationBoundaries
         return StandaloneStopRange(recognition, stopWords) is not null;
     }
 
-    // ponytail: floor set from TTS fixtures. With both grammars loaded, real stop words scored 0.57-0.73 and no body
-    // phrase was ever answered by the stop grammar; alone, the stop grammar force-matched "ストップしないで" at 0.24.
-    // Tune from the "grammar=stop conf=" and "tailConf=" log lines once real-voice data exists.
+    // Real stop words said with a soft last mora scored 0.28-0.38 and were ignored at the old 0.4 floor (2026-10-05/07 logs).
+    // With both grammars loaded, 20 stop-like TTS phrases (スタッフ, スタート, ストップしないで, ...) were never answered by the
+    // stop grammar, so 0.25 adds no false stop there; it stays above the 0.24 the stop grammar alone gave "ストップしないで".
     // The dedicated tail-stop recognizer (option C) uses this same floor.
-    public const double StopGrammarMinConfidence = 0.4;
+    public const double StopGrammarMinConfidence = 0.25;
 
     public static SampleRange? StandaloneStopRange(RecognizedUtterance recognition, IEnumerable<string> stopWords)
     {
@@ -501,6 +501,7 @@ public sealed record WakePrefix(long WakeEnd, long? BodyStart, WakeWord? ByReadi
 public sealed class DictationSession
 {
     private readonly VoiceSwitchConfig config;
+    private readonly AutomaticTranscriptPolicy transcriptPolicy;
     // Default wakes first so they keep priority; then each windows.actions entry in config order.
     private readonly (WakeAction? Owner, WakeWord[] Wakes)[] wakeSets;
     // The set that opened this session; the awaiting branch strips a repeated wake of that same set.
@@ -522,6 +523,7 @@ public sealed class DictationSession
     public DictationSession(VoiceSwitchConfig config)
     {
         this.config = config;
+        transcriptPolicy = new(config.Dictation?.NoWakeWord?.FilterInterjections == true);
         wakes = config.Wakes();
         wakeSets = (config.Windows?.Actions ?? [])
             .Select(action => ((WakeAction?)action, action.Wakes()))
@@ -794,7 +796,7 @@ public sealed class DictationSession
             return null;
         }
 
-        var audio = new DictationAudio(sessionId, range, copyAudio(range), reason, Action: Action, Origin: Origin);
+        var audio = new DictationAudio(sessionId, range, copyAudio(range), reason, Action: Action, Origin: Origin, TranscriptPolicy: transcriptPolicy);
         events.Add(DictationEvent.Submitted(sessionId, reason, range));
         return audio;
     }

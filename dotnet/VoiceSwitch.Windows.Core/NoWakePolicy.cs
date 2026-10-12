@@ -1,10 +1,22 @@
 namespace VoiceSwitch.Windows.Core;
 
 public sealed record NoWakeWordConfig(bool Followup = false, bool AutoIdle = false, bool RelaxedReadingDistance2 = false,
-    int FollowupMs = 8000, int IdleMs = 3000)
+    int FollowupMs = 8000, int IdleMs = 3000, bool FilterInterjections = false)
 {
     public bool Valid => FollowupMs is >= 1000 and <= 30000 && IdleMs is >= 1000 and <= 60000;
     public bool Enabled => Followup || AutoIdle || RelaxedReadingDistance2;
+}
+
+public readonly record struct AutomaticTranscriptPolicy(bool FilterInterjections = false)
+{
+    public bool Rejects(string text, WakeOrigin origin)
+    {
+        if (!FilterInterjections || !origin.IsAutomatic) return false;
+        var candidate = text.TrimStart();
+        var end = candidate.Length;
+        while (end > 0 && (char.IsWhiteSpace(candidate[end - 1]) || "。.!！?？".Contains(candidate[end - 1]))) end--;
+        return candidate.AsSpan(0, end).SequenceEqual("あっ") || candidate.AsSpan(0, end).SequenceEqual("ああ");
+    }
 }
 
 public static class NoWakePolicy
