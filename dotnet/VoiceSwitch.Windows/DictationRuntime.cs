@@ -311,8 +311,22 @@ public sealed class WindowsDictationRuntime
                         if (outcome.Error is not null)
                         {
                             Log.Info($"dictation recognition failed: {ErrorDetail(outcome.Error, wakeOrigin)}");
-                            session.Cancel(FinishReason.RecognitionFailed);
-                            session = ResetSession(pending, outcome.Work.Request.Range.End);
+                            // Once the body is open the recognizer only listens for a stop word; the body audio is in the
+                            // store and the VAD still ends it by silence, so a failure must not throw the dictation away.
+                            if (session.IsActive)
+                            {
+                                if (pending.Count == 0 && session.AdvanceSpeechTo(lastLiveSpeechEnd, originalStore.Copy) is { } kept)
+                                {
+                                    Submit(kept);
+                                    session = ResetSession(pending, kept.Range.End);
+                                }
+                            }
+                            else
+                            {
+                                session.Cancel(FinishReason.RecognitionFailed);
+                                session = ResetSession(pending, outcome.Work.Request.Range.End);
+                            }
+
                             TrimStore(session, pending);
                             continue;
                         }

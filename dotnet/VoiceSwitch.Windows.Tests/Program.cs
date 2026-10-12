@@ -91,6 +91,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation runtime waits for open stop utterance before silence", () => Check(DictationRuntimeWaitsForOpenStopUtteranceBeforeSilence())),
     ("dictation runtime short silence waits for open utterance", () => Check(DictationRuntimeShortSilenceWaitsForOpenUtterance())),
     ("dictation runtime ignores late stop after silence finish", () => Check(DictationRuntimeIgnoresLateStopAfterSilenceFinish())),
+    ("dictation runtime keeps the body when a recognition fails inside it", () => Check(DictationRuntimeKeepsBodyWhenRecognitionFailsInsideIt())),
     ("dictation runtime keeps embedded stop in silence body", () => Check(DictationRuntimeKeepsEmbeddedStopInSilenceBody())),
     ("dictation runtime keeps active body embedded stop in separate utterance", () => Check(DictationRuntimeKeepsActiveBodyEmbeddedStopInSeparateUtterance())),
     ("dictation runtime capture fault disposes capture", () => Check(DictationRuntimeCaptureFaultDisposesCapture())),
@@ -2098,6 +2099,39 @@ static bool DictationRuntimeIgnoresLateStopAfterSilenceFinish()
         && capture.GateWasReached
         && silenceSubmitted.IsSet
         && DictationDiagnosticsArePrivate(output);
+}
+
+static bool DictationRuntimeKeepsBodyWhenRecognitionFailsInsideIt()
+{
+    var config = DictationRuntimeTestConfig(startTimeoutMs: 3000, endSilenceMs: 1200, maxSeconds: 10);
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 20, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 60, loud: false);
+    var recognizer = new ScriptedDictationRecognizer(request => request.Id == 1
+        ? Task.FromResult(new RecognizedUtterance(
+            request.Id,
+            request.Extent,
+            request.Range,
+            "音声入力本文",
+            ImmutableArray.Create(
+                Run("音声", request.Range.Start, request.Range.Start + Segmenter.FrameLength),
+                Run("入力", request.Range.Start + Segmenter.FrameLength, request.Range.Start + Segmenter.FrameLength * 2),
+                Run("本文", request.Range.Start + Segmenter.FrameLength * 4, request.Range.End))))
+        : Task.FromException<RecognizedUtterance>(new InvalidOperationException("recognizer child exited")));
+    var handoff = new RecordingDictationHandoff();
+    var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(frames), recognizer, handoff, dryRun: true);
+    var code = RunWithTimeout(runtime, TimeSpan.FromSeconds(5));
+    var audio = handoff.Submissions.SingleOrDefault();
+    var expectedStart = recognizer.Requests[0].Range.Start + Segmenter.FrameLength * 4;
+    return code == 0
+        && recognizer.Requests.Count == 2
+        && audio is { Reason: FinishReason.Silence }
+        && audio.Range.Start == expectedStart
+        && audio.Range.End > recognizer.Requests[1].Range.Start + Segmenter.FrameLength
+        && audio.Range.End <= recognizer.Requests[1].Range.End;
 }
 
 static bool DictationRuntimeKeepsEmbeddedStopInSilenceBody()
