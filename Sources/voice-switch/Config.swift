@@ -105,6 +105,7 @@ struct DictationConfig: Decodable {
     /// Superwhisper mode key or display name for voice-switch dictations (Mac + Windows).
     /// Unset keeps auto-paste behavior; set switches mode around handoff and pastes when not routed.
     var superwhisperMode: String?
+    var noWakeWord: NoWakeWordConfig?
 
     init(recordingsDir: String? = nil, endSilenceMs: Int? = nil, maxSeconds: Double? = nil,
          excludeBundleIDs: [String]? = nil, startTimeoutMs: Int? = nil) {
@@ -169,9 +170,12 @@ final class ConfigFile {
     }
 
     private static func load(_ path: String) throws -> Config {
-        var cfg = try JSONDecoder().decode(Config.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
-        cfg.applyDefaultStopWords()
-        return cfg
+        var config = try JSONDecoder().decode(Config.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        if let options = config.dictation?.noWakeWord, !options.valid {
+            throw NSError(domain: "voice-switch.config", code: 1, userInfo: [NSLocalizedDescriptionKey: "noWakeWord requires followupMs 1000...30000 and idleMs 1000...60000"])
+        }
+        config.applyDefaultStopWords()
+        return config
     }
 
     private static func modified(_ path: String) -> Date? {

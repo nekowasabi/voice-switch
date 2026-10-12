@@ -15,6 +15,13 @@
     "endSilenceMs": 2400, "startTimeoutMs": 3000,
     "maxSeconds": 60,
     "excludeProcessNames": [],
-    "superwhisperMode": "voice_switch"
+    "superwhisperMode": "voice_switch",
+    "noWakeWord": {
+      "followup": false,
+      "autoIdle": false,
+      "relaxedReadingDistance2": false,
+      "followupMs": 8000,
+      "idleMs": 3000
+    }
   }
 }

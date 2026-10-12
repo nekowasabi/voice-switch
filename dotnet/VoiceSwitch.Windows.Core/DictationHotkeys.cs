@@ -17,7 +17,8 @@ public readonly record struct KeyChord(int Vk, KeyMods Mods);
 public enum DictationCommand
 {
     Finish,
-    Cancel
+    Cancel,
+    Start
 }
 
 // Mirrors MacApp.swift Hotkeys: Superwhisper's own finish/cancel shortcuts are borrowed only while a dictation is open.
@@ -150,6 +151,8 @@ public sealed class DictationHotkeys
             return true;
         }
     }
+
+    public void RequestStart() { lock (sync) pending = DictationCommand.Start; }
 
     public DictationCommand? Take()
     {

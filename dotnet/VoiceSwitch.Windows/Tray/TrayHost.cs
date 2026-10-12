@@ -57,6 +57,10 @@ public static class TrayHost
                 instance.Key);
 
             using var context = new VoiceSwitchTrayContext(supervisor);
+            using var wakeLabelHotkey = new WakeLabelHotkey(context.ShowHistory, hotkeys.RequestStart);
+            hud.HistoryRequested += context.ShowHistory;
+            void HistoryChanged() => hud.Post(hud.HistoryAvailable);
+            DictationHistory.Shared.Changed += HistoryChanged;
             var ipc = new TrayIpcServer(instance.PipeName, supervisor, context.Diagnostics, context.QuitRuntimeAsync, context.RequestExitThread);
             try
             {
@@ -69,6 +73,7 @@ public static class TrayHost
             }
             finally
             {
+                DictationHistory.Shared.Changed -= HistoryChanged;
                 ipc.DisposeAsync().AsTask().GetAwaiter().GetResult();
                 supervisor.QuitAsync(CancellationToken.None).GetAwaiter().GetResult();
             }

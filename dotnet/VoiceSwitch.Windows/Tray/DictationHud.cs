@@ -10,7 +10,6 @@ namespace VoiceSwitch.Windows.Tray;
 public sealed class DictationHud : Form
 {
     private const int WsExTopMost = 0x8;
-    private const int WsExTransparent = 0x20;
     private const int WsExToolWindow = 0x80;
     private const int WsExNoActivate = 0x8000000;
     private const int SwHide = 0;
@@ -26,6 +25,18 @@ public sealed class DictationHud : Form
     };
     private readonly System.Windows.Forms.Timer hide = new() { Interval = 1500 };
 
+    private DictationPhase phase = DictationPhase.Idle;
+    public event Action? HistoryRequested;
+
+    public void HistoryAvailable()
+    {
+        // Wake-word dictation also keeps a copy in history, but its output was delivered, so only an automatic entry earns this label.
+        if (phase is DictationPhase.Waiting or DictationPhase.Recording or DictationPhase.Followup
+            || DictationHistory.Shared.Snapshot() is not [{ Origin.IsAutomatic: true }, ..]) return;
+        Show(DictationPhase.Ended);
+        label.Text = "履歴に保存・クリック";
+    }
+
     public DictationHud()
     {
         FormBorderStyle = FormBorderStyle.None;
@@ -35,6 +46,7 @@ public sealed class DictationHud : Form
         Size = new Size(160, 40);
         BackColor = Color.FromArgb(32, 32, 32);
         Controls.Add(label);
+        label.Click += (_, _) => HistoryRequested?.Invoke();
         var region = CreateRoundRectRgn(0, 0, Width, Height, 12, 12);
         Region = Region.FromHrgn(region);
         DeleteObject(region);
@@ -54,7 +66,7 @@ public sealed class DictationHud : Form
         get
         {
             var parameters = base.CreateParams;
-            parameters.ExStyle |= WsExNoActivate | WsExToolWindow | WsExTransparent | WsExTopMost;
+            parameters.ExStyle |= WsExNoActivate | WsExToolWindow | WsExTopMost;
             return parameters;
         }
     }
@@ -79,6 +91,7 @@ public sealed class DictationHud : Form
     // UI thread only.
     public void Show(DictationPhase phase)
     {
+        this.phase = phase;
         // A new phase replaces the pending auto-hide, like Mac's `shown` generation counter.
         hide.Stop();
         switch (phase)
@@ -86,6 +99,10 @@ public sealed class DictationHud : Form
             case DictationPhase.Idle:
                 ShowWindow(Handle, SwHide);
                 return;
+            case DictationPhase.Followup:
+                label.Text = "連続待受・履歴のみ";
+                label.ForeColor = Color.White;
+                break;
             case DictationPhase.Waiting:
                 label.Text = "🎙 どうぞ";
                 label.ForeColor = Color.White;

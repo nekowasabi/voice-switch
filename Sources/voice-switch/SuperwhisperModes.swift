@@ -1,6 +1,7 @@
 // Pure Superwhisper mode helpers shared with Windows SuperwhisperModes.cs.
 // Resolve / Decide need no AppKit; MacApp wires switch + paste around them.
 import Foundation
+import CoreFoundation
 
 /// How the pane router disposed of a dictation. Same semantics as Windows `RouteDisposition`.
 /// SkippedNoBody: pane chosen but no extractable body — must not paste the full text.
@@ -65,4 +66,16 @@ func jsonStringField(_ json: String, _ name: String) -> String? {
           let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let value = root[name] as? String else { return nil }
     return value
+}
+
+func superwhisperAutoPasteDisabled(_ wanted: String?, modeJsons: [String]) -> Bool {
+    guard let wanted, let key = resolveSuperwhisperModeKey(wanted, modeJsons: modeJsons) else { return false }
+    let matching = modeJsons.compactMap { json -> [String: Any]? in
+        guard let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+              object["key"] as? String == key else { return nil }
+        return object
+    }
+    guard matching.count == 1, let value = matching[0]["autoPaste"] as? NSNumber,
+          CFGetTypeID(value) == CFBooleanGetTypeID() else { return false }
+    return !value.boolValue
 }

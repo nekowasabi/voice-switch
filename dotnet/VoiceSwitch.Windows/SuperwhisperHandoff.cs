@@ -10,8 +10,7 @@ using VoiceSwitch.Windows.Core;
 
 namespace VoiceSwitch.Windows;
 
-// Mirrors MacApp.swift handoff/awaitResult: Superwhisper transcribes the WAV and pastes into the frontmost app;
-// we only hand focus back, wait for its result to appear, and clean up.
+// Wake-word audio is pasted by Superwhisper in its active mode; automatic audio needs a verified no-auto-paste mode and stays in history.
 public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
 {
     private static readonly TimeSpan Tick = TimeSpan.FromMilliseconds(100);
@@ -25,9 +24,10 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
     private readonly Func<TimeSpan, Task> delay;
     private readonly Func<string, Task<RouteResult>>? onTranscribed;
     private readonly string? superwhisperMode;
-    private readonly Func<string, nint, bool> paste;
     private readonly string preferencesPath;
     private readonly string modesDir;
+    private static readonly SemaphoreSlim ModeOwner = new(1, 1);
+    private string JournalPath => Path.Combine(root, "mode-restore.json");
 
     public RegisteredSuperwhisperHandoff(
         string root,
@@ -38,7 +38,6 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         Func<TimeSpan, Task>? delay = null,
         Func<string, Task<RouteResult>>? onTranscribed = null,
         string? superwhisperMode = null,
-        Func<string, nint, bool>? paste = null,
         string? preferencesPath = null,
         string? modesDir = null)
     {
@@ -50,7 +49,6 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         this.delay = delay ?? (span => Task.Delay(span));
         this.onTranscribed = onTranscribed;
         this.superwhisperMode = string.IsNullOrWhiteSpace(superwhisperMode) ? null : superwhisperMode.Trim();
-        this.paste = paste ?? ((_, _) => false);
         this.preferencesPath = preferencesPath ?? WindowsPaths.SuperwhisperPreferencesPath();
         this.modesDir = modesDir ?? WindowsPaths.SuperwhisperModesPath();
         if (!dryRun)
@@ -61,6 +59,15 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
 
     public async Task<HandoffResult> SubmitAsync(DictationAudio audio, CancellationToken cancellation)
     {
+        await ModeOwner.WaitAsync(cancellation);
+        try { return await SubmitOwnedAsync(audio, cancellation); }
+        finally { ModeOwner.Release(); }
+    }
+
+    private async Task<HandoffResult> SubmitOwnedAsync(DictationAudio audio, CancellationToken cancellation)
+    {
+        // Nobody asked for an automatic recording, so it may only enter a mode verified not to paste.
+        var controlled = audio.Wake.IsAutomatic;
         // Keeps the file write and process launch off the runtime loop even though they start synchronously.
         await Task.Yield();
         if (dryRun)
@@ -68,6 +75,9 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
             return new HandoffResult(HandoffStatus.DryRunSuppressed, audio.SessionId, null, "dry-run kept audio in memory only");
         }
 
+        if (DictationHistory.Shared.Select(audio.SessionId) is not null)
+            return new HandoffResult(HandoffStatus.RecordedLocally, audio.SessionId, null, "duplicate session already retained");
+        var historyGeneration = DictationHistory.Shared.Generation;
         var wavPath = Path.Combine(root, $"{audio.SessionId:N}.wav");
         if (BuildFileIntakeArgument(wavPath) is not { } argument)
         {
@@ -75,11 +85,29 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
                 $"Superwhisper file intake needs an ASCII path without spaces; nothing was written or sent: {Path.GetFullPath(wavPath)}");
         }
 
+        if (!TryOwnMode(out var ownership))
+            return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, "mode ownership unavailable; local history required");
+        using var heldOwnership = ownership;
+        if (!await RecoverOwnedAsync(audio.Target))
+            return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, "mode recovery is unresolved");
         var actionMode = string.IsNullOrWhiteSpace(audio.Action?.SuperwhisperMode) ? null : audio.Action.SuperwhisperMode.Trim();
-        var (modeRequested, previousMode) = await EnterModeAsync(actionMode ?? superwhisperMode, audio.Target);
+        // An action's text goes only to its URL, so it also needs the no-auto-paste mode unless the action names its own.
+        var wantedMode = controlled ? superwhisperMode : audio.Action is null ? null : actionMode ?? superwhisperMode;
+        if (controlled && !SuperwhisperModes.HasAutoPasteDisabled(wantedMode, ReadModes()))
+            return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, "no verified no-auto-paste mode; local history required");
+        var (modeRequested, previousMode) = await EnterModeAsync(wantedMode, audio.Target);
         string? text = null;
+        HashSet<string> previousRuns = [];
         try
         {
+            if (controlled && (!modeRequested || !SuperwhisperModes.HasAutoPasteDisabled(wantedMode, ReadModes())))
+                return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, "controlled mode not confirmed; local history required");
+            if (controlled)
+            {
+                try { previousRuns = Directory.Exists(recordingsDir) ? Directory.GetDirectories(recordingsDir).Select(Path.GetFileName).OfType<string>().ToHashSet(StringComparer.Ordinal) : []; }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                { return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, "recordings baseline unavailable; local history required"); }
+            }
             var ownsWav = false;
             try
             {
@@ -111,7 +139,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
 
             for (var i = 0; i < 300 && text is null; i++)
             {
-                text = FindResult(recordingsDir, since);
+                text = FindResult(recordingsDir, since, previousRuns);
                 if (text is null)
                 {
                     await delay(Tick);
@@ -125,10 +153,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         }
         finally
         {
-            if (previousMode is not null && await SwitchModeAsync(previousMode, audio.Target))
-            {
-                Log.Info($"superwhisper mode restored: {previousMode}");
-            }
+            if (previousMode is not null) await RecoverOwnedAsync(audio.Target);
         }
 
         if (text is null)
@@ -138,6 +163,11 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         }
 
         TryDelete(wavPath);
+        cancellation.ThrowIfCancellationRequested();
+        if (!DictationHistory.Shared.Add(audio.SessionId, text, audio.Wake, historyGeneration, audio.TranscriptPolicy))
+            return new HandoffResult(HandoffStatus.RecordedLocally, audio.SessionId, null, "transcript discarded");
+        if (controlled)
+            return new HandoffResult(HandoffStatus.Transcribed, audio.SessionId, null, "Superwhisper result added to history");
         if (audio.Action is { } action)
         {
             // Mac parity: an action's text goes only to its URL, never to a tmux pane or a paste.
@@ -169,31 +199,16 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
             }
         }
 
-        switch (SuperwhisperModes.Decide(modeRequested, route.Disposition))
-        {
-            case DictationDelivery.Paste:
-                // SendFailed pastes the exact body send-keys tried (quoted or body Jev), never the full dictation
-                // wrapper and never a quote-only re-extract. NotRouted pastes the full text.
-                var payload = route.Disposition == RouteDisposition.SendFailed ? route.Body : text;
-                if (payload is null)
-                {
-                    Log.Info("dictation not delivered: send failed and no body to paste");
-                    break;
-                }
-
-                Log.Info(paste(payload, audio.Target) ? "dictation delivered: paste" : "dictation not delivered: no target window to paste into");
-                break;
-            case DictationDelivery.Superwhisper:
-                Log.Info("dictation delivered: superwhisper");
-                break;
-        }
+        // Wake-word audio never switches mode, so Superwhisper has already pasted unless the pane took it.
+        if (SuperwhisperModes.Decide(modeRequested, route.Disposition) == DictationDelivery.Superwhisper)
+            Log.Info("dictation delivered: superwhisper");
 
         return new HandoffResult(HandoffStatus.Transcribed, audio.SessionId, null, "Superwhisper result found; WAV deleted");
     }
 
     // Requested is true only when the configured mode is confirmed active; Previous is the mode to switch back to.
     // Without a readable activeMode there would be nothing to switch back to, so the mode is left alone.
-    // A failed 3 s poll must leave Requested false so Decide stays on Superwhisper (no paste) — B2 double-delivery guard.
+    // A failed poll leaves Requested false and production rejects file intake.
     private async Task<(bool Requested, string? Previous)> EnterModeAsync(string? superwhisperMode, nint target)
     {
         if (superwhisperMode is null)
@@ -220,12 +235,13 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
             return (true, null);
         }
 
+        if (!SaveRestore(new ModeRestore(active, key))) return (false, null);
         Log.Info($"superwhisper mode: {key} (was {active})");
         await SwitchModeAsync(key, target);
         // Mirror Mac enterSuperwhisperMode: only claim Requested when activeMode actually matches.
         if (ReadActiveMode() != key)
         {
-            return (false, null);
+            return (false, active);
         }
 
         return (true, active);
@@ -256,6 +272,81 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
 
         Log.Info($"superwhisper mode: {key} not active after 3 s; continuing");
         return false;
+    }
+
+    public async Task<bool> RecoverAsync(CancellationToken cancellation)
+    {
+        if (dryRun) return true;
+        await ModeOwner.WaitAsync(cancellation);
+        try
+        {
+            if (!File.Exists(JournalPath)) return true;
+            if (!TryOwnMode(out var ownership)) return false;
+            using var heldOwnership = ownership;
+            return await RecoverOwnedAsync(0);
+        }
+        finally { ModeOwner.Release(); }
+    }
+
+    private bool TryOwnMode(out FileStream? ownership)
+    {
+        ownership = null;
+        try
+        {
+            ValidateOwnedState(root);
+            Directory.CreateDirectory(root);
+            ValidateOwnedState(root);
+            ownership = new FileStream(Path.Combine(root, "mode-owner.lock"), FileMode.OpenOrCreate,
+                FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException) { return false; }
+    }
+
+    private bool SaveRestore(ModeRestore state)
+    {
+        try
+        {
+            ValidateOwnedState(root);
+            Directory.CreateDirectory(root);
+            ValidateOwnedState(root);
+            var temporary = JournalPath + "." + Guid.NewGuid().ToString("N");
+            File.WriteAllText(temporary, JsonSerializer.Serialize(state));
+            File.Move(temporary, JournalPath, true);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            Log.Info("superwhisper mode: cannot save recovery state; no mode switch");
+            return false;
+        }
+    }
+
+    private async Task<bool> RecoverOwnedAsync(nint target)
+    {
+        try
+        {
+            ValidateOwnedState(root);
+            if (!File.Exists(JournalPath)) return true;
+            if (new FileInfo(JournalPath).Length > 8192) return false;
+            var state = JsonSerializer.Deserialize<ModeRestore>(File.ReadAllText(JournalPath));
+            if (state is null) return false;
+            switch (state.Decide(ReadActiveMode()))
+            {
+                case ModeRecovery.Unknown: return false;
+                case ModeRecovery.Restore:
+                    if (!await SwitchModeAsync(state.Previous, target)) return false;
+                    Log.Info("superwhisper mode restored from recovery state");
+                    break;
+            }
+            File.Delete(JournalPath);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
+        {
+            Log.Info("superwhisper mode recovery unavailable; local history required");
+            return false;
+        }
     }
 
     private string? ReadActiveMode()
@@ -390,7 +481,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
     private static extern int GetShortPathName(string longPath, StringBuilder shortPath, int bufferLength);
 
     // Superwhisper writes one <unix-seconds>/meta.json per run; the newest run at or after `since` is ours.
-    internal static string? FindResult(string recordingsDir, long sinceUnixSeconds)
+    internal static string? FindResult(string recordingsDir, long sinceUnixSeconds, IReadOnlySet<string>? previousRuns = null)
     {
         string[] dirs;
         try
@@ -404,7 +495,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
 
         var runs = dirs
             .Select(dir => (Dir: dir, Ok: long.TryParse(Path.GetFileName(dir), NumberStyles.None, CultureInfo.InvariantCulture, out var time), Time: time))
-            .Where(run => run.Ok && run.Time >= sinceUnixSeconds)
+            .Where(run => run.Ok && run.Time >= sinceUnixSeconds && previousRuns?.Contains(Path.GetFileName(run.Dir)) != true)
             .OrderByDescending(run => run.Time);
         foreach (var run in runs)
         {

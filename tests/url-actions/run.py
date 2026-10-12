@@ -45,7 +45,8 @@ def check_wiring(repo):
     submit = extract_braced_body(mac, r"private func submit[^\{]*\{")
     assert "action: d.action" in submit
     handoff = extract_braced_body(mac, r"func handoff[^\{]*\{")
-    assert "if action == nil, Macrowhisper.shouldPrepareHandoff(macrowhisper)" in handoff
+    assert "Macrowhisper.prepare" not in handoff
+    assert "guard modeRequested, superwhisperAutoPasteDisabled" in handoff
     mode_override = "if let mode = action?.superwhisperMode { cfg.superwhisperMode = mode }"
     enter_mode = "enterSuperwhisperMode(cfg.superwhisperMode, target: target)"
     assert mode_override in handoff and enter_mode in handoff
@@ -80,7 +81,7 @@ mutations = [
     ("MacApp.swift", "dictationStart(transcript, wakeWords: action.wakeWords)"),
     ("MacApp.swift", "var action: WakeAction? = nil"),
     ("MacApp.swift", "action: d.action"),
-    ("MacApp.swift", "if action == nil, Macrowhisper.shouldPrepareHandoff(macrowhisper)"),
+    ("MacApp.swift", "guard modeRequested, superwhisperAutoPasteDisabled"),
     ("MacApp.swift", "if let mode = action?.superwhisperMode { cfg.superwhisperMode = mode }"),
     ("MacApp.swift", "Platform.urlProcess(action.url)"),
     ("MacApp.swift", "Platform.runURLProcess(p, wait: false)"),
@@ -105,7 +106,9 @@ if not shutil.which("swiftc"):
     sys.exit(1 if args.require_swift else 0)
 with tempfile.TemporaryDirectory(prefix="voice-switch-url-test-") as temp:
     binary = pathlib.Path(temp) / "url-actions"
-    subprocess.run(["swiftc", str(root / "Sources/voice-switch/Config.swift"),
+    subprocess.run(["swiftc", "-module-cache-path", str(pathlib.Path(temp) / "module-cache"),
+                    str(root / "Sources/voice-switch/WakeSafety.swift"), str(root / "Sources/voice-switch/Transcript.swift"),
+                    str(root / "Sources/voice-switch/Config.swift"),
                     str(root / "Sources/voice-switch/Platform.swift"),
                     str(root / "tests/url-actions/main.swift"), "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True)
