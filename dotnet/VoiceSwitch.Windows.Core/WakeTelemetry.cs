@@ -26,6 +26,7 @@ public sealed record WakeOrigin(WakeRule Rule, double? InputIdleSeconds)
 
 public sealed class WakeTelemetrySummary
 {
+    private static readonly Regex Quoted = new("\"[^\"]*\"");
     private static readonly Regex Fields = new(@"\brule=(strict|relaxed_d2|followup|auto_b)\s+inputIdleSeconds=(-?[0-9]+(?:\.[0-9]+)?)(?=\s|$)");
     [JsonPropertyName("rules")]
     public Dictionary<string, int> Rules { get; } = new();
@@ -43,7 +44,8 @@ public sealed class WakeTelemetrySummary
         var miss = line.Contains("wake label: MISS ", StringComparison.Ordinal);
         if (miss) MissLabels++;
         if (!miss && !line.Contains("recognition: complete ", StringComparison.Ordinal)) return;
-        var fields = Fields.Matches(line).LastOrDefault();
+        // Recognized text is quoted and can contain "rule=... inputIdleSeconds=..." verbatim.
+        var fields = Fields.Matches(Quoted.Replace(line, "")).LastOrDefault();
         if (fields is null)
         {
             if (!miss) MissingFields++;

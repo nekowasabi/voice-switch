@@ -17,11 +17,12 @@ class WakeMetricsTests(unittest.TestCase):
                 "dictation recognition: complete id=3 leadingWake=False rule=followup inputIdleSeconds=-1",
                 "dictation recognition: complete id=4 leadingWake=False",
                 "wake label: MISS id=1 rule=auto_b inputIdleSeconds=3.000",
+                "dictation recognition: complete id=5 text=\"rule=strict inputIdleSeconds=0.100 x\"",
             ]))
             self.assertEqual(metrics.parse_metrics(path)["wake_telemetry"], {
                 "rules": {"auto_b": 1, "strict": 1, "followup": 1},
                 "contexts": {"auto_b:idle": 1, "strict:after_input": 1, "followup:unknown": 1},
-                "missing_fields": 1, "miss_labels": 1, "miss_contexts": {"auto_b:idle": 1},
+                "missing_fields": 2, "miss_labels": 1, "miss_contexts": {"auto_b:idle": 1},
             })
 
 if __name__ == "__main__":

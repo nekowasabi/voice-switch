@@ -106,7 +106,9 @@ def iter_lines(path: Path, tail: Optional[int]) -> Iterable[str]:
 
 
 def wake_fields(line: str) -> tuple[str, str] | None:
-    matches = re.findall(r"\brule=(strict|relaxed_d2|followup|auto_b)\s+inputIdleSeconds=(-?[0-9]+(?:\.[0-9]+)?)(?=\s|$)", line)
+    # Recognized text is quoted and can contain the field pattern verbatim.
+    unquoted = re.sub(r'"[^"]*"', "", line)
+    matches = re.findall(r"\brule=(strict|relaxed_d2|followup|auto_b)\s+inputIdleSeconds=(-?[0-9]+(?:\.[0-9]+)?)(?=\s|$)", unquoted)
     if not matches:
         return None
     rule, raw = matches[-1]
