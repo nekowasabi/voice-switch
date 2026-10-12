@@ -13,6 +13,24 @@ struct WakeOrigin: Equatable {
     }
 }
 
+enum AutomaticTranscriptPolicy {
+    case disabled, filterInterjections
+
+    init(_ options: NoWakeWordConfig?) {
+        self = options?.filterInterjections == true ? .filterInterjections : .disabled
+    }
+
+    func rejects(_ text: String, origin: WakeOrigin) -> Bool {
+        guard self == .filterInterjections, origin.isAutomatic else { return false }
+        var candidate = text.unicodeScalars.drop(while: { $0.properties.isWhitespace })
+        while let last = candidate.last, last.properties.isWhitespace || "。.!！?？".unicodeScalars.contains(last) {
+            candidate.removeLast()
+        }
+        let token = String(String.UnicodeScalarView(candidate))
+        return token == "あっ" || token == "ああ"
+    }
+}
+
 struct DictationHistoryEntry {
     let id: UUID
     let text: String
@@ -39,8 +57,9 @@ final class DictationHistory {
     }
 
     @discardableResult
-    func add(id: UUID, text: String, origin: WakeOrigin, expectedGeneration: Int? = nil) -> Bool {
-        guard text.utf16.count <= 100_000, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+    func add(id: UUID, text: String, origin: WakeOrigin, expectedGeneration: Int? = nil, policy: AutomaticTranscriptPolicy = .disabled) -> Bool {
+        guard text.utf16.count <= 100_000, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !policy.rejects(text, origin: origin) else { return false }
         lock.lock()
         prune()
         guard expectedGeneration == nil || expectedGeneration == currentGeneration else { lock.unlock(); return false }
@@ -95,6 +114,7 @@ struct NoWakeWordConfig: Decodable {
     var relaxedReadingDistance2: Bool?
     var followupMs: Int?
     var idleMs: Int?
+    var filterInterjections: Bool?
     var enabled: Bool { followup == true || autoIdle == true || relaxedReadingDistance2 == true }
     var valid: Bool { (1000...30000).contains(followupMs ?? 8000) && (1000...60000).contains(idleMs ?? 3000) }
 }

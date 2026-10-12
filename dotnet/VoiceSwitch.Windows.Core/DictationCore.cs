@@ -95,7 +95,7 @@ public sealed record DictationEvent(string Kind, FinishReason? Reason, SampleRan
     public static DictationEvent Error(FinishReason reason) => new("error", reason, null);
 }
 
-public sealed record DictationAudio(Guid SessionId, SampleRange Range, ImmutableArray<short> Samples, FinishReason Reason = FinishReason.Silence, nint Target = 0, WakeAction? Action = null, WakeOrigin? Origin = null)
+public sealed record DictationAudio(Guid SessionId, SampleRange Range, ImmutableArray<short> Samples, FinishReason Reason = FinishReason.Silence, nint Target = 0, WakeAction? Action = null, WakeOrigin? Origin = null, AutomaticTranscriptPolicy TranscriptPolicy = default)
 {
     public WakeOrigin Wake => Origin ?? new WakeOrigin(WakeRule.Strict, null);
 }
@@ -463,6 +463,7 @@ public sealed record WakePrefix(long WakeEnd, long? BodyStart, WakeWord? ByReadi
 public sealed class DictationSession
 {
     private readonly VoiceSwitchConfig config;
+    private readonly AutomaticTranscriptPolicy transcriptPolicy;
     // Default wakes first so they keep priority; then each windows.actions entry in config order.
     private readonly (WakeAction? Owner, WakeWord[] Wakes)[] wakeSets;
     // The set that opened this session; the awaiting branch strips a repeated wake of that same set.
@@ -484,6 +485,7 @@ public sealed class DictationSession
     public DictationSession(VoiceSwitchConfig config)
     {
         this.config = config;
+        transcriptPolicy = new(config.Dictation?.NoWakeWord?.FilterInterjections == true);
         wakes = config.Wakes();
         wakeSets = (config.Windows?.Actions ?? [])
             .Select(action => ((WakeAction?)action, action.Wakes()))
@@ -736,7 +738,7 @@ public sealed class DictationSession
             return null;
         }
 
-        var audio = new DictationAudio(sessionId, range, copyAudio(range), reason, Action: Action, Origin: Origin);
+        var audio = new DictationAudio(sessionId, range, copyAudio(range), reason, Action: Action, Origin: Origin, TranscriptPolicy: transcriptPolicy);
         events.Add(DictationEvent.Submitted(sessionId, reason, range));
         return audio;
     }
