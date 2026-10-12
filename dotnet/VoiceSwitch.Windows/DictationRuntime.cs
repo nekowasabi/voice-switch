@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -63,6 +64,7 @@ public sealed class WindowsDictationRuntime
     private readonly Func<string, string?>? wakeReading;
     private readonly Func<IReadOnlyCollection<string>, string?> automaticMicInUseBy;
     private readonly Func<double?> inputIdleSeconds;
+    private readonly Func<float?> playbackPeak;
     private readonly SampleStore originalStore;
     private readonly SampleStore analysisStore;
     private readonly Segmenter segmenter;
@@ -102,10 +104,12 @@ public sealed class WindowsDictationRuntime
         Func<nint, string?>? windowProcess = null,
         Func<IReadOnlyCollection<string>, string?>? micInUseBy = null,
         Func<string, string?>? wakeReading = null,
-        Func<double?>? inputIdleSeconds = null)
+        Func<double?>? inputIdleSeconds = null,
+        Func<float?>? playbackPeak = null)
     {
         this.wakeReading = wakeReading;
         this.inputIdleSeconds = inputIdleSeconds ?? InputActivity.IdleSeconds;
+        this.playbackPeak = playbackPeak ?? PlaybackMeter.Peak;
         config = WithWakeReadings(config);
         this.config = config;
         this.capture = capture;
@@ -571,7 +575,8 @@ public sealed class WindowsDictationRuntime
                 {
                     // No hotkeys: the user is mid-task elsewhere and their Escape belongs to that app, so only silence or a stop word ends it.
                     target = window;
-                    Log.Info($"dictation session: automatic {origin.Fields} range={start}..{lastLiveSpeechEnd}");
+                    var peak = playbackPeak();
+                    Log.Info($"dictation session: automatic {origin.Fields} range={start}..{lastLiveSpeechEnd} playbackPeak={(peak is { } value ? value.ToString("0.000", CultureInfo.InvariantCulture) : "unknown")}");
                 }
             }
         }
