@@ -50,7 +50,7 @@ If `dictation` is present:
 
 A wake word is ignored while an app in `skipWhileMicInUseBy` has the microphone open. Dictation is skipped when the frontmost bundle id is in `dictation.excludeBundleIDs`.
 
-Optional `dictation.superwhisperMode` (Mac + Windows; key or display name) selects a Superwhisper mode that turns auto-paste off for voice-switch dictations. Unset keeps the old behavior (Superwhisper may auto-paste). When set, voice-switch switches to that mode before handoff and restores the previous mode after; if the pane route did not send, voice-switch pastes once into the wake-time app (SendFailed pastes the same resolved body send-keys tried, quoted or body-Jev, never the full dictation wrapper). A pane that matched but had no extractable send body does not paste the full dictation. Mac mode switch / paste are wired in source; live Mac runtime is unverified on this box (no swiftc / Apple Speech).
+Optional `dictation.superwhisperMode` (Mac + Windows; key or display name) selects a Superwhisper mode that turns auto-paste off for voice-switch dictations. Unset keeps the old behavior (Superwhisper may auto-paste). When set, voice-switch switches to that mode before handoff and restores the previous mode after; the mode is used only for automatic recordings and for action recordings without their own mode. Wake-word dictation keeps the active mode and leaves pasting to Superwhisper. Mac mode switch is wired in source; live Mac runtime is unverified on this box (no swiftc / Apple Speech).
 
 The top-level `maxSeconds` (sample 2.5) caps a short wake-word utterance. It is not the dictation cap.
 
@@ -217,12 +217,12 @@ Do not run CLI and tray concurrent capture. The default sample now runs live mic
 
 `dictation.noWakeWord` provides independent `followup`, `autoIdle`, and `relaxedReadingDistance2` switches. All default to false. Mac also requires `dictation.superwhisperMode`.
 
-Automatically started recordings use local transcription and in-memory history only. They never reach Superwhisper, Jev, tmux, action URLs, or automatic paste. History keeps at most 50 entries for 30 minutes and disappears on exit. Only an explicit selection copies text.
+Automatically started recordings go to in-memory history only. When `dictation.superwhisperMode` names a mode with `autoPaste: false`, they are transcribed by Superwhisper in that mode; otherwise they are transcribed locally. They never reach Jev, tmux, action URLs, or paste. An automatic recording leaves Escape and the other Superwhisper shortcuts to the foreground app and ends on silence or a stop word, and a wake word spoken during it discards it and starts a normal dictation. History keeps at most 50 entries for 30 minutes and disappears on exit. Only an explicit selection copies text.
 
 - Ctrl+Shift+F10 starts a manual recording
 - Ctrl+Shift+F9 or a HUD click opens history
 - On Windows, Ctrl+Shift+F8 labels the latest missed recognition
 
-Manual recording also falls back to local history unless the Superwhisper mode explicitly disables auto-paste. Unknown field, IME, focus, or clipboard safety prevents automatic paste. Mac conservatively declines automatic paste with an input-method source, including Japanese IME.
+Wake-word and Ctrl+Shift+F10 recordings keep the active Superwhisper mode and leave pasting to Superwhisper. Their result is also kept in history, but the stop HUD says it was saved to history only for automatic recordings.
 
 Mac native build and runtime are unverified. Audio, permission, UI, and real-world accuracy checks are still required. Read the [implementation and settings](docs/no-wake-word/implementation.md), [native checklist](docs/no-wake-word/native-validation.md), and [acceptance gates](docs/wake-acceptance.md) before enabling this feature.

@@ -10,7 +10,7 @@ using VoiceSwitch.Windows.Core;
 
 namespace VoiceSwitch.Windows;
 
-// Manual file intake requires a verified no-auto-paste mode; history precedes any delivery.
+// Wake-word audio is pasted by Superwhisper in its active mode; automatic audio needs a verified no-auto-paste mode and stays in history.
 public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
 {
     private static readonly TimeSpan Tick = TimeSpan.FromMilliseconds(100);
@@ -24,10 +24,8 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
     private readonly Func<TimeSpan, Task> delay;
     private readonly Func<string, Task<RouteResult>>? onTranscribed;
     private readonly string? superwhisperMode;
-    private readonly Func<string, nint, bool> paste;
     private readonly string preferencesPath;
     private readonly string modesDir;
-    private readonly bool requireControlledMode;
     private static readonly SemaphoreSlim ModeOwner = new(1, 1);
     private string JournalPath => Path.Combine(root, "mode-restore.json");
 
@@ -40,13 +38,10 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         Func<TimeSpan, Task>? delay = null,
         Func<string, Task<RouteResult>>? onTranscribed = null,
         string? superwhisperMode = null,
-        Func<string, nint, bool>? paste = null,
         string? preferencesPath = null,
-        string? modesDir = null,
-        bool requireControlledMode = true)
+        string? modesDir = null)
     {
         this.root = root;
-        this.requireControlledMode = requireControlledMode;
         this.recordingsDir = recordingsDir;
         this.startProcess = startProcess ?? Process.Start;
         this.dryRun = dryRun;
@@ -54,7 +49,6 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         this.delay = delay ?? (span => Task.Delay(span));
         this.onTranscribed = onTranscribed;
         this.superwhisperMode = string.IsNullOrWhiteSpace(superwhisperMode) ? null : superwhisperMode.Trim();
-        this.paste = paste ?? ((_, _) => false);
         this.preferencesPath = preferencesPath ?? WindowsPaths.SuperwhisperPreferencesPath();
         this.modesDir = modesDir ?? WindowsPaths.SuperwhisperModesPath();
         if (!dryRun)
@@ -65,8 +59,6 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
 
     public async Task<HandoffResult> SubmitAsync(DictationAudio audio, CancellationToken cancellation)
     {
-        if (audio.Wake.IsAutomatic)
-            return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, "automatic audio cannot enter Superwhisper");
         await ModeOwner.WaitAsync(cancellation);
         try { return await SubmitOwnedAsync(audio, cancellation); }
         finally { ModeOwner.Release(); }
@@ -74,8 +66,8 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
 
     private async Task<HandoffResult> SubmitOwnedAsync(DictationAudio audio, CancellationToken cancellation)
     {
-        if (audio.Wake.IsAutomatic)
-            return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, "automatic audio cannot enter Superwhisper");
+        // Nobody asked for an automatic recording, so it may only enter a mode verified not to paste.
+        var controlled = audio.Wake.IsAutomatic;
         // Keeps the file write and process launch off the runtime loop even though they start synchronously.
         await Task.Yield();
         if (dryRun)
@@ -99,17 +91,18 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         if (!await RecoverOwnedAsync(audio.Target))
             return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, "mode recovery is unresolved");
         var actionMode = string.IsNullOrWhiteSpace(audio.Action?.SuperwhisperMode) ? null : audio.Action.SuperwhisperMode.Trim();
-        var wantedMode = actionMode ?? superwhisperMode;
-        if (requireControlledMode && !SuperwhisperModes.HasAutoPasteDisabled(wantedMode, ReadModes()))
+        // An action's text goes only to its URL, so it also needs the no-auto-paste mode unless the action names its own.
+        var wantedMode = controlled ? superwhisperMode : audio.Action is null ? null : actionMode ?? superwhisperMode;
+        if (controlled && !SuperwhisperModes.HasAutoPasteDisabled(wantedMode, ReadModes()))
             return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, "no verified no-auto-paste mode; local history required");
         var (modeRequested, previousMode) = await EnterModeAsync(wantedMode, audio.Target);
         string? text = null;
         HashSet<string> previousRuns = [];
         try
         {
-            if (requireControlledMode && (!modeRequested || !SuperwhisperModes.HasAutoPasteDisabled(wantedMode, ReadModes())))
+            if (controlled && (!modeRequested || !SuperwhisperModes.HasAutoPasteDisabled(wantedMode, ReadModes())))
                 return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, "controlled mode not confirmed; local history required");
-            if (requireControlledMode)
+            if (controlled)
             {
                 try { previousRuns = Directory.Exists(recordingsDir) ? Directory.GetDirectories(recordingsDir).Select(Path.GetFileName).OfType<string>().ToHashSet(StringComparer.Ordinal) : []; }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -170,8 +163,11 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         }
 
         TryDelete(wavPath);
+        cancellation.ThrowIfCancellationRequested();
         if (!DictationHistory.Shared.Add(audio.SessionId, text, audio.Wake, historyGeneration))
             return new HandoffResult(HandoffStatus.RecordedLocally, audio.SessionId, null, "result discarded after history clear or duplicate");
+        if (controlled)
+            return new HandoffResult(HandoffStatus.Transcribed, audio.SessionId, null, "Superwhisper result added to history");
         if (audio.Action is { } action)
         {
             // Mac parity: an action's text goes only to its URL, never to a tmux pane or a paste.
@@ -203,24 +199,9 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
             }
         }
 
-        switch (SuperwhisperModes.Decide(modeRequested, route.Disposition))
-        {
-            case DictationDelivery.Paste:
-                // SendFailed pastes the exact body send-keys tried (quoted or body Jev), never the full dictation
-                // wrapper and never a quote-only re-extract. NotRouted pastes the full text.
-                var payload = route.Disposition == RouteDisposition.SendFailed ? route.Body : text;
-                if (payload is null)
-                {
-                    Log.Info("dictation not delivered: send failed and no body to paste");
-                    break;
-                }
-
-                Log.Info(paste(payload, audio.Target) ? "dictation delivered: paste" : "dictation not delivered: no target window to paste into");
-                break;
-            case DictationDelivery.Superwhisper:
-                Log.Info("dictation delivered: superwhisper");
-                break;
-        }
+        // Wake-word audio never switches mode, so Superwhisper has already pasted unless the pane took it.
+        if (SuperwhisperModes.Decide(modeRequested, route.Disposition) == DictationDelivery.Superwhisper)
+            Log.Info("dictation delivered: superwhisper");
 
         return new HandoffResult(HandoffStatus.Transcribed, audio.SessionId, null, "Superwhisper result found; WAV deleted");
     }

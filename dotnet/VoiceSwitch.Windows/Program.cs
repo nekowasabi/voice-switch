@@ -95,8 +95,7 @@ public static class Program
                             WindowsPaths.SuperwhisperRecordingsPath(config.Dictation),
                             dryRun: effectiveDryRun,
                             onTranscribed: TmuxPaneRouter.RouteAsync,
-                            superwhisperMode: config.Dictation.SuperwhisperMode,
-                            paste: Tray.WindowFocus.Paste, requireControlledMode: true);
+                            superwhisperMode: config.Dictation.SuperwhisperMode);
                     }
 
                     if (handoff is RegisteredSuperwhisperHandoff registered)

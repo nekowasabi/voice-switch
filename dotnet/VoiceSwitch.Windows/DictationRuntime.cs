@@ -72,9 +72,9 @@ public sealed class WindowsDictationRuntime
     private Task? inflight;
     private Task? localInflight;
     private CancellationToken localCancellation;
-    private long speechRunStart = -1;
-    private double? speechIdle;
-    private bool automaticConsidered;
+    // The phrase the user is speaking: voiced frames joined across gaps up to the hangover, which the VAD alone splits into short runs.
+    private long phraseStart = -1;
+    private long phraseVoiced;
     private long followupUntil;
     private bool lastVadSpeech;
     private string? lastSilenceDiagnosticKey;
@@ -317,6 +317,17 @@ public sealed class WindowsDictationRuntime
                             continue;
                         }
 
+                        // The automatic session opens on voice activity before the recognizer can see a wake word, so a spoken
+                        // wake word replaces it with the dictation the user asked for.
+                        if (session.Origin.IsAutomatic && session.IsActive && outcome.Work.Request.Extent != RecognitionExtent.Probe
+                            && SpeaksWake(outcome.Recognition!))
+                        {
+                            session.Cancel(FinishReason.CancelCommand);
+                            Log.Info($"dictation session: automatic replaced by wake word id={outcome.Work.Request.Id}");
+                            session = ResetSession(pending, outcome.Work.Request.Range.Start);
+                            wakeOrigin = RecognitionOrigin(session, outcome.Recognition!);
+                        }
+
                         var wasActive = session.IsActive;
                         var wasAwaiting = session.IsAwaitingBody;
                         var wasIdle = !wasActive && !wasAwaiting;
@@ -479,7 +490,7 @@ public sealed class WindowsDictationRuntime
             && analysisStore.Next - analysisStore.Start > idleRetainSamples)
         {
             segmenter.Reset();
-            var keepFrom = Math.Max(analysisStore.Start, analysisStore.Next - Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength);
+            var keepFrom = RetainStart(Math.Max(analysisStore.Start, analysisStore.Next - Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength));
             originalStore.RetainFrom(keepFrom);
             analysisStore.RetainFrom(keepFrom);
         }
@@ -498,10 +509,23 @@ public sealed class WindowsDictationRuntime
             if (lastVadSpeech)
             {
                 speechOnsets.Add(frame.Start);
-                speechRunStart = frame.Start;
-                speechIdle = inputIdleSeconds();
-                automaticConsidered = false;
             }
+        }
+
+        var bridge = Segmenter.Frames(config.HangoverMs ?? 300) * Segmenter.FrameLength;
+        if (session.IsActive || session.IsAwaitingBody)
+        {
+            // Audio a session already owns never becomes the lookback of the next automatic one.
+            phraseStart = -1;
+        }
+        else if (segmenter.LastWasSpeech)
+        {
+            if (phraseStart < 0 || frame.Start - lastLiveSpeechEnd > bridge) (phraseStart, phraseVoiced) = (frame.Start, 0);
+            phraseVoiced += frame.Analysis.Length;
+        }
+        else if (frame.Start - lastLiveSpeechEnd > bridge)
+        {
+            phraseStart = -1;
         }
 
         if (segmenter.LastWasSpeech)
@@ -509,22 +533,23 @@ public sealed class WindowsDictationRuntime
             lastLiveSpeechEnd = frame.Start + frame.Analysis.Length;
         }
 
-        if (!segmenter.LastWasSpeech) speechRunStart = -1;
-        if (config.Dictation?.NoWakeWord is { Enabled: true } && speechRunStart >= 0 && !automaticConsidered && !session.IsActive && !session.IsAwaitingBody
-            && lastLiveSpeechEnd - speechRunStart >= Segmenter.Frames(config.MinSpeechMs ?? 300) * Segmenter.FrameLength)
+        // Checked on every voiced frame, not once at onset: talk that began right after typing becomes eligible
+        // as soon as the keyboard and mouse have been quiet for idleMs.
+        if (config.Dictation?.NoWakeWord is { Enabled: true } && phraseStart >= 0 && segmenter.LastWasSpeech
+            && phraseVoiced >= Segmenter.Frames(config.MinSpeechMs ?? 300) * Segmenter.FrameLength)
         {
-            automaticConsidered = true;
-            var origin = NoWakePolicy.OnSpeech(config.Dictation?.NoWakeWord, speechIdle, speechRunStart < followupUntil);
-            var currentIdle = inputIdleSeconds();
-            var inputUnchanged = currentIdle is >= 0 && speechIdle is >= 0 && currentIdle >= speechIdle;
-            var window = origin is not null && inputUnchanged ? foregroundWindow() : 0;
-            if (origin is not null && inputUnchanged && localInflight is not { IsCompleted: false } && AutomaticSkipReason(window) is null)
+            var idle = inputIdleSeconds();
+            var origin = NoWakePolicy.OnSpeech(config.Dictation?.NoWakeWord, idle, phraseStart < followupUntil);
+            var window = origin is not null ? foregroundWindow() : 0;
+            // The whole phrase is recorded, but never audio from before the last key or mouse input.
+            var lastInput = analysisStore.Next - (long)((idle ?? 0) * Segmenter.Rate);
+            var start = Math.Max(Math.Max(originalStore.Start, lastInput), phraseStart - Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength);
+            if (origin is not null && start < lastLiveSpeechEnd && localInflight is not { IsCompleted: false } && AutomaticSkipReason(window) is null)
             {
-                var start = Math.Max(originalStore.Start, speechRunStart - Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength);
                 if (session.StartAutomatic(new SampleRange(start, lastLiveSpeechEnd), origin, analysisStore.Next))
                 {
+                    // No hotkeys: the user is mid-task elsewhere and their Escape belongs to that app, so only silence or a stop word ends it.
                     target = window;
-                    hotkeys?.Begin(DictationHotkeys.Load(readShortcuts()));
                     Log.Info($"dictation session: automatic {origin.Fields} range={start}..{lastLiveSpeechEnd}");
                 }
             }
@@ -754,13 +779,23 @@ public sealed class WindowsDictationRuntime
             ? "automatic wake blocked: excluded foreground process" : null;
     }
 
+    // Keeps the live phrase so an automatic session that starts late can still record it from the beginning.
+    // ponytail: capped at 10 s of audio; a longer phrase keeps only its tail.
+    private long RetainStart(long keepFrom) =>
+        phraseStart < 0 || config.Dictation?.NoWakeWord is not { Enabled: true } ? keepFrom
+            : Math.Min(keepFrom, Math.Max(phraseStart - Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength,
+                analysisStore.Next - (long)(Segmenter.Rate * 10)));
+
+    private bool SpeaksWake(RecognizedUtterance recognition) =>
+        DictationBoundaries.LeadingWake(recognition, config.Wakes()) is not null
+        || (config.Windows?.Actions ?? []).Any(action => DictationBoundaries.LeadingWake(recognition, action.Wakes()) is not null);
+
     private WakeOrigin RecognitionOrigin(DictationSession session, RecognizedUtterance recognition)
     {
         if (session.IsActive || session.IsAwaitingBody) return session.Origin;
         var relaxed = config.Dictation?.NoWakeWord?.RelaxedReadingDistance2 == true
-            && DictationBoundaries.LeadingWake(recognition, config.Wakes()) is null
             && DictationBoundaries.RejectedWake(recognition, config.WakeWords) is null
-            && !(config.Windows?.Actions ?? []).Any(action => DictationBoundaries.LeadingWake(recognition, action.Wakes()) is not null)
+            && !SpeaksWake(recognition)
             && NoWakePolicy.RelaxedWake(recognition, config.Wakes()) is not null;
         return new(relaxed ? WakeRule.RelaxedD2 : WakeRule.Strict, inputIdleSeconds());
     }
@@ -911,7 +946,7 @@ public sealed class WindowsDictationRuntime
             first = first is long value ? Math.Min(value, request.Request.Range.Start) : request.Request.Range.Start;
         }
 
-        var retainFrom = first ?? analysisStore.Next;
+        var retainFrom = RetainStart(first ?? analysisStore.Next);
         originalStore.RetainFrom(retainFrom);
         analysisStore.RetainFrom(retainFrom);
         speechOnsets.RemoveAll(at => at < analysisStore.Start);
@@ -927,6 +962,8 @@ public sealed class WindowsDictationRuntime
         audio = audio with { Target = target };
         if (audio.Wake.IsAutomatic)
         {
+            // Superwhisper takes focus when it opens the file; hand it back to wherever the user is now, not where the session began.
+            audio = audio with { Target = foregroundWindow() };
             if (localInflight is { IsCompleted: false }) { Log.Info("local history transcription busy; recording discarded"); return; }
             localInflight = RunHandoffAsync(audio);
             return;

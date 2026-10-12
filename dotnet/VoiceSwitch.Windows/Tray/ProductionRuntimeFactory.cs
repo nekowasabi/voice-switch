@@ -33,7 +33,7 @@ public sealed class ProductionRuntimeFactory(string configPath, TrayRuntimeHooks
         IDictationHandoff handoff = source.RecordOnlyDir is null
             ? new RegisteredSuperwhisperHandoff(RegisteredSuperwhisperHandoff.DefaultRoot(), WindowsPaths.SuperwhisperRecordingsPath(config.Dictation),
                 restoreFocus: hooks.RestoreFocus, onTranscribed: TmuxPaneRouter.RouteAsync,
-                superwhisperMode: config.Dictation.SuperwhisperMode, paste: WindowFocus.Paste, requireControlledMode: true)
+                superwhisperMode: config.Dictation.SuperwhisperMode)
             : new LocalRecordingHandoff(source.RecordOnlyDir, source.WavPath);
 
         if (handoff is RegisteredSuperwhisperHandoff registered && !await registered.RecoverAsync(cancellation))

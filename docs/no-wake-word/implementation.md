@@ -36,13 +36,13 @@ Each slice ends with tests and a local commit. Native limitations are not counte
 
 Set individual fields in `dictation.noWakeWord` after native validation. `followup` opens an 8-second history-only window after a manual recording. `autoIdle` requires at least 3 seconds without keyboard or mouse input at speech onset. `relaxedReadingDistance2` accepts only whole closed readings of 5 through 9 characters at distance 2. The existing longer-reading matcher remains unchanged. Every field defaults to false.
 
-Automatic recording keeps the configured preroll and starts only after the existing minimum speech duration. It has no near-voice score. A strict wake word spoken after an automatic recording starts does not grant paste permission. A follow-up recording does not renew the window indefinitely. Unknown idle time and excluded applications block the start. Mac additionally requires a nonempty `dictation.superwhisperMode`.
+Automatic recording keeps the configured preroll and starts only after the existing minimum speech duration. It has no near-voice score. A strict wake word spoken during an automatic recording discards it and starts a wake-word dictation. A follow-up recording does not renew the window indefinitely. Unknown idle time and excluded applications block the start. Mac additionally requires a nonempty `dictation.superwhisperMode`.
 
 Ctrl+Shift+F10 starts a manual recording while the listener is running. Repeating it inside an automatic session does not upgrade the session. The recording still finishes through the existing stop word, silence, or finish command.
 
 ## Controlled handoff and recovery
 
-Production manual handoff now requires a mode whose JSON explicitly has `autoPaste: false`, and a confirmed switch to that mode. Missing or ambiguous metadata falls back to local transcription and history. A safe manual paste can then run from that history entry. This changes legacy configurations that previously let Superwhisper paste without checks. Configure a dedicated no-auto-paste mode to keep the Superwhisper path.
+Wake-word and hotkey dictation keep the active Superwhisper mode and let Superwhisper paste. Automatic recordings require a mode whose JSON explicitly has `autoPaste: false` and a confirmed switch to it, and then stay in history. For automatic audio, missing or ambiguous metadata falls back to local transcription and history.
 
 Mode switches write a recovery record before the switch. Startup and the next handoff check it. If the active mode is still the temporary mode, the app requests the previous mode and verifies it. If the user selected another mode, recovery preserves that choice. Unknown state blocks external handoff and uses local history. Both platforms serialize in-process handoffs and take a filesystem lock across processes. Native crash, delayed URL handling, and Superwhisper mode-schema tests remain required.
 

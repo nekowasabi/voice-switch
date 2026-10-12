@@ -12,11 +12,9 @@ public sealed class LocalHistoryHandoff(
 
     public async Task<HandoffResult> SubmitAsync(DictationAudio audio, CancellationToken cancellation)
     {
-        if (!audio.Wake.IsAutomatic)
-        {
-            var result = await manual.SubmitAsync(audio, cancellation);
-            if (result.Status != HandoffStatus.FailedBeforeDispatch || audio.Action is not null || pasteManualFallback is null) return result;
-        }
+        var result = await manual.SubmitAsync(audio, cancellation);
+        if (result.Status != HandoffStatus.FailedBeforeDispatch || audio.Action is not null
+            || !audio.Wake.IsAutomatic && pasteManualFallback is null) return result;
         cancellation.ThrowIfCancellationRequested();
         var generation = history.Generation;
         var text = await transcribeLocal(audio, cancellation);

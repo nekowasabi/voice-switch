@@ -19,13 +19,13 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("controlled handoff ignores results already present before launch", () => Check(NoWakeTests.FreshResultsOnly())),
     ("overlapping handoffs restore modes serially and suppress duplicate delivery", () => Check(NoWakeTests.OverlappingHandoffs())),
     ("mode recovery survives restart and preserves a user mode change", () => Check(NoWakeTests.ModeRecovery())),
-    ("controlled mode failure uses local history before guarded manual paste", () => Check(NoWakeTests.ControlledMode())),
+    ("automatic audio without a verified no-auto-paste mode falls back to unpasted local history", () => Check(NoWakeTests.ControlledMode())),
     ("clearing history invalidates pending transcription", () => Check(NoWakeTests.ClearPendingHistory())),
     ("automatic wake gates and immutable provenance", () => Check(NoWakeTests.WakeRules())),
-    ("automatic runtime repeats local sessions and fails closed on idle or microphone uncertainty", () => Check(NoWakeTests.AutomaticRuntime())),
+    ("automatic runtime repeats sessions, fails closed on idle or microphone uncertainty, yields to a spoken wake word, and records fragmented speech from its start", () => Check(NoWakeTests.AutomaticRuntime())),
     ("manual paste requires every safety observation", () => Check(NoWakeTests.PasteGuards())),
     ("local history expires, evicts, deduplicates and clears", () => Check(NoWakeTests.History())),
-    ("automatic delivery remains local while manual delivery uses its adapter", () => Check(NoWakeTests.AutomaticDelivery())),
+    ("automatic delivery tries Superwhisper first and keeps only history; wake delivery skips history", () => Check(NoWakeTests.AutomaticDelivery())),
     ("wake telemetry records idle contexts without transcript text", () => Check(NoWakeTests.Telemetry())),
     ("normalizes punctuation and spaces", () => Check(Normalizes())),
     ("reading normalization folds katakana and width", () => Check(ReadingNormalizationFoldsKatakanaAndWidth())),
@@ -151,12 +151,8 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("wake action URL carries the text as one input item", () => Check(WakeActionUrlCarriesInput())),
     ("dictation action wake selects its action after the default wakes", () => Check(DictationActionWakeSelectsAction())),
     ("dictation handoff with an action opens its URL instead of routing or pasting", () => Check(DictationHandoffActionOpensUrl())),
-    ("dictation handoff switches mode before launch and restores after", () => Check(DictationHandoffSwitchesModeBeforeLaunchAndRestoresAfter())),
-    ("dictation handoff pastes only when mode requested and not routed", () => Check(DictationHandoffPastesOnlyWhenModeRequestedAndNotRouted())),
-    ("dictation handoff does not paste when mode switch fails", () => Check(DictationHandoffDoesNotPasteWhenModeSwitchFails())),
-    ("dictation handoff does not paste full text after no-body skip", () => Check(DictationHandoffDoesNotPasteFullTextAfterNoBodySkip())),
-    ("dictation handoff pastes extracted body when send-keys failed", () => Check(DictationHandoffPastesExtractedBodyWhenSendKeysFailed())),
-    ("dictation handoff pastes unquoted resolved body when send-keys failed", () => Check(DictationHandoffPastesUnquotedResolvedBodyWhenSendKeysFailed())),
+    ("dictation handoff switches mode only for automatic audio", () => Check(DictationHandoffSwitchesModeOnlyForAutomaticAudio())),
+    ("automatic audio stays out of Superwhisper when the mode switch fails", () => Check(DictationHandoffKeepsAutomaticAudioOutOfSuperwhisperWhenModeSwitchFails())),
     ("dictation handoff keeps WAV when Superwhisper writes no result", () => Check(DictationHandoffKeepsWavWithoutResult())),
     ("dictation handoff restores focus 20 times before polling", () => Check(DictationHandoffRestoresFocusBeforePolling())),
     ("superwhisper result lookup picks newest non-empty run", () => Check(SuperwhisperFindResultPicksNewestNonEmpty())),
@@ -3480,9 +3476,9 @@ static bool DictationHandoffRoutesResultText()
     };
     var routed = new List<string>();
     var recording = new RegisteredSuperwhisperHandoff(root, recordings, start, delay: _ => Task.CompletedTask,
-        onTranscribed: text => { routed.Add(text); return Task.FromResult(RouteResult.Sent); }, requireControlledMode: false);
+        onTranscribed: text => { routed.Add(text); return Task.FromResult(RouteResult.Sent); });
     var throwing = new RegisteredSuperwhisperHandoff(root, recordings, start, delay: _ => Task.CompletedTask,
-        onTranscribed: _ => throw new InvalidOperationException("wsl.exe is missing"), requireControlledMode: false);
+        onTranscribed: _ => throw new InvalidOperationException("wsl.exe is missing"));
     var audio = new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2));
     HandoffResult? first = null;
     HandoffResult? second = null;
@@ -3808,7 +3804,6 @@ static bool DictationHandoffActionOpensUrl()
     File.WriteAllText(Path.Combine(modes, "action.json"), """{"key":"action-mode","name":"input-voice-switch"}""");
     File.WriteAllText(Path.Combine(modes, "default.json"), """{"key":"default","name":"Default"}""");
     var launches = new List<string>();
-    var pastes = 0;
     var routes = 0;
     Func<ProcessStartInfo, Process?> start = psi =>
     {
@@ -3838,9 +3833,8 @@ static bool DictationHandoffActionOpensUrl()
         var handoff = new RegisteredSuperwhisperHandoff(root, recordings, start, delay: _ => Task.CompletedTask,
             onTranscribed: _ => { routes++; return Task.FromResult(RouteResult.NotRouted); },
             superwhisperMode: handoffMode,
-            paste: (_, _) => { pastes++; return true; },
             preferencesPath: preferences,
-            modesDir: modes, requireControlledMode: false);
+            modesDir: modes);
         var action = new WakeAction("progress", ["プログレス"], "alter://action/1?input=old&k=v", actionMode);
         var result = SubmitHandoff(handoff, new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2), Target: 0x42, Action: action));
         return result.Status == HandoffStatus.Transcribed ? [.. launches] : ["status " + result.Status];
@@ -3849,11 +3843,10 @@ static bool DictationHandoffActionOpensUrl()
     const string opened = "rundll32.exe url.dll,FileProtocolHandler alter://action/1?k=v&input=%E4%BB%8A%E6%97%A5%20a%26b";
     return Submit("voice_switch", "input-voice-switch").SequenceEqual(["mode action-mode", "file", "mode default", opened])
         && Submit("voice_switch", null).SequenceEqual(["mode new-mode-1", "file", "mode default", opened])
-        && pastes == 0
         && routes == 0;
 }
 
-static bool DictationHandoffSwitchesModeBeforeLaunchAndRestoresAfter()
+static bool DictationHandoffSwitchesModeOnlyForAutomaticAudio()
 {
     using var temp = RuntimeTemp();
     var root = Path.Combine(temp.Dir, "handoff");
@@ -3861,306 +3854,88 @@ static bool DictationHandoffSwitchesModeBeforeLaunchAndRestoresAfter()
     var modes = Path.Combine(temp.Dir, "modes");
     var preferences = Path.Combine(temp.Dir, "preferences.json");
     Directory.CreateDirectory(modes);
-    File.WriteAllText(Path.Combine(modes, "dedicated.json"), """{"key":"new-mode-1","name":"voice_switch"}""");
+    File.WriteAllText(Path.Combine(modes, "dedicated.json"), """{"key":"new-mode-1","name":"voice_switch","autoPaste":false}""");
     File.WriteAllText(Path.Combine(modes, "default.json"), """{"key":"default","name":"Default"}""");
-    File.WriteAllText(preferences, """{"activeMode":"default"}""");
     var launches = new List<string>();
     Func<ProcessStartInfo, Process?> start = psi =>
     {
         var argument = psi.ArgumentList[0];
-        launches.Add(argument);
         if (argument.StartsWith("superwhisper://mode?key=", StringComparison.Ordinal))
         {
             var key = Uri.UnescapeDataString(argument["superwhisper://mode?key=".Length..]);
             File.WriteAllText(preferences, $$"""{"activeMode":"{{key}}"}""");
+            launches.Add("mode " + key);
         }
         else if (argument.StartsWith("superwhisper://file//", StringComparison.Ordinal))
         {
-            if (SuperwhisperModes.ActiveMode(File.ReadAllText(preferences)) != "new-mode-1")
-            {
-                throw new InvalidOperationException("file intake launched before dedicated mode was active");
-            }
-
+            launches.Add("file in " + SuperwhisperModes.ActiveMode(File.ReadAllText(preferences)));
             WriteSuperwhisperMeta(recordings, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(), """{"llmResult":"hello"}""");
         }
 
         return Process.GetCurrentProcess();
     };
+    (HandoffResult Result, string Output) Submit(WakeRule rule)
+    {
+        launches.Clear();
+        File.WriteAllText(preferences, """{"activeMode":"default"}""");
+        var handoff = new RegisteredSuperwhisperHandoff(root, recordings, start, delay: _ => Task.CompletedTask,
+            onTranscribed: _ => Task.FromResult(RouteResult.NotRouted),
+            superwhisperMode: "voice_switch",
+            preferencesPath: preferences,
+            modesDir: modes);
+        HandoffResult? result = null;
+        var (_, output) = CaptureConsole(() =>
+        {
+            result = SubmitHandoff(handoff, new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2), Target: 0x42, Origin: new(rule, 4)));
+            return 0;
+        });
+        return (result!, output);
+    }
+
+    var automatic = Submit(WakeRule.AutoB);
+    if (automatic.Result.Status != HandoffStatus.Transcribed
+        || !launches.SequenceEqual(["mode new-mode-1", "file in new-mode-1", "mode default"])
+        || automatic.Output.Contains("dictation delivered", StringComparison.Ordinal)
+        || SuperwhisperModes.ActiveMode(File.ReadAllText(preferences)) != "default") return false;
+    var wake = Submit(WakeRule.Strict);
+    return wake.Result.Status == HandoffStatus.Transcribed
+        && launches.SequenceEqual(["file in default"])
+        && wake.Output.Contains("dictation delivered: superwhisper", StringComparison.Ordinal);
+}
+
+static bool DictationHandoffKeepsAutomaticAudioOutOfSuperwhisperWhenModeSwitchFails()
+{
+    using var temp = RuntimeTemp();
+    var root = Path.Combine(temp.Dir, "handoff");
+    var recordings = Path.Combine(temp.Dir, "recordings");
+    var modes = Path.Combine(temp.Dir, "modes");
+    var preferences = Path.Combine(temp.Dir, "preferences.json");
+    Directory.CreateDirectory(modes);
+    File.WriteAllText(Path.Combine(modes, "dedicated.json"), """{"key":"new-mode-1","name":"voice_switch","autoPaste":false}""");
+    File.WriteAllText(Path.Combine(modes, "default.json"), """{"key":"default","name":"Default"}""");
+    File.WriteAllText(preferences, """{"activeMode":"default"}""");
+    var modeLaunches = 0;
+    var fileLaunches = 0;
+    Func<ProcessStartInfo, Process?> start = psi =>
+    {
+        // Preferences stay on default, as when Superwhisper ignores the switch.
+        if (psi.ArgumentList[0].StartsWith("superwhisper://mode?key=", StringComparison.Ordinal)) modeLaunches++;
+        else fileLaunches++;
+        return Process.GetCurrentProcess();
+    };
     var handoff = new RegisteredSuperwhisperHandoff(root, recordings, start, delay: _ => Task.CompletedTask,
-        onTranscribed: _ => Task.FromResult(RouteResult.Sent),
         superwhisperMode: "voice_switch",
         preferencesPath: preferences,
-        modesDir: modes, requireControlledMode: false);
-    var result = SubmitHandoff(handoff, new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2), Target: 0x42));
-    return result.Status == HandoffStatus.Transcribed
-        && launches.Count == 3
-        && launches[0] == "superwhisper://mode?key=new-mode-1"
-        && launches[1].StartsWith("superwhisper://file//", StringComparison.Ordinal)
-        && launches[2] == "superwhisper://mode?key=default"
+        modesDir: modes);
+    var result = SubmitHandoff(handoff, new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2), Target: 0x55, Origin: new(WakeRule.AutoB, 4)));
+    return result.Status == HandoffStatus.FailedBeforeDispatch
+        && modeLaunches == 1
+        && fileLaunches == 0
         && SuperwhisperModes.ActiveMode(File.ReadAllText(preferences)) == "default";
 }
 
-static bool DictationHandoffPastesOnlyWhenModeRequestedAndNotRouted()
-{
-    using var temp = RuntimeTemp();
-    var root = Path.Combine(temp.Dir, "handoff");
-    var recordings = Path.Combine(temp.Dir, "recordings");
-    var modes = Path.Combine(temp.Dir, "modes");
-    var preferences = Path.Combine(temp.Dir, "preferences.json");
-    Directory.CreateDirectory(modes);
-    File.WriteAllText(Path.Combine(modes, "dedicated.json"), """{"key":"new-mode-1","name":"voice_switch"}""");
-    File.WriteAllText(preferences, """{"activeMode":"new-mode-1"}""");
-    var pastes = new List<(string Text, nint Target)>();
-    Func<ProcessStartInfo, Process?> start = _ =>
-    {
-        WriteSuperwhisperMeta(recordings, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(), """{"llmResult":"paste me"}""");
-        return Process.GetCurrentProcess();
-    };
-    bool Run(string? mode, RouteResult route, out string output)
-    {
-        pastes.Clear();
-        var handoff = new RegisteredSuperwhisperHandoff(root, recordings, start, delay: _ => Task.CompletedTask,
-            onTranscribed: _ => Task.FromResult(route),
-            superwhisperMode: mode,
-            paste: (text, target) => { pastes.Add((text, target)); return true; },
-            preferencesPath: preferences,
-            modesDir: modes, requireControlledMode: false);
-        HandoffResult? result = null;
-        (_, output) = CaptureConsole(() =>
-        {
-            result = SubmitHandoff(handoff, new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2), Target: 0x99));
-            return 0;
-        });
-        return result!.Status == HandoffStatus.Transcribed;
-    }
-
-    if (!Run("voice_switch", RouteResult.NotRouted, out var pasteOut)
-        || pastes.Count != 1
-        || pastes[0] != ("paste me", 0x99)
-        || !pasteOut.Contains("dictation delivered: paste", StringComparison.Ordinal))
-    {
-        return false;
-    }
-
-    if (!Run("voice_switch", RouteResult.Sent, out var routedOut)
-        || pastes.Count != 0
-        || routedOut.Contains("dictation delivered: paste", StringComparison.Ordinal)
-        || routedOut.Contains("dictation delivered: superwhisper", StringComparison.Ordinal))
-    {
-        return false;
-    }
-
-    if (!Run(null, RouteResult.NotRouted, out var legacyOut)
-        || pastes.Count != 0
-        || !legacyOut.Contains("dictation delivered: superwhisper", StringComparison.Ordinal))
-    {
-        return false;
-    }
-
-    return true;
-}
-
-static bool DictationHandoffDoesNotPasteWhenModeSwitchFails()
-{
-    // B2: if the 3 s poll never sees the dedicated mode, modeRequested stays false and Decide must not Paste
-    // (Superwhisper may still be on an autoPaste mode → double delivery).
-    using var temp = RuntimeTemp();
-    var root = Path.Combine(temp.Dir, "handoff");
-    var recordings = Path.Combine(temp.Dir, "recordings");
-    var modes = Path.Combine(temp.Dir, "modes");
-    var preferences = Path.Combine(temp.Dir, "preferences.json");
-    Directory.CreateDirectory(modes);
-    File.WriteAllText(Path.Combine(modes, "dedicated.json"), """{"key":"new-mode-1","name":"voice_switch"}""");
-    File.WriteAllText(Path.Combine(modes, "default.json"), """{"key":"default","name":"Default"}""");
-    File.WriteAllText(preferences, """{"activeMode":"default"}""");
-    var pastes = new List<(string Text, nint Target)>();
-    var modeLaunches = 0;
-    Func<ProcessStartInfo, Process?> start = psi =>
-    {
-        var argument = psi.ArgumentList[0];
-        if (argument.StartsWith("superwhisper://mode?key=", StringComparison.Ordinal))
-        {
-            modeLaunches++;
-            // Leave preferences on default — simulates poll failure after switch attempt.
-            return Process.GetCurrentProcess();
-        }
-
-        WriteSuperwhisperMeta(recordings, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(), """{"llmResult":"must not paste"}""");
-        return Process.GetCurrentProcess();
-    };
-    var handoff = new RegisteredSuperwhisperHandoff(root, recordings, start, delay: _ => Task.CompletedTask,
-        onTranscribed: _ => Task.FromResult(RouteResult.NotRouted),
-        superwhisperMode: "voice_switch",
-        paste: (text, target) => { pastes.Add((text, target)); return true; },
-        preferencesPath: preferences,
-        modesDir: modes, requireControlledMode: false);
-    HandoffResult? result = null;
-    var (_, output) = CaptureConsole(() =>
-    {
-        result = SubmitHandoff(handoff, new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2), Target: 0x55));
-        return 0;
-    });
-    return result!.Status == HandoffStatus.Transcribed
-        && modeLaunches == 1
-        && pastes.Count == 0
-        && !output.Contains("dictation delivered: paste", StringComparison.Ordinal)
-        && output.Contains("dictation delivered: superwhisper", StringComparison.Ordinal)
-        && SuperwhisperModes.ActiveMode(File.ReadAllText(preferences)) == "default"
-        && SuperwhisperModes.Decide(modeRequested: false, RouteDisposition.NotRouted) == DictationDelivery.Superwhisper;
-}
-
-static bool DictationHandoffDoesNotPasteFullTextAfterNoBodySkip()
-{
-    using var temp = RuntimeTemp();
-    var root = Path.Combine(temp.Dir, "handoff");
-    var recordings = Path.Combine(temp.Dir, "recordings");
-    var modes = Path.Combine(temp.Dir, "modes");
-    var preferences = Path.Combine(temp.Dir, "preferences.json");
-    Directory.CreateDirectory(modes);
-    File.WriteAllText(Path.Combine(modes, "dedicated.json"), """{"key":"new-mode-1","name":"voice_switch"}""");
-    File.WriteAllText(preferences, """{"activeMode":"new-mode-1"}""");
-    // Full dictation with a pane hit but no quoted body — must not be pasted.
-    const string full = "ボイススイッチの Claude Code の pane にハローワールドを送信して";
-    var pastes = new List<string>();
-    var handoff = new RegisteredSuperwhisperHandoff(root, recordings,
-        _ =>
-        {
-            WriteSuperwhisperMeta(recordings, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(), $$"""{"llmResult":"{{full}}"}""");
-            return Process.GetCurrentProcess();
-        },
-        delay: _ => Task.CompletedTask,
-        onTranscribed: text =>
-        {
-            var panes = new[] { new PaneLabel("%2", "voice-switch", "Claude Code", "node") };
-            var hits = PaneRoute.MatchingPanes(text, panes);
-            var decision = PaneRoute.Decide(hits, null);
-            var labels = PaneRoute.LabelsForHits(hits);
-            var (needJev, early, candidates) = PaneRoute.BeginBodyResolve(text, labels);
-            var resolved = !needJev
-                ? early!
-                : PaneRoute.CompleteBodyResolve(text, labels, null, "off");
-            decision = PaneRoute.RequireSendBody(decision, resolved.Body);
-            return Task.FromResult(PaneRoute.Disposition(decision, sent: false));
-        },
-        superwhisperMode: "voice_switch",
-        paste: (text, _) => { pastes.Add(text); return true; },
-        preferencesPath: preferences,
-        modesDir: modes, requireControlledMode: false);
-    HandoffResult? result = null;
-    var (_, output) = CaptureConsole(() =>
-    {
-        result = SubmitHandoff(handoff, new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2), Target: 0x77));
-        return 0;
-    });
-    return result!.Status == HandoffStatus.Transcribed
-        && PaneRoute.ExtractSendBody(full) is null
-        && pastes.Count == 0
-        && !output.Contains("dictation delivered: paste", StringComparison.Ordinal)
-        && !output.Contains("dictation delivered: superwhisper", StringComparison.Ordinal);
-}
-
-static bool DictationHandoffPastesExtractedBodyWhenSendKeysFailed()
-{
-    using var temp = RuntimeTemp();
-    var root = Path.Combine(temp.Dir, "handoff");
-    var recordings = Path.Combine(temp.Dir, "recordings");
-    var modes = Path.Combine(temp.Dir, "modes");
-    var preferences = Path.Combine(temp.Dir, "preferences.json");
-    Directory.CreateDirectory(modes);
-    File.WriteAllText(Path.Combine(modes, "dedicated.json"), """{"key":"new-mode-1","name":"voice_switch"}""");
-    File.WriteAllText(preferences, """{"activeMode":"new-mode-1"}""");
-    // Pane hit + quoted body, but send-keys failed → paste body only, never the full wrapper.
-    const string full = "ボイススイッチの Claude Code の pane に「ハローワールド」を送信して";
-    const string body = "ハローワールド";
-    var pastes = new List<string>();
-    var handoff = new RegisteredSuperwhisperHandoff(root, recordings,
-        _ =>
-        {
-            WriteSuperwhisperMeta(recordings, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(), $$"""{"llmResult":"{{full}}"}""");
-            return Process.GetCurrentProcess();
-        },
-        delay: _ => Task.CompletedTask,
-        onTranscribed: text =>
-        {
-            var panes = new[] { new PaneLabel("%2", "voice-switch", "Claude Code", "node") };
-            var hits = PaneRoute.MatchingPanes(text, panes);
-            var decision = PaneRoute.Decide(hits, null);
-            var extracted = PaneRoute.ExtractSendBody(text);
-            decision = PaneRoute.RequireSendBody(decision, extracted);
-            // sent:false mirrors SendKeysAsync returning false; the body send-keys tried rides on the result.
-            return Task.FromResult(PaneRoute.Disposition(decision, sent: false, extracted));
-        },
-        superwhisperMode: "voice_switch",
-        paste: (text, _) => { pastes.Add(text); return true; },
-        preferencesPath: preferences,
-        modesDir: modes, requireControlledMode: false);
-    HandoffResult? result = null;
-    var (_, output) = CaptureConsole(() =>
-    {
-        result = SubmitHandoff(handoff, new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2), Target: 0x77));
-        return 0;
-    });
-    return result!.Status == HandoffStatus.Transcribed
-        && PaneRoute.ExtractSendBody(full) == body
-        && PaneRoute.Disposition(PaneRoute.RequireSendBody(new RouteDecision("%2", "unique hit"), body), sent: false, body) == RouteResult.SendFailed(body)
-        && pastes.Count == 1
-        && pastes[0] == body
-        && pastes[0] != full
-        && output.Contains("dictation delivered: paste", StringComparison.Ordinal);
-}
-
-static bool DictationHandoffPastesUnquotedResolvedBodyWhenSendKeysFailed()
-{
-    using var temp = RuntimeTemp();
-    var root = Path.Combine(temp.Dir, "handoff");
-    var recordings = Path.Combine(temp.Dir, "recordings");
-    var modes = Path.Combine(temp.Dir, "modes");
-    var preferences = Path.Combine(temp.Dir, "preferences.json");
-    Directory.CreateDirectory(modes);
-    File.WriteAllText(Path.Combine(modes, "dedicated.json"), """{"key":"new-mode-1","name":"voice_switch"}""");
-    File.WriteAllText(preferences, """{"activeMode":"new-mode-1"}""");
-    // Pane hit, no quotes: body Jev chose the body, then send-keys failed. A quote-only re-extract would give
-    // null and paste nothing (critique bug); the handoff must paste the body send-keys tried.
-    const string full = "ボイススイッチの Claude Code の pane にハローワールドを送信して";
-    const string body = "ハローワールド";
-    var pastes = new List<string>();
-    var handoff = new RegisteredSuperwhisperHandoff(root, recordings,
-        _ =>
-        {
-            WriteSuperwhisperMeta(recordings, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(), $$"""{"llmResult":"{{full}}"}""");
-            return Process.GetCurrentProcess();
-        },
-        delay: _ => Task.CompletedTask,
-        onTranscribed: text =>
-        {
-            var panes = new[] { new PaneLabel("%2", "voice-switch", "Claude Code", "node") };
-            var hits = PaneRoute.MatchingPanes(text, panes);
-            var decision = PaneRoute.Decide(hits, null);
-            // Simulates a body Jev Choice resolving the unquoted body (no quote extract available).
-            decision = PaneRoute.RequireSendBody(decision, body);
-            return Task.FromResult(PaneRoute.Disposition(decision, sent: false, body));
-        },
-        superwhisperMode: "voice_switch",
-        paste: (text, _) => { pastes.Add(text); return true; },
-        preferencesPath: preferences,
-        modesDir: modes, requireControlledMode: false);
-    HandoffResult? result = null;
-    var (_, output) = CaptureConsole(() =>
-    {
-        result = SubmitHandoff(handoff, new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2), Target: 0x77));
-        return 0;
-    });
-    return result!.Status == HandoffStatus.Transcribed
-        && PaneRoute.ExtractSendBody(full) is null
-        && pastes.Count == 1
-        && pastes[0] == body
-        && pastes[0] != full
-        && output.Contains("dictation delivered: paste", StringComparison.Ordinal)
-        && !output.Contains("send failed and no body to paste", StringComparison.Ordinal);
-}
-
 static RegisteredSuperwhisperHandoff FakeSuperwhisper(string root, string recordings, Func<ProcessStartInfo, Process?> start, Action<nint>? restoreFocus = null) =>
-    new(root, recordings, start, restoreFocus: restoreFocus, delay: _ => Task.CompletedTask, requireControlledMode: false);
+    new(root, recordings, start, restoreFocus: restoreFocus, delay: _ => Task.CompletedTask);
 
 static void WriteSuperwhisperMeta(string recordings, string run, string json)
 {

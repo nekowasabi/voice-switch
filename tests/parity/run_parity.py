@@ -462,28 +462,26 @@ def check_mac_superwhisper_mode_handoff(result: Result, repo: SourceTree) -> Non
     )
     require_substrings(
         result,
-        "Swift MacApp handoff switches mode, restores, and pastes on Decide",
+        "Swift MacApp handoff switches mode only for automatic or action audio and restores",
         mac,
         [
-            "enterSuperwhisperMode(cfg.superwhisperMode, target: target)",
+            "let controlled = origin.isAutomatic",
+            "let wantedMode = controlled ? cfg.superwhisperMode : action == nil ? nil : action?.superwhisperMode ?? cfg.superwhisperMode",
+            "enterSuperwhisperMode(wantedMode, target: target)",
             "superwhisper://mode?key=",
             "superwhisper mode restored from recovery state",
             "let route = await routeDictation(result)",
             "decideDictationDelivery(modeRequested: modeRequested, route: route.disposition)",
-            "pasteDictation(payload, target: target)",
-            "dictation delivered: paste",
             "dictation delivered: superwhisper",
-            "route.disposition == .sendFailed",
-            "payload = route.body",
-            "dictation not delivered: send failed and no body to paste",
             # B2: modeRequested only after post-switch activeMode == key (failed poll → no paste).
             "guard readSuperwhisperActiveMode() == key else",
             "return (false, nil)",
         ],
     )
-    # SendFailed paste must use the body send-keys tried (RouteResult), never a quote-only re-extract.
+    # Neither handoff re-runs the quote-only extract. On both platforms wake-word audio keeps the active mode
+    # and lets Superwhisper paste; only automatic audio enters the verified no-auto-paste mode, and it stays in history.
     win_handoff = repo.code("dotnet/VoiceSwitch.Windows/SuperwhisperHandoff.cs")
-    label = "SendFailed paste uses RouteResult body, not extractSendBody / ExtractSendBody"
+    label = "handoff routes RouteResult without re-running extractSendBody / ExtractSendBody"
     if "extractSendBody" in mac or "ExtractSendBody" in win_handoff:
         result.fail(f"{label}: handoff still re-runs the quote-only extract")
     else:
@@ -493,7 +491,8 @@ def check_mac_superwhisper_mode_handoff(result: Result, repo: SourceTree) -> Non
             win_handoff,
             [
                 "Func<string, Task<RouteResult>>",
-                "route.Disposition == RouteDisposition.SendFailed ? route.Body : text",
+                "var controlled = audio.Wake.IsAutomatic;",
+                "var wantedMode = controlled ? superwhisperMode : audio.Action is null ? null : actionMode ?? superwhisperMode;",
                 "SuperwhisperModes.Decide(modeRequested, route.Disposition)",
             ],
         )
