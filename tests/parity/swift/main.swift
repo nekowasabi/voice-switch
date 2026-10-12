@@ -61,12 +61,11 @@ func checkWakeHistory() {
     let missOrigin = WakeOrigin(rule: .strict, inputIdleSeconds: 0.2)
     let missBase = Date(timeIntervalSince1970: 1000)
     let miss = WakeMissLabel()
-    miss.observe(id: nil, origin: missOrigin, at: missBase)
-    precondition(miss.record(now: missBase.addingTimeInterval(9)) == "wake label: MISS \(missOrigin.fields) \(sidField(nil))")
+    miss.observe(id: 1, origin: missOrigin, at: missBase)
+    precondition(miss.record(now: missBase.addingTimeInterval(9)) == "wake label: MISS id=1 \(missOrigin.fields)")
     precondition(miss.record(now: missBase.addingTimeInterval(9.5)) == nil)
-    let missID = UUID(uuidString: "A0B1C2D3-E4F5-4678-89AB-CDEF01234567")!
     let missExpiry = WakeMissLabel()
-    missExpiry.observe(id: missID, origin: missOrigin, at: missBase)
+    missExpiry.observe(id: 2, origin: missOrigin, at: missBase)
     precondition(missExpiry.record(now: missBase.addingTimeInterval(10.001)) == nil)
     // Windows FinishReason names for the session end line.
     precondition(finishReasonToken("hotkey") == "FinishCommand")

@@ -416,9 +416,9 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     if previousMode != nil { _ = await recoverSuperwhisperMode(target: target) }
     guard launched else { return false }
     guard let result else {
-        log("dictation: no superwhisper result within 30 s"); return true
+        log("dictation: no superwhisper result within 30 s \(sidField(sessionID))"); return true
     }
-    log("dictation: \(result.count) chars in \(Int(Date().timeIntervalSince(submitted) * 1000)) ms audio=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), Double(trimmedForHandoff.count) / rate))s \(sidField(sessionID))")
+    log("dictation: \(result.count) chars in \(Int(Date().timeIntervalSince(submitted) * 1000)) ms audio=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), Double(samples.count) / rate))s \(sidField(sessionID))")
     guard stillCurrent() else { return true }
     guard DictationHistory.shared.add(id: sessionID, text: result, origin: origin, expectedGeneration: historyGeneration, policy: transcriptPolicy) else { return true }
     if controlled { return true }
@@ -610,6 +610,8 @@ final class Listener {
     /// AVAudioEngineConfigurationChange (2026-10-13 log), and every end condition counts frames, so a dictation open then never ends.
     private let lastBuffer = OSAllocatedUnfairLock(initialState: Date())
     private var stallRestarts = 0
+    /// Monotonic recognition counter for idle complete lines (Windows id=N parity), starting at 1.
+    private var nextRecognitionId = 1
     /// CoreAudio device UID; nil follows the system default input. Set only while stopped.
     var deviceUID: String? {
         // A pinned input unit never follows the system default again, so start over with a fresh engine.
@@ -932,8 +934,9 @@ final class Listener {
                 && !(config.cfg.dictation?.superwhisperMode?.isEmpty ?? true)
                 && macRelaxedWake(t, wakeWords: config.cfg.wakeWords)
             let recognitionOrigin = WakeOrigin(rule: relaxed ? .relaxedD2 : .strict, inputIdleSeconds: MacInputActivity.idleSeconds())
-            if !isHead { WakeMissLabel.shared.observe(id: nil, origin: recognitionOrigin, at: Date()) }
-            log("dictation recognition: complete \(recognitionOrigin.fields) \(sidField(nil))")
+            let recognitionId = nextRecognitionId; nextRecognitionId += 1
+            if !isHead { WakeMissLabel.shared.observe(id: recognitionId, origin: recognitionOrigin, at: Date()) }
+            log("dictation recognition: complete id=\(recognitionId) \(recognitionOrigin.fields) \(sidField(nil))")
             // Logged too, so misses that transcribe to nothing are visible when tuning.
             guard !t.isEmpty else {
                 if config.cfg.dictation?.noWakeWord?.enabled != true { log("heard: (empty, \(u.count * 1000 / Int(rate)) ms)") }
@@ -1102,7 +1105,7 @@ final class Listener {
     }
 
     private func storeLocal(_ d: Dictation) async {
-        guard let generation = claimLocalHistory(d) else { log("local history transcription busy; recording discarded"); return }
+        guard let generation = claimLocalHistory(d) else { log("local history transcription busy; recording discarded \(sidField(d.sessionID))"); return }
         defer { localHistoryState.withLock { $0.busy = false } }
         await transcribeToHistory(d, generation: generation)
     }
@@ -1131,7 +1134,7 @@ final class Listener {
                 return
             }
             Task {
-                guard let generation = claimLocalHistory(d) else { log("local history transcription busy; recording discarded"); return }
+                guard let generation = claimLocalHistory(d) else { log("local history transcription busy; recording discarded \(sidField(d.sessionID))"); return }
                 defer { localHistoryState.withLock { $0.busy = false } }
                 // superwhisper takes focus when it opens the file; hand it back to wherever the user is now, not where the session began.
                 let delivered = await handoff(d.samples, cfg: cfg, target: NSWorkspace.shared.frontmostApplication,
@@ -1145,7 +1148,7 @@ final class Listener {
             defer { busy = true }
             return !busy
         }
-        guard claimed else { log("dictation dropped: previous one still in flight"); return }
+        guard claimed else { log("dictation dropped: previous one still in flight \(sidField(d.sessionID))"); return }
         Task {
             defer { handoffBusy.withLock { $0 = false } }
             let delivered = await handoff(d.samples, cfg: cfg, target: d.target,

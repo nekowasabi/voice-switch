@@ -24,9 +24,9 @@ func sidField(_ id: UUID?) -> String {
 final class WakeMissLabel {
     static let shared = WakeMissLabel()
     private let lock = NSLock()
-    private var latest: (id: UUID?, origin: WakeOrigin, at: Date)?
+    private var latest: (id: Int, origin: WakeOrigin, at: Date)?
 
-    func observe(id: UUID?, origin: WakeOrigin, at: Date = Date()) {
+    func observe(id: Int, origin: WakeOrigin, at: Date = Date()) {
         lock.lock()
         latest = (id, origin, at)
         lock.unlock()
@@ -39,7 +39,7 @@ final class WakeMissLabel {
         let elapsed = now.timeIntervalSince(value.at)
         guard elapsed >= 0, elapsed <= 10 else { return nil }
         latest = nil
-        return "wake label: MISS \(value.origin.fields) \(sidField(value.id))"
+        return "wake label: MISS id=\(value.id) \(value.origin.fields)"
     }
 }
 
