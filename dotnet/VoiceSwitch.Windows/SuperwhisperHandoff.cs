@@ -115,7 +115,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
                 Directory.CreateDirectory(root);
                 ValidateOwnedState(root);
                 ownsWav = true;
-                await File.WriteAllBytesAsync(wavPath, Pcm16Wav.Encode(audio.Samples.AsSpan()), cancellation);
+                await File.WriteAllBytesAsync(wavPath, Pcm16Wav.Encode(TrimQuietHead(audio.Samples.AsSpan())), cancellation);
                 Launch(argument);
             }
             catch (Exception ex)
@@ -148,7 +148,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
 
             if (text is not null)
             {
-                Log.Info($"dictation: {text.Length} chars in {clock.ElapsedMilliseconds} ms");
+                Log.Info($"dictation: {text.Length} chars in {clock.ElapsedMilliseconds} ms audio={audio.Samples.Length / (double)Pcm16Wav.Rate:F2}s");
             }
         }
         finally
@@ -204,6 +204,19 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
             Log.Info("dictation delivered: superwhisper");
 
         return new HandoffResult(HandoffStatus.Transcribed, audio.SessionId, null, "Superwhisper result found; WAV deleted");
+    }
+
+    // Superwhisper drops the first sentence of quiet speech when the file opens with the session's 300 ms preroll of
+    // room noise (voice-switch.log 2026-10-12; reproduced 4/5 with the real app, 0/20 once the head was cut), so the file
+    // it reads starts at most 120 ms before the first sample that is clearly speech. The session range is untouched.
+    internal static ReadOnlySpan<short> TrimQuietHead(ReadOnlySpan<short> samples)
+    {
+        const short speech = 300;
+        const int keep = Pcm16Wav.Rate * 120 / 1000;
+        var first = 0;
+        while (first < samples.Length && Math.Abs((int)samples[first]) < speech) first++;
+        // ponytail: a fixed amplitude gate; a click in the preroll keeps the whole head. Use frame RMS if that shows up in the log.
+        return first == samples.Length ? samples : samples[Math.Max(0, first - keep)..];
     }
 
     // Requested is true only when the configured mode is confirmed active; Previous is the mode to switch back to.
