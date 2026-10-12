@@ -1033,6 +1033,13 @@ public sealed class WindowsDictationRuntime
         {
             // Superwhisper takes focus when it opens the file; hand it back to wherever the user is now, not where the session began.
             audio = audio with { Target = foregroundWindow() };
+            // Measured on 2026-10-12: no intended automatic dictation was shorter than 1.17 s, while sub-second
+            // captures were all noise or backchannels whose handoff only played Superwhisper's sound.
+            if (audio.Range.Length < MsToSamples(config.Dictation?.NoWakeWord?.MinHandoffMs ?? 1000))
+            {
+                Log.Info($"dictation dropped: automatic audio shorter than minHandoffMs reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End} sid={audio.SessionId}");
+                return;
+            }
             if (localInflight is { IsCompleted: false }) { Log.Info($"local history transcription busy; recording discarded sid={audio.SessionId}"); return; }
             localInflight = RunHandoffAsync(audio);
             return;

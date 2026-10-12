@@ -114,7 +114,7 @@ internal static class NoWakeTests
 
     public static bool AutomaticRuntime()
     {
-        async Task<(int Entries, int Manual, int Code, bool Leaked, bool Preroll, bool Replaced)> Run(double? idle, string? busy = null, bool failLocal = false, bool failRecognition = false, bool spokenWake = false, bool fragmented = false, bool filterInterjections = false, float? loopbackDb = null)
+        async Task<(int Entries, int Manual, int Code, bool Leaked, bool Preroll, bool Replaced)> Run(double? idle, string? busy = null, bool failLocal = false, bool failRecognition = false, bool spokenWake = false, bool fragmented = false, bool filterInterjections = false, float? loopbackDb = null, int minHandoffMs = 0)
         {
             var frames = new List<PcmFrame>();
             void Add(int count, short value)
@@ -128,7 +128,7 @@ internal static class NoWakeTests
             else { Add(12, 9000); Add(22, 0); Add(12, 9000); Add(22, 0); }
             var config = new VoiceSwitchConfig(["wake"], "en-US", "unused", MaxSeconds: 2.5,
                 HangoverMs: 120, PrerollMs: 60, MinSpeechMs: 90, VadMinRMS: 0.005f,
-                Dictation: new(EndSilenceMs: 240, NoWakeWord: new(AutoIdle: true, FilterInterjections: filterInterjections)));
+                Dictation: new(EndSilenceMs: 240, NoWakeWord: new(AutoIdle: true, FilterInterjections: filterInterjections, MinHandoffMs: minHandoffMs)));
             var manual = Unverified();
             var history = new DictationHistory();
             var captured = new List<DictationAudio>();
@@ -165,10 +165,12 @@ internal static class NoWakeTests
                         || (spokenWake
                             ? !lines.Any(line => line.Contains("dictation session: automatic replaced by wake word ") && line.Contains($" sid={sid}"))
                             : !lines.Any(line => line.Contains("dictation session: end reason=") && line.Contains($" sid={sid} ") && line.Contains(" seconds="))
-                                || !lines.Any(line => (line.Contains("dictation handoff: ") || line.Contains("dictation handoff failed: ")) && line.Contains($" sid={sid}")))
+                                || !lines.Any(line => (line.Contains("dictation handoff: ") || line.Contains("dictation handoff failed: ") || line.Contains("dictation dropped: ")) && line.Contains($" sid={sid}")))
                         || (!failRecognition && !lines.Any(line => line.Contains("dictation recognition: complete ") && line.Contains($" sid={sid}") && line.Contains($" textLen={(spokenWake ? 8 : 17)} filler=0 conf="))))
                     || lines.Any(line => line.Contains("dictation recognition: complete ") && line.Contains("PRIVATE_NO_WAKE_BODY")))
                     throw new InvalidOperationException($"session logs are not joined by sid (idle={idle} busy={busy} failLocal={failLocal} failRecognition={failRecognition} spokenWake={spokenWake} fragmented={fragmented} filter={filterInterjections})");
+                if (minHandoffMs > 0 && !output.ToString().Contains("dictation dropped: automatic audio shorter than minHandoffMs"))
+                    throw new InvalidOperationException("short automatic audio was not dropped before handoff");
                 if (filterInterjections)
                 {
                     var retained = history.Snapshot();
@@ -191,6 +193,7 @@ internal static class NoWakeTests
             && Run(4).GetAwaiter().GetResult() == (2, 2, 0, false, true, false)
             && Run(4, loopbackDb: -20).GetAwaiter().GetResult() == (2, 2, 0, false, true, false)
             && Run(4, loopbackDb: -100).GetAwaiter().GetResult() == (2, 2, 0, false, true, false)
+            && Run(4, minHandoffMs: 1000).GetAwaiter().GetResult() == (0, 0, 0, false, true, false)
             && Run(null).GetAwaiter().GetResult() == (0, 0, 0, false, true, false)
             && Run(0).GetAwaiter().GetResult() == (0, 0, 0, false, true, false)
             && Run(4, "other recorder").GetAwaiter().GetResult() == (0, 0, 0, false, true, false)
