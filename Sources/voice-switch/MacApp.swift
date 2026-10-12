@@ -1003,7 +1003,7 @@ final class Listener {
         let words = (config.cfg.stopWords ?? []).map(normalize)
         guard !words.isEmpty, let t = try? await transcribe(u, locale: Locale(identifier: config.cfg.locale ?? "ja_JP")).text else { return false }
         if config.cfg.dictation?.noWakeWord?.enabled != true { log("dictating: \(t)  [utt \(u.count * 1000 / Int(rate)) ms]") }
-        return words.contains(normalize(t))
+        return words.contains(t)
     }
 
     private func restart() { halt(); attemptStart() }
