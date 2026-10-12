@@ -43,6 +43,19 @@ final class WakeMissLabel {
     }
 }
 
+/// Maps Mac end-of-dictation prose reasons to Windows FinishReason names for the log.
+func finishReasonToken(_ reason: String) -> String {
+    switch reason {
+    case "hotkey", "FinishCommand": return "FinishCommand"
+    case "maxSeconds", "MaximumDuration": return "MaximumDuration"
+    case "stop word", "StandaloneStop": return "StandaloneStop"
+    case "Silence": return "Silence"
+    default:
+        if reason.contains("silence") { return "Silence" }
+        return reason.replacingOccurrences(of: " ", with: "_")
+    }
+}
+
 struct AutomaticTranscriptPolicy: Equatable {
     /// Whole transcripts an automatic recording is dropped for, after `token` trims it.
     var ignored: Set<String>

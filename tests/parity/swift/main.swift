@@ -68,6 +68,11 @@ func checkWakeHistory() {
     let missExpiry = WakeMissLabel()
     missExpiry.observe(id: missID, origin: missOrigin, at: missBase)
     precondition(missExpiry.record(now: missBase.addingTimeInterval(10.001)) == nil)
+    // Windows FinishReason names for the session end line.
+    precondition(finishReasonToken("hotkey") == "FinishCommand")
+    precondition(finishReasonToken("maxSeconds") == "MaximumDuration")
+    precondition(finishReasonToken("1500 ms silence") == "Silence")
+    precondition(finishReasonToken("stop word") == "StandaloneStop")
     // Superwhisper drops the first sentence of quiet speech behind the 300 ms preroll; the file it reads must
     // start at most 120 ms before the first speech sample (mirrors Windows test 6128348).
     let trimQuiet: [Float] = (0..<4800).map { $0 % 2 == 0 ? Float(20) / 32768 : Float(-20) / 32768 }
