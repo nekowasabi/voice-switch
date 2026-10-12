@@ -171,6 +171,8 @@ internal static class NoWakeTests
                     throw new InvalidOperationException($"session logs are not joined by sid (idle={idle} busy={busy} failLocal={failLocal} failRecognition={failRecognition} spokenWake={spokenWake} fragmented={fragmented} filter={filterInterjections})");
                 if (minHandoffMs > 0 && !output.ToString().Contains("dictation dropped: automatic audio shorter than minHandoffMs"))
                     throw new InvalidOperationException("short automatic audio was not dropped before handoff");
+                if (busy is not null && lines.Count(line => line.Contains($"automatic wake blocked: {busy}")) != 1)
+                    throw new InvalidOperationException("a blocked automatic wake must be logged once, not silently or per frame");
                 if (filterInterjections)
                 {
                     var retained = history.Snapshot();

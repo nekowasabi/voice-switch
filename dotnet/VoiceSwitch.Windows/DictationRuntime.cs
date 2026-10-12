@@ -87,6 +87,7 @@ public sealed class WindowsDictationRuntime
     private DictationPhase shownPhase;
     private bool endedByUser;
     private nint target;
+    private string? lastAutomaticSkip;
     // Mac heardSpeech: once the voice after the wake word is heard it stays heard, so a repeated wake word keeps 録音中.
     private bool heardAfterWake;
     // Frames before this sample index carry our own confirmation sound, which must not count as the text starting.
@@ -578,7 +579,11 @@ public sealed class WindowsDictationRuntime
             // The whole phrase is recorded, but never audio from before the last key or mouse input.
             var lastInput = analysisStore.Next - (long)((idle ?? 0) * Segmenter.Rate);
             var start = Math.Max(Math.Max(originalStore.Start, lastInput), phraseStart - Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength);
-            if (origin is not null && start < lastLiveSpeechEnd && localInflight is not { IsCompleted: false } && AutomaticSkipReason(window) is null)
+            var skip = origin is null ? null : AutomaticSkipReason(window);
+            // Logged once per change: a blocked automatic wake was otherwise indistinguishable from silence in the log.
+            if (skip != lastAutomaticSkip && skip is not null) Log.Info(skip);
+            lastAutomaticSkip = skip;
+            if (origin is not null && start < lastLiveSpeechEnd && localInflight is not { IsCompleted: false } && skip is null)
             {
                 if (session.StartAutomatic(new SampleRange(start, lastLiveSpeechEnd), origin, analysisStore.Next))
                 {

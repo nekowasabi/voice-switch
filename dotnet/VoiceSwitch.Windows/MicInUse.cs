@@ -57,7 +57,7 @@ public static class MicInUse
 
     private static IEnumerable<int> ActiveCapturePids(bool failClosed)
     {
-        var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
+        var enumerator = (IMMDeviceEnumerator)NewDeviceEnumerator();
         if (enumerator.EnumAudioEndpoints(CaptureFlow, DeviceStateActive, out var devices) < 0 || devices.GetCount(out var count) < 0)
         {
             if (failClosed) throw new COMException("capture endpoint query failed");
@@ -94,10 +94,10 @@ public static class MicInUse
         }
     }
 
-    [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
-    private class MMDeviceEnumerator
-    {
-    }
+    // Created by CLSID rather than a [ComImport] coclass: two coclasses with one CLSID in the assembly make the runtime
+    // hand back the other one's type, and every cast to the local class then fails.
+    internal static object NewDeviceEnumerator() =>
+        Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("BCDE0395-E52F-467C-8E3D-C4579291692E"), throwOnError: true)!)!;
 
     [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     private interface IMMDeviceEnumerator
