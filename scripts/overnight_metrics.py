@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -105,6 +106,10 @@ def iter_lines(path: Path, tail: Optional[int]) -> Iterable[str]:
 
 
 def parse_metrics(path: Path, tail: Optional[int] = None) -> dict[str, Any]:
+    wake_rules: Counter[str] = Counter()
+    wake_contexts: Counter[str] = Counter()
+    wake_missing_fields = 0
+    miss_labels = 0
     stt_ms: list[int] = []
     complete_count = 0
     leading_wake_true = 0
@@ -135,6 +140,9 @@ def parse_metrics(path: Path, tail: Optional[int] = None) -> dict[str, Any]:
 
     for line in iter_lines(path, tail):
         lines_scanned += 1
+        telemetry_line = re.sub(r'"[^"]*"', '', line)
+        if "wake label: MISS " in telemetry_line:
+            miss_labels += 1
 
         if RE_STT.search(line):
             m = RE_STT_MS.search(line)
@@ -146,6 +154,18 @@ def parse_metrics(path: Path, tail: Optional[int] = None) -> dict[str, Any]:
 
         if RE_COMPLETE.search(line):
             complete_count += 1
+            rule = re.search(r"(?:^|\s)rule=(strict)(?=\s|$)", telemetry_line)
+            idle = re.search(r"(?:^|\s)inputIdleSeconds=(\S+)", telemetry_line)
+            if rule and idle:
+                try:
+                    seconds = float(idle.group(1))
+                except ValueError:
+                    seconds = math.nan
+                context = "unknown" if not math.isfinite(seconds) or seconds < 0 else "after_input" if seconds < 3 else "idle"
+                wake_rules[rule.group(1)] += 1
+                wake_contexts[f"{rule.group(1)}:{context}"] += 1
+            else:
+                wake_missing_fields += 1
             lw = RE_LEADING_WAKE.search(line)
             if lw:
                 if lw.group(1) == "True":
@@ -268,6 +288,8 @@ def parse_metrics(path: Path, tail: Optional[int] = None) -> dict[str, Any]:
     start_timeout_mode = mode_of(start_timeout_hist)
 
     return {
+        "wake_telemetry": {"rules": dict(wake_rules), "contexts": dict(wake_contexts),
+                           "missing_fields": wake_missing_fields, "miss_labels": miss_labels},
         "path": str(path),
         "tail": tail,
         "lines_scanned": lines_scanned,

@@ -16,6 +16,10 @@ if (args is ["--child", var mode])
 
 var tests = new (string Name, Func<TestOutcome> Test)[]
 {
+    ("wake telemetry handles missing and unknown input", () => Check(WakeTelemetryHandlesUnknown())),
+    ("wake telemetry MISS records once without recording", () => Check(WakeMissRecordsOnce())),
+    ("wake telemetry input ticks wrap", () => Check(InputActivity.ElapsedSeconds(100, uint.MaxValue - 899) == 1)),
+    ("wake telemetry runtime stamps every complete line", () => Check(WakeTelemetryRuntimeLogs())),
     ("normalizes punctuation and spaces", () => Check(Normalizes())),
     ("reading normalization folds katakana and width", () => Check(ReadingNormalizationFoldsKatakanaAndWidth())),
     ("decides wake and stop commands", () => Check(DecidesCommands())),
@@ -245,6 +249,48 @@ foreach (var (name, test) in tests)
 return failed == 0 ? 0 : 1;
 
 static TestOutcome Check(bool ok) => ok ? TestOutcome.Pass() : TestOutcome.Fail();
+
+static bool WakeTelemetryHandlesUnknown()
+{
+    var summary = new WakeTelemetrySummary();
+    foreach (var idle in new[] { "0.200", "3.000", "-1", "null", "NaN", "Infinity" })
+        summary.Observe($"dictation recognition: complete id=1 rule=strict inputIdleSeconds={idle}");
+    summary.Observe("dictation recognition: complete id=2");
+    summary.Observe("dictation recognition: complete text=\"rule=strict inputIdleSeconds=3.000\"");
+    summary.Observe("dictation recognition: complete rule=auto_b inputIdleSeconds=3.000");
+    summary.Observe("wake label: MISS id=1 rule=strict inputIdleSeconds=-1");
+    return summary.Rules.Count == 1 && summary.Rules["strict"] == 6
+        && summary.Contexts["strict:after_input"] == 1
+        && summary.Contexts["strict:idle"] == 1
+        && summary.Contexts["strict:unknown"] == 4
+        && summary.MissingFields == 3 && summary.MissLabels == 1
+        && WakeOrigin.FormatIdle(double.NaN) == "-1" && WakeOrigin.Context(null) == "unknown"
+        && new WakeOrigin(WakeRule.Strict, 0.2).Fields == "rule=strict inputIdleSeconds=0.200";
+}
+
+static bool WakeMissRecordsOnce()
+{
+    var (_, output) = CaptureConsole(() =>
+    {
+        WakeMissLabel.Observe(98765, new WakeOrigin(WakeRule.Strict, 0.2));
+        WakeMissLabel.Record();
+        WakeMissLabel.Record();
+        return 0;
+    });
+    return output.Split('\n').Count(line => line.Contains("wake label: MISS id=98765 rule=strict inputIdleSeconds=0.200")) == 1
+        && !output.Contains("dictation: recording");
+}
+
+static bool WakeTelemetryRuntimeLogs()
+{
+    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 5000),
+        new FixturePcmCapture(ThreeUtteranceFrames()), TwoDictationRecognizer(),
+        new RecordingDictationHandoff(), dryRun: true, inputIdleSeconds: () => 0.2);
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output);
+    var lines = output.Split('\n').Where(line => line.Contains("recognition: complete ")).ToArray();
+    return code == 0 && lines.Length > 0
+        && lines.All(line => line.EndsWith("rule=strict inputIdleSeconds=0.200", StringComparison.Ordinal));
+}
 
 static bool PaneRouteParsesCatalog()
 {
