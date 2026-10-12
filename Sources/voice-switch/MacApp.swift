@@ -887,7 +887,9 @@ final class Listener {
                 let began = Date()
                 guard let tr = try? await transcribe(buf, locale: Locale(identifier: config.cfg.locale ?? "ja_JP")) else { continue }
                 guard localHistoryState.withLock({ $0.generation == generation }) else { continue }
-                log("dictation recognition: complete \(WakeOrigin(rule: .strict, inputIdleSeconds: MacInputActivity.idleSeconds()).fields) \(sidField(nil))")
+                let earlyOrigin = WakeOrigin(rule: .strict, inputIdleSeconds: MacInputActivity.idleSeconds())
+                WakeMissLabel.shared.observe(id: nil, origin: earlyOrigin, at: Date())
+                log("dictation recognition: complete \(earlyOrigin.fields) \(sidField(nil))")
                 let stt = Int(Date().timeIntervalSince(began) * 1000)
                 guard let hit = Segmenter.earlyWake(tr, cfg: config.cfg, tailSilentFrames: seg.tailSilentFrames) else { continue }
                 let start = config.cfg.dictation == nil ? nil : hit
@@ -930,6 +932,7 @@ final class Listener {
                 && !(config.cfg.dictation?.superwhisperMode?.isEmpty ?? true)
                 && macRelaxedWake(t, wakeWords: config.cfg.wakeWords)
             let recognitionOrigin = WakeOrigin(rule: relaxed ? .relaxedD2 : .strict, inputIdleSeconds: MacInputActivity.idleSeconds())
+            WakeMissLabel.shared.observe(id: nil, origin: recognitionOrigin, at: Date())
             log("dictation recognition: complete \(recognitionOrigin.fields) \(sidField(nil))")
             // Logged too, so misses that transcribe to nothing are visible when tuning.
             guard !t.isEmpty else {
@@ -1109,6 +1112,7 @@ final class Listener {
         do {
             let transcript = try await transcribe(d.samples, locale: Locale(identifier: config.cfg.locale ?? "ja_JP"))
             guard localHistoryState.withLock({ $0.generation == generation }) else { return }
+            WakeMissLabel.shared.observe(id: d.sessionID, origin: d.origin, at: Date())
             log("dictation recognition: complete \(d.origin.fields) \(sidField(d.sessionID))")
             let text = transcript.runs.map(\.text).joined()
             let retained = DictationHistory.shared.add(id: d.sessionID, text: text, origin: d.origin, expectedGeneration: historyGeneration, policy: d.transcriptPolicy)

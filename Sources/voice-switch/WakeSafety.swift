@@ -18,6 +18,31 @@ func sidField(_ id: UUID?) -> String {
     return "sid=\(id.uuidString.lowercased())"
 }
 
+/// One MISS label per observed recognition, pressed via Ctrl+Shift+F8 within 10 s.
+/// Pure Foundation so the Linux parity harness can test it; the hotkey itself stays
+/// a RegisterEventHotKey (no CGEventTap, no new permissions).
+final class WakeMissLabel {
+    static let shared = WakeMissLabel()
+    private let lock = NSLock()
+    private var latest: (id: UUID?, origin: WakeOrigin, at: Date)?
+
+    func observe(id: UUID?, origin: WakeOrigin, at: Date = Date()) {
+        lock.lock()
+        latest = (id, origin, at)
+        lock.unlock()
+    }
+
+    func record(now: Date = Date()) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let value = latest else { return nil }
+        let elapsed = now.timeIntervalSince(value.at)
+        guard elapsed >= 0, elapsed <= 10 else { return nil }
+        latest = nil
+        return "wake label: MISS \(value.origin.fields) \(sidField(value.id))"
+    }
+}
+
 struct AutomaticTranscriptPolicy: Equatable {
     /// Whole transcripts an automatic recording is dropped for, after `token` trims it.
     var ignored: Set<String>

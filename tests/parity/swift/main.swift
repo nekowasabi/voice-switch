@@ -57,6 +57,17 @@ func checkWakeHistory() {
     precondition(sidField(UUID(uuidString: "A0B1C2D3-E4F5-4678-89AB-CDEF01234567")!) == "sid=a0b1c2d3-e4f5-4678-89ab-cdef01234567")
     precondition("\(WakeOrigin(rule: .strict, inputIdleSeconds: 1.5).fields) \(sidField(nil))" == "rule=strict inputIdleSeconds=1.500 sid=-")
     precondition("\(WakeOrigin(rule: .autoB, inputIdleSeconds: 4).fields) \(sidField(UUID(uuidString: "A0B1C2D3-E4F5-4678-89AB-CDEF01234567")!))" == "rule=auto_b inputIdleSeconds=4.000 sid=a0b1c2d3-e4f5-4678-89ab-cdef01234567")
+    // MISS label hotkey: one label per observation, only within 10 s.
+    let missOrigin = WakeOrigin(rule: .strict, inputIdleSeconds: 0.2)
+    let missBase = Date(timeIntervalSince1970: 1000)
+    let miss = WakeMissLabel()
+    miss.observe(id: nil, origin: missOrigin, at: missBase)
+    precondition(miss.record(now: missBase.addingTimeInterval(9)) == "wake label: MISS \(missOrigin.fields) \(sidField(nil))")
+    precondition(miss.record(now: missBase.addingTimeInterval(9.5)) == nil)
+    let missID = UUID(uuidString: "A0B1C2D3-E4F5-4678-89AB-CDEF01234567")!
+    let missExpiry = WakeMissLabel()
+    missExpiry.observe(id: missID, origin: missOrigin, at: missBase)
+    precondition(missExpiry.record(now: missBase.addingTimeInterval(10.001)) == nil)
     // Superwhisper drops the first sentence of quiet speech behind the 300 ms preroll; the file it reads must
     // start at most 120 ms before the first speech sample (mirrors Windows test 6128348).
     let trimQuiet: [Float] = (0..<4800).map { $0 % 2 == 0 ? Float(20) / 32768 : Float(-20) / 32768 }
