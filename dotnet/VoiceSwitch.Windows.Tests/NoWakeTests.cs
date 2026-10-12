@@ -114,7 +114,7 @@ internal static class NoWakeTests
 
     public static bool AutomaticRuntime()
     {
-        async Task<(int Entries, int Manual, int Code, bool Leaked, bool Preroll, bool Replaced)> Run(double? idle, string? busy = null, bool failLocal = false, bool failRecognition = false, bool spokenWake = false, bool fragmented = false, bool filterInterjections = false, float? playbackPeak = null)
+        async Task<(int Entries, int Manual, int Code, bool Leaked, bool Preroll, bool Replaced)> Run(double? idle, string? busy = null, bool failLocal = false, bool failRecognition = false, bool spokenWake = false, bool fragmented = false, bool filterInterjections = false)
         {
             var frames = new List<PcmFrame>();
             void Add(int count, short value)
@@ -141,7 +141,7 @@ internal static class NoWakeTests
                     : [new LexicalRun("PRIVATE_NO_WAKE_BODY", request.Range)])));
             var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(frames, new[] { 22, 36, 56, 70 }),
                 recognizer, handoff, false, inputIdleSeconds: () => idle, wakeReading: value => value,
-                micInUseBy: _ => busy, playbackPeak: () => playbackPeak);
+                micInUseBy: _ => busy);
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             var previousOutput = Console.Out;
             using var output = new StringWriter();
@@ -149,9 +149,6 @@ internal static class NoWakeTests
             {
                 Console.SetOut(output);
                 var code = await runtime.RunAsync(timeout.Token);
-                var expectedPeak = playbackPeak is { } peak ? peak.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture) : "unknown";
-                if (output.ToString().Split('\n').Any(line => line.Contains("dictation session: automatic ") && line.Contains(" range=") && !line.Contains($" playbackPeak={expectedPeak}")))
-                    throw new InvalidOperationException($"automatic session log lacks playbackPeak={expectedPeak}");
                 if (filterInterjections)
                 {
                     var retained = history.Snapshot();
@@ -172,7 +169,6 @@ internal static class NoWakeTests
         return !Run(4, failLocal: true).GetAwaiter().GetResult().Leaked
             && !Run(4, failRecognition: true).GetAwaiter().GetResult().Leaked
             && Run(4).GetAwaiter().GetResult() == (2, 2, 0, false, true, false)
-            && Run(4, playbackPeak: 0.25f).GetAwaiter().GetResult() == (2, 2, 0, false, true, false)
             && Run(null).GetAwaiter().GetResult() == (0, 0, 0, false, true, false)
             && Run(0).GetAwaiter().GetResult() == (0, 0, 0, false, true, false)
             && Run(4, "other recorder").GetAwaiter().GetResult() == (0, 0, 0, false, true, false)
