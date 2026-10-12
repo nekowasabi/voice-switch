@@ -64,6 +64,11 @@ public sealed class WindowsDictationRuntime
     private readonly Func<string, string?>? wakeReading;
     private readonly Func<IReadOnlyCollection<string>, string?> automaticMicInUseBy;
     private readonly Func<double?> inputIdleSeconds;
+    // Shadow log of playback vs microphone levels: mic dBFS per frame keyed by sample index, loopback dBFS per 10 ms keyed by ms.
+    private readonly LevelTrace micLevels = new(4_000);
+    private readonly LevelTrace? loopbackLevels;
+    private LoopbackCapture? loopbackCapture;
+    private long sampleEpochMs;
     private readonly SampleStore originalStore;
     private readonly SampleStore analysisStore;
     private readonly Segmenter segmenter;
@@ -103,10 +108,12 @@ public sealed class WindowsDictationRuntime
         Func<nint, string?>? windowProcess = null,
         Func<IReadOnlyCollection<string>, string?>? micInUseBy = null,
         Func<string, string?>? wakeReading = null,
-        Func<double?>? inputIdleSeconds = null)
+        Func<double?>? inputIdleSeconds = null,
+        LevelTrace? loopbackLevels = null)
     {
         this.wakeReading = wakeReading;
         this.inputIdleSeconds = inputIdleSeconds ?? InputActivity.IdleSeconds;
+        this.loopbackLevels = loopbackLevels;
         config = WithWakeReadings(config);
         this.config = config;
         this.capture = capture;
@@ -154,6 +161,7 @@ public sealed class WindowsDictationRuntime
             SingleWriter = true
         });
 
+        if (loopbackLevels is null && OperatingSystem.IsWindows()) loopbackCapture = LoopbackCapture.Start();
         var captureTask = PumpCaptureAsync(frames.Writer, linked.Token);
         var recognitionTask = PumpRecognitionAsync(requests.Reader, recognitions.Writer, linked.Token);
         var pending = new Dictionary<long, RecognitionWork>();
@@ -489,6 +497,7 @@ public sealed class WindowsDictationRuntime
             }
             finally
             {
+                loopbackCapture?.Dispose();
                 await capture.DisposeAsync();
                 if (recognizer is IAsyncDisposable warmRecognizer)
                 {
@@ -519,6 +528,9 @@ public sealed class WindowsDictationRuntime
 
         originalStore.Append(frame.Start, frame.Original.AsSpan());
         analysisStore.Append(frame.Start, frame.Analysis.AsSpan());
+        micLevels.Add(frame.Start, LoopbackShadow.Dbfs(frame.Original.AsSpan()));
+        // The frame ended about now; the anchor jitters by the WinMM and channel latency, see LoopbackShadow.LagMs.
+        sampleEpochMs = Environment.TickCount64 - (frame.Start + frame.Original.Length) * 1000 / (long)Segmenter.Rate;
         segmenter.AdaptFloor = !(session.IsActive || session.IsAwaitingBody);
         // Only the VAD goes deaf; the stores keep the real audio so SAPI and the preroll stay intact.
         var ev = segmenter.Push(frame.Start < deafUntil ? new float[frame.Analysis.Length] : ToFloat(frame.Analysis.AsSpan()));
@@ -572,7 +584,7 @@ public sealed class WindowsDictationRuntime
                 {
                     // No hotkeys: the user is mid-task elsewhere and their Escape belongs to that app, so only silence or a stop word ends it.
                     target = window;
-                    Log.Info($"dictation session: automatic {origin.Fields} range={start}..{lastLiveSpeechEnd}");
+                    Log.Info($"dictation session: automatic {origin.Fields} range={start}..{lastLiveSpeechEnd} {LevelFields(new SampleRange(start, lastLiveSpeechEnd))}");
                 }
             }
         }
@@ -994,8 +1006,15 @@ public sealed class WindowsDictationRuntime
 
     // Mac parity: one handoff at a time so a recordings-folder result is never attributed to the wrong dictation,
     // and the loop keeps listening while Superwhisper transcribes.
+    private string LevelFields(SampleRange range) =>
+        LoopbackShadow.Fields(
+            micLevels.Between(range.Start, range.End),
+            (loopbackLevels ?? loopbackCapture?.Levels)?.Between(LoopbackShadow.LoopbackMs(range.Start, sampleEpochMs) - 2 * LoopbackShadow.BinMs, LoopbackShadow.LoopbackMs(range.End, sampleEpochMs) + 2 * LoopbackShadow.BinMs),
+            sampleEpochMs);
+
     private void Submit(DictationAudio audio)
     {
+        Log.Info($"dictation session: end reason={audio.Reason} {audio.Wake.Fields} range={audio.Range.Start}..{audio.Range.End} {LevelFields(audio.Range)}");
         var stopped = audio.Reason is FinishReason.StandaloneStop or FinishReason.FinishCommand;
         endedByUser |= stopped;
         // The user wants to know the recording is over, so ring before Superwhisper is launched, automatic sessions included.

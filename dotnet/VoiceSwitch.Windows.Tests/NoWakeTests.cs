@@ -114,7 +114,7 @@ internal static class NoWakeTests
 
     public static bool AutomaticRuntime()
     {
-        async Task<(int Entries, int Manual, int Code, bool Leaked, bool Preroll, bool Replaced)> Run(double? idle, string? busy = null, bool failLocal = false, bool failRecognition = false, bool spokenWake = false, bool fragmented = false, bool filterInterjections = false)
+        async Task<(int Entries, int Manual, int Code, bool Leaked, bool Preroll, bool Replaced)> Run(double? idle, string? busy = null, bool failLocal = false, bool failRecognition = false, bool spokenWake = false, bool fragmented = false, bool filterInterjections = false, float? loopbackDb = null)
         {
             var frames = new List<PcmFrame>();
             void Add(int count, short value)
@@ -141,7 +141,7 @@ internal static class NoWakeTests
                     : [new LexicalRun("PRIVATE_NO_WAKE_BODY", request.Range)])));
             var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(frames, new[] { 22, 36, 56, 70 }),
                 recognizer, handoff, false, inputIdleSeconds: () => idle, wakeReading: value => value,
-                micInUseBy: _ => busy);
+                micInUseBy: _ => busy, loopbackLevels: loopbackDb is { } constantDb ? ConstantLoopback(constantDb) : null);
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             var previousOutput = Console.Out;
             using var output = new StringWriter();
@@ -149,6 +149,14 @@ internal static class NoWakeTests
             {
                 Console.SetOut(output);
                 var code = await runtime.RunAsync(timeout.Token);
+                // Linux has no playback device, so without an injected trace the shadow fields must say so instead of vanishing.
+                var expectedLevels = loopbackDb switch { null => " loopback=unknown micDb=", <= LoopbackShadow.SilentDb => " loopback=silent micDb=", _ => $" loopbackDb={loopbackDb:0.0} micDb=" };
+                var lines = output.ToString().Split('\n');
+                var ends = lines.Where(line => line.Contains("dictation session: end reason=")).ToArray();
+                if (lines.Where(line => line.Contains("dictation session: automatic ") && line.Contains(" range=")).Concat(ends).Any(line => !line.Contains(expectedLevels))
+                    || (idle == 4 && busy is null && ends.Length == 0)
+                    || (loopbackDb is > LoopbackShadow.SilentDb && !ends.Any(line => line.Contains(" micOverLoopbackGe0=0."))))
+                    throw new InvalidOperationException($"session logs lack '{expectedLevels}'");
                 if (filterInterjections)
                 {
                     var retained = history.Snapshot();
@@ -169,6 +177,8 @@ internal static class NoWakeTests
         return !Run(4, failLocal: true).GetAwaiter().GetResult().Leaked
             && !Run(4, failRecognition: true).GetAwaiter().GetResult().Leaked
             && Run(4).GetAwaiter().GetResult() == (2, 2, 0, false, true, false)
+            && Run(4, loopbackDb: -20).GetAwaiter().GetResult() == (2, 2, 0, false, true, false)
+            && Run(4, loopbackDb: -100).GetAwaiter().GetResult() == (2, 2, 0, false, true, false)
             && Run(null).GetAwaiter().GetResult() == (0, 0, 0, false, true, false)
             && Run(0).GetAwaiter().GetResult() == (0, 0, 0, false, true, false)
             && Run(4, "other recorder").GetAwaiter().GetResult() == (0, 0, 0, false, true, false)
@@ -178,6 +188,37 @@ internal static class NoWakeTests
             && Run(4, spokenWake: true, filterInterjections: true).GetAwaiter().GetResult() is (> 0, > 0, 0, false, _, true);
     }
 
+
+    // A playback trace at one level from a minute ago to a minute ahead, so every mic frame of the test pairs with a bin.
+    private static LevelTrace ConstantLoopback(float db)
+    {
+        var trace = new LevelTrace(20_000);
+        var now = Environment.TickCount64 / LoopbackShadow.BinMs * LoopbackShadow.BinMs;
+        for (var at = now - 60_000; at < now + 60_000; at += LoopbackShadow.BinMs) trace.Add(at, db);
+        return trace;
+    }
+
+    public static bool LoopbackShadowFields()
+    {
+        const long epoch = 1_000_000;
+        // Nine 30 ms mic frames: four at -30 dBFS, then five at -10 dBFS (lower median -10).
+        var mic = Enumerable.Range(0, 9).Select(k => ((long)k * Segmenter.FrameLength, k < 4 ? -30f : -10f)).ToArray();
+        // Loopback bins over the lag-shifted window; playback starts where mic frame 3 is heard, so frames 0..2 pair with silence.
+        var from = LoopbackShadow.LoopbackMs(0, epoch) - 2 * LoopbackShadow.BinMs;
+        var to = LoopbackShadow.LoopbackMs(9 * Segmenter.FrameLength, epoch) + 2 * LoopbackShadow.BinMs;
+        var onset = LoopbackShadow.LoopbackMs(3 * Segmenter.FrameLength, epoch);
+        var loopback = new List<(long, float)>();
+        for (var at = from; at < to; at += LoopbackShadow.BinMs) loopback.Add((at, at < onset ? -100f : -20f));
+        var silent = loopback.Select(bin => (bin.Item1, -100f)).ToList();
+        // Diffs: frame 3 gives -10, frames 4..8 give +10 -> median 10, 5 of 6 at or above 0.
+        return LoopbackShadow.Fields(mic, loopback, epoch) == "loopbackDb=-20.0 micDb=-10.0 micOverLoopbackDb=10.0 micOverLoopbackGe0=0.83 micOverLoopbackN=6"
+            && LoopbackShadow.Fields(mic, silent, epoch) == "loopback=silent micDb=-10.0"
+            && LoopbackShadow.Fields(mic, null, epoch) == "loopback=unknown micDb=-10.0"
+            && LoopbackShadow.Fields(mic, [], epoch) == "loopback=unknown micDb=-10.0"
+            && LoopbackShadow.Fields([], loopback, epoch) == "loopbackDb=-20.0 micDb=- micOverLoopbackDb=- micOverLoopbackGe0=- micOverLoopbackN=0"
+            && LoopbackShadow.Dbfs(new short[480]) == LoopbackShadow.FloorDb
+            && Math.Abs(LoopbackShadow.Dbfs(Enumerable.Repeat((short)9000, 480).ToArray()) - -11.2f) < 0.05f;
+    }
 
     public static bool ModeRecovery()
     {
