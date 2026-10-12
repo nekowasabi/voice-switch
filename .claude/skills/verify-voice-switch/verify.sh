@@ -66,6 +66,17 @@ wav() {
   grep -E "dictation (session|handoff|cancelled)|dictation recognition: complete .*(leadingWake=True|standaloneStop=True)" "$out/stdout.txt" | sed 's/ text=.*grammar=/ grammar=/' || true
 }
 
+phrases() {
+  "$PS" -NoProfile -ExecutionPolicy Bypass -File "$(win "$SKILL/make-phrase-cases.ps1")" -Spec "$(win "$SKILL/phrase-cases.json")" -OutDir "$(win "$ROOT/recall/tts")"
+}
+
+# KPI: phrases missing from Superwhisper rawResult. Exit 0 only when none is missing.
+recall() {
+  local cases="${1:-$ROOT/recall/tts/cases.json}" pads="${2:-0}"
+  local out="$ROOT/recall/${VS_RUN_ID:-$(date +%Y%m%dT%H%M%S)}"
+  "$PS" -NoProfile -ExecutionPolicy Bypass -Command "& '$(win "$SKILL/superwhisper-recall.ps1")' -Cases '$(win "$cases")' -OutDir '$(win "$out")' -PadMs $pads"
+}
+
 cleanup() {
   for pidfile in "$EVIDENCE"/*/*/pid.txt; do
     [ -f "$pidfile" ] || continue
@@ -86,6 +97,8 @@ case "${1:-}" in
   fixtures) fixtures ;;
   doctor) doctor ;;
   wav) shift; wav "$@" ;;
+  phrases) phrases ;;
+  recall) shift; recall "$@" ;;
   cleanup) cleanup ;;
-  *) echo "usage: $0 build | fixtures | doctor | wav <fixture> [config.json] | cleanup" >&2; exit 2 ;;
+  *) echo "usage: $0 build | fixtures | doctor | wav <fixture> [config.json] | phrases | recall [cases.json] [padMs,...] | cleanup" >&2; exit 2 ;;
 esac
