@@ -1298,8 +1298,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func refresh() {
         let on = listener?.running ?? false
         let wanted = listener?.wanted ?? false
-        item.button?.image = NSImage(systemSymbolName: on ? "mic.fill" : "mic.slash",
-                                     accessibilityDescription: on ? "voice-switch: 待ち受け中" : "voice-switch: 停止中")
+        item.button?.title = on ? "🔔" : "🔕"
+        item.button?.setAccessibilityLabel(on ? "voice-switch: 待ち受け中" : "voice-switch: 停止中")
         toggle.title = wanted ? "一時停止" : "再開"
         toggle.isEnabled = listener != nil
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
