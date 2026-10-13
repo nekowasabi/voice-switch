@@ -797,6 +797,7 @@ final class Listener {
                     d.samples.removeLast(min(u.count, d.samples.count))
                     dictation = nil; recent.removeAll(); speechFrames = 0; Hotkeys.end(); endedByUser = true
                     log("dictation finished by stop word")
+                    playStopSound()
                     if d.heardSpeech, !d.samples.isEmpty { submitAndArm(d, cfg: dc) }
                     continue
                 }
@@ -820,6 +821,7 @@ final class Listener {
                 d.samples.removeLast(d.silentFrames * frameLen)
                 dictation = nil; recent.removeAll(); speechFrames = 0; Hotkeys.end(); endedByUser = key == .finish
                 log("dictation ended by \(reason) after \(d.samples.count * 1000 / Int(rate)) ms of audio")
+                if key == .finish { playStopSound() }
                 submitAndArm(d, cfg: dc)
                 continue
             }
@@ -1149,6 +1151,24 @@ func micInUse(by bundleIDs: [String], failClosed: Bool = false) -> String? {
 
 let deviceKey = "inputDeviceUID"
 let soundKey = "confirmationSound"
+
+/// A5 -> E5 soft pops, the notes Windows plays on stop (TraySettings.Synthesize), so stop reads differently from the wake Tink.
+private let stopChime: NSSound? = {
+    let notes = [880.0, 659.25], noteSamples = Int(rate) * 120 / 1000
+    let samples = (0 ..< noteSamples * notes.count).map { i -> Float in
+        let t = Double(i % noteSamples)
+        let env = min(1, t / 80) * pow(1 - t / Double(noteSamples), 3)
+        return Float(sin(2 * .pi * notes[i / noteSamples] * Double(i) / rate) * env * 9000 / 32768)
+    }
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("voice-switch-stop-chime.wav")
+    guard (try? writeWAV(samples, to: url)) != nil else { return nil }
+    defer { try? FileManager.default.removeItem(at: url) }
+    return NSSound(contentsOf: url, byReference: false)
+}()
+
+func playStopSound() {
+    if UserDefaults.standard.bool(forKey: soundKey) { stopChime?.play() }
+}
 
 /// Floating label at the top of the screen while a dictation is open; the menu bar may be hidden.
 final class HUD {
