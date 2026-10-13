@@ -8,7 +8,8 @@ public static class TextMatching
 
     public static string Normalize(string value)
     {
-        var chars = value.Where(c => !char.IsWhiteSpace(c) && !Punctuation.Contains(c));
+        // Recognizers capitalize Latin words ("ST") while configs are typed in lowercase.
+        var chars = value.Where(c => !char.IsWhiteSpace(c) && !Punctuation.Contains(c)).Select(char.ToLowerInvariant);
         return new string(chars.ToArray());
     }
 

@@ -4,7 +4,8 @@ import Foundation
 let punctuation = Set("、。,.!?！？「」")
 
 func normalize(_ s: String) -> String {
-    String(s.filter { !$0.isWhitespace && !punctuation.contains($0) })
+    // Recognizers capitalize Latin words ("ST") while configs are typed in lowercase.
+    String(s.filter { !$0.isWhitespace && !punctuation.contains($0) }).lowercased()
 }
 
 struct Transcript {

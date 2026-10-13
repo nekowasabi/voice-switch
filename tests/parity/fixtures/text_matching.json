@@ -14,6 +14,11 @@
       "name": "keeps meaningful kana and kanji",
       "input": "「入力ストップ」",
       "expected": "入力ストップ"
+    },
+    {
+      "name": "folds Latin case so a recognized ST matches a configured st",
+      "input": "ST",
+      "expected": "st"
     }
   ],
   "decision_config": {
