@@ -1,21 +1,32 @@
 namespace VoiceSwitch.Windows.Core;
 
 public sealed record NoWakeWordConfig(bool Followup = false, bool AutoIdle = false, bool RelaxedReadingDistance2 = false,
-    int FollowupMs = 8000, int IdleMs = 3000, bool FilterInterjections = false, int MinHandoffMs = 1000)
+    int FollowupMs = 8000, int IdleMs = 3000, bool FilterInterjections = false, int MinHandoffMs = 1000,
+    IReadOnlyList<string>? IgnoredTranscripts = null)
 {
     public bool Valid => FollowupMs is >= 1000 and <= 30000 && IdleMs is >= 1000 and <= 60000;
     public bool Enabled => Followup || AutoIdle || RelaxedReadingDistance2;
 }
 
-public readonly record struct AutomaticTranscriptPolicy(bool FilterInterjections = false)
+public readonly record struct AutomaticTranscriptPolicy(bool FilterInterjections = false, IReadOnlyList<string>? Ignored = null)
 {
+    public static AutomaticTranscriptPolicy From(NoWakeWordConfig? options) =>
+        new(options?.FilterInterjections == true, options?.IgnoredTranscripts?.Select(Token).ToArray());
+
     public bool Rejects(string text, WakeOrigin origin)
     {
-        if (!FilterInterjections || !origin.IsAutomatic) return false;
+        if (!origin.IsAutomatic) return false;
+        var token = Token(text);
+        return (FilterInterjections && (token == "あっ" || token == "ああ")) || (Ignored?.Contains(token) ?? false);
+    }
+
+    // Outer whitespace and trailing 。.!！?？ only; anything inside the text means it said more than the word.
+    private static string Token(string text)
+    {
         var candidate = text.TrimStart();
         var end = candidate.Length;
         while (end > 0 && (char.IsWhiteSpace(candidate[end - 1]) || "。.!！?？".Contains(candidate[end - 1]))) end--;
-        return candidate.AsSpan(0, end).SequenceEqual("あっ") || candidate.AsSpan(0, end).SequenceEqual("ああ");
+        return candidate[..end];
     }
 }
 

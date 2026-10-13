@@ -13,21 +13,31 @@ struct WakeOrigin: Equatable {
     }
 }
 
-enum AutomaticTranscriptPolicy {
-    case disabled, filterInterjections
+struct AutomaticTranscriptPolicy: Equatable {
+    /// Whole transcripts an automatic recording is dropped for, after `token` trims it.
+    var ignored: Set<String>
+
+    static let disabled = AutomaticTranscriptPolicy(ignored: [])
+    static let filterInterjections = AutomaticTranscriptPolicy(ignored: ["あっ", "ああ"])
+
+    init(ignored: Set<String>) { self.ignored = ignored }
 
     init(_ options: NoWakeWordConfig?) {
-        self = options?.filterInterjections == true ? .filterInterjections : .disabled
+        let listed = Set((options?.ignoredTranscripts ?? []).map(Self.token))
+        ignored = options?.filterInterjections == true ? listed.union(Self.filterInterjections.ignored) : listed
     }
 
-    func rejects(_ text: String, origin: WakeOrigin) -> Bool {
-        guard self == .filterInterjections, origin.isAutomatic else { return false }
+    /// Outer whitespace and trailing 。.!！?？ only; anything inside the text means it said more than the word.
+    static func token(_ text: String) -> String {
         var candidate = text.unicodeScalars.drop(while: { $0.properties.isWhitespace })
         while let last = candidate.last, last.properties.isWhitespace || "。.!！?？".unicodeScalars.contains(last) {
             candidate.removeLast()
         }
-        let token = String(String.UnicodeScalarView(candidate))
-        return token == "あっ" || token == "ああ"
+        return String(String.UnicodeScalarView(candidate))
+    }
+
+    func rejects(_ text: String, origin: WakeOrigin) -> Bool {
+        origin.isAutomatic && !ignored.isEmpty && ignored.contains(Self.token(text))
     }
 }
 
@@ -115,6 +125,8 @@ struct NoWakeWordConfig: Decodable {
     var followupMs: Int?
     var idleMs: Int?
     var filterInterjections: Bool?
+    /// Transcripts that are never kept from an automatic recording when they are all it said, e.g. "うん".
+    var ignoredTranscripts: [String]?
     /// Automatic recordings shorter than this are a cough or a click, not speech; they never reach Superwhisper (Windows MinHandoffMs).
     var minHandoffMs: Int?
     var enabled: Bool { followup == true || autoIdle == true || relaxedReadingDistance2 == true }

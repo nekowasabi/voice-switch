@@ -22,6 +22,19 @@ The comparison preserves internal spaces and punctuation. It also preserves lead
 
 The filter applies to `auto_b`, `followup`, and `relaxed_d2` recordings. Strict wake-word and manual recordings are exempt. A spoken strict wake word keeps its existing priority over an automatic recording.
 
+## Additional ignored transcripts
+
+`dictation.noWakeWord.ignoredTranscripts` lists more whole transcripts to discard from automatic recordings, for words that keep appearing and are never meant as dictation. It works with or without `filterInterjections`, and the two lists combine.
+
+```json
+"noWakeWord": {
+  "filterInterjections": true,
+  "ignoredTranscripts": ["うん"]
+}
+```
+
+Each entry and each transcript go through the same matching rule as above, so `うん。` and ` うん` match the entry `うん`, while `うん、それで` does not. Strict wake-word recordings are exempt, because Superwhisper pastes those itself before voice-switch sees the text. Keep the list short; every entry also discards a genuine automatic utterance that says only that word.
+
 ## Recording and delivery behavior
 
 Each recording keeps the setting captured when its dictation session starts. A configuration reload does not change the policy for a pending transcript. The next session uses the reloaded setting.

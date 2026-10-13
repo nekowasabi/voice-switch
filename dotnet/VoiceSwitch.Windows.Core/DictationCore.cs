@@ -523,7 +523,7 @@ public sealed class DictationSession
     public DictationSession(VoiceSwitchConfig config)
     {
         this.config = config;
-        transcriptPolicy = new(config.Dictation?.NoWakeWord?.FilterInterjections == true);
+        transcriptPolicy = AutomaticTranscriptPolicy.From(config.Dictation?.NoWakeWord);
         wakes = config.Wakes();
         wakeSets = (config.Windows?.Actions ?? [])
             .Select(action => ((WakeAction?)action, action.Wakes()))

@@ -62,6 +62,12 @@ try
     CheckRecording(before with { Origin = new(WakeRule.Strict, 0) }, "あっ");
     Check(!Load("{\"filterInterjections\":true}").Dictation!.NoWakeWord!.Enabled, "filter alone does not start automatic recording");
     CheckRecording(new(Guid.NewGuid(), new(0, 2), [1, 2], Origin: new(WakeRule.AutoB, 4)), "あっ");
+    var listed = AutomaticTranscriptPolicy.From(Load("{\"ignoredTranscripts\":[\"うん。\"]}").Dictation!.NoWakeWord);
+    Check(listed.Rejects(" うん。", new(WakeRule.AutoB, 4)), "listed transcript rejected");
+    Check(!listed.Rejects("うん、それで", new(WakeRule.AutoB, 4)), "longer speech kept");
+    Check(!listed.Rejects("あっ", new(WakeRule.AutoB, 4)), "interjections still need filterInterjections");
+    Check(!listed.Rejects("うん", new(WakeRule.Strict, 4)), "wake-word dictation kept");
+    Check(AutomaticTranscriptPolicy.From(Load("{\"filterInterjections\":true,\"ignoredTranscripts\":[\"うん\"]}").Dictation!.NoWakeWord).Rejects("あっ", new(WakeRule.AutoB, 4)), "flag and list combine");
 }
 finally { File.Delete(path); }
 
