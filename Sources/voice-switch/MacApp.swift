@@ -1037,14 +1037,24 @@ final class Listener {
             }
     }
 
+    /// Checked on every voiced frame, so only a change of reason is logged.
+    private var lastAutomaticBlock: String?
+
     private func automaticWakeAllowed() -> Bool {
-        if localHistoryState.withLock({ $0.busy }) { return false }
-        if micInUse(by: config.cfg.skipWhileMicInUseBy ?? [], failClosed: true) != nil { return false }
+        let block = automaticWakeBlock()
+        if let block, block != lastAutomaticBlock { log("automatic wake blocked: \(block)") }
+        lastAutomaticBlock = block
+        return block == nil
+    }
+
+    private func automaticWakeBlock() -> String? {
+        if localHistoryState.withLock({ $0.busy }) { return "previous recording still transcribing" }
+        if let busy = micInUse(by: config.cfg.skipWhileMicInUseBy ?? [], failClosed: true) { return "\(busy) is using the microphone" }
         if let excluded = config.cfg.dictation?.excludeBundleIDs, !excluded.isEmpty {
-            guard let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else { return false }
-            if excluded.contains(id) { return false }
+            guard let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else { return "frontmost app unknown" }
+            if excluded.contains(id) { return "\(id) is excluded" }
         }
-        return true
+        return nil
     }
 
     /// `heard` is a transcript of `u` already taken this frame, so the utterance is not recognized twice.
