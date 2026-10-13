@@ -90,7 +90,7 @@ enum MacWakeShortcuts {
             var id = EventHotKeyID()
             let result = GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
                                            nil, MemoryLayout<EventHotKeyID>.size, nil, &id)
-            guard result == noErr, id.signature == signature else { return OSStatus(eventNotHandledErr) }
+            guard result == noErr, id.signature == MacWakeShortcuts.signature else { return OSStatus(eventNotHandledErr) }
             if id.id == 1 { HistoryPanel.shared.show() }
             if id.id == 2 { Hotkeys.requestStart() }
             if id.id == 3 { MacWakeShortcuts.copyNewestHistory() }
@@ -120,7 +120,7 @@ func macReading(_ text: String) -> String? {
     }
     if kanaOnly(normalized) { return normalized }
     guard let tokenizer = CFStringTokenizerCreate(nil, text as CFString, CFRange(location: 0, length: text.utf16.count),
-        kCFStringTokenizerUnitWord, CFLocaleCreate(nil, "ja_JP" as CFString)) else { return nil }
+        kCFStringTokenizerUnitWord, Locale(identifier: "ja_JP") as CFLocale) else { return nil }
     var result = ""
     while true {
         _ = CFStringTokenizerAdvanceToNextToken(tokenizer)
@@ -158,7 +158,7 @@ enum MacModeRestoreStore {
         let path = directory.appendingPathComponent("mode-owner.lock").path
         let descriptor = Darwin.open(path, O_CREAT | O_RDWR | O_NOFOLLOW, mode_t(0o600))
         guard descriptor >= 0 else { throw CocoaError(.fileWriteNoPermission) }
-        guard Darwin.flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
             _ = Darwin.close(descriptor)
             throw CocoaError(.fileLocking)
         }
