@@ -145,8 +145,9 @@ func check(_ paths: [String], cfg: Config) async throws {
                 }
             }
             guard let event else { continue }
+            if case .tail = event { continue }
             earlyHit = false
-            let (u, isHead) = switch event { case let .utterance(u): (u, false); case let .head(u): (u, true) }
+            let (u, isHead) = switch event { case let .utterance(u): (u, false); case let .head(u): (u, true); case .tail: ([], false) }
             let began = Date()
             let tr = try await transcribe(u, locale: locale)
             if !isHead, targets.contains(tr.text) {
@@ -767,7 +768,7 @@ final class Listener {
             let event = seg.push(f)
             // The automatic session opens on voice activity before any transcript, so a spoken wake word replaces it with the
             // dictation the user asked for. The idle path below transcribes the same utterance again and opens that dictation.
-            var heardDuringAutomatic: String?
+            var heardDuringAutomatic: Transcript?
             if dictation?.origin.isAutomatic == true, case let .utterance(u)? = event,
                let heard = try? await transcribe(u, locale: Locale(identifier: config.cfg.locale ?? "ja_JP")) {
                 guard localHistoryState.withLock({ $0.generation == generation }) else { continue }
@@ -775,7 +776,7 @@ final class Listener {
                     dictation = nil; speechFrames = 0
                     log("dictation session: automatic replaced by wake word")
                 } else {
-                    heardDuringAutomatic = heard.text
+                    heardDuringAutomatic = heard
                 }
             }
             if var d = dictation {
@@ -788,13 +789,16 @@ final class Listener {
                 }
                 d.samples += f
                 d.silentFrames = seg.lastWasSpeech ? 0 : d.silentFrames + 1
-                let stopUtterance: [Float]?
-                if case let .utterance(u)? = event { stopUtterance = await isStopWord(u, heard: heardDuringAutomatic) ? u : nil }
-                else { stopUtterance = nil }
+                var stopCut: Int?
+                switch event {
+                case let .utterance(u)?: stopCut = await stopWordCut(u, heard: heardDuringAutomatic)
+                case let .tail(u)?: stopCut = await stopWordCut(u)
+                default: break
+                }
                 guard localHistoryState.withLock({ $0.generation == generation }) else { continue }
-                if let u = stopUtterance {
-                    // The stop word arrived as its own utterance; its audio is the tail of the buffer.
-                    d.samples.removeLast(min(u.count, d.samples.count))
+                if let stopCut {
+                    // The utterance ends now, so the stop word and the silence after it are the end of the buffer.
+                    d.samples.removeLast(min(stopCut, d.samples.count))
                     dictation = nil; recent.removeAll(); speechFrames = 0; Hotkeys.end(); endedByUser = true
                     log("dictation finished by stop word")
                     playStopSound()
@@ -888,7 +892,9 @@ final class Listener {
                 continue
             }
             guard let event else { continue }
-            let (u, isHead) = switch event { case let .utterance(u): (u, false); case let .head(u): (u, true) }
+            // Only a dictation listens for a stop word at the end of a long utterance.
+            if case .tail = event { continue }
+            let (u, isHead) = switch event { case let .utterance(u): (u, false); case let .head(u): (u, true); case .tail: ([], false) }
             config.reloadIfChanged()
             seg.cfg = config.cfg
             let transcript: Transcript
@@ -1024,14 +1030,16 @@ final class Listener {
     }
 
     /// `heard` is a transcript of `u` already taken this frame, so the utterance is not recognized twice.
-    private func isStopWord(_ u: [Float], heard: String? = nil) async -> Bool {
-        let words = (config.cfg.stopWords ?? []).map(normalize)
-        guard !words.isEmpty else { return false }
+    /// Samples to drop from the end of the dictation when `u` ends with a stop word, else nil.
+    private func stopWordCut(_ u: [Float], heard: Transcript? = nil) async -> Int? {
+        let words = config.cfg.stopWords ?? []
+        guard !words.isEmpty else { return nil }
         var t = heard
-        if t == nil { t = try? await transcribe(u, locale: Locale(identifier: config.cfg.locale ?? "ja_JP")).text }
-        guard let t else { return false }
-        if config.cfg.dictation?.noWakeWord?.enabled != true { log("dictating: \(t)  [utt \(u.count * 1000 / Int(rate)) ms]") }
-        return words.contains(t)
+        if t == nil { t = try? await transcribe(u, locale: Locale(identifier: config.cfg.locale ?? "ja_JP")) }
+        guard let t else { return nil }
+        if config.cfg.dictation?.noWakeWord?.enabled != true { log("dictating: \(t.text)  [utt \(u.count * 1000 / Int(rate)) ms]") }
+        guard let start = stopWordStart(t, stopWords: words) else { return nil }
+        return u.count - min(u.count, Int(start * rate))
     }
 
     private func restart() { halt(); attemptStart() }

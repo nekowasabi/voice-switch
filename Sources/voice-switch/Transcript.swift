@@ -14,6 +14,19 @@ struct Transcript {
     var text: String { normalize(runs.map(\.text).joined()) }
 }
 
+/// Seconds into the audio where a trailing stop word starts, or nil when the transcript does not end with one.
+/// "…思っています入力ストップ" stops; "入力ストップです" does not.
+func stopWordStart(_ t: Transcript, stopWords: [String]) -> Double? {
+    let words = Set(stopWords.map(normalize).filter { !$0.isEmpty })
+    var suffix = ""
+    for (i, run) in t.runs.enumerated().reversed() {
+        suffix = normalize(run.text) + suffix
+        if words.contains(suffix) { return i == 0 ? 0 : run.start }
+        if !words.contains(where: { $0.hasSuffix(suffix) }) { return nil }
+    }
+    return nil
+}
+
 /// Where to cut the audio so it starts after any leading wake words, plus the normalized text heard after them.
 /// nil if the transcript does not start with a wake word or has nothing after it.
 func dictationStart(_ t: Transcript, wakeWords: [String]) -> (cutAt: Double, rest: String)? {

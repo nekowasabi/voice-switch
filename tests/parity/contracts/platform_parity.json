@@ -128,7 +128,7 @@
       "id": "whole_utterance_stop_runs_stop_command",
       "macos": {
         "file": "Sources/voice-switch/MacApp.swift",
-        "markers": ["stopWords ?? []", "Platform.runMacAction(config.cfg, stop: true)", "isStopWord"]
+        "markers": ["stopWords ?? []", "Platform.runMacAction(config.cfg, stop: true)", "stopWordCut"]
       },
       "windows": {
         "file": "dotnet/VoiceSwitch.Windows.Core/TextMatching.cs",
@@ -196,7 +196,7 @@
       "id": "dictation_closed_stop_guard",
       "macos": {
         "file": "Sources/voice-switch/MacApp.swift",
-        "markers": ["!isHead", "isStopWord", "removeLast"]
+        "markers": ["!isHead", "stopWordCut", "removeLast"]
       },
       "windows": {
         "file": "dotnet/VoiceSwitch.Windows.Core/DictationCore.cs",

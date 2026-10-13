@@ -14,6 +14,7 @@ struct Segmenter {
     private var utt: [[Float]] = []
     private var silent = 0
     private var skipping = false
+    private var tailFrames: [[Float]] = []
     private var lastRms: Float = 0
     private var levelSum: Double = 0
     private var levelCount = 0
@@ -26,6 +27,8 @@ struct Segmenter {
         case utterance([Float])
         /// The start of an utterance too long to be a wake word; may be a one-breath dictation.
         case head([Float])
+        /// The last maxSeconds of an over-cap utterance, when it ends. A stop word said without a pause lands here.
+        case tail([Float])
     }
 
     init(cfg: Config) { self.cfg = cfg }
@@ -121,10 +124,16 @@ struct Segmenter {
             skipping = true
             // Everything buffered so far, not just maxSeconds, so a dictation continuing from here has no gap.
             head = .head(Array((utt + [f]).joined()))
+            // Seeded from the head so a stop word straddling the cap is whole in the tail.
+            tailFrames = Array((utt + [f]).suffix(maxFrames + hangover))
+        } else {
+            tailFrames.append(f)
+            if tailFrames.count > maxFrames + hangover { tailFrames.removeFirst() }
         }
         guard silent >= hangover else { return head }
-        let done = !skipping && utt.count - hangover >= minFrames ? Event.utterance(Array(utt.joined())) : nil
-        utt = []; ring = []; skipping = false; lastProbe = 0
+        let done = !skipping && utt.count - hangover >= minFrames ? Event.utterance(Array(utt.joined()))
+            : skipping && !tailFrames.isEmpty ? Event.tail(Array(tailFrames.joined())) : nil
+        utt = []; ring = []; tailFrames = []; skipping = false; lastProbe = 0
         levelSum = 0; levelCount = 0
         return done ?? head
     }

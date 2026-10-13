@@ -262,6 +262,9 @@ func checkSegmenter(_ spec: SegmenterFixture.Spec, config: Config) {
     case .head(let samples):
         actualKind = "head"
         sampleCount = samples.count
+    case .tail(let samples):
+        actualKind = "tail"
+        sampleCount = samples.count
     case nil:
         actualKind = "<none>"
         sampleCount = 0
