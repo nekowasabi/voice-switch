@@ -605,6 +605,10 @@ final class Listener {
     var onRestart: (() -> Void)?
     private var restartError: String?
     private var retryScheduled = false
+    /// When the tap last delivered audio. Display sleep can make coreaudiod drop the input without
+    /// AVAudioEngineConfigurationChange (2026-10-13 log), and every end condition counts frames, so a dictation open then never ends.
+    private let lastBuffer = OSAllocatedUnfairLock(initialState: Date())
+    private var stallRestarts = 0
     /// CoreAudio device UID; nil follows the system default input. Set only while stopped.
     var deviceUID: String? {
         // A pinned input unit never follows the system default again, so start over with a fresh engine.
@@ -625,6 +629,18 @@ final class Listener {
             log("audio configuration changed, restarting input")
             self.restart()
         }
+        Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in self?.checkStall() }
+    }
+
+    private func checkStall() {
+        guard running else { return }
+        let silentFor = Date().timeIntervalSince(lastBuffer.withLock { $0 })
+        if silentFor < 10 { stallRestarts = 0; return }
+        // ponytail: backoff doubles to 320 s so a long display sleep does not restart the engine every 10 s.
+        guard silentFor >= 10 * pow(2, Double(min(stallRestarts, 5))) else { return }
+        log("input stalled: no audio for \(Int(silentFor)) s, restarting")
+        stallRestarts += 1
+        halt(); engine = AVAudioEngine(); attemptStart()
     }
 
     func start() throws {
@@ -656,7 +672,9 @@ final class Listener {
         pending = []
         node.removeTap(onBus: 0)
         let captureGeneration = localHistoryState.withLock { $0.generation }
+        lastBuffer.withLock { $0 = Date() }
         node.installTap(onBus: 0, bufferSize: 4096, format: fmt) { [self] buf, _ in
+            lastBuffer.withLock { $0 = Date() }
             guard let out = convert(buf, with: conv, flush: false) else { return }
             pending += UnsafeBufferPointer(start: out.floatChannelData![0], count: Int(out.frameLength))
             while pending.count >= frameLen {
