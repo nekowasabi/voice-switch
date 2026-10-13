@@ -115,11 +115,17 @@ struct NoWakeWordConfig: Decodable {
     var followupMs: Int?
     var idleMs: Int?
     var filterInterjections: Bool?
+    /// Automatic recordings shorter than this are a cough or a click, not speech; they never reach Superwhisper (Windows MinHandoffMs).
+    var minHandoffMs: Int?
     var enabled: Bool { followup == true || autoIdle == true || relaxedReadingDistance2 == true }
     var valid: Bool { (1000...30000).contains(followupMs ?? 8000) && (1000...60000).contains(idleMs ?? 3000) }
 }
 
 enum NoWakePolicy {
+    static func belowMinHandoff(sampleCount: Int, rate: Double, options: NoWakeWordConfig?) -> Bool {
+        sampleCount < Int(rate) * (options?.minHandoffMs ?? 1000) / 1000
+    }
+
     static func onSpeech(_ options: NoWakeWordConfig?, idleSeconds: Double?, inFollowupWindow: Bool) -> WakeOrigin? {
         guard let options, options.valid, let idleSeconds, idleSeconds.isFinite, idleSeconds >= 0 else { return nil }
         if options.followup == true && inFollowupWindow { return WakeOrigin(rule: .followup, inputIdleSeconds: idleSeconds) }

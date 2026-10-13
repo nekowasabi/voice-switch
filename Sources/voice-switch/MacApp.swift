@@ -1093,6 +1093,10 @@ final class Listener {
     private func submit(_ d: Dictation, cfg: DictationConfig) {
         guard localHistoryState.withLock({ $0.generation == d.captureGeneration }) else { return }
         if d.origin.isAutomatic {
+            if NoWakePolicy.belowMinHandoff(sampleCount: d.samples.count, rate: rate, options: cfg.noWakeWord) {
+                log("dictation dropped: automatic audio shorter than minHandoffMs (\(d.samples.count * 1000 / Int(rate)) ms)")
+                return
+            }
             Task {
                 guard let generation = claimLocalHistory(d) else { log("local history transcription busy; recording discarded"); return }
                 defer { localHistoryState.withLock { $0.busy = false } }
