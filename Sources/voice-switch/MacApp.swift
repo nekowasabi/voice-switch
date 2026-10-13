@@ -394,9 +394,10 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     }
     var result: String?
     var launched = false
+    let trimmedForHandoff = Array(trimQuietHead(samples, rate: rate))
     do {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try writeWAV(samples, to: wav)
+        try writeWAV(trimmedForHandoff, to: wav)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         p.arguments = ["-g", "-a", "superwhisper", wav.path]
@@ -415,9 +416,9 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     if previousMode != nil { _ = await recoverSuperwhisperMode(target: target) }
     guard launched else { return false }
     guard let result else {
-        log("dictation: no superwhisper result within 30 s"); return true
+        log("dictation: no superwhisper result within 30 s \(sidField(sessionID))"); return true
     }
-    log("dictation: \(result.count) chars in \(Int(Date().timeIntervalSince(submitted) * 1000)) ms")
+    log("dictation: \(result.count) chars in \(Int(Date().timeIntervalSince(submitted) * 1000)) ms audio=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), Double(samples.count) / rate))s \(sidField(sessionID))")
     guard stillCurrent() else { return true }
     guard DictationHistory.shared.add(id: sessionID, text: result, origin: origin, expectedGeneration: historyGeneration, policy: transcriptPolicy) else { return true }
     if controlled { return true }
@@ -609,6 +610,11 @@ final class Listener {
     /// AVAudioEngineConfigurationChange (2026-10-13 log), and every end condition counts frames, so a dictation open then never ends.
     private let lastBuffer = OSAllocatedUnfairLock(initialState: Date())
     private var stallRestarts = 0
+    /// Monotonic recognition counter for complete lines (Windows id=N parity), starting at 1.
+    private let nextRecognitionId = OSAllocatedUnfairLock(initialState: 1)
+    private func takeRecognitionId() -> Int {
+        nextRecognitionId.withLock { state in let id = state; state += 1; return id }
+    }
     /// CoreAudio device UID; nil follows the system default input. Set only while stopped.
     var deviceUID: String? {
         // A pinned input unit never follows the system default again, so start over with a fresh engine.
@@ -750,12 +756,12 @@ final class Listener {
         var recent: [Float] = []
         var speechFrames = 0
         var gapFrames = 0
-        func submitAndArm(_ d: Dictation, cfg: DictationConfig) {
+        func submitAndArm(_ d: Dictation, cfg: DictationConfig, reason: String) {
             if !d.origin.isAutomatic && d.action == nil, let options = cfg.noWakeWord, options.followup == true, options.valid {
                 followupUntil = clock + Int(rate) * (options.followupMs ?? 8000) / 1000
             }
             recent.removeAll(); speechFrames = 0
-            submit(d, cfg: cfg)
+            submit(d, cfg: cfg, reason: reason)
         }
         var activeGeneration = localHistoryState.withLock { $0.generation }
         for await frame in stream {
@@ -803,7 +809,7 @@ final class Listener {
                 if key == .cancel {
                     dictation = nil; recent.removeAll(); speechFrames = 0; Hotkeys.end()
                     followupUntil = 0
-                    log("dictation cancelled"); continue
+                    log("dictation cancelled \(sidField(d.sessionID))"); continue
                 }
                 d.samples += f
                 d.silentFrames = seg.lastWasSpeech ? 0 : d.silentFrames + 1
@@ -818,9 +824,9 @@ final class Listener {
                     // The utterance ends now, so the stop word and the silence after it are the end of the buffer.
                     d.samples.removeLast(min(stopCut, d.samples.count))
                     dictation = nil; recent.removeAll(); speechFrames = 0; Hotkeys.end(); endedByUser = true
-                    log("dictation finished by stop word")
+                    log("dictation finished by stop word \(sidField(d.sessionID))")
                     playStopSound()
-                    if d.heardSpeech, !d.samples.isEmpty { submitAndArm(d, cfg: dc) }
+                    if d.heardSpeech, !d.samples.isEmpty { submitAndArm(d, cfg: dc, reason: finishReasonToken("stop word")) }
                     continue
                 }
                 if d.deafFrames > 0 { d.deafFrames -= 1 } else if !d.heardSpeech && seg.lastWasSpeech {
@@ -832,7 +838,7 @@ final class Listener {
                 if !d.heardSpeech {
                     if d.silentFrames * frameLen * 1000 / Int(rate) >= dc.startTimeoutMs ?? 3000 {
                         dictation = nil; recent.removeAll(); speechFrames = 0; Hotkeys.end()
-                        log("dictation cancelled: nothing said after the wake word")
+                        log("dictation cancelled: nothing said after the wake word \(sidField(d.sessionID))")
                     }
                     continue
                 }
@@ -842,9 +848,9 @@ final class Listener {
                     : "\(d.silentFrames * frameLen * 1000 / Int(rate)) ms silence"
                 d.samples.removeLast(d.silentFrames * frameLen)
                 dictation = nil; recent.removeAll(); speechFrames = 0; Hotkeys.end(); endedByUser = key == .finish
-                log("dictation ended by \(reason) after \(d.samples.count * 1000 / Int(rate)) ms of audio")
+                log("dictation ended by \(reason) after \(d.samples.count * 1000 / Int(rate)) ms of audio \(sidField(d.sessionID))")
                 if key == .finish { playStopSound() }
-                submitAndArm(d, cfg: dc)
+                submitAndArm(d, cfg: dc, reason: finishReasonToken(reason))
                 continue
             }
             // speechFrames counts the voiced frames of the phrase being spoken, joined across gaps up to the hangover,
@@ -860,7 +866,7 @@ final class Listener {
                 if automaticWakeAllowed() {
                     dictation = Dictation(samples: [], generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: false)
                     Hotkeys.begin()
-                    log("dictation session: manual-hotkey \(dictation!.origin.fields)")
+                    log("dictation session: manual-hotkey \(dictation!.origin.fields) \(sidField(dictation!.sessionID))")
                 }
                 continue
             }
@@ -877,7 +883,7 @@ final class Listener {
                 if !samples.isEmpty {
                     // No hotkeys: the user is mid-task elsewhere and their Escape belongs to that app, so only silence or a stop word ends it.
                     dictation = Dictation(samples: samples, generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: true, origin: origin)
-                    log("dictation session: automatic \(origin.fields)")
+                    log("dictation session: automatic \(origin.fields) \(sidField(dictation?.sessionID))")
                     continue
                 }
             }
@@ -887,7 +893,8 @@ final class Listener {
                 let began = Date()
                 guard let tr = try? await transcribe(buf, locale: Locale(identifier: config.cfg.locale ?? "ja_JP")) else { continue }
                 guard localHistoryState.withLock({ $0.generation == generation }) else { continue }
-                log("dictation recognition: complete \(WakeOrigin(rule: .strict, inputIdleSeconds: MacInputActivity.idleSeconds()).fields)")
+                let earlyOrigin = WakeOrigin(rule: .strict, inputIdleSeconds: MacInputActivity.idleSeconds())
+                log("dictation recognition: complete id=\(takeRecognitionId()) \(earlyOrigin.fields) \(sidField(nil))")
                 let stt = Int(Date().timeIntervalSince(began) * 1000)
                 guard let hit = Segmenter.earlyWake(tr, cfg: config.cfg, tailSilentFrames: seg.tailSilentFrames) else { continue }
                 let start = config.cfg.dictation == nil ? nil : hit
@@ -930,7 +937,9 @@ final class Listener {
                 && !(config.cfg.dictation?.superwhisperMode?.isEmpty ?? true)
                 && macRelaxedWake(t, wakeWords: config.cfg.wakeWords)
             let recognitionOrigin = WakeOrigin(rule: relaxed ? .relaxedD2 : .strict, inputIdleSeconds: MacInputActivity.idleSeconds())
-            log("dictation recognition: complete \(recognitionOrigin.fields)")
+            let recognitionId = takeRecognitionId()
+            if !isHead { WakeMissLabel.shared.observe(id: recognitionId, origin: recognitionOrigin, at: Date()) }
+            log("dictation recognition: complete id=\(recognitionId) \(recognitionOrigin.fields) \(sidField(nil))")
             // Logged too, so misses that transcribe to nothing are visible when tuning.
             guard !t.isEmpty else {
                 if config.cfg.dictation?.noWakeWord?.enabled != true { log("heard: (empty, \(u.count * 1000 / Int(rate)) ms)") }
@@ -987,7 +996,7 @@ final class Listener {
             if !hit && start == nil && relaxed, recognitionOrigin.inputIdleSeconds != nil, automaticWakeAllowed() {
                 dictation = Dictation(samples: [], generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: false, origin: recognitionOrigin)
                 Hotkeys.begin()
-                log("dictation session: wake-only \(recognitionOrigin.fields)")
+                log("dictation session: wake-only \(recognitionOrigin.fields) \(sidField(dictation?.sessionID))")
                 continue
             }
             // Over-cap head and recognizer found no wake: steady noise must not keep skipping forever (Windows RebaseFloor).
@@ -1099,7 +1108,7 @@ final class Listener {
     }
 
     private func storeLocal(_ d: Dictation) async {
-        guard let generation = claimLocalHistory(d) else { log("local history transcription busy; recording discarded"); return }
+        guard let generation = claimLocalHistory(d) else { log("local history transcription busy; recording discarded \(sidField(d.sessionID))"); return }
         defer { localHistoryState.withLock { $0.busy = false } }
         await transcribeToHistory(d, generation: generation)
     }
@@ -1109,7 +1118,7 @@ final class Listener {
         do {
             let transcript = try await transcribe(d.samples, locale: Locale(identifier: config.cfg.locale ?? "ja_JP"))
             guard localHistoryState.withLock({ $0.generation == generation }) else { return }
-            log("dictation recognition: complete \(d.origin.fields)")
+            log("dictation recognition: complete id=\(takeRecognitionId()) \(d.origin.fields) \(sidField(d.sessionID))")
             let text = transcript.runs.map(\.text).joined()
             let retained = DictationHistory.shared.add(id: d.sessionID, text: text, origin: d.origin, expectedGeneration: historyGeneration, policy: d.transcriptPolicy)
             if retained && !d.origin.isAutomatic && d.action == nil {
@@ -1118,15 +1127,17 @@ final class Listener {
         } catch { log("local history transcription failed") }
     }
 
-    private func submit(_ d: Dictation, cfg: DictationConfig) {
+    private func submit(_ d: Dictation, cfg: DictationConfig, reason: String) {
         guard localHistoryState.withLock({ $0.generation == d.captureGeneration }) else { return }
+        let token = finishReasonToken(reason)
+        log("dictation session: end reason=\(token) \(d.origin.fields) seconds=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), Double(d.samples.count) / rate)) \(sidField(d.sessionID))")
         if d.origin.isAutomatic {
             if NoWakePolicy.belowMinHandoff(sampleCount: d.samples.count, rate: rate, options: cfg.noWakeWord) {
-                log("dictation dropped: automatic audio shorter than minHandoffMs (\(d.samples.count * 1000 / Int(rate)) ms)")
+                log("dictation dropped: automatic audio shorter than minHandoffMs (\(d.samples.count * 1000 / Int(rate)) ms) reason=\(token) \(sidField(d.sessionID))")
                 return
             }
             Task {
-                guard let generation = claimLocalHistory(d) else { log("local history transcription busy; recording discarded"); return }
+                guard let generation = claimLocalHistory(d) else { log("local history transcription busy; recording discarded \(sidField(d.sessionID))"); return }
                 defer { localHistoryState.withLock { $0.busy = false } }
                 // superwhisper takes focus when it opens the file; hand it back to wherever the user is now, not where the session began.
                 let delivered = await handoff(d.samples, cfg: cfg, target: NSWorkspace.shared.frontmostApplication,
@@ -1140,7 +1151,7 @@ final class Listener {
             defer { busy = true }
             return !busy
         }
-        guard claimed else { log("dictation dropped: previous one still in flight"); return }
+        guard claimed else { log("dictation dropped: previous one still in flight \(sidField(d.sessionID))"); return }
         Task {
             defer { handoffBusy.withLock { $0 = false } }
             let delivered = await handoff(d.samples, cfg: cfg, target: d.target,

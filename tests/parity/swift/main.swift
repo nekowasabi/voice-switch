@@ -53,6 +53,33 @@ func checkWakeHistory() {
     precondition(history.select(first) == nil)
     precondition(!history.add(id: first, text: String(repeating: "x", count: 100_001), origin: origin))
     precondition(WakeOrigin(rule: .relaxedD2, inputIdleSeconds: .nan).fields == "rule=relaxed_d2 inputIdleSeconds=-1")
+    precondition(sidField(nil) == "sid=-")
+    precondition(sidField(UUID(uuidString: "A0B1C2D3-E4F5-4678-89AB-CDEF01234567")!) == "sid=a0b1c2d3-e4f5-4678-89ab-cdef01234567")
+    precondition("\(WakeOrigin(rule: .strict, inputIdleSeconds: 1.5).fields) \(sidField(nil))" == "rule=strict inputIdleSeconds=1.500 sid=-")
+    precondition("\(WakeOrigin(rule: .autoB, inputIdleSeconds: 4).fields) \(sidField(UUID(uuidString: "A0B1C2D3-E4F5-4678-89AB-CDEF01234567")!))" == "rule=auto_b inputIdleSeconds=4.000 sid=a0b1c2d3-e4f5-4678-89ab-cdef01234567")
+    // MISS label hotkey: one label per observation, only within 10 s.
+    let missOrigin = WakeOrigin(rule: .strict, inputIdleSeconds: 0.2)
+    let missBase = Date(timeIntervalSince1970: 1000)
+    let miss = WakeMissLabel()
+    miss.observe(id: 1, origin: missOrigin, at: missBase)
+    precondition(miss.record(now: missBase.addingTimeInterval(9)) == "wake label: MISS id=1 \(missOrigin.fields)")
+    precondition(miss.record(now: missBase.addingTimeInterval(9.5)) == nil)
+    let missExpiry = WakeMissLabel()
+    missExpiry.observe(id: 2, origin: missOrigin, at: missBase)
+    precondition(missExpiry.record(now: missBase.addingTimeInterval(10.001)) == nil)
+    // Windows FinishReason names for the session end line.
+    precondition(finishReasonToken("hotkey") == "FinishCommand")
+    precondition(finishReasonToken("maxSeconds") == "MaximumDuration")
+    precondition(finishReasonToken("1500 ms silence") == "Silence")
+    precondition(finishReasonToken("stop word") == "StandaloneStop")
+    // Superwhisper drops the first sentence of quiet speech behind the 300 ms preroll; the file it reads must
+    // start at most 120 ms before the first speech sample (mirrors Windows test 6128348).
+    let trimQuiet: [Float] = (0..<4800).map { $0 % 2 == 0 ? Float(20) / 32768 : Float(-20) / 32768 }
+    let trimSpeech: [Float] = (0..<8000).map { $0 % 2 == 0 ? Float(3000) / 32768 : Float(-3000) / 32768 }
+    let trimmed = Array(trimQuietHead(trimQuiet + trimSpeech, rate: 16000))
+    let trimHead = trimmed.prefix(while: { abs($0) < Float(3000) / 32768 }).count
+    precondition(trimHead == 1920 && Array(trimmed.dropFirst(trimHead)) == trimSpeech)
+    precondition(Array(trimQuietHead(trimQuiet, rate: 16000)) == trimQuiet)
 }
 checkWakeHistory()
 

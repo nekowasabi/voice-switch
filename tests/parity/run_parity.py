@@ -271,6 +271,7 @@ def check_static_call_chains(result: Result, repo: SourceTree) -> None:
     check_swift_segmenter_rebase(result, repo)
     check_transcribe_deadline(result, repo)
     check_mac_superwhisper_mode_handoff(result, repo)
+    check_swift_handoff_markers(result, repo)
 
 
 def check_dictation_test_markers(result: Result, repo: SourceTree) -> None:
@@ -533,6 +534,31 @@ def check_mac_superwhisper_mode_handoff(result: Result, repo: SourceTree) -> Non
                 "SuperwhisperModes.Decide(modeRequested, route.Disposition)",
             ],
         )
+
+
+def check_swift_handoff_markers(result: Result, repo: SourceTree) -> None:
+    mac = repo.code("Sources/voice-switch/MacApp.swift")
+    wakeui = repo.code("Sources/voice-switch/MacWakeUI.swift")
+    submit_body = extract_braced_body(mac, r"private\s+func\s+submit\s*\([^)]*\)\s*\{")
+    auto_body = extract_braced_body(submit_body, r"if d\.origin\.isAutomatic\s*\{")
+    require_substrings(
+        result,
+        "Swift submit gates min-handoff inside automatic block",
+        auto_body,
+        ["belowMinHandoff("],
+    )
+    require_substrings(
+        result,
+        "Swift handoff writes trimmed audio file",
+        mac,
+        ["writeWAV(trimmedForHandoff", "trimQuietHead(samples"],
+    )
+    require_substrings(
+        result,
+        "Swift MISS label hotkey is id 4",
+        wakeui,
+        ["id.id == 4", "WakeMissLabel.shared.record", "(kVK_F8, UInt32(4))"],
+    )
 
 
 def check_swift_runtime_call_chain(result: Result, repo: SourceTree) -> None:

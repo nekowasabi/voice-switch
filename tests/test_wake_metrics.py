@@ -25,5 +25,21 @@ class WakeMetricsTests(unittest.TestCase):
                 "missing_fields": 2, "miss_labels": 1, "miss_contexts": {"auto_b:idle": 1},
             })
 
+    def test_mac_log_lines_parse_like_windows(self):
+        # Lines exactly as Sources/voice-switch/MacApp.swift writes them (ISO-8601 prefix, id= rule= inputIdleSeconds= sid=).
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "mac.log"
+            path.write_text("\n".join([
+                "2026-10-12T13:00:00Z dictation session: automatic rule=auto_b inputIdleSeconds=4.000 sid=a0b1c2d3-e4f5-4678-89ab-cdef01234567",
+                "2026-10-12T13:00:02Z dictation recognition: complete id=1 rule=auto_b inputIdleSeconds=4.000 sid=a0b1c2d3-e4f5-4678-89ab-cdef01234567",
+                "2026-10-12T13:00:05Z dictation recognition: complete id=2 rule=strict inputIdleSeconds=0.250 sid=-",
+                "2026-10-12T13:00:06Z wake label: MISS id=2 rule=strict inputIdleSeconds=0.250",
+            ]))
+            telemetry = metrics.parse_metrics(path)["wake_telemetry"]
+            self.assertEqual(telemetry["rules"], {"auto_b": 1, "strict": 1})
+            self.assertEqual(telemetry["contexts"], {"auto_b:idle": 1, "strict:after_input": 1})
+            self.assertEqual(telemetry["missing_fields"], 0)
+            self.assertEqual(telemetry["miss_labels"], 1)
+
 if __name__ == "__main__":
     unittest.main()

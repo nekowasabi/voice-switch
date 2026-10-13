@@ -13,6 +13,49 @@ struct WakeOrigin: Equatable {
     }
 }
 
+func sidField(_ id: UUID?) -> String {
+    guard let id else { return "sid=-" }
+    return "sid=\(id.uuidString.lowercased())"
+}
+
+/// One MISS label per observed recognition, pressed via Ctrl+Shift+F8 within 10 s.
+/// Pure Foundation so the Linux parity harness can test it; the hotkey itself stays
+/// a RegisterEventHotKey (no CGEventTap, no new permissions).
+final class WakeMissLabel {
+    static let shared = WakeMissLabel()
+    private let lock = NSLock()
+    private var latest: (id: Int, origin: WakeOrigin, at: Date)?
+
+    func observe(id: Int, origin: WakeOrigin, at: Date = Date()) {
+        lock.lock()
+        latest = (id, origin, at)
+        lock.unlock()
+    }
+
+    func record(now: Date = Date()) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let value = latest else { return nil }
+        let elapsed = now.timeIntervalSince(value.at)
+        guard elapsed >= 0, elapsed <= 10 else { return nil }
+        latest = nil
+        return "wake label: MISS id=\(value.id) \(value.origin.fields)"
+    }
+}
+
+/// Maps Mac end-of-dictation prose reasons to Windows FinishReason names for the log.
+func finishReasonToken(_ reason: String) -> String {
+    switch reason {
+    case "hotkey", "FinishCommand": return "FinishCommand"
+    case "maxSeconds", "MaximumDuration": return "MaximumDuration"
+    case "stop word", "StandaloneStop": return "StandaloneStop"
+    case "Silence": return "Silence"
+    default:
+        if reason.contains("silence") { return "Silence" }
+        return reason.replacingOccurrences(of: " ", with: "_")
+    }
+}
+
 struct AutomaticTranscriptPolicy: Equatable {
     /// Whole transcripts an automatic recording is dropped for, after `token` trims it.
     var ignored: Set<String>

@@ -139,6 +139,19 @@ struct Segmenter {
     }
 }
 
+/// Superwhisper drops the first sentence of quiet speech when the file opens with the session's 300 ms preroll of
+/// room noise (voice-switch.log 2026-10-12; reproduced 4/5 with the real app, 0/20 once the head was cut), so the file
+/// it reads starts at most 120 ms before the first sample that is clearly speech. The session range is untouched.
+func trimQuietHead(_ samples: [Float], rate: Double) -> ArraySlice<Float> {
+    let speech: Float = 300 / 32768
+    let keep = Int(rate * 120 / 1000)
+    var first = 0
+    while first < samples.count && abs(samples[first]) < speech { first += 1 }
+    // ponytail: a fixed amplitude gate; a click in the preroll keeps the whole head. Use frame RMS if that shows up in the log.
+    if first == samples.count { return samples.dropFirst(0) }
+    return samples.dropFirst(max(0, first - keep))
+}
+
 /// Synthetic tones through the Segmenter — no Speech/AVFoundation required.
 func vadSelftest() {
     // RESEARCH hyp 2: deadline helper matches Windows TranscribeDeadline (no Apple Speech needed).

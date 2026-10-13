@@ -94,10 +94,11 @@ enum MacWakeShortcuts {
             if id.id == 1 { HistoryPanel.shared.show() }
             if id.id == 2 { Hotkeys.requestStart() }
             if id.id == 3 { MacWakeShortcuts.copyNewestHistory() }
+            if id.id == 4, let line = WakeMissLabel.shared.record() { log(line) }
             return noErr
         }, 1, &event, nil, &handler)
         guard status == noErr else { log("history hotkey handler unavailable status=\(status)"); return }
-        for (code, id) in [(kVK_F9, UInt32(1)), (kVK_F10, UInt32(2)), (kVK_F11, UInt32(3))] {
+        for (code, id) in [(kVK_F8, UInt32(4)), (kVK_F9, UInt32(1)), (kVK_F10, UInt32(2)), (kVK_F11, UInt32(3))] {
             var key: EventHotKeyRef?
             let registered = RegisterEventHotKey(UInt32(code), UInt32(controlKey | shiftKey),
                 EventHotKeyID(signature: signature, id: id), GetApplicationEventTarget(), 0, &key)
