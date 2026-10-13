@@ -1,0 +1,34 @@
+# voice-switch (macOS) verification map
+
+This directory is the maintained source for verifying what a Mac user of voice-switch experiences. Read the index, then use the matching feature file as the recipe.
+
+| Feature | File | Touches Superwhisper |
+|---|---|---|
+| Wake word runs the command | [wake-command.md](wake-command.md) | no |
+| Stop word | [stop-word.md](stop-word.md) | no |
+| Stop word at the end of a long utterance | [stop-word-long-utterance.md](stop-word-long-utterance.md) | yes (history only, no paste) |
+| Wake word then dictation | [wake-dictation.md](wake-dictation.md) | yes |
+| Automatic sessions without a wake word | [automatic-wake.md](automatic-wake.md) | yes |
+
+## Baseline preconditions
+
+- `$V build` was run on the tree you are proving, and `$V doctor` exits 0.
+- `V=/Users/ttakeda/repos/voice-switch/.claude/skills/verify-voice-switch-mac/verify.sh`.
+- Use one `VS_RUN_ID` per proof so its runs share one evidence folder.
+- Never drive the user's installed VoiceSwitch.app. Only drive `--simulate` processes this skill started.
+
+## Driving conventions
+
+- Fixtures are Kyoko speech made with `$V say`. Put `[[slnc 800]]` or longer between phrases that must be separate utterances. Shorter gaps get merged into one utterance.
+- The safe config (`config.safe.json`) has wake word `音声入力`, stop words `入力ストップ` and `st`, and no `dictation`.
+- Feature configs go in your scratchpad. Keep `__EVIDENCE__` in commands so markers land in the evidence folder.
+
+## Proof and skip reporting
+
+- Quote the `heard:` line and the decision line that follows it.
+- Name the marker file or Superwhisper result that proves the side effect.
+- Report a feature that needs Superwhisper as not run when the user has not agreed to it. Do not report it as verified through the safe config.
+
+## Feature entry contract
+
+Each feature file starts with an H1 title and one paragraph describing the user-visible behavior. It then uses exactly four H2 sections in this order: `Sub-features`, `How to get to it (user POV)`, `Driving it with verify.sh`, and `Gotchas`.
