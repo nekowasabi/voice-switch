@@ -31,6 +31,8 @@ cmd_doctor() {
   if [ -x "$BIN" ]; then
     if "$BIN" --vad-selftest >/dev/null 2>&1; then echo "ok   --vad-selftest"; else echo "FAIL --vad-selftest"; ok=1; fi
   fi
+  # Only VS_BUSY_INPUT=1 runs need this, so it warns instead of failing.
+  if swift "$SKILL/busy-input.swift" 0 >/dev/null 2>&1; then echo "ok   busy-input can post events"; else echo "warn busy-input cannot post events: grant Accessibility to this terminal or VS_BUSY_INPUT runs are not busy"; fi
   for p in "$EVID"/*/*/pid.txt; do
     [ -f "$p" ] || continue
     d=$(dirname "$p")
