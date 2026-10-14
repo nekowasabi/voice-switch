@@ -565,7 +565,7 @@ def check_swift_handoff_markers(result: Result, repo: SourceTree) -> None:
         result,
         "Swift whisper hallucination filtered before agreement",
         mac,
-        ["NoWakePolicy.isWhisperHallucination(heard)"],
+        ["NoWakePolicy.agreedWithWhisper(apple:"],
     )
 
 
