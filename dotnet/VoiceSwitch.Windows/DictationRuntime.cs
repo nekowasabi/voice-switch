@@ -64,6 +64,7 @@ public sealed class WindowsDictationRuntime
     private readonly Func<string, string?>? wakeReading;
     private readonly Func<IReadOnlyCollection<string>, string?> automaticMicInUseBy;
     private readonly Func<double?> inputIdleSeconds;
+    private readonly Func<ImmutableArray<short>, int> voicedWindows;
     // Shadow log of playback vs microphone levels: mic dBFS per frame keyed by sample index, loopback dBFS per 10 ms keyed by ms.
     private readonly LevelTrace micLevels = new(4_000);
     private readonly LevelTrace? loopbackLevels;
@@ -110,8 +111,10 @@ public sealed class WindowsDictationRuntime
         Func<IReadOnlyCollection<string>, string?>? micInUseBy = null,
         Func<string, string?>? wakeReading = null,
         Func<double?>? inputIdleSeconds = null,
-        LevelTrace? loopbackLevels = null)
+        LevelTrace? loopbackLevels = null,
+        Func<ImmutableArray<short>, int>? voicedWindows = null)
     {
+        this.voicedWindows = voicedWindows ?? SpeechGate.VoicedWindows;
         this.wakeReading = wakeReading;
         this.inputIdleSeconds = inputIdleSeconds ?? InputActivity.IdleSeconds;
         this.loopbackLevels = loopbackLevels;
@@ -1061,6 +1064,20 @@ public sealed class WindowsDictationRuntime
     // Not tied to the loop token: pausing or quitting must not abort a handoff Superwhisper is already reading.
     private async Task RunHandoffAsync(DictationAudio audio)
     {
+        // A cough or a keystroke still opens Superwhisper and leaves its own empty or "よっ!" entry; Silero finds no voice in them.
+        // Off the capture loop: a long recording is thousands of Silero windows.
+        if (audio.Wake.IsAutomatic)
+        {
+            try
+            {
+                if (await Task.Run(() => voicedWindows(audio.Samples)) == 0)
+                {
+                    Log.Info($"dictation dropped: automatic audio had no speech reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End} sid={audio.SessionId}");
+                    return;
+                }
+            }
+            catch (Exception ex) { Log.Info($"speech gate failed; handing off anyway: {ex.Message}"); }
+        }
         try
         {
             var result = await handoff.SubmitAsync(audio, audio.Wake.IsAutomatic ? localCancellation : CancellationToken.None);

@@ -114,7 +114,7 @@ internal static class NoWakeTests
 
     public static bool AutomaticRuntime()
     {
-        async Task<(int Entries, int Manual, int Code, bool Leaked, bool Preroll, bool Replaced)> Run(double? idle, string? busy = null, bool failLocal = false, bool failRecognition = false, bool spokenWake = false, bool fragmented = false, bool filterInterjections = false, float? loopbackDb = null, int minHandoffMs = 0)
+        async Task<(int Entries, int Manual, int Code, bool Leaked, bool Preroll, bool Replaced)> Run(double? idle, string? busy = null, bool failLocal = false, bool failRecognition = false, bool spokenWake = false, bool fragmented = false, bool filterInterjections = false, float? loopbackDb = null, int minHandoffMs = 0, int voiced = 1)
         {
             var frames = new List<PcmFrame>();
             void Add(int count, short value)
@@ -141,7 +141,8 @@ internal static class NoWakeTests
                     : [new LexicalRun("PRIVATE_NO_WAKE_BODY", request.Range)])));
             var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(frames, new[] { 22, 36, 56, 70 }),
                 recognizer, handoff, false, inputIdleSeconds: () => idle, wakeReading: value => value,
-                micInUseBy: _ => busy, loopbackLevels: loopbackDb is { } constantDb ? ConstantLoopback(constantDb) : null);
+                micInUseBy: _ => busy, loopbackLevels: loopbackDb is { } constantDb ? ConstantLoopback(constantDb) : null,
+                voicedWindows: _ => voiced);
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             var previousOutput = Console.Out;
             using var output = new StringWriter();
@@ -171,6 +172,8 @@ internal static class NoWakeTests
                     throw new InvalidOperationException($"session logs are not joined by sid (idle={idle} busy={busy} failLocal={failLocal} failRecognition={failRecognition} spokenWake={spokenWake} fragmented={fragmented} filter={filterInterjections})");
                 if (minHandoffMs > 0 && !output.ToString().Contains("dictation dropped: automatic audio shorter than minHandoffMs"))
                     throw new InvalidOperationException("short automatic audio was not dropped before handoff");
+                if (voiced == 0 && lines.Count(line => line.Contains("dictation dropped: automatic audio had no speech")) != 2)
+                    throw new InvalidOperationException("automatic audio without speech was not dropped before handoff");
                 if (busy is not null && lines.Count(line => line.Contains($"automatic wake blocked: {busy}")) != 1)
                     throw new InvalidOperationException("a blocked automatic wake must be logged once, not silently or per frame");
                 if (filterInterjections)
@@ -196,6 +199,7 @@ internal static class NoWakeTests
             && Run(4, loopbackDb: -20).GetAwaiter().GetResult() == (2, 2, 0, false, true, false)
             && Run(4, loopbackDb: -100).GetAwaiter().GetResult() == (2, 2, 0, false, true, false)
             && Run(4, minHandoffMs: 1000).GetAwaiter().GetResult() == (0, 0, 0, false, true, false)
+            && Run(4, voiced: 0).GetAwaiter().GetResult() == (0, 0, 0, false, true, false)
             && Run(null).GetAwaiter().GetResult() == (0, 0, 0, false, true, false)
             && Run(0).GetAwaiter().GetResult() == (2, 2, 0, false, true, false)
             && Run(0, spokenWake: true).GetAwaiter().GetResult() is (0, > 0, 0, _, _, true)

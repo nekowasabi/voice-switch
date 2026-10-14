@@ -1,1 +1,7 @@
-<Project Sdk="Microsoft.NET.Sdk" />
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <!-- Same ONNX Runtime version as the macOS Swift package, so both run Silero alike. -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.24.2" />
+    <EmbeddedResource Include="..\..\Sources\voice-switch\Resources\silero_vad.onnx" LogicalName="silero_vad.onnx" />
+  </ItemGroup>
+</Project>

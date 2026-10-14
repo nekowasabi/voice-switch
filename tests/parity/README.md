@@ -21,6 +21,7 @@ What the checker proves:
 - Swift and C# config types must keep the same retained compatibility fields. The intentional `macOS` URL action object is Mac-only; Windows .NET ignores it. Its mirror, the `windows` object (`windows.actions`), is Windows-only; Swift ignores it.
 - Windows core behavior is executed through compiled `VoiceSwitch.Windows.Core` copied into a temporary project.
 - Swift pure behavior is executed through production `Config.swift`, `Transcript.swift`, `Segmenter.swift`, and `PaneRoute.swift` when `swiftc` is present.
+- The Silero speech gate gives the same drop/keep verdict on both platforms for `fixtures/speech_gate.json`. C# runs it through the real `VoiceSwitch.Windows.Core` project. Swift runs it through `.build/release/voice-switch --check`, so build that first; `--require-swift` fails when it is missing.
 - The tmux pane route (label match, Jev policy table, Jev answer parsing) is asserted on both platforms from `fixtures/pane_route.json`; the C# tests read the same file.
 - Static call-chain checks tie the Windows CLI parse to `Main`, recognized text to `TextMatching.Decide`, and the decision to `CommandRunner.Run`.
 - Static call-chain checks tie the Windows `--vad-selftest` alias to `SelfTest.Run`, and require that self-test to exercise `Segmenter`.
