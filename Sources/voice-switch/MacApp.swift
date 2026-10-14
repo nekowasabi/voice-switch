@@ -66,6 +66,13 @@ func transcribe(_ samples: [Float], locale: Locale) async throws -> Transcript {
     }
 }
 
+/// Characters Apple Speech and Whisper both wrote for `samples`, compared with `NoWakePolicy.minAgreedCharacters`.
+func agreedWordCount(_ samples: [Float], locale: Locale) async throws -> Int {
+    async let whisperText = Task.detached { try WhisperGate.transcribe(samples) }.value
+    async let appleText = transcribe(samples, locale: locale).text
+    return NoWakePolicy.agreedCharacters(try await appleText, try await whisperText)
+}
+
 /// Samples to drop from the end of the dictation when `u` ends with a stop word, else 0.
 /// `heard` is a transcript of `u` already taken this frame, so the utterance is not recognized twice.
 /// Runs beside the frame loop, so it may wait on the recognizer.
@@ -763,6 +770,9 @@ final class Listener {
         let sessionID = UUID()
         let captureGeneration: Int
         let historyGeneration = DictationHistory.shared.generation
+        /// Whether Apple Speech and Whisper agreed on words in it. An automatic recording records from its first sound but shows
+        /// the recording HUD only once confirmed, so a cough no longer flashes it; one the user started is confirmed from the start.
+        var confirmed: Bool
         init(samples: [Float], generation: Int, transcriptPolicy: AutomaticTranscriptPolicy, silentFrames: Int, heardSpeech: Bool, action: WakeAction? = nil,
              origin: WakeOrigin = WakeOrigin(rule: .strict, inputIdleSeconds: MacInputActivity.idleSeconds())) {
             self.samples = samples
@@ -772,6 +782,7 @@ final class Listener {
             self.action = action
             self.origin = origin
             self.transcriptPolicy = transcriptPolicy
+            confirmed = !origin.isAutomatic
         }
     }
 
@@ -791,6 +802,7 @@ final class Listener {
         var gapFrames = 0
         // Stop-word judgement runs beside the frame loop; `stopJob` says which dictation and generation it belongs to.
         let stopCheck = LatestRecognition<Int>()
+        let wordCheck = LatestRecognition<(session: UUID, agreed: Bool)>()
         var stopJob: (session: UUID, generation: Int)?
         var stopFrames = 0
         func submitAndArm(_ d: Dictation, cfg: DictationConfig, reason: String) {
@@ -817,7 +829,7 @@ final class Listener {
             var endedByUser = false
             // Derived from `dictation` after every frame (defer covers each `continue`) instead of at each place that sets it.
             defer {
-                let phase: Phase = endedByUser ? .ended : dictation.map { $0.heardSpeech ? .recording : .waiting } ?? (clock < followupUntil && config.cfg.dictation?.noWakeWord?.followup == true ? .followup : .idle)
+                let phase: Phase = endedByUser ? .ended : dictation.map { !$0.heardSpeech ? .waiting : $0.confirmed ? .recording : .idle } ?? (clock < followupUntil && config.cfg.dictation?.noWakeWord?.followup == true ? .followup : .idle)
                 // .ended hides itself after a moment; the idle that follows it is not a change.
                 if phase != shown, !(shown == .ended && phase == .idle) {
                     shown = phase
@@ -850,6 +862,16 @@ final class Listener {
                 }
                 d.samples += f
                 d.silentFrames = seg.lastWasSpeech ? 0 : d.silentFrames + 1
+                if !d.confirmed, let check = wordCheck.take(), check.session == d.sessionID, check.agreed {
+                    d.confirmed = true
+                    log("dictation session: automatic confirmed by agreed words \(sidField(d.sessionID))")
+                }
+                // Checked beside the frame loop on the audio so far, each time an utterance closes, until one agrees.
+                if !d.confirmed, case .utterance(_)? = event {
+                    let samples = d.samples, session = d.sessionID, locale = Locale(identifier: config.cfg.locale ?? "ja_JP")
+                    // A recognizer that fails confirms, as the handoff hands such a recording off.
+                    wordCheck.submit { (session, (try? await agreedWordCount(samples, locale: locale)).map { $0 >= NoWakePolicy.minAgreedCharacters } ?? true) }
+                }
                 stopFrames += f.count
                 // The stop word is judged beside the frame loop, on the newest utterance only. Frames keep flowing meanwhile,
                 // so the result is taken on a later frame, and the cut also drops the frames that arrived since.
@@ -1187,17 +1209,18 @@ final class Listener {
                 } catch { log("speech gate failed; handing off anyway: \(error)") }
                 // Silero still hears a voiced cough as speech. Whisper and Apple Speech each invent their own words for it,
                 // while spoken words come out the same from both, so only a recording they agree on reaches superwhisper.
-                let began = Date()
-                async let whisperText = Task.detached { try WhisperGate.transcribe(d.samples) }.value
-                async let appleText = transcribe(d.samples, locale: Locale(identifier: config.cfg.locale ?? "ja_JP")).text
-                do {
-                    let shared = NoWakePolicy.agreedCharacters(try await appleText, try await whisperText)
-                    log("dictation agreement: shared=\(shared) ms=\(Int(Date().timeIntervalSince(began) * 1000)) \(sidField(d.sessionID))")
-                    if shared < NoWakePolicy.minAgreedCharacters {
-                        log("dictation dropped: automatic audio had no agreed words reason=\(token) \(sidField(d.sessionID))")
-                        return
-                    }
-                } catch { log("word agreement failed; handing off anyway: \(error)") }
+                // A recording confirmed while it was recorded already agreed; checking it again would only delay superwhisper.
+                if !d.confirmed {
+                    let began = Date()
+                    do {
+                        let shared = try await agreedWordCount(d.samples, locale: Locale(identifier: config.cfg.locale ?? "ja_JP"))
+                        log("dictation agreement: shared=\(shared) ms=\(Int(Date().timeIntervalSince(began) * 1000)) \(sidField(d.sessionID))")
+                        if shared < NoWakePolicy.minAgreedCharacters {
+                            log("dictation dropped: automatic audio had no agreed words reason=\(token) \(sidField(d.sessionID))")
+                            return
+                        }
+                    } catch { log("word agreement failed; handing off anyway: \(error)") }
+                }
                 guard let generation = claimLocalHistory(d) else { log("local history transcription busy; recording discarded \(sidField(d.sessionID))"); return }
                 defer { localHistoryState.withLock { $0.busy = false } }
                 // superwhisper takes focus when it opens the file; hand it back to wherever the user is now, not where the session began.
