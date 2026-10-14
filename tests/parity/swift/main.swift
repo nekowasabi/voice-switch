@@ -26,6 +26,8 @@ func checkWakeHistory() {
     precondition(NoWakePolicy.agreedWithWhisper(apple: "チャンネル登録者数を調べて", whisper: "チャンネル登録者数を調べて") == 13)
     precondition(NoWakePolicy.agreedWithWhisper(apple: "ご視聴ありがとうございました", whisper: "ご視聴ありがとうございました。") == 0)
     precondition(NoWakePolicy.agreedWithWhisper(apple: "音楽", whisper: "音楽") == 0)
+    precondition(NoWakePolicy.agreedWithWhisper(apple: "会議ですご視聴ありがとうございました", whisper: "会議です。ご視聴ありがとうございました") == 4)
+    precondition(NoWakePolicy.whisperTextForAgreement("今日は(音楽)晴れ") == "今日は晴れ")
     precondition(NoWakePolicy.belowMinHandoff(sampleCount: 15999, rate: 16000, options: nil))
     precondition(!NoWakePolicy.belowMinHandoff(sampleCount: 16000, rate: 16000, options: nil))
     precondition(NoWakePolicy.belowMinHandoff(sampleCount: 7999, rate: 16000, options: NoWakeWordConfig(minHandoffMs: 500)))
