@@ -576,7 +576,7 @@ public sealed class WindowsDictationRuntime
             var origin = NoWakePolicy.OnSpeech(config.Dictation?.NoWakeWord, idle, phraseStart < followupUntil);
             var window = origin is not null ? foregroundWindow() : 0;
             // The whole phrase with its preroll, even when it overlaps typing.
-            var start = Math.Max(originalStore.Start, phraseStart -Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength);
+            var start = Math.Max(originalStore.Start, phraseStart - Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength);
             var skip = origin is null ? null : AutomaticSkipReason(window);
             // Logged once per change: a blocked automatic wake was otherwise indistinguishable from silence in the log.
             if (skip != lastAutomaticSkip && skip is not null) Log.Info(skip);

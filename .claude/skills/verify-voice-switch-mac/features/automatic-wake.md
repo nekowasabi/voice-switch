@@ -5,7 +5,7 @@ With `dictation.noWakeWord` switched on, speech can open a dictation without the
 ## Sub-features
 
 - `auto-idle` logs `dictation session: automatic rule=auto_b` after the keyboard and mouse were idle. The result goes to Superwhisper's no-auto-paste mode.
-- `auto-busy` (target, not yet implemented on `d3685d6`). Speech while the user is operating the Mac also logs `dictation session: automatic rule=auto_b inputIdleSeconds=<below 1>`. Checks:
+- `auto-busy` (implemented by issue #33; `d3685d6` and earlier fail it). Speech while the user is operating the Mac also logs `dictation session: automatic rule=auto_b inputIdleSeconds=<below 1>`. Checks:
   - `AB1` the session starts at all (the baseline does not, see Gotchas).
   - `AB2` the recording starts at the phrase head, not at the last input. The session's audio length on `dictation session: end ... seconds=` is close to the spoken phrase (the `busy-speech` phrase is about 2 s), not near zero.
   - `AB3` the route is chosen at submit. Still operating at submit means local recognition into history and no Superwhisper call. The `end` line carries `route=local`; an idle submit carries `route=superwhisper`. No `open -a superwhisper` and no mode switch line appear on the local route.
