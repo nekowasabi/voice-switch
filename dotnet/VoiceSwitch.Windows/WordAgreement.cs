@@ -11,20 +11,22 @@ namespace VoiceSwitch.Windows;
 // from both. macOS pairs Apple Speech with Whisper instead (MacApp.swift agreedWordCount).
 public static class WordAgreement
 {
-    private static readonly SpeechWorker[] Workers = [new("parakeet-tdt_ctc-0.6b-ja"), new("reazonspeech-v2")];
+    public static readonly string[] Models = ["parakeet-tdt_ctc-0.6b-ja", "reazonspeech-v2"];
+    private static readonly SpeechWorker[] Workers = Models.Select(model => new SpeechWorker(model)).ToArray();
 
     // Loading the models, and fetching 1.3 GB of them on the first run, takes far longer than a recording; pay it at launch.
-    public static void Warm()
-    {
-        foreach (var worker in Workers) worker.Start();
-    }
+    public static Task Warm() => Task.WhenAll(Workers.Select(worker => worker.Start()));
 
     // Throws while a worker is not ready or fails; the caller hands the recording off as macOS does.
     public static async Task<int> CountAsync(ImmutableArray<short> samples)
     {
-        var texts = await Task.WhenAll(Workers.Select(worker => worker.TranscribeAsync(samples)));
+        var texts = await TranscribeAsync(samples);
         return NoWakePolicy.AgreedCharacters(texts[0], texts[1]);
     }
+
+    // One transcript per model, in the order of Models.
+    public static Task<string[]> TranscribeAsync(ImmutableArray<short> samples) =>
+        Task.WhenAll(Workers.Select(worker => worker.TranscribeAsync(samples)));
 
     private sealed class SpeechWorker(string model)
     {
@@ -37,22 +39,20 @@ public static class WordAgreement
         private DateTime failedAt = DateTime.MinValue;
         private long nextId;
 
-        public void Start()
+        public Task<Process> Start()
         {
             lock (sync)
             {
-                if (starting is { IsFaulted: false } && !(starting.IsCompletedSuccessfully && starting.Result.HasExited)) return;
-                if (starting is not null && DateTime.UtcNow - failedAt < RetryAfter) return;
-                starting = Task.Run(StartAsync);
+                if (starting is { IsFaulted: false } && !(starting.IsCompletedSuccessfully && starting.Result.HasExited)) return starting;
+                if (starting is not null && DateTime.UtcNow - failedAt < RetryAfter) return starting;
+                return starting = Task.Run(StartAsync);
             }
         }
 
         public async Task<string> TranscribeAsync(ImmutableArray<short> samples)
         {
-            Start();
-            Task<Process>? current;
-            lock (sync) current = starting;
-            if (current is not { IsCompletedSuccessfully: true } || current.Result.HasExited)
+            var current = Start();
+            if (!current.IsCompletedSuccessfully || current.Result.HasExited)
                 throw new InvalidOperationException($"speech worker {model} is not ready");
             var process = current.Result;
             await gate.WaitAsync();
