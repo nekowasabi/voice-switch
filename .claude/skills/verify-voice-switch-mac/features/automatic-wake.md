@@ -15,6 +15,8 @@ With `dictation.noWakeWord` switched on, speech can open a dictation without the
 - `auto-relaxed` logs `dictation session: wake-only rule=relaxed_d2`.
 - `auto-short-dropped` drops an automatic recording shorter than `minHandoffMs` (default 1000). A cough or a click logs `dictation dropped: automatic audio shorter than minHandoffMs` and never reaches Superwhisper. Drive it with `$V say cough2 "[[slnc 1500]] えへん [[slnc 3000]]"` and `SIMULATE_REALTIME=1 $V run cough2 config.stop-auto.json` while nobody touches the keyboard or mouse. Under busy input the same drop must still happen (`AB6`).
 
+- `auto-no-speech-dropped` (issue #35) drops an automatic recording long enough to pass `minHandoffMs` but holding no voice. Silero VAD scores no 32 ms window at 0.5 or above, so it logs `dictation dropped: automatic audio had no speech` and never reaches Superwhisper. `say` cannot make noise, so write the `noise-burst` fixture yourself into `~/Library/Caches/voice-switch-verify/fixtures/noise-burst.aiff`: 16 kHz mono, 1.5 s quiet, 2 s of decaying clicks (a keyboard), 3 s quiet. Run it like `busy-speech`. Expect `dictation session: end ... seconds=<about 2>` then the `had no speech` line, and no `superwhisper mode:` line. `busy-speech` is the counterpart that must still reach Superwhisper. Proven on 2026-10-14 (runs `silero-noise`, `silero-speech`).
+
 ## How to get to it (user POV)
 
 - Idle path. Stop typing for a second or more, then speak.
