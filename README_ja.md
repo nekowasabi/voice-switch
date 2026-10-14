@@ -127,7 +127,7 @@ LaunchServices、実マイク、Superwhisper の録音・文字起こし・貼�
 
 `dictation.noWakeWord` の `followup`、`autoIdle`、`relaxedReadingDistance2` は個別に指定できます。すべて既定では無効です。Mac では `dictation.superwhisperMode` も必須です。
 
-自動で始まった録音は履歴だけに進みます。`dictation.superwhisperMode` が `autoPaste: false` のモードなら、そのモードに切り替えて Superwhisper で変換します。そうでなければ端末内で文字起こしします。Jev、tmux、アクション URL、貼り付けには渡しません。自動録音中は Escape などの Superwhisper ショートカットを奪わず、無音か停止ワードで終わります。自動録音中にウェイクワードを話すと、自動録音を破棄して通常の録音に切り替えます。履歴はメモリ上の最大50件で、30分後またはアプリ終了時に消えます。選んだものだけコピーできます。
+自動で始まった録音は履歴だけに進みます。`dictation.superwhisperMode` が `autoPaste: false` のモードなら、そのモードに切り替えて Superwhisper で変換します。そうでなければ端末内で文字起こしします。Jev、tmux、アクション URL、貼り付けには渡しません。自動録音中は Escape などの Superwhisper ショートカットを奪わず、無音か停止ワードで終わります。ただし Mac では、停止ワードを言って終えた自動録音はウェイクワードの録音と同じ扱いになり、Superwhisper が手前のアプリに貼り付けます（ログは `dictation session: automatic ended by stop word, pasting like a wake-word dictation`）。自動録音中にウェイクワードを話すと、自動録音を破棄して通常の録音に切り替えます。履歴はメモリ上の最大50件で、30分後またはアプリ終了時に消えます。選んだものだけコピーできます。
 
 - Ctrl+Shift+F10 は手動録音の開始
 - Ctrl+Shift+F9 または HUD のクリックは履歴

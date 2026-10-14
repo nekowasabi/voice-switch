@@ -1228,8 +1228,12 @@ final class Listener {
                 guard let generation = claimLocalHistory(d) else { log("local history transcription busy; recording discarded \(sidField(d.sessionID))"); return }
                 defer { localHistoryState.withLock { $0.busy = false } }
                 // superwhisper takes focus when it opens the file; hand it back to wherever the user is now, not where the session began.
+                // Ending it with the stop word shows the user meant to dictate into the app in front, so it is handed off like a
+                // wake-word dictation and superwhisper pastes it. One that ended on silence or maxSeconds stays history-only.
+                let origin = token == "StandaloneStop" ? WakeOrigin(rule: .strict, inputIdleSeconds: d.origin.inputIdleSeconds) : d.origin
+                if origin != d.origin { log("dictation session: automatic ended by stop word, pasting like a wake-word dictation \(sidField(d.sessionID))") }
                 let delivered = await handoff(d.samples, cfg: cfg, target: NSWorkspace.shared.frontmostApplication,
-                                              action: nil, origin: d.origin, sessionID: d.sessionID, transcriptPolicy: d.transcriptPolicy,
+                                              action: nil, origin: origin, sessionID: d.sessionID, transcriptPolicy: d.transcriptPolicy,
                                               stillCurrent: { self.localHistoryState.withLock { $0.generation == generation } })
                 if !delivered { await transcribeToHistory(d, generation: generation) }
             }
