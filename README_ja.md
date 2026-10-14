@@ -141,7 +141,7 @@ LaunchServices、実マイク、Superwhisper の録音・文字起こし・貼�
 
 1. 長さが `noWakeWord.minHandoffMs`（既定 1000 ms）以上あること。短ければ `dictation dropped: automatic audio shorter than minHandoffMs` と記録して捨てます。
 2. Silero VAD が、32 ms の窓のうち 1 つ以上で声を検出すること。打鍵音や物音はここで `dictation dropped: automatic audio had no speech` として捨てます。Mac と Windows で同じモデルを使います。
-3. 2 つの認識器の書き起こしに、順序どおり共通する文字が 3 文字以上あること。Mac は Apple Speech と Whisper large-v3-turbo、Windows は [speech.cpp](https://github.com/nyosegawa/speech.cpp) の parakeet-tdt_ctc-0.6b-ja と reazonspeech-v2 を使います（BUILD.md を参照）。咳払いからは認識器ごとに別の言葉が出ますが、話した言葉はどちらでも同じになります。咳払いは `dictation agreement: shared=<n>` に続けて `dictation dropped: automatic audio had no agreed words` と記録して捨てます。この確認で、Superwhisper が開くまでが約 0.4 秒延びます。一致するまで HUD は録音中を出さないので、咳払いで HUD が点滅しません。録音中に一致した録音は、渡す前の確認を省きます。
+3. 2 つの認識器の書き起こしに、順序どおり共通する文字が 3 文字以上あること。Mac は Apple Speech と Whisper large-v3-turbo、Windows は [speech.cpp](https://github.com/nyosegawa/speech.cpp) の parakeet-tdt_ctc-0.6b-ja と Qwen3-ASR 0.6B を使います（BUILD.md を参照）。咳払いからは認識器ごとに別の言葉が出ますが、話した言葉はどちらでも同じになります。咳払いは `dictation agreement: shared=<n>` に続けて `dictation dropped: automatic audio had no agreed words` と記録して捨てます。この確認で、Superwhisper が開くまでが約 0.4 秒延びます。一致するまで HUD は録音中を出さないので、咳払いで HUD が点滅しません。録音中に一致した録音は、渡す前の確認を省きます。
 
 「うん」「はい」のような短い相づちは、3 つ目の確認で捨てられることがあります。Silero のモデルや認識器（Mac は Whisper、Windows は speech.cpp）を読み込めないときは、その旨を記録し、その確認を飛ばして渡します。`voice-switch --check a.wav` は、標準エラーに `voiced=` と `agreed=`、2 つの書き起こしを出します。ファイルが残る理由と捨てられる理由を確かめるときに使えます。
 

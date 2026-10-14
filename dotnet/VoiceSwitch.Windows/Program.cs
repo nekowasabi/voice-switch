@@ -242,7 +242,7 @@ public static class CheckMode
             try
             {
                 var texts = await WordAgreement.TranscribeAsync(samples);
-                gates.WriteLine($"{path}\tagreed={NoWakePolicy.AgreedCharacters(texts[0], texts[1])}\tparakeet={texts[0]}\treazonspeech={texts[1]}");
+                gates.WriteLine($"{path}\tagreed={NoWakePolicy.AgreedCharacters(texts[0], texts[1])}\tparakeet={texts[0]}\tqwen={texts[1]}");
             }
             catch (Exception ex) { gates.WriteLine($"{path}\tagreed=<unavailable: {ex.Message}>"); }
         }

@@ -6,13 +6,16 @@ using VoiceSwitch.Windows.Core;
 
 namespace VoiceSwitch.Windows;
 
-// Characters two Japanese recognizers of speech.cpp (github.com/nyosegawa/speech.cpp) both wrote for a recording. Silero
-// still hears a voiced cough as speech; each recognizer invents its own word for it, while spoken words come out the same
-// from both. macOS pairs Apple Speech with Whisper instead (MacApp.swift agreedWordCount).
+// Characters two recognizers of speech.cpp (github.com/nyosegawa/speech.cpp) of different families both wrote for a
+// recording. Silero still hears a voiced cough as speech; each recognizer invents its own word for it, while spoken words
+// come out the same from both. macOS pairs Apple Speech with Whisper instead (MacApp.swift agreedWordCount).
+// Two FastConformers (parakeet with reazonspeech-v2) heard the same cough as アッハッハッ and アハハハ and let it through
+// (2026-10-14); Qwen3-ASR writes 咳 for a cough, and no noise slice of the 15 measured shared more than 1 character with it.
 public static class WordAgreement
 {
-    public static readonly string[] Models = ["parakeet-tdt_ctc-0.6b-ja", "reazonspeech-v2"];
-    private static readonly SpeechWorker[] Workers = Models.Select(model => new SpeechWorker(model)).ToArray();
+    // Qwen3-ASR left on auto writes short Japanese in Chinese (うん as 嗯), so it is held to Japanese.
+    public static readonly (string Name, string[] Flags)[] Models = [("parakeet-tdt_ctc-0.6b-ja", []), ("qwen3-asr-0.6b", ["--language=ja"])];
+    private static readonly SpeechWorker[] Workers = Models.Select(model => new SpeechWorker(model.Name, model.Flags)).ToArray();
 
     // Loading the models, and fetching 1.3 GB of them on the first run, takes far longer than a recording; pay it at launch.
     public static Task Warm() => Task.WhenAll(Workers.Select(worker => worker.Start()));
@@ -28,7 +31,7 @@ public static class WordAgreement
     public static Task<string[]> TranscribeAsync(ImmutableArray<short> samples) =>
         Task.WhenAll(Workers.Select(worker => worker.TranscribeAsync(samples)));
 
-    private sealed class SpeechWorker(string model)
+    private sealed class SpeechWorker(string model, string[] flags)
     {
         private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(10);
         // A worker that will not start (not installed, no Vulkan) is retried at most this often, not on every check.
@@ -109,7 +112,6 @@ public static class WordAgreement
             {
                 var psi = new ProcessStartInfo(Executable() ?? throw new FileNotFoundException("speech.cpp is not installed (speech.exe not found)"))
                 {
-                    ArgumentList = { "worker", model },
                     RedirectStandardInput = true,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
@@ -119,6 +121,7 @@ public static class WordAgreement
                     UseShellExecute = false,
                     CreateNoWindow = true,
                 };
+                foreach (var argument in (string[])["worker", model, .. flags]) psi.ArgumentList.Add(argument);
                 var process = ChildProcessJob.Start(psi);
                 // Drained from the start: a worker blocked on a full stderr pipe (model download progress) would never answer.
                 var stderr = process.StandardError.ReadToEndAsync();
