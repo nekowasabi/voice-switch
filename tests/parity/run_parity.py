@@ -1053,6 +1053,13 @@ def harness_program(text_fixture: dict, segmenter_fixture: dict, pane_route_fixt
                 configElement.GetProperty("dictation").GetProperty("excludeBundleIDs").EnumerateArray().Select(x => x.GetString()!).ToArray(),
                 configElement.GetProperty("dictation").GetProperty("startTimeoutMs").GetInt32()));
 
+        Check(NoWakePolicy.MinAgreedCharacters == textFixture.GetProperty("agreement_min").GetInt32(), "agreement minimum");
+        foreach (var item in textFixture.GetProperty("agreement").EnumerateArray())
+        {{
+            var actual = NoWakePolicy.AgreedCharacters(item.GetProperty("a").GetString()!, item.GetProperty("b").GetString()!);
+            Check(actual == item.GetProperty("expected").GetInt32(), $"agreement {{item.GetProperty("name").GetString()}} actual={{actual}}");
+        }}
+
         foreach (var item in textFixture.GetProperty("decisions").EnumerateArray())
         {{
             var decision = TextMatching.Decide(item.GetProperty("recognized").GetString()!, config);

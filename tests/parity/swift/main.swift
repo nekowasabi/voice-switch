@@ -99,7 +99,16 @@ struct TextFixture: Decodable {
         var expected: String
     }
 
+    struct Agreement: Decodable {
+        var name: String
+        var a: String
+        var b: String
+        var expected: Int
+    }
+
     var normalization: [Normalization]
+    var agreement_min: Int
+    var agreement: [Agreement]
 }
 
 struct SegmenterFixture: Decodable {
@@ -209,6 +218,11 @@ let paneFixture = try decoder.decode(PaneRouteFixture.self, from: Data(contentsO
 for item in textFixture.normalization {
     let actual = normalize(item.input)
     check(actual == item.expected, "normalize \(item.name) expected=\(item.expected) actual=\(actual)")
+}
+check(NoWakePolicy.minAgreedCharacters == textFixture.agreement_min, "agreement minimum")
+for item in textFixture.agreement {
+    let actual = NoWakePolicy.agreedCharacters(item.a, item.b)
+    check(actual == item.expected, "agreement \(item.name) expected=\(item.expected) actual=\(actual)")
 }
 
 let segmenterConfig = Config(
