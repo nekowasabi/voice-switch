@@ -879,7 +879,7 @@ final class Listener {
                     continue
                 }
                 // A pending stop check holds the end, so a stop word is not submitted as text.
-                guard key == .finish || (!stopCheck.pending && (d.silentFrames * frameLen * 1000 / Int(rate) >= dc.endSilenceMs ?? 1200
+                guard key == .finish || (!stopCheck.pending && (d.silentFrames * frameLen * 1000 / Int(rate) >= (d.origin.isAutomatic ? dc.noWakeWord?.endSilenceMs : nil) ?? dc.endSilenceMs ?? 1200
                     || d.samples.count > Int((dc.maxSeconds ?? 60) * rate))) else { continue }
                 let reason = key == .finish ? "hotkey" : d.samples.count > Int((dc.maxSeconds ?? 60) * rate) ? "maxSeconds"
                     : "\(d.silentFrames * frameLen * 1000 / Int(rate)) ms silence"

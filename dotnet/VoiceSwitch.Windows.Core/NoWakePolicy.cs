@@ -2,7 +2,7 @@ namespace VoiceSwitch.Windows.Core;
 
 public sealed record NoWakeWordConfig(bool Followup = false, bool AutoIdle = false, bool RelaxedReadingDistance2 = false,
     int FollowupMs = 8000, int IdleMs = 3000, bool FilterInterjections = false, int MinHandoffMs = 1000,
-    IReadOnlyList<string>? IgnoredTranscripts = null)
+    IReadOnlyList<string>? IgnoredTranscripts = null, int? EndSilenceMs = null)
 {
     public bool Valid => FollowupMs is >= 1000 and <= 30000 && IdleMs is >= 1000 and <= 60000;
     public bool Enabled => Followup || AutoIdle || RelaxedReadingDistance2;
