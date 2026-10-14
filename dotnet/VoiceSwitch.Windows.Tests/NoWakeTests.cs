@@ -259,7 +259,7 @@ internal static class NoWakeTests
                && !agreed.Log.Contains("dictation agreement:") && agreed.Audio?.Wake.IsAutomatic == true
             && cough is (0, false, _, _) && cough.Log.Contains("dictation agreement: shared=1 ")
                && cough.Log.Contains("dictation dropped: automatic audio had no agreed words")
-            && broken is (1, true, _, _)
+            && broken is (1, true, _, _) && broken.Log.Contains("automatic confirmed by unavailable word agreement")
             && stopped.Handed == 1 && stopped.Audio is { Reason: FinishReason.StandaloneStop, Wake.IsAutomatic: false }
                && stopped.Log.Contains("automatic ended by stop word, pasting like a wake-word dictation");
     }

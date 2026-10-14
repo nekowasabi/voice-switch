@@ -923,7 +923,7 @@ public sealed class WindowsDictationRuntime
             if (done.Session == session.SessionId && session.IsActive && (!done.Agreed.IsCompletedSuccessfully || done.Agreed.Result))
             {
                 confirmedSession = session.SessionId;
-                Log.Info($"dictation session: automatic confirmed by agreed words {Sid(session)}");
+                Log.Info($"dictation session: automatic confirmed by {(done.Agreed.IsCompletedSuccessfully ? "agreed words" : "unavailable word agreement")} {Sid(session)}");
             }
         }
 
