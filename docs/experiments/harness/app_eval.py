@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""App-level pass (agreedCharacters>=3) under two Apple assumptions: apple='' and apple==whisper. tool=argv[2] reads whisper text lines."""
+"""App-level pass (agreedCharacters>=3) under two Apple assumptions: apple='' and apple==whisper. tool=argv[2] reads whisper text lines.
+Usage: app_eval.py <runs.jsonl> <tools/bin/agree_same_empty>"""
 import json,sys,collections,subprocess
 man={}
 for d in ("clips","heldout"):

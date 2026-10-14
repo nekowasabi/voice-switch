@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """App pass = agreed>=3 per run, clip passes if majority of runs pass. tool reads apple\twhisper, prints agreed.
-Assumptions: A) apple='' B) apple==whisper raw text C) speech only: apple=TTS source sentence (JFK excluded: not TTS)."""
+Assumptions: A) apple='' B) apple==whisper raw text C) speech only: apple=TTS source sentence (JFK excluded: not TTS).
+Usage: app_eval3.py <runs.jsonl> <tools/bin/agree_pair or agree_pair_main>"""
 import json,sys,collections,subprocess
 SRC={"tts-hai":"はい","tts-hai-quiet-20dB":"はい","tts-hai-raw-0.26s":"はい"}
 SENT="画面の右上にあるボタンを押してください。"  # assumed source = clean TTS whisper output
