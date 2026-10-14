@@ -901,15 +901,14 @@ final class Listener {
                 continue
             }
             let options = config.cfg.dictation?.noWakeWord
-            // Checked on every voiced frame, not once at onset: talk that began right after typing becomes eligible
-            // as soon as the keyboard and mouse have been quiet for idleMs.
+            // Starts even while the user types or moves the mouse; idleMs only picks the route at submit.
             if seg.lastWasSpeech && speechFrames >= frames(ms: config.cfg.minSpeechMs ?? 300),
                let mode = config.cfg.dictation?.superwhisperMode, !mode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                let idle = MacInputActivity.idleSeconds(),
                let origin = NoWakePolicy.onSpeech(options, idleSeconds: idle, inFollowupWindow: clock < followupUntil),
                automaticWakeAllowed() {
-                // The whole phrase is recorded, but never audio from before the last key or mouse input.
-                let samples = Array(recent.suffix(min(recent.count, Int(idle * rate))))
+                // The whole phrase with its preroll, even when it overlaps typing.
+                let samples = recent
                 if !samples.isEmpty {
                     // No hotkeys: the user is mid-task elsewhere and their Escape belongs to that app, so only silence or a stop word ends it.
                     dictation = Dictation(samples: samples, generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: true, origin: origin)
@@ -1147,7 +1146,8 @@ final class Listener {
     private func submit(_ d: Dictation, cfg: DictationConfig, reason: String) {
         guard localHistoryState.withLock({ $0.generation == d.captureGeneration }) else { return }
         let token = finishReasonToken(reason)
-        log("dictation session: end reason=\(token) \(d.origin.fields) seconds=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), Double(d.samples.count) / rate)) \(sidField(d.sessionID))")
+        let route = d.origin.isAutomatic ? NoWakePolicy.automaticRoute(idleSeconds: MacInputActivity.idleSeconds(), options: cfg.noWakeWord) : nil
+        log("dictation session: end reason=\(token) \(d.origin.fields) \(route.map { "route=\($0.rawValue) " } ?? "")seconds=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), Double(d.samples.count) / rate)) \(sidField(d.sessionID))")
         if d.origin.isAutomatic {
             if NoWakePolicy.belowMinHandoff(sampleCount: d.samples.count, rate: rate, options: cfg.noWakeWord) {
                 log("dictation dropped: automatic audio shorter than minHandoffMs (\(d.samples.count * 1000 / Int(rate)) ms) reason=\(token) \(sidField(d.sessionID))")
@@ -1156,6 +1156,7 @@ final class Listener {
             Task {
                 guard let generation = claimLocalHistory(d) else { log("local history transcription busy; recording discarded \(sidField(d.sessionID))"); return }
                 defer { localHistoryState.withLock { $0.busy = false } }
+                if route == .local { await transcribeToHistory(d, generation: generation); return }
                 // superwhisper takes focus when it opens the file; hand it back to wherever the user is now, not where the session began.
                 let delivered = await handoff(d.samples, cfg: cfg, target: NSWorkspace.shared.frontmostApplication,
                                               action: nil, origin: d.origin, sessionID: d.sessionID, transcriptPolicy: d.transcriptPolicy,

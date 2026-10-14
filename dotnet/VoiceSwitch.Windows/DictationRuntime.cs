@@ -568,17 +568,15 @@ public sealed class WindowsDictationRuntime
             lastLiveSpeechEnd = frame.Start + frame.Analysis.Length;
         }
 
-        // Checked on every voiced frame, not once at onset: talk that began right after typing becomes eligible
-        // as soon as the keyboard and mouse have been quiet for idleMs.
+        // Starts even while the user types or moves the mouse; IdleMs only picks the route at submit.
         if (config.Dictation?.NoWakeWord is { Enabled: true } && phraseStart >= 0 && segmenter.LastWasSpeech
             && phraseVoiced >= Segmenter.Frames(config.MinSpeechMs ?? 300) * Segmenter.FrameLength)
         {
             var idle = inputIdleSeconds();
             var origin = NoWakePolicy.OnSpeech(config.Dictation?.NoWakeWord, idle, phraseStart < followupUntil);
             var window = origin is not null ? foregroundWindow() : 0;
-            // The whole phrase is recorded, but never audio from before the last key or mouse input.
-            var lastInput = analysisStore.Next - (long)((idle ?? 0) * Segmenter.Rate);
-            var start = Math.Max(Math.Max(originalStore.Start, lastInput), phraseStart - Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength);
+            // The whole phrase with its preroll, even when it overlaps typing.
+            var start = Math.Max(originalStore.Start, phraseStart -Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength);
             var skip = origin is null ? null : AutomaticSkipReason(window);
             // Logged once per change: a blocked automatic wake was otherwise indistinguishable from silence in the log.
             if (skip != lastAutomaticSkip && skip is not null) Log.Info(skip);
@@ -1024,7 +1022,8 @@ public sealed class WindowsDictationRuntime
 
     private void Submit(DictationAudio audio)
     {
-        Log.Info($"dictation session: end reason={audio.Reason} {audio.Wake.Fields} range={audio.Range.Start}..{audio.Range.End} seconds={audio.Range.Length / Segmenter.Rate:0.00} sid={audio.SessionId} {LevelFields(audio.Range)}");
+        AutomaticRoute? route = audio.Wake.IsAutomatic ? NoWakePolicy.AutomaticRoute(inputIdleSeconds(), config.Dictation?.NoWakeWord ?? new()) : null;
+        Log.Info($"dictation session: end reason={audio.Reason} {audio.Wake.Fields} {(route is { } r ? $"route={r.ToString().ToLowerInvariant()} " : "")}range={audio.Range.Start}..{audio.Range.End} seconds={audio.Range.Length / Segmenter.Rate:0.00} sid={audio.SessionId} {LevelFields(audio.Range)}");
         var stopped = audio.Reason is FinishReason.StandaloneStop or FinishReason.FinishCommand;
         endedByUser |= stopped;
         // The user wants to know the recording is over, so ring before Superwhisper is launched, automatic sessions included.
@@ -1037,7 +1036,7 @@ public sealed class WindowsDictationRuntime
         if (audio.Wake.IsAutomatic)
         {
             // Superwhisper takes focus when it opens the file; hand it back to wherever the user is now, not where the session began.
-            audio = audio with { Target = foregroundWindow() };
+            audio = audio with { Target = foregroundWindow(), Route = route!.Value };
             // Measured on 2026-10-12: no intended automatic dictation was shorter than 1.17 s, while sub-second
             // captures were all noise or backchannels whose handoff only played Superwhisper's sound.
             if (audio.Range.Length < MsToSamples(config.Dictation?.NoWakeWord?.MinHandoffMs ?? 1000))

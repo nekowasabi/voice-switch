@@ -101,7 +101,7 @@ public sealed record DictationEvent(string Kind, FinishReason? Reason, SampleRan
     public static DictationEvent Error(FinishReason reason) => new("error", reason, null);
 }
 
-public sealed record DictationAudio(Guid SessionId, SampleRange Range, ImmutableArray<short> Samples, FinishReason Reason = FinishReason.Silence, nint Target = 0, WakeAction? Action = null, WakeOrigin? Origin = null, AutomaticTranscriptPolicy TranscriptPolicy = default)
+public sealed record DictationAudio(Guid SessionId, SampleRange Range, ImmutableArray<short> Samples, FinishReason Reason = FinishReason.Silence, nint Target = 0, WakeAction? Action = null, WakeOrigin? Origin = null, AutomaticTranscriptPolicy TranscriptPolicy = default, AutomaticRoute Route = AutomaticRoute.Superwhisper)
 {
     public WakeOrigin Wake => Origin ?? new WakeOrigin(WakeRule.Strict, null);
 }

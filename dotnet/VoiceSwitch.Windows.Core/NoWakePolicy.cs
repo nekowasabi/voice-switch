@@ -55,14 +55,22 @@ public static class TranscriptShape
     }
 }
 
+public enum AutomaticRoute { Local, Superwhisper }
+
 public static class NoWakePolicy
 {
     public static WakeOrigin? OnSpeech(NoWakeWordConfig? options, double? idleSeconds, bool inFollowupWindow)
     {
         if (options is null || !options.Valid || idleSeconds is null or < 0 || !double.IsFinite(idleSeconds.Value)) return null;
         if (options.Followup && inFollowupWindow) return new(WakeRule.Followup, idleSeconds);
-        return options.AutoIdle && idleSeconds * 1000 >= options.IdleMs ? new(WakeRule.AutoB, idleSeconds) : null;
+        return options.AutoIdle ? new(WakeRule.AutoB, idleSeconds) : null;
     }
+
+    // Decided at submit, not at start: input within IdleMs means the user is still working, and handing the file to
+    // Superwhisper would steal their focus, so the transcript stays local.
+    public static AutomaticRoute AutomaticRoute(double? idleSeconds, NoWakeWordConfig options) =>
+        idleSeconds is { } idle && double.IsFinite(idle) && idle * 1000 >= options.IdleMs
+            ? Core.AutomaticRoute.Superwhisper : Core.AutomaticRoute.Local;
 
     public static WakePrefix? RelaxedWake(RecognizedUtterance recognition, IReadOnlyList<WakeWord> wakes)
     {
