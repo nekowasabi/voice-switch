@@ -200,6 +200,18 @@ enum NoWakePolicy {
         return row[y.count]
     }
 
+    /// Phrases observed on box whisper.cpp v1.7.5 with silence/noise clips (app uses b5454).
+    static func isWhisperHallucination(_ text: String) -> Bool {
+        let drop = Set("。、！!？?.")
+        let normalized = text.filter { !$0.isWhitespace && !drop.contains($0) }
+        if normalized.isEmpty { return false }
+        let exact = [
+            "ご視聴ありがとうございました", "ご視聴ありがとうございます", "お疲れ様でした",
+            "音楽", "字幕", "♪",
+        ]
+        return exact.contains(normalized) || normalized.contains("ご視聴") || normalized.contains("チャンネル登録")
+    }
+
     static func belowMinHandoff(sampleCount: Int, rate: Double, options: NoWakeWordConfig?) -> Bool {
         sampleCount < Int(rate) * (options?.minHandoffMs ?? 1000) / 1000
     }

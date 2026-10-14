@@ -70,7 +70,8 @@ func transcribe(_ samples: [Float], locale: Locale) async throws -> Transcript {
 func agreedWordCount(_ samples: [Float], locale: Locale) async throws -> Int {
     async let whisperText = Task.detached { try WhisperGate.transcribe(samples) }.value
     async let appleText = transcribe(samples, locale: locale).text
-    return NoWakePolicy.agreedCharacters(try await appleText, try await whisperText)
+    let heard = try await whisperText
+    return NoWakePolicy.agreedCharacters(try await appleText, NoWakePolicy.isWhisperHallucination(heard) ? "" : heard)
 }
 
 /// Samples to drop from the end of the dictation when `u` ends with a stop word, else 0.

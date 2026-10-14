@@ -561,6 +561,12 @@ def check_swift_handoff_markers(result: Result, repo: SourceTree) -> None:
         wakeui,
         ["id.id == 4", "WakeMissLabel.shared.record", "(kVK_F8, UInt32(4))"],
     )
+    require_substrings(
+        result,
+        "Swift whisper hallucination filtered before agreement",
+        mac,
+        ["NoWakePolicy.isWhisperHallucination(heard)"],
+    )
 
 
 def check_swift_runtime_call_chain(result: Result, repo: SourceTree) -> None:
