@@ -127,7 +127,7 @@ LaunchServices、実マイク、Superwhisper の録音・文字起こし・貼�
 
 `dictation.noWakeWord` の `followup`、`autoIdle`、`relaxedReadingDistance2` は個別に指定できます。すべて既定では無効です。Mac では `dictation.superwhisperMode` も必須です。
 
-自動で始まった録音は履歴だけに進みます。`dictation.superwhisperMode` が `autoPaste: false` のモードなら、そのモードに切り替えて Superwhisper で変換します。そうでなければ端末内で文字起こしします。Jev、tmux、アクション URL、貼り付けには渡しません。自動録音中は Escape などの Superwhisper ショートカットを奪わず、無音か停止ワードで終わります。ただし Mac では、停止ワードを言って終えた自動録音はウェイクワードの録音と同じ扱いになり、Superwhisper が手前のアプリに貼り付けます（ログは `dictation session: automatic ended by stop word, pasting like a wake-word dictation`）。自動録音中にウェイクワードを話すと、自動録音を破棄して通常の録音に切り替えます。履歴はメモリ上の最大50件で、30分後またはアプリ終了時に消えます。選んだものだけコピーできます。
+自動で始まった録音は履歴だけに進みます。`dictation.superwhisperMode` が `autoPaste: false` のモードなら、そのモードに切り替えて Superwhisper で変換します。そうでなければ端末内で文字起こしします。Jev、tmux、アクション URL、貼り付けには渡しません。自動録音中は Escape などの Superwhisper ショートカットを奪わず、無音か停止ワードで終わります。ただし、停止ワードを言って終えた自動録音はウェイクワードの録音と同じ扱いになり、Superwhisper が手前のアプリに貼り付けます（ログは `dictation session: automatic ended by stop word, pasting like a wake-word dictation`）。自動録音中にウェイクワードを話すと、自動録音を破棄して通常の録音に切り替えます。履歴はメモリ上の最大50件で、30分後またはアプリ終了時に消えます。選んだものだけコピーできます。
 
 - Ctrl+Shift+F10 は手動録音の開始
 - Ctrl+Shift+F9 または HUD のクリックは履歴
@@ -141,8 +141,8 @@ LaunchServices、実マイク、Superwhisper の録音・文字起こし・貼�
 
 1. 長さが `noWakeWord.minHandoffMs`（既定 1000 ms）以上あること。短ければ `dictation dropped: automatic audio shorter than minHandoffMs` と記録して捨てます。
 2. Silero VAD が、32 ms の窓のうち 1 つ以上で声を検出すること。打鍵音や物音はここで `dictation dropped: automatic audio had no speech` として捨てます。Mac と Windows で同じモデルを使います。
-3. Mac のみ。Apple Speech と Whisper large-v3-turbo の書き起こしに、順序どおり共通する文字が 3 文字以上あること。咳払いからは認識器ごとに別の言葉が出ますが、話した言葉はどちらでも同じになります。咳払いは `dictation agreement: shared=<n>` に続けて `dictation dropped: automatic audio had no agreed words` と記録して捨てます。この確認で、Superwhisper が開くまでが約 0.4 秒延びます。
+3. 2 つの認識器の書き起こしに、順序どおり共通する文字が 3 文字以上あること。Mac は Apple Speech と Whisper large-v3-turbo、Windows は [speech.cpp](https://github.com/nyosegawa/speech.cpp) の parakeet-tdt_ctc-0.6b-ja と reazonspeech-v2 を使います（BUILD.md を参照）。咳払いからは認識器ごとに別の言葉が出ますが、話した言葉はどちらでも同じになります。咳払いは `dictation agreement: shared=<n>` に続けて `dictation dropped: automatic audio had no agreed words` と記録して捨てます。この確認で、Superwhisper が開くまでが約 0.4 秒延びます。一致するまで HUD は録音中を出さないので、咳払いで HUD が点滅しません。録音中に一致した録音は、渡す前の確認を省きます。
 
-「うん」「はい」のような短い相づちは、3 つ目の確認で捨てられることがあります。Silero や Whisper のモデルを読み込めないときは、その旨を記録し、その確認を飛ばして渡します。`voice-switch --check a.wav` は、標準エラーに `voiced=` と `agreed=`、2 つの書き起こしを出します。ファイルが残る理由と捨てられる理由を確かめるときに使えます。
+「うん」「はい」のような短い相づちは、3 つ目の確認で捨てられることがあります。Silero のモデルや認識器（Mac は Whisper、Windows は speech.cpp）を読み込めないときは、その旨を記録し、その確認を飛ばして渡します。`voice-switch --check a.wav` は、標準エラーに `voiced=` と `agreed=`、2 つの書き起こしを出します。ファイルが残る理由と捨てられる理由を確かめるときに使えます。
 
 Mac 未検証。実機での音声・権限・UI と精度の評価はまだ必要です。[実装と設定](docs/no-wake-word/implementation.md)、[実機チェック](docs/no-wake-word/native-validation.md)、[合格ライン](docs/wake-acceptance.md) を確認してから有効にしてください。
