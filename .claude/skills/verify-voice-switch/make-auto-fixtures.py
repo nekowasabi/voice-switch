@@ -34,7 +34,10 @@ def hiss(seconds: float) -> bytes:
 
 
 body, stop = read(out / "say-body.wav"), read(out / "say-stop.wav")
+gate = repo / "tests/parity/fixtures/speech_gate"
 fixtures = {
+    # Silero hears the はい, but both recognizers write at most はい (2 characters), under the 3 the gate needs.
+    "auto-backchannel": [silence(1), read(gate / "noise-burst.wav"), read(gate / "backchannel-hai.wav"), read(gate / "noise-keystrokes.wav"), silence(2.5)],
     "auto-hiss": [silence(1), hiss(3), silence(2.5)],
     "auto-speech": [silence(1), body, silence(2.5)],
     "auto-stop": [silence(1), body, silence(0.3), stop, silence(2.5)],

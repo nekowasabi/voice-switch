@@ -34,7 +34,7 @@ fixtures() {
     ls "$FIXTURES"/*.wav | sed 's|.*/||'
   fi
   # Automatic-recording gates (features/automatic-gates.md): speech without a wake word, the same plus the stop word, and noise.
-  if [ ! -f "$FIXTURES/auto-stop.wav" ]; then
+  if [ ! -f "$FIXTURES/auto-backchannel.wav" ]; then
     "$PS" -NoProfile -ExecutionPolicy Bypass -File "$(win "$REPO/scripts/windows-say.ps1")" -Text "今日の会議は三時から始めます。資料は共有フォルダに置きました。" -Output "$(win "$FIXTURES")\\say-body.wav" >/dev/null
     "$PS" -NoProfile -ExecutionPolicy Bypass -File "$(win "$REPO/scripts/windows-say.ps1")" -Text "入力ストップ" -Output "$(win "$FIXTURES")\\say-stop.wav" >/dev/null
     python3 "$SKILL/make-auto-fixtures.py" "$REPO" "$FIXTURES"
