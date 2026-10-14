@@ -15,7 +15,7 @@ mkdir -p "$out"
 needs() { case $1 in agree_pair) echo "func agreedWithWhisper";; hallucination_filter) echo "func whisperTextForAgreement";; *) echo "func agreedCharacters";; esac; }
 for t in agree_same_empty agree_pair_main agree_pair hallucination_filter; do
   rm -f "$out/$t"
-  if ! grep -q "$(needs $t)" "$policy"; then echo "skipped $t ($(needs $t) is not in this checkout)"; continue; fi
+  if ! grep -Eq "^[[:space:]]*(static[[:space:]]+)?$(needs $t)\(" "$policy"; then echo "skipped $t ($(needs $t) is not in this checkout)"; continue; fi
   mkdir -p "$tmp/$t"; cp "$here/$t.swift" "$tmp/$t/main.swift"  # top-level code must be in main.swift
   if ! "$swiftc" -O -module-cache-path "$tmp/mc" "${srcs[@]}" "$tmp/$t/main.swift" -o "$out/$t"; then echo "build failed: $t" >&2; exit 1; fi
   echo "built $out/$t"
