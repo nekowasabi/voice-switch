@@ -21,8 +21,7 @@
       "followup": false,
       "autoIdle": false,
       "relaxedReadingDistance2": false,
-      "followupMs": 8000,
-      "idleMs": 3000
+      "followupMs": 8000
     }
   }
 }

@@ -1,6 +1,6 @@
 # Automatic no-wake recording
 
-With `dictation.noWakeWord.autoIdle` on, speech that starts after the keyboard and mouse have been idle for `idleMs` opens an automatic recording without a wake word. It ends on silence or a stop word and goes to history only. If the user says a wake word while an automatic recording is open, the automatic recording is discarded and a normal wake-word dictation takes over.
+With `dictation.noWakeWord.autoIdle` on, speech opens an automatic recording without a wake word. It ends on silence or a stop word and goes to history only. If the user says a wake word while an automatic recording is open, the automatic recording is discarded and a normal wake-word dictation takes over.
 
 ## Sub-features
 

@@ -166,7 +166,6 @@ struct NoWakeWordConfig: Decodable {
     var autoIdle: Bool?
     var relaxedReadingDistance2: Bool?
     var followupMs: Int?
-    var idleMs: Int?
     var filterInterjections: Bool?
     /// Transcripts that are never kept from an automatic recording when they are all it said, e.g. "うん".
     var ignoredTranscripts: [String]?
@@ -176,7 +175,7 @@ struct NoWakeWordConfig: Decodable {
     /// `dictation.endSilenceMs`, so it can wait longer for someone thinking mid-sentence.
     var endSilenceMs: Int?
     var enabled: Bool { followup == true || autoIdle == true || relaxedReadingDistance2 == true }
-    var valid: Bool { (1000...30000).contains(followupMs ?? 8000) && (1000...60000).contains(idleMs ?? 3000) }
+    var valid: Bool { (1000...30000).contains(followupMs ?? 8000) }
 }
 
 enum NoWakePolicy {

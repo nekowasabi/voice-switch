@@ -20,7 +20,7 @@ Preconditions:
 - `$V build` on the tree under test and `$V doctor` passes.
 - The user agreed to runs that touch their Superwhisper. Each run that records switches Superwhisper to the `input` mode (auto-paste off), adds one history entry, and restores the previous mode. Nothing is pasted.
 - Superwhisper has a mode with key `input` and `autoPaste: false` (`~/Documents/superwhisper/modes`). Otherwise edit `superwhisperMode` in a scratchpad copy of `config.stop-auto.json`.
-- Do not touch the keyboard or mouse during a run. The session starts only after 1 s of input idle (`autoIdle`, `idleMs: 1000`).
+- Do not touch the keyboard or mouse during a run. Input during the run changes `inputIdleSeconds` and where the result goes.
 
 Make the fixtures once.
 

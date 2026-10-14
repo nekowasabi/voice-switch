@@ -17,7 +17,7 @@ With `dictation.noWakeWord` switched on, speech can open a dictation without the
 
 ## How to get to it (user POV)
 
-- Idle path. Stop typing for `idleMs`, then speak.
+- Idle path. Stop typing for a second or more, then speak.
 - Busy path. Keep typing or moving the mouse and talk at the same time.
 
 ## Driving it with verify.sh
@@ -25,7 +25,7 @@ With `dictation.noWakeWord` switched on, speech can open a dictation without the
 Preconditions:
 
 - The user agreed to a run that may drive their Superwhisper and switch its mode. The busy path must not touch Superwhisper; if it does, that is the failure being shown.
-- Config `config.stop-auto.json` in this folder (`superwhisperMode: input`, `autoIdle: true`, `idleMs: 1000`), or a scratchpad copy of it.
+- Config `config.stop-auto.json` in this folder (`superwhisperMode: input`, `autoIdle: true`), or a scratchpad copy of it.
 
 - **Idle start.** Do not touch the keyboard or mouse. Run `$V say auto-idle "今日は晴れです [[slnc 2000]]"` and `VS_RUN_ID=<id> $V run auto-idle <config>`. The output has `dictation session: automatic rule=auto_b inputIdleSeconds=<n>` with n of at least 1.
 - **Busy start (AB1 to AB4).** `$V say busy-speech "[[slnc 1500]] 今日の会議は三時からです [[slnc 3000]]"`, then `VS_BUSY_INPUT=1 SIMULATE_REALTIME=1 VS_RUN_ID=<id> $V run busy-speech config.stop-auto.json`. `VS_BUSY_INPUT=1` runs `busy-input.swift`, which posts an in-place mouse move every 200 ms for 45 s and samples the frontmost app. Expect, in order: `dictation session: automatic rule=auto_b inputIdleSeconds=0.<n>`, `dictation session: end ... seconds=<about 2>`, `superwhisper mode: input`, a `dictation:` result line, and in `busy-input.txt` no `com.superduper.superwhisper` entry left frontmost for more than 2 s.

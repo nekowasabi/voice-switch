@@ -16,6 +16,6 @@
     "maxSeconds": 60,
     "excludeBundleIDs": [],
     "superwhisperMode": "input",
-    "noWakeWord": { "autoIdle": true, "idleMs": 1000 }
+    "noWakeWord": { "autoIdle": true }
   }
 }

@@ -175,7 +175,7 @@ final class ConfigFile {
     private static func load(_ path: String) throws -> Config {
         var config = try JSONDecoder().decode(Config.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
         if let options = config.dictation?.noWakeWord, !options.valid {
-            throw NSError(domain: "voice-switch.config", code: 1, userInfo: [NSLocalizedDescriptionKey: "noWakeWord requires followupMs 1000...30000 and idleMs 1000...60000"])
+            throw NSError(domain: "voice-switch.config", code: 1, userInfo: [NSLocalizedDescriptionKey: "noWakeWord requires followupMs 1000...30000"])
         }
         config.applyDefaultStopWords()
         return config
