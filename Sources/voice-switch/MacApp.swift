@@ -744,10 +744,6 @@ final class Listener {
         let sessionID = UUID()
         let captureGeneration: Int
         let historyGeneration = DictationHistory.shared.generation
-        /// What the on-device recognizer made of this automatic session's utterances so far. Only `.noise` is dropped
-        /// before Superwhisper: an untranscribed one (a long phrase still open) is handed off as before.
-        var heard: Heard = .untranscribed
-        enum Heard { case untranscribed, noise, words }
         init(samples: [Float], generation: Int, transcriptPolicy: AutomaticTranscriptPolicy, silentFrames: Int, heardSpeech: Bool, action: WakeAction? = nil,
              origin: WakeOrigin = WakeOrigin(rule: .strict, inputIdleSeconds: MacInputActivity.idleSeconds())) {
             self.samples = samples
@@ -823,10 +819,6 @@ final class Listener {
                     log("dictation session: automatic replaced by wake word")
                 } else {
                     heardDuringAutomatic = heard
-                    let token = AutomaticTranscriptPolicy.token(heard.text)
-                    let noise = token.isEmpty || dictation?.transcriptPolicy.ignored.contains(token) == true
-                        || (config.cfg.stopWords ?? []).map(normalize).contains(heard.text)
-                    if !noise { dictation?.heard = .words } else if dictation?.heard == .untranscribed { dictation?.heard = .noise }
                 }
             }
             if var d = dictation {
@@ -1158,10 +1150,6 @@ final class Listener {
         if d.origin.isAutomatic {
             if NoWakePolicy.belowMinHandoff(sampleCount: d.samples.count, rate: rate, options: cfg.noWakeWord) {
                 log("dictation dropped: automatic audio shorter than minHandoffMs (\(d.samples.count * 1000 / Int(rate)) ms) reason=\(token) \(sidField(d.sessionID))")
-                return
-            }
-            if d.heard == .noise {
-                log("dictation dropped: automatic audio had no words reason=\(token) \(sidField(d.sessionID))")
                 return
             }
             Task {
