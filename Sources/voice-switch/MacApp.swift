@@ -1147,6 +1147,12 @@ final class Listener {
         guard localHistoryState.withLock({ $0.generation == d.captureGeneration }) else { return }
         let token = finishReasonToken(reason)
         log("dictation session: end reason=\(token) \(d.origin.fields) seconds=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), Double(d.samples.count) / rate)) \(sidField(d.sessionID))")
+        // A wake word followed straight by the stop word leaves a few frames. Superwhisper returns nothing for them and
+        // the 30 s wait holds the handoff lock, so the next wake dictation and every automatic session behind it stall.
+        if d.samples.count < frames(ms: config.cfg.minSpeechMs ?? 300) * frameLen {
+            log("dictation dropped: audio shorter than minSpeechMs (\(d.samples.count * 1000 / Int(rate)) ms) reason=\(token) \(sidField(d.sessionID))")
+            return
+        }
         if d.origin.isAutomatic {
             if NoWakePolicy.belowMinHandoff(sampleCount: d.samples.count, rate: rate, options: cfg.noWakeWord) {
                 log("dictation dropped: automatic audio shorter than minHandoffMs (\(d.samples.count * 1000 / Int(rate)) ms) reason=\(token) \(sidField(d.sessionID))")
