@@ -568,7 +568,7 @@ public sealed class WindowsDictationRuntime
             lastLiveSpeechEnd = frame.Start + frame.Analysis.Length;
         }
 
-        // Starts even while the user types or moves the mouse; IdleMs only picks the route at submit.
+        // Starts even while the user types or moves the mouse; input idle no longer gates it.
         if (config.Dictation?.NoWakeWord is { Enabled: true } && phraseStart >= 0 && segmenter.LastWasSpeech
             && phraseVoiced >= Segmenter.Frames(config.MinSpeechMs ?? 300) * Segmenter.FrameLength)
         {

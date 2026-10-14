@@ -908,7 +908,7 @@ final class Listener {
                 continue
             }
             let options = config.cfg.dictation?.noWakeWord
-            // Starts even while the user types or moves the mouse; idleMs only picks the route at submit.
+            // Starts even while the user types or moves the mouse; input idle no longer gates it.
             if seg.lastWasSpeech && speechFrames >= frames(ms: config.cfg.minSpeechMs ?? 300),
                let mode = config.cfg.dictation?.superwhisperMode, !mode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                let idle = MacInputActivity.idleSeconds(),
