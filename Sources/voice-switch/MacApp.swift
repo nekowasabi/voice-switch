@@ -773,6 +773,8 @@ final class Listener {
         /// Whether Apple Speech and Whisper agreed on words in it. An automatic recording records from its first sound but shows
         /// the recording HUD only once confirmed, so a cough no longer flashes it; one the user started is confirmed from the start.
         var confirmed: Bool
+        /// Length of `samples` when the last agreement check started.
+        var checkedSamples = 0
         init(samples: [Float], generation: Int, transcriptPolicy: AutomaticTranscriptPolicy, silentFrames: Int, heardSpeech: Bool, action: WakeAction? = nil,
              origin: WakeOrigin = WakeOrigin(rule: .strict, inputIdleSeconds: MacInputActivity.idleSeconds())) {
             self.samples = samples
@@ -866,8 +868,10 @@ final class Listener {
                     d.confirmed = true
                     log("dictation session: automatic confirmed by agreed words \(sidField(d.sessionID))")
                 }
-                // Checked beside the frame loop on the audio so far, each time an utterance closes, until one agrees.
-                if !d.confirmed, case .utterance(_)? = event {
+                // Checked beside the frame loop on the audio so far, after every further second of it, until one agrees. Waiting
+                // for an utterance to close instead left long continuous speech unconfirmed, so its HUD never appeared.
+                if !d.confirmed, !wordCheck.pending, d.samples.count - d.checkedSamples >= Int(rate) {
+                    d.checkedSamples = d.samples.count
                     let samples = d.samples, session = d.sessionID, locale = Locale(identifier: config.cfg.locale ?? "ja_JP")
                     // A recognizer that fails confirms, as the handoff hands such a recording off.
                     wordCheck.submit { (session, (try? await agreedWordCount(samples, locale: locale)).map { $0 >= NoWakePolicy.minAgreedCharacters } ?? true) }
