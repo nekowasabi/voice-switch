@@ -8,7 +8,7 @@
 
 ## インストール
 
-`make install` はリリースビルドを `VoiceSwitch.app` にし、`local.voice-switch` としてアドホック署名し、`~/Applications` にコピーする。`~/.config/voice-switch/config.json` が無いときだけ `config.example.json` をそこへコピーし、アプリを開く。
+`make install` はリリースビルドを `VoiceSwitch.app` にし、`local.voice-switch` としてアドホック署名し、`~/Applications` にコピーする。`~/.config/voice-switch/config.json` が無いときだけ `config.example.json` をそこへコピーし、アプリを開く。初回は Whisper のモデル（約 550 MB）も `~/Library/Application Support/voice-switch/models/` にダウンロードする。`make model` でモデルだけを取得できる。
 
 `make uninstall` はアプリを終了してそのコピーを消す。`make logs` は `~/Library/Logs/voice-switch.log` を追う。
 
@@ -134,5 +134,15 @@ LaunchServices、実マイク、Superwhisper の録音・文字起こし・貼�
 - Windows の Ctrl+Shift+F8 は直近の取りこぼしに MISS ラベルを付ける
 
 ウェイクワードと Ctrl+Shift+F10 の録音はモードを切り替えず、その時点の Superwhisper のモードで変換し、貼り付けも Superwhisper に任せます。変換結果は履歴にも残りますが、停止時の HUD に「履歴に保存」と出るのは自動録音のときだけです。
+
+### 雑音と咳払いを Superwhisper に渡さない
+
+自動録音は、Superwhisper を開く前に次の 3 つの確認を通ります。ウェイクワードと Ctrl+Shift+F10 の録音には適用しません。
+
+1. 長さが `noWakeWord.minHandoffMs`（既定 1000 ms）以上あること。短ければ `dictation dropped: automatic audio shorter than minHandoffMs` と記録して捨てます。
+2. Silero VAD が、32 ms の窓のうち 1 つ以上で声を検出すること。打鍵音や物音はここで `dictation dropped: automatic audio had no speech` として捨てます。Mac と Windows で同じモデルを使います。
+3. Mac のみ。Apple Speech と Whisper large-v3-turbo の書き起こしに、順序どおり共通する文字が 3 文字以上あること。咳払いからは認識器ごとに別の言葉が出ますが、話した言葉はどちらでも同じになります。咳払いは `dictation agreement: shared=<n>` に続けて `dictation dropped: automatic audio had no agreed words` と記録して捨てます。この確認で、Superwhisper が開くまでが約 0.4 秒延びます。
+
+「うん」「はい」のような短い相づちは、3 つ目の確認で捨てられることがあります。Silero や Whisper のモデルを読み込めないときは、その旨を記録し、その確認を飛ばして渡します。`voice-switch --check a.wav` は、標準エラーに `voiced=` と `agreed=`、2 つの書き起こしを出します。ファイルが残る理由と捨てられる理由を確かめるときに使えます。
 
 Mac 未検証。実機での音声・権限・UI と精度の評価はまだ必要です。[実装と設定](docs/no-wake-word/implementation.md)、[実機チェック](docs/no-wake-word/native-validation.md)、[合格ライン](docs/wake-acceptance.md) を確認してから有効にしてください。

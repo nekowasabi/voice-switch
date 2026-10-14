@@ -20,7 +20,7 @@ See [BUILD.md](./BUILD.md) for `$PC` details and verification.
 
 ## Install (macOS)
 
-`make install` builds a release binary, wraps it as `VoiceSwitch.app`, ad-hoc signs it as `local.voice-switch`, copies the app to `~/Applications`, copies `config.example.json` to `~/.config/voice-switch/config.json` when that file is missing, and opens the app.
+`make install` builds a release binary, wraps it as `VoiceSwitch.app`, ad-hoc signs it as `local.voice-switch`, copies the app to `~/Applications`, copies `config.example.json` to `~/.config/voice-switch/config.json` when that file is missing, and opens the app. The first install also downloads the Whisper model (about 550 MB) to `~/Library/Application Support/voice-switch/models/`; `make model` fetches it alone.
 
 `make uninstall` quits the app and removes that copy. `make logs` follows `~/Library/Logs/voice-switch.log`.
 
@@ -226,5 +226,15 @@ Automatically started recordings go to in-memory history only. When `dictation.s
 - On Windows, Ctrl+Shift+F8 labels the latest missed recognition
 
 Wake-word and Ctrl+Shift+F10 recordings keep the active Superwhisper mode and leave pasting to Superwhisper. Their result is also kept in history, but the stop HUD says it was saved to history only for automatic recordings.
+
+### Noise and coughs never reach Superwhisper
+
+An automatic recording passes three checks before Superwhisper opens. Wake-word and Ctrl+Shift+F10 recordings skip them.
+
+1. It is at least `noWakeWord.minHandoffMs` long (default 1000 ms). Otherwise the log says `dictation dropped: automatic audio shorter than minHandoffMs`.
+2. Silero VAD hears voice in at least one 32 ms window. Keystrokes and knocks fail it with `dictation dropped: automatic audio had no speech`. Mac and Windows run the same model.
+3. Mac only: Apple Speech and Whisper large-v3-turbo transcribe it, and the two texts share at least 3 characters in order. Each recognizer invents its own words for a cough, while spoken words come out the same from both. A cough fails it with `dictation agreement: shared=<n>` then `dictation dropped: automatic audio had no agreed words`. This adds about 0.4 s before Superwhisper opens.
+
+Short replies such as うん or はい can also be dropped by the third check. When the Silero or Whisper model cannot load, the app logs it and hands the recording off without that check. `voice-switch --check a.wav` prints `voiced=` and `agreed=` with both transcripts on stderr, to see why a file would be kept or dropped.
 
 Mac native build and runtime are unverified. Audio, permission, UI, and real-world accuracy checks are still required. Read the [implementation and settings](docs/no-wake-word/implementation.md), [native checklist](docs/no-wake-word/native-validation.md), and [acceptance gates](docs/wake-acceptance.md) before enabling this feature.
