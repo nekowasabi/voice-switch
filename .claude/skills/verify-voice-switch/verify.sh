@@ -27,10 +27,20 @@ build() {
 }
 
 fixtures() {
-  if [ -f "$FIXTURES/wake-body-separate-stop-clean.wav" ]; then echo "fixtures present in $FIXTURES"; return; fi
   mkdir -p "$FIXTURES"
-  "$PS" -NoProfile -ExecutionPolicy Bypass -File "$(win "$REPO/tests/windows/compose-fixtures.ps1")" -OutputDir "$(win "$FIXTURES")" >/dev/null
-  ls "$FIXTURES"/*.wav | sed 's|.*/||'
+  if [ -f "$FIXTURES/wake-body-separate-stop-clean.wav" ]; then echo "fixtures present in $FIXTURES"
+  else
+    "$PS" -NoProfile -ExecutionPolicy Bypass -File "$(win "$REPO/tests/windows/compose-fixtures.ps1")" -OutputDir "$(win "$FIXTURES")" >/dev/null
+    ls "$FIXTURES"/*.wav | sed 's|.*/||'
+  fi
+  # Automatic-recording gates (features/automatic-gates.md): speech without a wake word, the same plus the stop word, and noise.
+  if [ ! -f "$FIXTURES/auto-stop.wav" ]; then
+    "$PS" -NoProfile -ExecutionPolicy Bypass -File "$(win "$REPO/scripts/windows-say.ps1")" -Text "今日の会議は三時から始めます。資料は共有フォルダに置きました。" -Output "$(win "$FIXTURES")\\say-body.wav" >/dev/null
+    "$PS" -NoProfile -ExecutionPolicy Bypass -File "$(win "$REPO/scripts/windows-say.ps1")" -Text "入力ストップ" -Output "$(win "$FIXTURES")\\say-stop.wav" >/dev/null
+    python3 "$SKILL/make-auto-fixtures.py" "$REPO" "$FIXTURES"
+  fi
+  sed 's/"autoIdle": false/"autoIdle": true/' "$REPO/config.example.windows.json" > "$FIXTURES/auto.json"
+  grep -q '"autoIdle": true' "$FIXTURES/auto.json" || die "config.example.windows.json no longer has \"autoIdle\": false; fix auto.json"
 }
 
 doctor() {

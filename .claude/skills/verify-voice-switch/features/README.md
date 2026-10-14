@@ -31,5 +31,6 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [Consecutive sessions](./consecutive-sessions.md) covers two dictations in one listening run.
 - [Silence produces nothing](./no-speech.md) covers audio with no speech.
 - [Automatic no-wake recording](./automatic-wake.md) covers `noWakeWord.autoIdle` and the spoken wake word taking priority over it.
+- [Automatic-recording gates](./automatic-gates.md) covers the Silero and speech.cpp checks before handoff, the recording HUD waiting for agreement, and the stop-word paste.
 - [Transcription recall](./transcription-recall.md) counts phrases Superwhisper drops from a captured WAV. The KPI is zero.
 - [Tray host and IPC](./tray-ipc.md) covers start, pause, reload, and quit of the tray app. It is not drivable on this machine yet.
