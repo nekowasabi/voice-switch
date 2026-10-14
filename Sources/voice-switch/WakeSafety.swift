@@ -179,6 +179,27 @@ struct NoWakeWordConfig: Decodable {
 }
 
 enum NoWakePolicy {
+    /// Fewest characters Apple Speech and Whisper must share before an automatic recording reaches Superwhisper.
+    /// Noise and coughs make each recognizer invent its own words (Whisper "ご視聴ありがとうございました", Apple nothing),
+    /// so they share none; spoken words come out the same from both. Measured 2026-10-14: coughs 0, speech 12 or more.
+    static let minAgreedCharacters = 3
+
+    /// Length of the longest common subsequence of the two transcripts after `normalize` and width folding (３ and 3 match).
+    static func agreedCharacters(_ a: String, _ b: String) -> Int {
+        let x = Array(normalize(a.precomposedStringWithCompatibilityMapping))
+        let y = Array(normalize(b.precomposedStringWithCompatibilityMapping))
+        var row = [Int](repeating: 0, count: y.count + 1)
+        for c in x {
+            var diagonal = 0
+            for (j, d) in y.enumerated() {
+                let above = row[j + 1]
+                row[j + 1] = c == d ? diagonal + 1 : max(above, row[j])
+                diagonal = above
+            }
+        }
+        return row[y.count]
+    }
+
     static func belowMinHandoff(sampleCount: Int, rate: Double, options: NoWakeWordConfig?) -> Bool {
         sampleCount < Int(rate) * (options?.minHandoffMs ?? 1000) / 1000
     }

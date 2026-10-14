@@ -175,6 +175,9 @@ func check(_ paths: [String], cfg: Config) async throws {
         print("\(path)\t\(verdicts)")
         // stderr keeps stdout in the format scripts and the Windows --check share.
         FileHandle.standardError.write(Data("\(path)\tvoiced=\(try SpeechGate.voicedWindows(samples))\n".utf8))
+        let apple = try await transcribe(samples, locale: locale).text
+        let whisper = (try? WhisperGate.transcribe(samples)) ?? "<unavailable>"
+        FileHandle.standardError.write(Data("\(path)\tagreed=\(NoWakePolicy.agreedCharacters(apple, whisper))\tapple=\(apple)\twhisper=\(whisper)\n".utf8))
     }
 }
 
@@ -659,6 +662,13 @@ final class Listener {
             self.restart()
         }
         Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in self?.checkStall() }
+        // Loading Whisper and compiling its Metal kernels takes seconds; pay it now, not in front of the first automatic recording.
+        if config.cfg.dictation?.noWakeWord?.enabled == true {
+            Task.detached(priority: .utility) {
+                do { _ = try WhisperGate.transcribe([Float](repeating: 0, count: Int(rate))); log("whisper: ready") }
+                catch { log("whisper: unavailable, automatic recordings skip word agreement: \(error)") }
+            }
+        }
     }
 
     private func checkStall() {
@@ -1175,6 +1185,19 @@ final class Listener {
                         return
                     }
                 } catch { log("speech gate failed; handing off anyway: \(error)") }
+                // Silero still hears a voiced cough as speech. Whisper and Apple Speech each invent their own words for it,
+                // while spoken words come out the same from both, so only a recording they agree on reaches superwhisper.
+                let began = Date()
+                async let whisperText = Task.detached { try WhisperGate.transcribe(d.samples) }.value
+                async let appleText = transcribe(d.samples, locale: Locale(identifier: config.cfg.locale ?? "ja_JP")).text
+                do {
+                    let shared = NoWakePolicy.agreedCharacters(try await appleText, try await whisperText)
+                    log("dictation agreement: shared=\(shared) ms=\(Int(Date().timeIntervalSince(began) * 1000)) \(sidField(d.sessionID))")
+                    if shared < NoWakePolicy.minAgreedCharacters {
+                        log("dictation dropped: automatic audio had no agreed words reason=\(token) \(sidField(d.sessionID))")
+                        return
+                    }
+                } catch { log("word agreement failed; handing off anyway: \(error)") }
                 guard let generation = claimLocalHistory(d) else { log("local history transcription busy; recording discarded \(sidField(d.sessionID))"); return }
                 defer { localHistoryState.withLock { $0.busy = false } }
                 // superwhisper takes focus when it opens the file; hand it back to wherever the user is now, not where the session began.

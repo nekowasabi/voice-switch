@@ -24,6 +24,8 @@ Useful flags: `--check`, `--simulate`, `--fire`, `--vad-selftest`.
 
 The first build downloads ONNX Runtime 1.24.2 (about 71 MB from download.onnxruntime.ai) for the Silero VAD speech gate. It links statically. `make app` copies `voice-switch_voice-switch.bundle` (the Silero model and its MIT license) into `Contents/Resources`, and `--vad-selftest` fails when the model is missing. `--check` also writes `<file>\tvoiced=<n>` to stderr, where n is the number of 32 ms windows Silero heard as voice. An automatic recording with n = 0 is never handed to superwhisper.
 
+Automatic recordings that pass Silero are also transcribed by Apple Speech and by Whisper large-v3-turbo (whisper.cpp b5454, a dynamic framework `make app` copies into `Contents/Frameworks`). They reach superwhisper only when the two transcripts share at least `NoWakePolicy.minAgreedCharacters` (3) characters in order. Noise and coughs make each recognizer invent different words, while spoken words come out the same. This adds about 0.4 s before superwhisper opens. The 550 MB model is not bundled. `make model` (run by `make install`) downloads it once to `~/Library/Application Support/voice-switch/models/`, and `--vad-selftest` fails without it. If the model cannot load, the app logs `whisper: unavailable` and hands automatic recordings off without the check. `--check` writes `<file>\tagreed=<n>\tapple=<text>\twhisper=<text>` to stderr.
+
 ## Windows from WSL
 
 Requirements: .NET SDK with Windows targeting support. The Makefile assumes a POSIX shell. Override `DOTNET=/path/to/dotnet` if `dotnet` is not on `PATH`. `VoiceSwitch.Windows.Core` restores the `Microsoft.ML.OnnxRuntime` 1.24.2 NuGet package for the same speech gate, so the first restore needs nuget.org.

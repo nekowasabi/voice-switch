@@ -26,6 +26,10 @@ if mode == "--vad-selftest" {
         print("vad-selftest: FAILED (speech gate)")
         exit(1)
     }
+    guard FileManager.default.fileExists(atPath: WhisperGate.modelPath) else {
+        print("vad-selftest: FAILED (Whisper model missing at \(WhisperGate.modelPath); run make model)")
+        exit(1)
+    }
     vadSelftest()
     exit(0)
 } else if mode == "--fire" {
