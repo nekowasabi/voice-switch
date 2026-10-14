@@ -17,7 +17,9 @@ q=[]
 for f in sorted(per):
     n=f.split("/")[-1][:-4]; src=SRC.get(n, SENT if n.startswith("tts-sentence") else None)
     for t in per[f]: q+=[(f,"A","",t),(f,"B",t,t)]+([(f,"C",src,t)] if src else [])
-out=run_tool(sys.argv[2],[a+"\t"+w for _,_,a,w in q],allowed=lambda o: o.strip().isdigit())
+NAME=__import__("os").path.basename(sys.argv[2])
+if NAME not in ("agree_pair","agree_pair_main"): raise SystemExit(f"app_eval3.py needs agree_pair or agree_pair_main, got {NAME}")
+out=run_tool(sys.argv[2],[a+"\t"+w for _,_,a,w in q],NAME,allowed=lambda o: o.strip().isdigit())
 votes=collections.defaultdict(list)
 for (f,k,_,_),o in zip(q,out): votes[(f,k)].append(int(o)>=3)
 S=collections.defaultdict(lambda:collections.Counter())

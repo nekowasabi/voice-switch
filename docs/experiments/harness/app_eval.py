@@ -11,7 +11,7 @@ for l in open(sys.argv[1]):
     r=json.loads(l)
     if r["event"]=="run": per[r["file"]].append(r["text"].strip().replace("\n"," "))
 fs=sorted(per); allt=[(f,t) for f in fs for t in per[f]]
-out=run_tool(sys.argv[2],[t for _,t in allt],allowed=lambda o: o.split() in (["0","0"],["0","1"],["1","0"],["1","1"]))
+out=run_tool(sys.argv[2],[t for _,t in allt],"agree_same_empty",allowed=lambda o: o.split() in (["0","0"],["0","1"],["1","0"],["1","1"]))
 res=collections.defaultdict(lambda:[0,0,0])
 for (f,t),line in zip(allt,out):
     same,empty=map(int,line.split()); res[f][0]+=same; res[f][1]+=empty; res[f][2]+=1
