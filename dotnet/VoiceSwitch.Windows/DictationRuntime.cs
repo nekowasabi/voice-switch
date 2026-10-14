@@ -568,17 +568,15 @@ public sealed class WindowsDictationRuntime
             lastLiveSpeechEnd = frame.Start + frame.Analysis.Length;
         }
 
-        // Checked on every voiced frame, not once at onset: talk that began right after typing becomes eligible
-        // as soon as the keyboard and mouse have been quiet for idleMs.
+        // Starts even while the user types or moves the mouse; input idle no longer gates it.
         if (config.Dictation?.NoWakeWord is { Enabled: true } && phraseStart >= 0 && segmenter.LastWasSpeech
             && phraseVoiced >= Segmenter.Frames(config.MinSpeechMs ?? 300) * Segmenter.FrameLength)
         {
             var idle = inputIdleSeconds();
             var origin = NoWakePolicy.OnSpeech(config.Dictation?.NoWakeWord, idle, phraseStart < followupUntil);
             var window = origin is not null ? foregroundWindow() : 0;
-            // The whole phrase is recorded, but never audio from before the last key or mouse input.
-            var lastInput = analysisStore.Next - (long)((idle ?? 0) * Segmenter.Rate);
-            var start = Math.Max(Math.Max(originalStore.Start, lastInput), phraseStart - Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength);
+            // The whole phrase with its preroll, even when it overlaps typing.
+            var start = Math.Max(originalStore.Start, phraseStart - Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength);
             var skip = origin is null ? null : AutomaticSkipReason(window);
             // Logged once per change: a blocked automatic wake was otherwise indistinguishable from silence in the log.
             if (skip != lastAutomaticSkip && skip is not null) Log.Info(skip);

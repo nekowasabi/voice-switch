@@ -2,7 +2,7 @@ namespace VoiceSwitch.Windows.Core;
 
 public sealed record NoWakeWordConfig(bool Followup = false, bool AutoIdle = false, bool RelaxedReadingDistance2 = false,
     int FollowupMs = 8000, int IdleMs = 3000, bool FilterInterjections = false, int MinHandoffMs = 1000,
-    IReadOnlyList<string>? IgnoredTranscripts = null)
+    IReadOnlyList<string>? IgnoredTranscripts = null, int? EndSilenceMs = null)
 {
     public bool Valid => FollowupMs is >= 1000 and <= 30000 && IdleMs is >= 1000 and <= 60000;
     public bool Enabled => Followup || AutoIdle || RelaxedReadingDistance2;
@@ -61,7 +61,7 @@ public static class NoWakePolicy
     {
         if (options is null || !options.Valid || idleSeconds is null or < 0 || !double.IsFinite(idleSeconds.Value)) return null;
         if (options.Followup && inFollowupWindow) return new(WakeRule.Followup, idleSeconds);
-        return options.AutoIdle && idleSeconds * 1000 >= options.IdleMs ? new(WakeRule.AutoB, idleSeconds) : null;
+        return options.AutoIdle ? new(WakeRule.AutoB, idleSeconds) : null;
     }
 
     public static WakePrefix? RelaxedWake(RecognizedUtterance recognition, IReadOnlyList<WakeWord> wakes)

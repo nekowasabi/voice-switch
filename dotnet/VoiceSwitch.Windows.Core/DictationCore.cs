@@ -544,7 +544,7 @@ public sealed class DictationSession
     public long? RequiredAudioStart => bodyStart;
     public long? AwaitingWakeEnd => awaitingBody && !terminal ? wakeEnd : null;
     public long? AwaitingWakeSourceEnd => awaitingBody && !terminal ? wakeSourceEnd : null;
-    public long? SilenceDeadline => bodyStart is not null && !terminal ? silenceFrom + MsToSamples(config.Dictation?.EndSilenceMs ?? 1200) : null;
+    public long? SilenceDeadline => bodyStart is not null && !terminal ? silenceFrom + MsToSamples((Origin.IsAutomatic ? config.Dictation?.NoWakeWord?.EndSilenceMs : null) ?? config.Dictation?.EndSilenceMs ?? 1200) : null;
 
     private bool DedicatedStopEnabled => config.Dictation?.DedicatedStopRecognizer == true;
 

@@ -61,6 +61,12 @@ cmd_run() {
   # MARK lets a config's command prove its side effect inside the evidence folder.
   sed -i '' "s#__EVIDENCE__#$out#g" "$out/config.json"
   cp "$wav" "$out/input.aiff"
+  # VS_BUSY_INPUT=1 holds input idle near zero for the whole run, i.e. "the user is operating the Mac".
+  if [ -n "${VS_BUSY_INPUT:-}" ]; then
+    swift "$SKILL/busy-input.swift" 45 > "$out/busy-input.txt" 2>&1 &
+    echo $! > "$out/busy-pid.txt"
+    sleep 3
+  fi
   VOICE_SWITCH_CONFIG=$out/config.json "$BIN" --simulate "$out/input.aiff" > "$out/stdout.txt" 2> "$out/stderr.txt" &
   pid=$!
   echo "$pid" > "$out/pid.txt"
@@ -68,6 +74,8 @@ cmd_run() {
   i=0
   while kill -0 "$pid" 2>/dev/null && [ $i -lt 90 ]; do sleep 1; i=$((i + 1)); done
   if kill -0 "$pid" 2>/dev/null; then kill "$pid"; echo timeout > "$out/exitcode.txt"; else wait "$pid" && echo 0 > "$out/exitcode.txt" || echo $? > "$out/exitcode.txt"; fi
+  # The helper ends by itself after 45 s; waiting keeps its idle report in the evidence.
+  [ -f "$out/busy-pid.txt" ] && { wait "$(cat "$out/busy-pid.txt")" || true; cat "$out/busy-input.txt"; }
   echo "exit=$(cat "$out/exitcode.txt") evidence=$out"
   for m in "$out"/*.marker; do [ -f "$m" ] && basename "$m"; done
   grep -E 'heard|dictation|phase|fatal|command' "$out/stdout.txt" || true

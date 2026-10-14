@@ -432,6 +432,9 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     guard let result else {
         log("dictation: no superwhisper result within 30 s \(sidField(sessionID))"); return true
     }
+    guard !result.isEmpty else {
+        log("dictation: superwhisper heard no words \(sidField(sessionID))"); return true
+    }
     log("dictation: \(result.count) chars in \(Int(Date().timeIntervalSince(submitted) * 1000)) ms audio=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), Double(samples.count) / rate))s \(sidField(sessionID))")
     guard stillCurrent() else { return true }
     guard DictationHistory.shared.add(id: sessionID, text: result, origin: origin, expectedGeneration: historyGeneration, policy: transcriptPolicy) else { return true }
@@ -461,6 +464,7 @@ func acquireModeOwnership() async -> MacModeOwnership? {
 }
 
 /// Polls superwhisper's recordings folder for the run that started at or after `since` (unix seconds).
+/// "" means the run finished without words; nil means no run finished within 30 s.
 func awaitResult(in dir: String, since: Int, excluding previousRuns: Set<String> = []) async -> String? {
     for _ in 0 ..< 300 {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []
@@ -471,6 +475,9 @@ func awaitResult(in dir: String, since: Int, excluding previousRuns: Set<String>
             for key in ["llmResult", "result"] {
                 if let s = meta[key] as? String, !s.isEmpty { return s }
             }
+            // A finished run that heard no words (noise, a cough) has processingTime and an empty result. Waiting the
+            // full 30 s for it held the handoff lock, which blocked every automatic session behind it.
+            if meta["processingTime"] is NSNumber { return "" }
         }
         try? await Task.sleep(for: .milliseconds(100))
     }
@@ -872,7 +879,7 @@ final class Listener {
                     continue
                 }
                 // A pending stop check holds the end, so a stop word is not submitted as text.
-                guard key == .finish || (!stopCheck.pending && (d.silentFrames * frameLen * 1000 / Int(rate) >= dc.endSilenceMs ?? 1200
+                guard key == .finish || (!stopCheck.pending && (d.silentFrames * frameLen * 1000 / Int(rate) >= (d.origin.isAutomatic ? dc.noWakeWord?.endSilenceMs : nil) ?? dc.endSilenceMs ?? 1200
                     || d.samples.count > Int((dc.maxSeconds ?? 60) * rate))) else { continue }
                 let reason = key == .finish ? "hotkey" : d.samples.count > Int((dc.maxSeconds ?? 60) * rate) ? "maxSeconds"
                     : "\(d.silentFrames * frameLen * 1000 / Int(rate)) ms silence"
@@ -901,15 +908,14 @@ final class Listener {
                 continue
             }
             let options = config.cfg.dictation?.noWakeWord
-            // Checked on every voiced frame, not once at onset: talk that began right after typing becomes eligible
-            // as soon as the keyboard and mouse have been quiet for idleMs.
+            // Starts even while the user types or moves the mouse; input idle no longer gates it.
             if seg.lastWasSpeech && speechFrames >= frames(ms: config.cfg.minSpeechMs ?? 300),
                let mode = config.cfg.dictation?.superwhisperMode, !mode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                let idle = MacInputActivity.idleSeconds(),
                let origin = NoWakePolicy.onSpeech(options, idleSeconds: idle, inFollowupWindow: clock < followupUntil),
                automaticWakeAllowed() {
-                // The whole phrase is recorded, but never audio from before the last key or mouse input.
-                let samples = Array(recent.suffix(min(recent.count, Int(idle * rate))))
+                // The whole phrase with its preroll, even when it overlaps typing.
+                let samples = recent
                 if !samples.isEmpty {
                     // No hotkeys: the user is mid-task elsewhere and their Escape belongs to that app, so only silence or a stop word ends it.
                     dictation = Dictation(samples: samples, generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: true, origin: origin)
@@ -1148,6 +1154,12 @@ final class Listener {
         guard localHistoryState.withLock({ $0.generation == d.captureGeneration }) else { return }
         let token = finishReasonToken(reason)
         log("dictation session: end reason=\(token) \(d.origin.fields) seconds=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), Double(d.samples.count) / rate)) \(sidField(d.sessionID))")
+        // A wake word followed straight by the stop word leaves a few frames. Superwhisper returns nothing for them and
+        // the 30 s wait holds the handoff lock, so the next wake dictation and every automatic session behind it stall.
+        if d.samples.count < frames(ms: config.cfg.minSpeechMs ?? 300) * frameLen {
+            log("dictation dropped: audio shorter than minSpeechMs (\(d.samples.count * 1000 / Int(rate)) ms) reason=\(token) \(sidField(d.sessionID))")
+            return
+        }
         if d.origin.isAutomatic {
             if NoWakePolicy.belowMinHandoff(sampleCount: d.samples.count, rate: rate, options: cfg.noWakeWord) {
                 log("dictation dropped: automatic audio shorter than minHandoffMs (\(d.samples.count * 1000 / Int(rate)) ms) reason=\(token) \(sidField(d.sessionID))")

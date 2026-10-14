@@ -86,8 +86,8 @@ internal static class NoWakeTests
         if (NoWakePolicy.OnSpeech(new(), 10, true) is not null
             || NoWakePolicy.OnSpeech(new(AutoIdle: true), null, false) is not null
             || NoWakePolicy.OnSpeech(new(AutoIdle: true), double.NaN, false) is not null
-            || NoWakePolicy.OnSpeech(new(AutoIdle: true), 2.999, false) is not null
-            || NoWakePolicy.OnSpeech(new(AutoIdle: true), 3, false)?.Rule != WakeRule.AutoB
+            || NoWakePolicy.OnSpeech(new(AutoIdle: true), 0.2, false)?.Rule != WakeRule.AutoB
+            || NoWakePolicy.OnSpeech(new(AutoIdle: true), -1, false) is not null
             || NoWakePolicy.OnSpeech(new(Followup: true, AutoIdle: true), 4, true)?.Rule != WakeRule.Followup) return false;
         RecognizedUtterance Heard(string reading, RecognitionExtent extent = RecognitionExtent.ClosedUtterance) =>
             new(1, extent, new(0, 100), "candidate", [new LexicalRun("candidate", new(0, 100), reading)]);
@@ -197,7 +197,8 @@ internal static class NoWakeTests
             && Run(4, loopbackDb: -100).GetAwaiter().GetResult() == (2, 2, 0, false, true, false)
             && Run(4, minHandoffMs: 1000).GetAwaiter().GetResult() == (0, 0, 0, false, true, false)
             && Run(null).GetAwaiter().GetResult() == (0, 0, 0, false, true, false)
-            && Run(0).GetAwaiter().GetResult() == (0, 0, 0, false, true, false)
+            && Run(0).GetAwaiter().GetResult() == (2, 2, 0, false, true, false)
+            && Run(0, spokenWake: true).GetAwaiter().GetResult() is (0, > 0, 0, _, _, true)
             && Run(4, "other recorder").GetAwaiter().GetResult() == (0, 0, 0, false, true, false)
             && Run(4, spokenWake: true).GetAwaiter().GetResult() is (0, > 0, 0, _, _, true)
             && Run(4, fragmented: true).GetAwaiter().GetResult() == (1, 1, 0, false, true, false)
