@@ -211,6 +211,59 @@ internal static class NoWakeTests
     }
 
 
+    public static bool AutomaticWordAgreement()
+    {
+        async Task<(int Handed, bool Recording, string Log, DictationAudio? Audio)> Run(Func<ImmutableArray<short>, Task<int>> agreed, bool stopWord = false)
+        {
+            var frames = new List<PcmFrame>();
+            void Add(int count, short value)
+            {
+                for (var i = 0; i < count; i++)
+                    frames.Add(new(frames.Count * Segmenter.FrameLength,
+                        Enumerable.Range(0, Segmenter.FrameLength).Select(j => (short)(j % 2 == 0 ? value : -value)).ToImmutableArray()));
+            }
+            Add(4, 0);
+            if (stopWord) { Add(12, 9000); Add(10, 0); Add(12, 9000); Add(60, 0); }
+            else { Add(70, 9000); Add(30, 0); }
+            var config = new VoiceSwitchConfig(["wake"], "en-US", "unused", MaxSeconds: 2.5,
+                HangoverMs: 120, PrerollMs: 60, MinSpeechMs: 90, VadMinRMS: 0.005f, StopWords: ["stop"],
+                Dictation: new(EndSilenceMs: stopWord ? 1200 : 240, NoWakeWord: new(AutoIdle: true, MinHandoffMs: 0)));
+            var handoff = new CountingHandoff();
+            var recognizer = new ScriptedDictationRecognizer(request =>
+            {
+                var text = stopWord && request.Range.Start >= 20 * Segmenter.FrameLength ? "stop" : "body";
+                return Task.FromResult(new RecognizedUtterance(request.Id, request.Extent, request.Range, text, [new LexicalRun(text, request.Range)]));
+            });
+            var phases = new PhaseRecorder();
+            var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(frames, new[] { 20, 30, 40, 50, 60, 70, 80 }),
+                recognizer, handoff, false, phases, inputIdleSeconds: () => 4, wakeReading: value => value,
+                micInUseBy: _ => null, voicedWindows: _ => 1, agreedCharacters: agreed);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var previousOutput = Console.Out;
+            using var output = new StringWriter();
+            try
+            {
+                Console.SetOut(output);
+                await runtime.RunAsync(timeout.Token);
+            }
+            finally { Console.SetOut(previousOutput); }
+            return (handoff.Count, phases.Phases.Contains(DictationPhase.Recording), output.ToString(), handoff.Seen.LastOrDefault());
+        }
+
+        bool Before(string log, string first, string second) => log.IndexOf(first, StringComparison.Ordinal) is >= 0 and var at && at < log.IndexOf(second, StringComparison.Ordinal);
+        var agreed = Run(_ => Task.FromResult(5)).GetAwaiter().GetResult();
+        var cough = Run(_ => Task.FromResult(1)).GetAwaiter().GetResult();
+        var broken = Run(_ => Task.FromException<int>(new InvalidOperationException("worker down"))).GetAwaiter().GetResult();
+        var stopped = Run(_ => Task.FromResult(5), stopWord: true).GetAwaiter().GetResult();
+        return agreed is (1, true, _, _) && Before(agreed.Log, "automatic confirmed by agreed words", "dictation phase: Recording")
+               && !agreed.Log.Contains("dictation agreement:") && agreed.Audio?.Wake.IsAutomatic == true
+            && cough is (0, false, _, _) && cough.Log.Contains("dictation agreement: shared=1 ")
+               && cough.Log.Contains("dictation dropped: automatic audio had no agreed words")
+            && broken is (1, true, _, _)
+            && stopped.Handed == 1 && stopped.Audio is { Reason: FinishReason.StandaloneStop, Wake.IsAutomatic: false }
+               && stopped.Log.Contains("automatic ended by stop word, pasting like a wake-word dictation");
+    }
+
     // A playback trace at one level from a minute ago to a minute ahead, so every mic frame of the test pairs with a bin.
     private static LevelTrace ConstantLoopback(float db)
     {
@@ -521,10 +574,12 @@ internal static class NoWakeTests
     private sealed class CountingHandoff : IDictationHandoff
     {
         public int Count;
+        public List<DictationAudio> Seen = [];
         public HandoffStatus Status = HandoffStatus.Transcribed;
         public Task<HandoffResult> SubmitAsync(DictationAudio audio, CancellationToken cancellation)
         {
             Count++;
+            Seen.Add(audio);
             return Task.FromResult(new HandoffResult(Status, audio.SessionId, null, "manual"));
         }
     }

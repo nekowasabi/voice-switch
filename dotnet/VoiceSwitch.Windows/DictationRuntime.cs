@@ -65,6 +65,13 @@ public sealed class WindowsDictationRuntime
     private readonly Func<IReadOnlyCollection<string>, string?> automaticMicInUseBy;
     private readonly Func<double?> inputIdleSeconds;
     private readonly Func<ImmutableArray<short>, int> voicedWindows;
+    // Characters two recognizers share for a recording (WordAgreement.CountAsync); null skips the check, as an unavailable recognizer does.
+    private readonly Func<ImmutableArray<short>, Task<int>>? agreedCharacters;
+    // Mac Dictation.confirmed: an automatic session records from its first sound but shows 録音中 only once the recognizers
+    // agreed on words in it, so a cough no longer flashes it. Checked beside the loop after every further second of body.
+    private Guid confirmedSession;
+    private long checkedSamples;
+    private (Guid Session, Task<bool> Agreed)? wordCheck;
     // Shadow log of playback vs microphone levels: mic dBFS per frame keyed by sample index, loopback dBFS per 10 ms keyed by ms.
     private readonly LevelTrace micLevels = new(4_000);
     private readonly LevelTrace? loopbackLevels;
@@ -112,9 +119,11 @@ public sealed class WindowsDictationRuntime
         Func<string, string?>? wakeReading = null,
         Func<double?>? inputIdleSeconds = null,
         LevelTrace? loopbackLevels = null,
-        Func<ImmutableArray<short>, int>? voicedWindows = null)
+        Func<ImmutableArray<short>, int>? voicedWindows = null,
+        Func<ImmutableArray<short>, Task<int>>? agreedCharacters = null)
     {
         this.voicedWindows = voicedWindows ?? SpeechGate.VoicedWindows;
+        this.agreedCharacters = agreedCharacters;
         this.wakeReading = wakeReading;
         this.inputIdleSeconds = inputIdleSeconds ?? InputActivity.IdleSeconds;
         this.loopbackLevels = loopbackLevels;
@@ -476,6 +485,7 @@ public sealed class WindowsDictationRuntime
                     break;
                 }
 
+                CheckWords(session);
                 PublishPhase(session, lastLiveSpeechEnd);
             }
 
@@ -738,6 +748,7 @@ public sealed class WindowsDictationRuntime
         lastSilenceDiagnosticKey = null;
         target = 0;
         heardAfterWake = false;
+        checkedSamples = 0;
         hotkeys?.End();
         return new DictationSession(config);
     }
@@ -894,10 +905,33 @@ public sealed class WindowsDictationRuntime
     private void PublishPhase(DictationSession session, long lastLiveSpeechEnd)
     {
         PublishPhase(endedByUser ? DictationPhase.Ended
-            : session.IsActive ? DictationPhase.Recording
+            : session.IsActive ? (Confirmed(session) ? DictationPhase.Recording : DictationPhase.Idle)
             : session.IsAwaitingBody ? (HeardAfterWake(session, lastLiveSpeechEnd) ? DictationPhase.Recording : DictationPhase.Waiting)
             : config.Dictation?.NoWakeWord?.Followup == true && analysisStore.Next < followupUntil ? DictationPhase.Followup
             : DictationPhase.Idle);
+    }
+
+    private bool Confirmed(DictationSession session) =>
+        !session.Origin.IsAutomatic || agreedCharacters is null || confirmedSession == session.SessionId;
+
+    private void CheckWords(DictationSession session)
+    {
+        if (wordCheck is { Agreed.IsCompleted: true } done)
+        {
+            wordCheck = null;
+            // A recognizer that fails confirms, as the handoff hands such a recording off.
+            if (done.Session == session.SessionId && session.IsActive && (!done.Agreed.IsCompletedSuccessfully || done.Agreed.Result))
+            {
+                confirmedSession = session.SessionId;
+                Log.Info($"dictation session: automatic confirmed by agreed words {Sid(session)}");
+            }
+        }
+
+        if (agreedCharacters is not { } agreed || Confirmed(session) || wordCheck is not null
+            || session.PendingBody is not { } body || body.Length - checkedSamples < (long)Segmenter.Rate) return;
+        checkedSamples = body.Length;
+        var samples = originalStore.Copy(body);
+        wordCheck = (session.SessionId, Task.Run(async () => await agreed(samples) >= NoWakePolicy.MinAgreedCharacters));
     }
 
     private bool HeardAfterWake(DictationSession session, long lastLiveSpeechEnd) =>
@@ -1047,7 +1081,7 @@ public sealed class WindowsDictationRuntime
                 return;
             }
             if (localInflight is { IsCompleted: false }) { Log.Info($"local history transcription busy; recording discarded sid={audio.SessionId}"); return; }
-            localInflight = RunHandoffAsync(audio);
+            localInflight = RunHandoffAsync(audio, confirmedSession == audio.SessionId);
             return;
         }
         if (config.Dictation?.NoWakeWord is { Followup: true } followup && audio.Action is null)
@@ -1058,15 +1092,17 @@ public sealed class WindowsDictationRuntime
             return;
         }
 
-        inflight = RunHandoffAsync(audio);
+        inflight = RunHandoffAsync(audio, confirmed: true);
     }
 
     // Not tied to the loop token: pausing or quitting must not abort a handoff Superwhisper is already reading.
-    private async Task RunHandoffAsync(DictationAudio audio)
+    // confirmed: the recognizers already agreed on words while it was recorded; checking again would only delay Superwhisper.
+    private async Task RunHandoffAsync(DictationAudio audio, bool confirmed)
     {
+        var wake = audio.Wake;
         // A cough or a keystroke still opens Superwhisper and leaves its own empty or "よっ!" entry; Silero finds no voice in them.
         // Off the capture loop: a long recording is thousands of Silero windows.
-        if (audio.Wake.IsAutomatic)
+        if (wake.IsAutomatic)
         {
             try
             {
@@ -1076,17 +1112,40 @@ public sealed class WindowsDictationRuntime
                     return;
                 }
             }
-            catch (Exception ex) { Log.Info($"speech gate failed; handing off anyway: {ErrorDetail(ex, audio.Wake)} sid={audio.SessionId}"); }
+            catch (Exception ex) { Log.Info($"speech gate failed; handing off anyway: {ErrorDetail(ex, wake)} sid={audio.SessionId}"); }
+        }
+        // Silero still hears a voiced cough as speech; only a recording both recognizers write the same words for goes on.
+        if (wake.IsAutomatic && !confirmed && agreedCharacters is { } agreed)
+        {
+            var began = Stopwatch.GetTimestamp();
+            try
+            {
+                var shared = await Task.Run(() => agreed(audio.Samples));
+                Log.Info($"dictation agreement: shared={shared} ms={(long)Stopwatch.GetElapsedTime(began).TotalMilliseconds} sid={audio.SessionId}");
+                if (shared < NoWakePolicy.MinAgreedCharacters)
+                {
+                    Log.Info($"dictation dropped: automatic audio had no agreed words reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End} sid={audio.SessionId}");
+                    return;
+                }
+            }
+            catch (Exception ex) { Log.Info($"word agreement failed; handing off anyway: {ErrorDetail(ex, wake)} sid={audio.SessionId}"); }
+        }
+        // Ending it with the stop word shows the user meant to dictate into the window in front, so it is handed off like a
+        // wake-word dictation and Superwhisper pastes it. One that ended on silence or maxSeconds stays history-only.
+        if (wake.IsAutomatic && audio.Reason == FinishReason.StandaloneStop)
+        {
+            audio = audio with { Origin = new WakeOrigin(WakeRule.Strict, audio.Wake.InputIdleSeconds) };
+            Log.Info($"dictation session: automatic ended by stop word, pasting like a wake-word dictation sid={audio.SessionId}");
         }
         try
         {
-            var result = await handoff.SubmitAsync(audio, audio.Wake.IsAutomatic ? localCancellation : CancellationToken.None);
+            var result = await handoff.SubmitAsync(audio, wake.IsAutomatic ? localCancellation : CancellationToken.None);
             observer?.HandoffSubmitted(audio, result);
-            Log.Info($"dictation handoff: {result.Status} sid={result.Id} wav={result.Path ?? "-"} reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End} {(config.Dictation?.NoWakeWord?.Enabled == true || audio.Wake.IsAutomatic ? "details suppressed" : result.Message)}");
+            Log.Info($"dictation handoff: {result.Status} sid={result.Id} wav={result.Path ?? "-"} reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End} {(config.Dictation?.NoWakeWord?.Enabled == true || wake.IsAutomatic ? "details suppressed" : result.Message)}");
         }
         catch (Exception ex)
         {
-            Log.Info($"dictation handoff failed: {ErrorDetail(ex, audio.Wake)} reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End} sid={audio.SessionId}");
+            Log.Info($"dictation handoff failed: {ErrorDetail(ex, wake)} reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End} sid={audio.SessionId}");
         }
     }
 

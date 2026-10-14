@@ -22,6 +22,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("automatic audio without a verified no-auto-paste mode falls back to unpasted local history", () => Check(NoWakeTests.ControlledMode())),
     ("clearing history invalidates pending transcription", () => Check(NoWakeTests.ClearPendingHistory())),
     ("automatic wake gates and immutable provenance", () => Check(NoWakeTests.WakeRules())),
+    ("automatic recording shows 録音中 only once two recognizers agree, drops a cough they disagree on, hands off when they fail, and pastes when ended by the stop word", () => Check(NoWakeTests.AutomaticWordAgreement())),
     ("automatic runtime repeats sessions, fails closed on idle or microphone uncertainty, yields to a spoken wake word, records fragmented speech from its start, and logs playback-vs-mic levels at start and end", () => Check(NoWakeTests.AutomaticRuntime())),
     ("loopback shadow fields give medians, the above-zero share, silent and unknown", () => Check(NoWakeTests.LoopbackShadowFields())),
     ("transcript shape counts letters and spots filler-only text without the text", () => Check(NoWakeTests.TranscriptShapeFields())),

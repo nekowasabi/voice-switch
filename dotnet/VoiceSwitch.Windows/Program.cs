@@ -118,13 +118,15 @@ public static class Program
                     }
 
                     if (!effectiveDryRun && options.OutputDir is null) handoff = LocalHistoryHandoff.Wrap(handoff, config, Tray.WindowFocus.Paste);
+                    if (config.Dictation?.NoWakeWord?.Enabled == true) WordAgreement.Warm();
                     return new WindowsDictationRuntime(
                             config,
                             capture,
                             new SpeechPowerShellDictationRecognizer(config),
                             handoff,
                             effectiveDryRun,
-                            reloadConfig: new ConfigFile(configPath).ReloadIfChanged)
+                            reloadConfig: new ConfigFile(configPath).ReloadIfChanged,
+                            agreedCharacters: WordAgreement.CountAsync)
                         .RunAsync(interrupt.Token)
                         .GetAwaiter()
                         .GetResult();
