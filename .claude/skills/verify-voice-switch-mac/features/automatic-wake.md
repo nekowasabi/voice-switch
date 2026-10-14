@@ -34,6 +34,8 @@ Preconditions:
 
 ## Gotchas
 
+- `busy-input.swift` needs the terminal running `verify.sh` to hold the Accessibility grant. Without it every posted move is dropped, the session logs `inputIdleSeconds` of many seconds, and the run proves nothing about the busy path. `$V doctor` warns about it, and the helper writes `busy-input: FAILED` into `busy-input.txt`. The 2026-10-14 runs `silero-noise` and `silero-speech` hit this (`inputIdleSeconds=8.148` and `60.803`).
+
 - With `noWakeWord` enabled the `heard:` lines are suppressed for privacy. Read the `dictation session:` and `dictation recognition:` lines instead.
 - Missing `superwhisperMode` silently disables all three. A run with no `rule=auto_b` line should first check the config.
 - Without `VS_BUSY_INPUT`, your own typing during the run changes `inputIdleSeconds`. Do not type during idle-path runs.
