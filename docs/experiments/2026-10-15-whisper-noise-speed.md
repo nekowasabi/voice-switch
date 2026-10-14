@@ -126,11 +126,15 @@ box では、1つの作業ディレクトリの下にこう並べていました
 ```
 git clone https://github.com/ggml-org/whisper.cpp wcpp
 git -C wcpp checkout v1.7.5
-cmake -S wcpp -B wcpp/build
+cmake -S wcpp -B wcpp/build -DCMAKE_BUILD_TYPE=Release
 cmake --build wcpp/build -j
 ```
 
-`bench*.c` は `wcpp/include` と `wcpp/ggml/include` を読み、`libwhisper` と `libggml` にリンクします。box で使ったコンパイルの1行は記録に残っていません。
+`bench*.c` は次の1行でコンパイルできます（`bench.c` の部分を `bench_seg.c`、`bench_dyn.c`、`bench_s3.c` に替えれば、ほかの3本も作れます）。`-lggml` は要りません。この1行は、あとから box で4本ともコンパイルできることを確かめたものです。測ったときの1行は記録に残っていません。
+
+```sh
+cc -O2 -Iwcpp/include -Iwcpp/ggml/include bench.c -Lwcpp/build/src -lwhisper -o bench
+```
 
 ### 実行例
 

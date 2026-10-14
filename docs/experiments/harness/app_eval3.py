@@ -2,7 +2,8 @@
 """App pass = agreed>=3 per run, clip passes if majority of runs pass. tool reads apple\twhisper, prints agreed.
 Assumptions: A) apple='' B) apple==whisper raw text C) speech only: apple=TTS source sentence (JFK excluded: not TTS).
 Usage: app_eval3.py <runs.jsonl> <tools/bin/agree_pair or agree_pair_main>"""
-import json,sys,collections,subprocess
+import json,sys,collections
+from tool_io import run_tool
 SRC={"tts-hai":"はい","tts-hai-quiet-20dB":"はい","tts-hai-raw-0.26s":"はい"}
 SENT="画面の右上にあるボタンを押してください。"  # assumed source = clean TTS whisper output
 man={}
@@ -16,7 +17,7 @@ q=[]
 for f in sorted(per):
     n=f.split("/")[-1][:-4]; src=SRC.get(n, SENT if n.startswith("tts-sentence") else None)
     for t in per[f]: q+=[(f,"A","",t),(f,"B",t,t)]+([(f,"C",src,t)] if src else [])
-out=subprocess.run([sys.argv[2]],input="\n".join(a+"\t"+w for _,_,a,w in q)+"\n",text=True,capture_output=True).stdout.split()
+out=run_tool(sys.argv[2],[a+"\t"+w for _,_,a,w in q],allowed=lambda o: o.strip().isdigit())
 votes=collections.defaultdict(list)
 for (f,k,_,_),o in zip(q,out): votes[(f,k)].append(int(o)>=3)
 S=collections.defaultdict(lambda:collections.Counter())

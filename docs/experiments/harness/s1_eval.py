@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """S1 eval: whisper text before/after the hallucination filter.
 Usage: s1_eval.py <runs.jsonl> <tools/bin/hallucination_filter>"""
-import json,sys,subprocess,collections
+import json,sys,collections
+from tool_io import run_tool
 rows=[json.loads(l) for l in open(sys.argv[1]) if '"run"' in l]
 man={}
 for d in ("clips","heldout"):
@@ -9,7 +10,7 @@ for d in ("clips","heldout"):
 per=collections.defaultdict(list)
 for r in rows: per[r["file"]].append(r)
 files=sorted(per); texts=[collections.Counter(r["text"].strip() for r in per[f]).most_common(1)[0][0] for f in files]
-flt=subprocess.run([sys.argv[2]],input="\n".join(t.replace("\n"," ") for t in texts)+"\n",text=True,capture_output=True).stdout.split()
+flt=run_tool(sys.argv[2],[t.replace("\n"," ") for t in texts],allowed=lambda o: o in ("0","1"))
 out=dict(sets={},clips=[])
 for f,t,h in zip(files,texts,flt):
     m=man[f]; s=f.split("/")[0]; after="" if h=="1" else t
