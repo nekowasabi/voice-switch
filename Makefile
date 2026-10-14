@@ -87,7 +87,7 @@ win-restore: ## Windows: restore .NET projects
 win-build: win-restore win-test ## Windows: build .NET app and behavior tests
 	$(DOTNET) build $(WIN_APP) -c $(WIN_CONFIG) -r $(WIN_RID) --no-restore
 
-win-test: win-restore ## Windows: run package-free behavior tests
+win-test: win-restore ## Windows: run behavior tests
 	$(DOTNET) run --project $(WIN_TESTS) -c $(WIN_CONFIG) --no-restore
 	$(MAKE) parity-test
 

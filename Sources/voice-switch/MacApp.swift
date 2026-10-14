@@ -172,7 +172,9 @@ func check(_ paths: [String], cfg: Config) async throws {
                 verdicts.append(tr.text)
             }
         }
-        print("\(path)\t\(verdicts)\tvoiced=\(try SpeechGate.voicedWindows(samples))")
+        print("\(path)\t\(verdicts)")
+        // stderr keeps stdout in the format scripts and the Windows --check share.
+        FileHandle.standardError.write(Data("\(path)\tvoiced=\(try SpeechGate.voicedWindows(samples))\n".utf8))
     }
 }
 

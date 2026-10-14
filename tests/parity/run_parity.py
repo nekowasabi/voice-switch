@@ -914,7 +914,8 @@ def check_speech_gate_behavior(result: Result, require_swift: bool) -> None:
         return {m.group(1): int(m.group(2)) > 0 for m in found if m}
 
     def judge(platform: str, completed: subprocess.CompletedProcess) -> None:
-        actual = verdicts(completed.stdout)
+        # Swift --check writes voiced= to stderr so its stdout keeps the format scripts parse.
+        actual = verdicts(completed.stdout + completed.stderr)
         if completed.returncode != 0 or actual != expected:
             result.fail(f"{platform} speech gate verdicts differ from {SPEECH_GATE_FIXTURE.name}: {actual}\n{completed.stdout}{completed.stderr}")
         else:

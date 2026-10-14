@@ -22,9 +22,11 @@ Config example: `config.example.json` with `open -g superwhisper://record`.
 
 Useful flags: `--check`, `--simulate`, `--fire`, `--vad-selftest`.
 
+The first build downloads ONNX Runtime 1.24.2 (about 71 MB from download.onnxruntime.ai) for the Silero VAD speech gate. It links statically. `make app` copies `voice-switch_voice-switch.bundle` (the Silero model and its MIT license) into `Contents/Resources`, and `--vad-selftest` fails when the model is missing. `--check` also writes `<file>\tvoiced=<n>` to stderr, where n is the number of 32 ms windows Silero heard as voice. An automatic recording with n = 0 is never handed to superwhisper.
+
 ## Windows from WSL
 
-Requirements: .NET SDK with Windows targeting support. The Makefile assumes a POSIX shell. Override `DOTNET=/path/to/dotnet` if `dotnet` is not on `PATH`.
+Requirements: .NET SDK with Windows targeting support. The Makefile assumes a POSIX shell. Override `DOTNET=/path/to/dotnet` if `dotnet` is not on `PATH`. `VoiceSwitch.Windows.Core` restores the `Microsoft.ML.OnnxRuntime` 1.24.2 NuGet package for the same speech gate, so the first restore needs nuget.org.
 
 ```sh
 export PC=wsl

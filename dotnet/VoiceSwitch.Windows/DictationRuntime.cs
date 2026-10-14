@@ -1076,7 +1076,7 @@ public sealed class WindowsDictationRuntime
                     return;
                 }
             }
-            catch (Exception ex) { Log.Info($"speech gate failed; handing off anyway: {ex.Message}"); }
+            catch (Exception ex) { Log.Info($"speech gate failed; handing off anyway: {ErrorDetail(ex, audio.Wake)} sid={audio.SessionId}"); }
         }
         try
         {
