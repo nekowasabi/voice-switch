@@ -16,6 +16,7 @@
     <Compile Include="..\VoiceSwitch.Windows\TmuxPaneRouter.cs" Link="VoiceSwitch.Windows.TmuxPaneRouter.cs" />
     <Compile Include="..\VoiceSwitch.Windows\NoiseReduction.cs" Link="VoiceSwitch.Windows.NoiseReduction.cs" />
     <Compile Include="..\VoiceSwitch.Windows\SyntheticIngress.cs" Link="VoiceSwitch.Windows.SyntheticIngress.cs" />
+    <Compile Include="..\VoiceSwitch.Windows\WordAgreement.cs" Link="VoiceSwitch.Windows.WordAgreement.cs" />
     <Compile Include="..\VoiceSwitch.Windows\Tray\TrayContracts.cs" Link="VoiceSwitch.Windows.Tray.Contracts.cs" />
     <Compile Include="..\VoiceSwitch.Windows\Tray\TrayOptions.cs" Link="VoiceSwitch.Windows.Tray.Options.cs" />
     <Compile Include="..\VoiceSwitch.Windows\Tray\TrayIpc.cs" Link="VoiceSwitch.Windows.Tray.Ipc.cs" />

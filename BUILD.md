@@ -22,9 +22,13 @@ Config example: `config.example.json` with `open -g superwhisper://record`.
 
 Useful flags: `--check`, `--simulate`, `--fire`, `--vad-selftest`.
 
+The first build downloads ONNX Runtime 1.24.2 (about 71 MB from download.onnxruntime.ai) for the Silero VAD speech gate. It links statically. `make app` copies `voice-switch_voice-switch.bundle` (the Silero model and its MIT license) into `Contents/Resources`, and `--vad-selftest` fails when the model is missing. `--check` also writes `<file>\tvoiced=<n>` to stderr, where n is the number of 32 ms windows Silero heard as voice. An automatic recording with n = 0 is never handed to superwhisper.
+
+Automatic recordings that pass Silero are also transcribed by Apple Speech and by Whisper large-v3-turbo (whisper.cpp b5454, a dynamic framework `make app` copies into `Contents/Frameworks`). They reach superwhisper only when the two transcripts share at least `NoWakePolicy.minAgreedCharacters` (3) characters in order. Noise and coughs make each recognizer invent different words, while spoken words come out the same. This adds about 0.4 s before superwhisper opens. The 550 MB model is not bundled. `make model` (run by `make install`) downloads it once to `~/Library/Application Support/voice-switch/models/`, and `--vad-selftest` fails without it. If the model cannot load, the app logs `whisper: unavailable` and hands automatic recordings off without the check. `--check` writes `<file>\tagreed=<n>\tapple=<text>\twhisper=<text>` to stderr.
+
 ## Windows from WSL
 
-Requirements: .NET SDK with Windows targeting support. The Makefile assumes a POSIX shell. Override `DOTNET=/path/to/dotnet` if `dotnet` is not on `PATH`.
+Requirements: .NET SDK with Windows targeting support. The Makefile assumes a POSIX shell. Override `DOTNET=/path/to/dotnet` if `dotnet` is not on `PATH`. `VoiceSwitch.Windows.Core` restores the `Microsoft.ML.OnnxRuntime` 1.24.2 NuGet package for the same speech gate, so the first restore needs nuget.org.
 
 ```sh
 export PC=wsl
@@ -48,6 +52,8 @@ cp config.example.windows.json /mnt/c/temp/voice-switch-validation/config.dictat
 `config.example.windows.json` is dictation mode, like the macOS sample. With the `dictation` block present, Windows selects the PCM dictation runtime and does not fall back to the command toggle on dictation errors. Removing the block selects command mode, which runs `command` (the `superwhisper://record` deep link through `rundll32 url.dll,FileProtocolHandler`; `cmd /c start` returns access denied for this URL). The sample omits the unsupported process microphone-use guard.
 
 The app first uses `config.json` next to `voice-switch.exe`. If that file is absent, it falls back to `%USERPROFILE%\.config\voice-switch\config.json` or `VOICE_SWITCH_CONFIG`.
+
+Automatic recordings that pass Silero are also transcribed by two recognizers of different families in [speech.cpp](https://github.com/nyosegawa/speech.cpp) (MIT): `parakeet-tdt_ctc-0.6b-ja` (NVIDIA FastConformer, CC-BY-4.0) and `qwen3-asr-0.6b` held to Japanese (Qwen, Apache-2.0). Two FastConformers (parakeet with `reazonspeech-v2`) heard the same cough as laughter and let it through; Qwen3-ASR writes 咳 for a cough. They reach Superwhisper only when the two transcripts share at least `NoWakePolicy.MinAgreedCharacters` (3) characters in order, the same rule as the Mac. speech.cpp is not bundled. Install it once in PowerShell with `irm https://raw.githubusercontent.com/nyosegawa/speech.cpp/main/install.ps1 | iex`; the app looks for `%LOCALAPPDATA%\Programs\speech.cpp\current\speech.exe`, then `speech.exe` on `PATH`. With `noWakeWord` on, the app starts one `speech worker` per model at launch. The first launch downloads both models (about 1.5 GB) to `%LOCALAPPDATA%\speech.cpp\models`. Until a worker reports ready, or when speech.cpp is missing, the app logs `word agreement: <model> unavailable` and hands automatic recordings off without the check. `--check` writes `<file>\tvoiced=<n>` and `<file>\tagreed=<n>\tparakeet=<text>\tqwen=<text>` to stderr.
 
 Optional noise reduction defaults to `Off`. `ConservativeWiener` affects only the local SAPI analysis/control lane. Original PCM remains the emitted body WAV and handoff source. Current native noise evidence does not justify changing the default.
 

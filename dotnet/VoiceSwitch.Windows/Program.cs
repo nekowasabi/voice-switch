@@ -45,7 +45,9 @@ public static class Program
                 var recognizer = new SpeechPowerShellDictationRecognizer(config);
                 try
                 {
-                    return CheckMode.RunAsync(options.CheckPaths, config, recognizer, Console.Out).GetAwaiter().GetResult();
+                    try { WordAgreement.Warm().GetAwaiter().GetResult(); }
+                    catch (Exception) { /* logged by WordAgreement; each file then says agreed=<unavailable> */ }
+                    return CheckMode.RunAsync(options.CheckPaths, config, recognizer, Console.Out, Console.Error).GetAwaiter().GetResult();
                 }
                 finally
                 {
@@ -118,13 +120,15 @@ public static class Program
                     }
 
                     if (!effectiveDryRun && options.OutputDir is null) handoff = LocalHistoryHandoff.Wrap(handoff, config, Tray.WindowFocus.Paste);
+                    if (config.Dictation?.NoWakeWord?.Enabled == true) _ = WordAgreement.Warm();
                     return new WindowsDictationRuntime(
                             config,
                             capture,
                             new SpeechPowerShellDictationRecognizer(config),
                             handoff,
                             effectiveDryRun,
-                            reloadConfig: new ConfigFile(configPath).ReloadIfChanged)
+                            reloadConfig: new ConfigFile(configPath).ReloadIfChanged,
+                            agreedCharacters: WordAgreement.CountAsync)
                         .RunAsync(interrupt.Token)
                         .GetAwaiter()
                         .GetResult();
@@ -185,7 +189,9 @@ public static class Program
 // on its own, "dictate:<text after the wake word>" for a one-breath dictation, else the normalized text heard.
 public static class CheckMode
 {
-    public static async Task<int> RunAsync(IReadOnlyList<string> paths, VoiceSwitchConfig config, IDictationRecognizer recognizer, TextWriter output)
+    // gates: where the automatic-recording gates (Silero windows, recognizer agreement) are written, apart from output so its
+    // format stays what scripts parse, as Mac writes them to stderr.
+    public static async Task<int> RunAsync(IReadOnlyList<string> paths, VoiceSwitchConfig config, IDictationRecognizer recognizer, TextWriter output, TextWriter? gates = null)
     {
         long id = 0;
         foreach (var path in paths)
@@ -231,6 +237,14 @@ public static class CheckMode
             }
 
             output.WriteLine($"{path}\t[{string.Join(", ", verdicts.Select(verdict => $"\"{verdict}\""))}]");
+            if (gates is null) continue;
+            gates.WriteLine($"{path}\tvoiced={SpeechGate.VoicedWindows(samples)}");
+            try
+            {
+                var texts = await WordAgreement.TranscribeAsync(samples);
+                gates.WriteLine($"{path}\tagreed={NoWakePolicy.AgreedCharacters(texts[0], texts[1])}\tparakeet={texts[0]}\tqwen={texts[1]}");
+            }
+            catch (Exception ex) { gates.WriteLine($"{path}\tagreed=<unavailable: {ex.Message}>"); }
         }
 
         return 0;

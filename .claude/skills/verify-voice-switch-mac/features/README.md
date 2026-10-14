@@ -13,7 +13,7 @@ This directory is the maintained source for verifying what a Mac user of voice-s
 ## Baseline preconditions
 
 - `$V build` was run on the tree you are proving, and `$V doctor` exits 0.
-- `V=/Users/ttakeda/repos/voice-switch/.claude/skills/verify-voice-switch-mac/verify.sh`.
+- `V=.claude/skills/verify-voice-switch-mac/verify.sh`, run from the repo root.
 - Use one `VS_RUN_ID` per proof so its runs share one evidence folder.
 - Never drive the user's installed VoiceSwitch.app. Only drive `--simulate` processes this skill started.
 

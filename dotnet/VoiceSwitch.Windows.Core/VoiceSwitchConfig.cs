@@ -246,8 +246,8 @@ public static class ConfigLoader
             }
         }
 
-        if (config.Dictation?.NoWakeWord is { } noWake && (noWake.FollowupMs is < 1000 or > 30000 || noWake.IdleMs is < 1000 or > 60000))
-            throw new InvalidDataException("dictation.noWakeWord requires followupMs 1000..30000 and idleMs 1000..60000.");
+        if (config.Dictation?.NoWakeWord is { } noWake && (noWake.FollowupMs is < 1000 or > 30000))
+            throw new InvalidDataException("dictation.noWakeWord requires followupMs 1000..30000.");
 
         if (config.NoiseReduction is { MaxAttenuationDb: < 0 or > 6 })
         {

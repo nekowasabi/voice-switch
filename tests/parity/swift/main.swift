@@ -9,6 +9,10 @@ func checkWakeHistory() {
     precondition(superwhisperAutoPasteDisabled("voice", modeJsons: [safeMode]))
     precondition(!superwhisperAutoPasteDisabled("safe", modeJsons: [safeMode, safeMode]))
     precondition(!superwhisperAutoPasteDisabled("safe", modeJsons: [#"{"key":"safe","autoPaste":0}"#]))
+    precondition(NoWakePolicy.agreedCharacters("", "おかんのおかんのおかんの") == 0)
+    precondition(NoWakePolicy.agreedCharacters("今日の会議は3時からです", "今日の会議は３時からです。") == 12)
+    precondition(NoWakePolicy.agreedCharacters("はい", "はい!") < NoWakePolicy.minAgreedCharacters)
+    precondition(NoWakePolicy.agreedCharacters("ブロックホットのアプリ", "ブロックボットのアプリ") == 10)
     precondition(NoWakePolicy.belowMinHandoff(sampleCount: 15999, rate: 16000, options: nil))
     precondition(!NoWakePolicy.belowMinHandoff(sampleCount: 16000, rate: 16000, options: nil))
     precondition(NoWakePolicy.belowMinHandoff(sampleCount: 7999, rate: 16000, options: NoWakeWordConfig(minHandoffMs: 500)))
@@ -95,7 +99,16 @@ struct TextFixture: Decodable {
         var expected: String
     }
 
+    struct Agreement: Decodable {
+        var name: String
+        var a: String
+        var b: String
+        var expected: Int
+    }
+
     var normalization: [Normalization]
+    var agreement_min: Int
+    var agreement: [Agreement]
 }
 
 struct SegmenterFixture: Decodable {
@@ -205,6 +218,11 @@ let paneFixture = try decoder.decode(PaneRouteFixture.self, from: Data(contentsO
 for item in textFixture.normalization {
     let actual = normalize(item.input)
     check(actual == item.expected, "normalize \(item.name) expected=\(item.expected) actual=\(actual)")
+}
+check(NoWakePolicy.minAgreedCharacters == textFixture.agreement_min, "agreement minimum")
+for item in textFixture.agreement {
+    let actual = NoWakePolicy.agreedCharacters(item.a, item.b)
+    check(actual == item.expected, "agreement \(item.name) expected=\(item.expected) actual=\(actual)")
 }
 
 let segmenterConfig = Config(

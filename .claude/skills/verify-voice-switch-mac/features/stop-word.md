@@ -24,4 +24,5 @@ Preconditions:
 ## Gotchas
 
 - `stopCommand` runs only when an app in `skipWhileMicInUseBy` is using the microphone. The safe config lists none, so `stop.marker` is expected to be absent. The proof is the `(stop word, nothing is recording)` line.
+- Make `stop-ja` exactly as written, with no `[[slnc]]` around it. Padded with silence (`"[[slnc 800]]入力ストップ[[slnc 1200]]"`), Kyoko's last mora is lost and the run logs `heard: 入力ストッ` with no stop (seen 2026-10-14).
 - Kyoko's エスティー is recognized as lowercase `st`. A live voice has produced uppercase `ST`. This run does not exercise the uppercase spelling.

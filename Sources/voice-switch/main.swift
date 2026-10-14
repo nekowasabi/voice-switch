@@ -21,6 +21,15 @@ if mode != nil { args.removeFirst() }
 let configPath = Platform.defaultConfigPath
 
 if mode == "--vad-selftest" {
+    // Catches an app bundle that lost the Silero resource; the runtime gate itself fails open.
+    guard (try? SpeechGate.voicedWindows([Float](repeating: 0, count: Int(rate)))) == 0 else {
+        print("vad-selftest: FAILED (speech gate)")
+        exit(1)
+    }
+    guard FileManager.default.fileExists(atPath: WhisperGate.modelPath) else {
+        print("vad-selftest: FAILED (Whisper model missing at \(WhisperGate.modelPath); run make model)")
+        exit(1)
+    }
     vadSelftest()
     exit(0)
 } else if mode == "--fire" {

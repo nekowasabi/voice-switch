@@ -41,6 +41,13 @@
       "excludeBundleIDs": []
     }
   },
+  "agreement_min": 3,
+  "agreement": [
+    { "name": "an empty transcript shares nothing", "a": "", "b": "おかんのおかんのおかんの", "expected": 0 },
+    { "name": "full and half width digits and a trailing 。 match", "a": "今日の会議は3時からです", "b": "今日の会議は３時からです。", "expected": 12 },
+    { "name": "a backchannel stays under the minimum", "a": "はい", "b": "はい!", "expected": 2 },
+    { "name": "one misheard kana costs one character", "a": "ブロックホットのアプリ", "b": "ブロックボットのアプリ", "expected": 10 }
+  ],
   "decisions": [
     {
       "name": "wake word is a whole normalized utterance",

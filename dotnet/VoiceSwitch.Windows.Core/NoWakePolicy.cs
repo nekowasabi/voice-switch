@@ -1,10 +1,10 @@
 namespace VoiceSwitch.Windows.Core;
 
 public sealed record NoWakeWordConfig(bool Followup = false, bool AutoIdle = false, bool RelaxedReadingDistance2 = false,
-    int FollowupMs = 8000, int IdleMs = 3000, bool FilterInterjections = false, int MinHandoffMs = 1000,
+    int FollowupMs = 8000, bool FilterInterjections = false, int MinHandoffMs = 1000,
     IReadOnlyList<string>? IgnoredTranscripts = null, int? EndSilenceMs = null)
 {
-    public bool Valid => FollowupMs is >= 1000 and <= 30000 && IdleMs is >= 1000 and <= 60000;
+    public bool Valid => FollowupMs is >= 1000 and <= 30000;
     public bool Enabled => Followup || AutoIdle || RelaxedReadingDistance2;
 }
 
@@ -57,6 +57,38 @@ public static class TranscriptShape
 
 public static class NoWakePolicy
 {
+    // Fewest characters both recognizers must share before an automatic recording reaches Superwhisper; macOS keeps the same
+    // value in WakeSafety.swift. Coughs share 0 or 1, speech 12 or more (measured on macOS 2026-10-14).
+    public const int MinAgreedCharacters = 3;
+
+    // Longest common subsequence of the two transcripts after FormKC width folding and Normalize (３ and 3 match), counted in
+    // text elements as Swift counts Characters.
+    public static int AgreedCharacters(string a, string b)
+    {
+        static string[] Elements(string text)
+        {
+            var normalized = TextMatching.Normalize(text.Normalize(System.Text.NormalizationForm.FormKC));
+            var elements = new List<string>();
+            var enumerator = System.Globalization.StringInfo.GetTextElementEnumerator(normalized);
+            while (enumerator.MoveNext()) elements.Add(enumerator.GetTextElement());
+            return elements.ToArray();
+        }
+        var x = Elements(a);
+        var y = Elements(b);
+        var row = new int[y.Length + 1];
+        foreach (var c in x)
+        {
+            var diagonal = 0;
+            for (var j = 0; j < y.Length; j++)
+            {
+                var above = row[j + 1];
+                row[j + 1] = c == y[j] ? diagonal + 1 : Math.Max(above, row[j]);
+                diagonal = above;
+            }
+        }
+        return row[y.Length];
+    }
+
     public static WakeOrigin? OnSpeech(NoWakeWordConfig? options, double? idleSeconds, bool inFollowupWindow)
     {
         if (options is null || !options.Valid || idleSeconds is null or < 0 || !double.IsFinite(idleSeconds.Value)) return null;

@@ -13,6 +13,9 @@ CONFIG  ?= $(HOME)/.config/voice-switch/config.json
 ID      := local.voice-switch
 # Earlier versions ran as a LaunchAgent; install removes it so two copies never listen at once.
 OLD_PLIST := $(HOME)/Library/LaunchAgents/$(ID).plist
+# WhisperGate.modelPath reads the same path.
+WHISPER_MODEL := $(HOME)/Library/Application Support/voice-switch/models/ggml-large-v3-turbo-q5_0.bin
+WHISPER_MODEL_URL := https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin
 
 PC_NORM := $(shell printf '%s' "$(PC)" | tr '[:upper:]' '[:lower:]')
 
@@ -33,7 +36,7 @@ DOTNET_RESTORE_FLAGS ?= --ignore-failed-sources --disable-parallel
 # Why: Run from local disk, not \\wsl.localhost, as focusbm does; AV heuristics flag UNC-launched exes.
 RELEASE_DIR ?= /mnt/c/takeda/tools/voice-switch
 
-.PHONY: build app install relaunch uninstall logs win win-restore win-build win-test parity-test win-publish win-verify help url-test
+.PHONY: build app model install relaunch uninstall logs win win-restore win-build win-test parity-test win-publish win-verify help url-test
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -50,12 +53,17 @@ app: build ## macOS: wrap .build/release/voice-switch as VoiceSwitch.app
 	rm -rf $(BUILT)
 	install -d $(BUILT)/Contents/MacOS
 	install .build/release/voice-switch $(BUILT)/Contents/MacOS/voice-switch
+	install -d $(BUILT)/Contents/Resources
+	cp -R .build/release/voice-switch_voice-switch.bundle $(BUILT)/Contents/Resources/
+	install -d $(BUILT)/Contents/Frameworks
+	cp -R .build/release/whisper.framework $(BUILT)/Contents/Frameworks/
+	codesign --force --sign - $(BUILT)/Contents/Frameworks/whisper.framework
 	cp Info.plist $(BUILT)/Contents/Info.plist
 	# Ad-hoc signatures default to a cdhash requirement, so every rebuild looked like a new app to TCC and
 	# lost the microphone/Accessibility grants. Pin the requirement to the bundle identifier instead.
 	codesign --force --sign - --identifier $(ID) -r='designated => identifier "$(ID)"' $(BUILT)
 
-install: app ## macOS: install into DEST and open
+install: app model ## macOS: install into DEST and open
 	-launchctl bootout gui/$$(id -u)/$(ID) 2>/dev/null
 	rm -f $(OLD_PLIST) $(HOME)/.local/bin/voice-switch
 	-osascript -e 'quit app id "$(ID)"' 2>/dev/null
@@ -68,6 +76,9 @@ install: app ## macOS: install into DEST and open
 	open $(DEST)/$(APP)
 
 relaunch: install ## macOS: quit, rebuild and relaunch (default when PC!=wsl)
+
+model: ## macOS: download the Whisper model automatic recordings are checked with (550 MB, once)
+	@test -f "$(WHISPER_MODEL)" || { mkdir -p "$$(dirname "$(WHISPER_MODEL)")" && curl -fL -o "$(WHISPER_MODEL).part" $(WHISPER_MODEL_URL) && mv "$(WHISPER_MODEL).part" "$(WHISPER_MODEL)"; }
 
 uninstall: ## macOS: remove installed app
 	-osascript -e 'quit app id "$(ID)"' 2>/dev/null
@@ -85,7 +96,7 @@ win-restore: ## Windows: restore .NET projects
 win-build: win-restore win-test ## Windows: build .NET app and behavior tests
 	$(DOTNET) build $(WIN_APP) -c $(WIN_CONFIG) -r $(WIN_RID) --no-restore
 
-win-test: win-restore ## Windows: run package-free behavior tests
+win-test: win-restore ## Windows: run behavior tests
 	$(DOTNET) run --project $(WIN_TESTS) -c $(WIN_CONFIG) --no-restore
 	$(MAKE) parity-test
 

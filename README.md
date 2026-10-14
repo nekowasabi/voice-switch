@@ -20,7 +20,7 @@ See [BUILD.md](./BUILD.md) for `$PC` details and verification.
 
 ## Install (macOS)
 
-`make install` builds a release binary, wraps it as `VoiceSwitch.app`, ad-hoc signs it as `local.voice-switch`, copies the app to `~/Applications`, copies `config.example.json` to `~/.config/voice-switch/config.json` when that file is missing, and opens the app.
+`make install` builds a release binary, wraps it as `VoiceSwitch.app`, ad-hoc signs it as `local.voice-switch`, copies the app to `~/Applications`, copies `config.example.json` to `~/.config/voice-switch/config.json` when that file is missing, and opens the app. The first install also downloads the Whisper model (about 550 MB) to `~/Library/Application Support/voice-switch/models/`; `make model` fetches it alone.
 
 `make uninstall` quits the app and removes that copy. `make logs` follows `~/Library/Logs/voice-switch.log`.
 
@@ -219,12 +219,22 @@ Do not run CLI and tray concurrent capture. The default sample now runs live mic
 
 `dictation.noWakeWord` provides independent `followup`, `autoIdle`, and `relaxedReadingDistance2` switches. All default to false. Mac also requires `dictation.superwhisperMode`.
 
-Automatically started recordings go to in-memory history only. When `dictation.superwhisperMode` names a mode with `autoPaste: false`, they are transcribed by Superwhisper in that mode; otherwise they are transcribed locally. They never reach Jev, tmux, action URLs, or paste. An automatic recording leaves Escape and the other Superwhisper shortcuts to the foreground app and ends on silence or a stop word, and a wake word spoken during it discards it and starts a normal dictation. History keeps at most 50 entries for 30 minutes and disappears on exit. Only an explicit selection copies text.
+Automatically started recordings go to in-memory history only. When `dictation.superwhisperMode` names a mode with `autoPaste: false`, they are transcribed by Superwhisper in that mode; otherwise they are transcribed locally. They never reach Jev, tmux, action URLs, or paste. An automatic recording leaves Escape and the other Superwhisper shortcuts to the foreground app and ends on silence or a stop word. One the user ends with the stop word is the exception: it is handed off like a wake-word dictation, so Superwhisper pastes it into the app in front (log `dictation session: automatic ended by stop word, pasting like a wake-word dictation`). A wake word spoken during an automatic recording discards it and starts a normal dictation. History keeps at most 50 entries for 30 minutes and disappears on exit. Only an explicit selection copies text.
 
 - Ctrl+Shift+F10 starts a manual recording
 - Ctrl+Shift+F9 or a HUD click opens history
 - On Windows, Ctrl+Shift+F8 labels the latest missed recognition
 
 Wake-word and Ctrl+Shift+F10 recordings keep the active Superwhisper mode and leave pasting to Superwhisper. Their result is also kept in history, but the stop HUD says it was saved to history only for automatic recordings.
+
+### Noise and coughs never reach Superwhisper
+
+An automatic recording passes three checks before Superwhisper opens. Wake-word and Ctrl+Shift+F10 recordings skip them.
+
+1. It is at least `noWakeWord.minHandoffMs` long (default 1000 ms). Otherwise the log says `dictation dropped: automatic audio shorter than minHandoffMs`.
+2. Silero VAD hears voice in at least one 32 ms window. Keystrokes and knocks fail it with `dictation dropped: automatic audio had no speech`. Mac and Windows run the same model.
+3. Two recognizers transcribe it, and the two texts share at least 3 characters in order. The Mac uses Apple Speech and Whisper large-v3-turbo; Windows uses parakeet-tdt_ctc-0.6b-ja and Qwen3-ASR 0.6B through [speech.cpp](https://github.com/nyosegawa/speech.cpp) (see BUILD.md). Each recognizer invents its own words for a cough, while spoken words come out the same from both. A cough fails it with `dictation agreement: shared=<n>` then `dictation dropped: automatic audio had no agreed words`. This adds about 0.4 s before Superwhisper opens. Until the recognizers agree, the HUD does not show recording, so a cough no longer flashes it; a recording that agreed while it was recorded skips the check at the end.
+
+Short replies such as うん or はい can also be dropped by the third check. When the Silero model or a recognizer cannot load (Whisper on the Mac, speech.cpp on Windows), the app logs it and hands the recording off without that check. `voice-switch --check a.wav` prints `voiced=` and `agreed=` with both transcripts on stderr, to see why a file would be kept or dropped.
 
 Mac native build and runtime are unverified. Audio, permission, UI, and real-world accuracy checks are still required. Read the [implementation and settings](docs/no-wake-word/implementation.md), [native checklist](docs/no-wake-word/native-validation.md), and [acceptance gates](docs/wake-acceptance.md) before enabling this feature.

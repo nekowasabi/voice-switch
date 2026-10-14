@@ -22,6 +22,7 @@ TEXT_FIXTURE = HERE / "fixtures" / "text_matching.json"
 SEGMENTER_FIXTURE = HERE / "fixtures" / "segmenter.json"
 CLI_FIXTURE = HERE / "fixtures" / "cli.json"
 PANE_ROUTE_FIXTURE = HERE / "fixtures" / "pane_route.json"
+SPEECH_GATE_FIXTURE = HERE / "fixtures" / "speech_gate.json"
 SWIFT_HARNESS = HERE / "swift" / "main.swift"
 
 
@@ -48,6 +49,7 @@ def main() -> int:
         check_windows_core_behavior(result, text_fixture, segmenter_fixture, pane_route_fixture)
         check_swift_core_behavior(result, args.require_swift)
         check_cough_policy_behavior(result)
+        check_speech_gate_behavior(result, args.require_swift)
     check_mutation_gate(result, repo, contract)
 
     result.note("macOS runtime execution skipped: Apple Speech, AVFoundation, and the macOS SDK are not available in this WSL environment.")
@@ -902,6 +904,54 @@ def check_swift_core_behavior(result: Result, require_swift: bool) -> None:
             result.fail("Swift pure harness failed:\n" + completed.stdout + completed.stderr)
 
 
+def check_speech_gate_behavior(result: Result, require_swift: bool) -> None:
+    fixture = load_json(SPEECH_GATE_FIXTURE)
+    paths = [str(HERE / "fixtures" / item["file"]) for item in fixture["recordings"]]
+    expected = {path: item["speech"] for path, item in zip(paths, fixture["recordings"])}
+
+    def verdicts(output: str) -> dict[str, bool]:
+        found = (re.match(r"^(\S+\.wav)\t.*voiced=(\d+)$", line) for line in output.splitlines())
+        return {m.group(1): int(m.group(2)) > 0 for m in found if m}
+
+    def judge(platform: str, completed: subprocess.CompletedProcess) -> None:
+        # Swift --check writes voiced= to stderr so its stdout keeps the format scripts parse.
+        actual = verdicts(completed.stdout + completed.stderr)
+        if completed.returncode != 0 or actual != expected:
+            result.fail(f"{platform} speech gate verdicts differ from {SPEECH_GATE_FIXTURE.name}: {actual}\n{completed.stdout}{completed.stderr}")
+        else:
+            result.ok(f"{platform} speech gate drops the noise fixtures and keeps the speech fixtures")
+
+    dotnet = shutil.which("dotnet") or str(Path.home() / ".local/share/mise/shims/dotnet")
+    with tempfile.TemporaryDirectory(prefix="voice-switch-speech-gate-") as tmp:
+        tmp_path = Path(tmp)
+        (tmp_path / "Gate.csproj").write_text(harness_project(ROOT / "dotnet/VoiceSwitch.Windows.Core/VoiceSwitch.Windows.Core.csproj"), encoding="utf-8")
+        (tmp_path / "Program.cs").write_text(textwrap.dedent(
+            """\
+            using System.Collections.Immutable;
+            using VoiceSwitch.Windows.Core;
+
+            foreach (var path in args)
+            {
+                var bytes = File.ReadAllBytes(path);
+                var at = 12;
+                while (System.Text.Encoding.ASCII.GetString(bytes, at, 4) != "data") at += 8 + BitConverter.ToInt32(bytes, at + 4);
+                var samples = Enumerable.Range(0, BitConverter.ToInt32(bytes, at + 4) / 2).Select(i => BitConverter.ToInt16(bytes, at + 8 + i * 2)).ToImmutableArray();
+                Console.WriteLine($"{path}\\tvoiced={SpeechGate.VoicedWindows(samples)}");
+            }
+            """), encoding="utf-8")
+        judge("C#", subprocess.run([dotnet, "run", "--project", str(tmp_path / "Gate.csproj"), "--", *paths],
+                                   cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=180))
+
+    # The Swift gate needs the ONNX Runtime package, so it runs in the SwiftPM build rather than the swiftc harness.
+    binary = ROOT / ".build/release/voice-switch"
+    if not binary.exists():
+        message = "Swift speech gate skipped: run `swift build -c release` first"
+        result.fail(message) if require_swift else result.note(message)
+        return
+    judge("Swift", subprocess.run([str(binary), "--check", *paths], cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  timeout=180, env={**os.environ, "VOICE_SWITCH_CONFIG": str(ROOT / "config.example.json")}))
+
+
 def check_cough_policy_behavior(result: Result) -> None:
     language = "both" if shutil.which("swiftc") else "csharp"
     completed = subprocess.run(
@@ -922,7 +972,7 @@ def check_cough_policy_behavior(result: Result) -> None:
 
 def core_project() -> str:
     return textwrap.dedent(
-        """\
+        f"""\
         <Project Sdk="Microsoft.NET.Sdk">
           <PropertyGroup>
             <TargetFramework>net8.0</TargetFramework>
@@ -931,6 +981,10 @@ def core_project() -> str:
             <Nullable>enable</Nullable>
             <ImplicitUsings>enable</ImplicitUsings>
           </PropertyGroup>
+          <ItemGroup>
+            <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.24.2" />
+            <EmbeddedResource Include="{ROOT / "Sources/voice-switch/Resources/silero_vad.onnx"}" LogicalName="silero_vad.onnx" />
+          </ItemGroup>
         </Project>
         """
     )
@@ -998,6 +1052,13 @@ def harness_program(text_fixture: dict, segmenter_fixture: dict, pane_route_fixt
                 configElement.GetProperty("dictation").GetProperty("maxSeconds").GetDouble(),
                 configElement.GetProperty("dictation").GetProperty("excludeBundleIDs").EnumerateArray().Select(x => x.GetString()!).ToArray(),
                 configElement.GetProperty("dictation").GetProperty("startTimeoutMs").GetInt32()));
+
+        Check(NoWakePolicy.MinAgreedCharacters == textFixture.GetProperty("agreement_min").GetInt32(), "agreement minimum");
+        foreach (var item in textFixture.GetProperty("agreement").EnumerateArray())
+        {{
+            var actual = NoWakePolicy.AgreedCharacters(item.GetProperty("a").GetString()!, item.GetProperty("b").GetString()!);
+            Check(actual == item.GetProperty("expected").GetInt32(), $"agreement {{item.GetProperty("name").GetString()}} actual={{actual}}");
+        }}
 
         foreach (var item in textFixture.GetProperty("decisions").EnumerateArray())
         {{

@@ -1,0 +1,9 @@
+{
+  "comment": "Silero VAD verdicts both runtimes must agree on. Synthetic audio only: Kyoko speech from `say`, and generated keystrokes and a broadband burst.",
+  "recordings": [
+    {"file": "speech_gate/noise-keystrokes.wav", "speech": false},
+    {"file": "speech_gate/noise-burst.wav", "speech": false},
+    {"file": "speech_gate/backchannel-hai.wav", "speech": true},
+    {"file": "speech_gate/speech-sentence.wav", "speech": true}
+  ]
+}

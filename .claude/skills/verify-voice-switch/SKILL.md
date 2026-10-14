@@ -20,6 +20,7 @@ V=/home/takets/repos/voice-switch/.claude/skills/verify-voice-switch/verify.sh
 ```sh
 $V build      # dotnet publish of the working tree to /mnt/c/temp/voice-switch-verify/build (about 30 s)
 $V fixtures   # once: synthesizes speech WAVs with Windows System.Speech into .../fixtures (cached afterwards)
+              # also writes auto-hiss/auto-speech/auto-stop and auto.json (make-auto-fixtures.py) for features/automatic-gates.md
 ```
 
 There is no long-lived server. Each `$V wav ...` starts one exe, feeds the WAV in real time, and the exe exits by itself at the end of the WAV. Ready means `$V doctor` passes.
