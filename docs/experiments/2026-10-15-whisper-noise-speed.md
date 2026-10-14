@@ -39,6 +39,7 @@ Mac 版の自動録音で使う whisper.cpp（`WhisperGate.swift`）について
 - Whisper の出力だけで数えると、雑音11本すべてで何かしらの文が出ます。そのうち8本は決まり文句（「ご視聴ありがとうございました」7本、「音楽」1本）、残り3本（白色・ピンク・ディザー雑音）は「はい」です。
 - 0.26秒の「はい」は空になります。whisper.cpp は1秒未満の入力に何も返しません。
 - 1回の時間は、音声の長さに関係なく中央値 25.0秒です（30秒にそろえて処理するため）。範囲は約22〜33秒です。
+  - S1 と S2 の比べた相手の 28.1秒は、別の日時に測った main の値です。box は他の作業と共有なので、実行ごとにこのくらいずれます。
 - メモリ（RSS）は、読み込み後 615MB、最初の呼び出しで 951MB、57回後に 1019MB。57回の範囲では増え続ける傾向は見えません。
 - `no_speech_prob` は、すべての音声で 0.0 でした。判定には使えません。
 
@@ -76,6 +77,8 @@ Whisper の書き起こしから決まった言い回しだけを取り除き、
 | 雑音 30秒 | 23.7秒、「ご視聴ありがとうございました」 | 24.9秒で打ち切り、空 |
 | 日本語 TTS 約29秒（176文字） | 26.5〜30.5秒、176文字 | 打ち切りありで 22.7秒、空。打ち切りなしで 24.2〜26.1秒、**56文字で途中まで** |
 
+文字数は句読点を含めて数えています。句読点を除くと 165文字と 53文字です。
+
 - 10秒で打ち切る設定でも、止まるまでに約23秒かかりました。打ち切りは、重い処理の途中では効きません。
 - `max_tokens = 48` で、長い口述が途中で切れました。
 - 予定していた200回のループは、S3 をやめたので実施していません。
@@ -94,7 +97,9 @@ Whisper の出力の平均の対数確率（`avg_logprob`）で、自信の低�
 | white-3s | 雑音 | -2.2596 |
 | TTS の声（6本） | 声 | -0.0007〜-0.0219 |
 
-無音や咳の方が、実際に録った声より高い値になります。どのしきい値でも、雑音を捨てると実際の声も捨ててしまいます。
+値は main の設定での1回目です。S2（`audio_ctx` 512）の設定では、jfk は -0.108〜-0.338 で、やはり雑音と重なります。
+
+無音や咳の方が、実際に録った声より高い値になります。ただし jfk は英語の音声を `language=ja` で書き起こしたものなので、実際に録った日本語の声の代わりにはなりません。この案をもう一度試すなら、日本語の実録音で測り直してください。どのしきい値でも、雑音を捨てると実際の声も捨ててしまいます。
 
 ## 道具
 
@@ -105,12 +110,36 @@ Whisper の出力の平均の対数確率（`avg_logprob`）で、自信の低�
 - `summarize.py`: Whisper の出力だけでの集計
 - `app_eval.py`、`app_eval3.py`、`s1_eval.py`: 想定A/B/C でアプリの合否を数える
 
-実行例（box で使った形）:
+判定ツール（Apple Speech との一致を数える Swift のツール）の作り方は `harness/tools/README.md` にあります。
+
+### 置き場所
+
+box では、1つの作業ディレクトリの下にこう並べていました。
+
+- `wcpp/`: whisper.cpp v1.7.5 のチェックアウトとビルド
+- `models/ggml-large-v3-turbo-q5_0.bin`: モデル（アプリの `make model` と同じもの）
+- `clips/`、`heldout/`: `make_clips.py`、`make_heldout.py` で作った音声と manifest
+- `repo/`: voice-switch のチェックアウト（判定ツールのビルドに使う）
+
+### whisper.cpp のビルド
 
 ```
-LD_LIBRARY_PATH=wcpp/build/ggml/src ./bench models/ggml-large-v3-turbo-q5_0.bin 4 3 clips/*.wav > runs.jsonl
+git clone https://github.com/ggml-org/whisper.cpp wcpp
+git -C wcpp checkout v1.7.5
+cmake -S wcpp -B wcpp/build
+cmake --build wcpp/build -j
+```
+
+`bench*.c` は `wcpp/include` と `wcpp/ggml/include` を読み、`libwhisper` と `libggml` にリンクします。box で使ったコンパイルの1行は記録に残っていません。
+
+### 実行例
+
+```
+LD_LIBRARY_PATH=wcpp/build/src:wcpp/build/ggml/src ./bench models/ggml-large-v3-turbo-q5_0.bin 4 3 clips/*.wav > runs.jsonl
 python3 summarize.py runs.jsonl LABEL
 ```
+
+`libwhisper.so` は `wcpp/build/src`、`libggml*.so` は `wcpp/build/ggml/src` にできるので、両方を `LD_LIBRARY_PATH` に入れます。
 
 ## 次の候補
 
