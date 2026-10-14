@@ -50,6 +50,8 @@ app: build ## macOS: wrap .build/release/voice-switch as VoiceSwitch.app
 	rm -rf $(BUILT)
 	install -d $(BUILT)/Contents/MacOS
 	install .build/release/voice-switch $(BUILT)/Contents/MacOS/voice-switch
+	install -d $(BUILT)/Contents/Resources
+	cp -R .build/release/voice-switch_voice-switch.bundle $(BUILT)/Contents/Resources/
 	cp Info.plist $(BUILT)/Contents/Info.plist
 	# Ad-hoc signatures default to a cdhash requirement, so every rebuild looked like a new app to TCC and
 	# lost the microphone/Accessibility grants. Pin the requirement to the bundle identifier instead.

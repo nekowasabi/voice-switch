@@ -172,7 +172,7 @@ func check(_ paths: [String], cfg: Config) async throws {
                 verdicts.append(tr.text)
             }
         }
-        print("\(path)\t\(verdicts)")
+        print("\(path)\t\(verdicts)\tvoiced=\(try SpeechGate.voicedWindows(samples))")
     }
 }
 
@@ -1166,6 +1166,13 @@ final class Listener {
                 return
             }
             Task {
+                // A cough or a keystroke still opens superwhisper and leaves its own empty or "よっ!" entry; Silero finds no voice in them.
+                do {
+                    if try SpeechGate.voicedWindows(d.samples) == 0 {
+                        log("dictation dropped: automatic audio had no speech reason=\(token) \(sidField(d.sessionID))")
+                        return
+                    }
+                } catch { log("speech gate failed; handing off anyway: \(error)") }
                 guard let generation = claimLocalHistory(d) else { log("local history transcription busy; recording discarded \(sidField(d.sessionID))"); return }
                 defer { localHistoryState.withLock { $0.busy = false } }
                 // superwhisper takes focus when it opens the file; hand it back to wherever the user is now, not where the session began.
