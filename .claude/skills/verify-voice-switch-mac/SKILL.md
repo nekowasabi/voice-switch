@@ -44,6 +44,7 @@ VS_RUN_ID=<name> $V run <fixture> [config.json]
 
 - `config.json` defaults to `config.safe.json` in this folder. It has no `dictation` key, so nothing reaches Superwhisper. `command` and `stopCommand` only `touch` a marker file in the evidence folder (`__EVIDENCE__` is replaced with that folder).
 - To prove a config-dependent feature, write a variant into your scratchpad and pass it. It is copied into the evidence folder.
+- `VS_BUSY_INPUT=1` simulates a user who keeps operating the Mac. It runs `swift busy-input.swift 45` beside the process, which posts an in-place mouse move every 200 ms (nothing is typed, the cursor stays put) and logs every frontmost-app change into `busy-input.txt`. Use it with `SIMULATE_REALTIME=1` so audio time matches wall time.
 - A config with a `dictation` key drives the user's real Superwhisper. It writes a WAV, runs `open -a superwhisper`, may switch Superwhisper modes, and may paste into the frontmost app. Tell the user before running one.
 
 The command prints the exit code, the evidence folder, any marker files, and the `heard` / `dictation` / `phase` lines. The fixture text and expected lines for each feature are in [features/README.md](features/README.md).
