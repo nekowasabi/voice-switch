@@ -1,6 +1,6 @@
 # Stop word at the end of a long utterance
 
-During a dictation, saying the stop word right after a long sentence, without a pause in between, ends the dictation and keeps the stop word out of the text. Today an utterance longer than `maxSeconds` (2.5 s) is never handed to the stop check (`Segmenter.swift`, the `skipping` branch returns no `.utterance`), so the stop word is recorded as text. This file is the acceptance check for the fix that checks the tail of every utterance, long ones included, with the suffix match from PR #31.
+During a dictation, saying the stop word right after a long sentence, without a pause in between, ends the dictation and keeps the stop word out of the text. An utterance longer than `maxSeconds` (2.5 s) reaches the stop check through the `.tail` event `Segmenter.swift` emits at its end, and the stop word is matched as a suffix (PR #31). Before that fix the stop word was recorded as text; the baseline notes below are kept for comparison. On the automatic path the cut recording still has to pass Silero and the Apple Speech plus Whisper agreement before Superwhisper gets it, so a `dictation dropped:` line after the stop means no history entry, though the stop itself still worked.
 
 ## Sub-features
 
@@ -34,7 +34,7 @@ $V say embedded-long "入力ストップという言葉を使って今日の予�
 Run each with the stop config.
 
 ```sh
-C=/Users/ttakeda/repos/voice-switch/.claude/skills/verify-voice-switch-mac/config.stop-auto.json
+C=.claude/skills/verify-voice-switch-mac/config.stop-auto.json
 VS_RUN_ID=<id> $V run long-tail $C
 ```
 
@@ -65,7 +65,7 @@ Result after the fix (2026-10-13, evidence `stop-fix`):
 - `noWakeWord` suppresses `heard:` and `dictating:` lines, so the transcript is not in `stdout.txt`. Use Superwhisper's `meta.json` for the text.
 - The automatic path stands in for a wake-word dictation because it never pastes. The stop check (`isStopWord`) is the same code for both. A wake-word run would paste into the frontmost app.
 - `[[slnc 3000]]` at the end is needed. Without trailing silence the session runs to the end of the file and ends by silence anyway, which hides a missed stop.
-- Kyoko must say the sentence without an internal pause longer than `hangoverMs` (200 ms) for `long-tail` to be one utterance. Check `seconds` in `afinfo` of the fixture (over 2.5 s) and, after the fix, the log of the tail check.
+- Kyoko must say the sentence without an internal pause longer than `hangoverMs` (200 ms) for `long-tail` to be one utterance. Check the duration in `afinfo` of the fixture (over 2.5 s). The tail check logs nothing under `noWakeWord`, so the proof is `dictation finished by stop word` instead of `ended by ... ms silence`. Re-proven on 2026-10-14 (run `maint`, `long-tail`: `confirmed by agreed words`, `finished by stop word`, `dictation: 33 chars`).
 - Baseline on main (2026-10-13, evidence `stop-baseline` and `stop-baseline-rt`): `long-tail` ended by `1200 ms silence after 4320 ms of audio`, so the stop word was recorded. The `superwhisper-meta.json` saved there (`入力ストップ。`) was the newest entry taken blindly and may belong to another recording.
 - The automatic session can open after the start of the phrase. `continued` and `embedded-long` lost their opening words in the fixed run too. That is a separate open issue. Judge this feature by the end line and by whether the result ends with `入力ストップ`, not by the full sentence.
 - A missing `dictation session: automatic` line means the run never started a session (input not idle, or Superwhisper busy). That run proves nothing; rerun.

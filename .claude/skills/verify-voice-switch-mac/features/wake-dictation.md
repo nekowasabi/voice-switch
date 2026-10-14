@@ -1,6 +1,6 @@
 # Wake word then dictation
 
-With `dictation` configured, a wake word opens a dictation. The body is recorded until `endSilenceMs` of silence or a stop word, and the recording is handed to Superwhisper, which pastes the text.
+With `dictation` configured, a wake word opens a dictation. The body is recorded until `endSilenceMs` of silence, a stop word, `maxSeconds`, or the finish hotkey, and the recording is handed to Superwhisper, which pastes the text unless the tmux pane route takes it. A lone wake word with nothing said within `startTimeoutMs` logs `dictation cancelled: nothing said after the wake word`. Wake-word dictations show the recording HUD at once and skip the Silero and agreement checks that apply only to automatic recordings.
 
 ## Sub-features
 
@@ -25,4 +25,6 @@ Preconditions:
 ## Gotchas
 
 - The handoff opens Superwhisper and it pastes into the frontmost app. Keep a scratch text field in front.
-- `dictation: no superwhisper result within 30 s` means Superwhisper did not pick up the file. That is a handoff failure, not a recognition failure.
+- `dictation: no superwhisper result within 30 s sid=...` means voice-switch saw no new entry in Superwhisper's recordings folder. The handoff still counts as delivered, so nothing falls back to local history; check Superwhisper itself.
+- Log lines carry a trailing ` sid=...` (and `dictation:` also ` audio=<s>s`). Match them by prefix.
+- A wake word followed straight by the stop word leaves almost no audio and logs `dictation dropped: audio shorter than minSpeechMs`.

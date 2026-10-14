@@ -12,7 +12,7 @@ Out of scope here are the menu bar UI, the hotkeys (F9 to F11, Ctrl+Shift+F8), a
 `verify.sh` in this folder wraps every step. Run it by absolute path.
 
 ```sh
-V=/Users/ttakeda/repos/voice-switch/.claude/skills/verify-voice-switch-mac/verify.sh
+V=.claude/skills/verify-voice-switch-mac/verify.sh   # from the repo root; verify.sh finds the repo from its own path
 ```
 
 ## Launch
@@ -57,7 +57,7 @@ Each run leaves `~/Library/Caches/voice-switch-verify/evidence/<run>/<fixture>/`
 |---|---|
 | `config.json` | the exact config the run used |
 | `input.aiff` | the audio that was fed |
-| `stdout.txt` | the full runtime log (`heard:`, `dictation recognition: complete rule=`, `dictation session:`, `phase:`) |
+| `stdout.txt` | the full runtime log (`heard:`, `dictation recognition: complete id=<n> rule=`, `dictation session:`, `phase:`) |
 | `wake.marker`, `stop.marker` | present only when `command` / `stopCommand` actually ran |
 | `exitcode.txt`, `pid.txt`, `stderr.txt` | process outcome |
 

@@ -23,5 +23,6 @@ Preconditions:
 
 ## Gotchas
 
+- `wake-normalized` has no reliable `say` recipe. Kyoko pauses at 「、」, so `"音声、入力。"` becomes two utterances (`heard: 音声`, `heard: 入力`) and never matches (seen 2026-10-14). Normalization removes only the characters in `Transcript.swift`'s punctuation set.
 - `-> wake` alone is not proof. `command` runs in a child shell, so check `wake.marker`.
 - A config that lists an app in `skipWhileMicInUseBy` skips the wake while that app holds the microphone. The safe config lists none.
