@@ -176,8 +176,6 @@ struct NoWakeWordConfig: Decodable {
     var valid: Bool { (1000...30000).contains(followupMs ?? 8000) && (1000...60000).contains(idleMs ?? 3000) }
 }
 
-enum AutomaticRoute: String { case local, superwhisper }
-
 enum NoWakePolicy {
     static func belowMinHandoff(sampleCount: Int, rate: Double, options: NoWakeWordConfig?) -> Bool {
         sampleCount < Int(rate) * (options?.minHandoffMs ?? 1000) / 1000
@@ -188,13 +186,6 @@ enum NoWakePolicy {
         if options.followup == true && inFollowupWindow { return WakeOrigin(rule: .followup, inputIdleSeconds: idleSeconds) }
         if options.autoIdle == true { return WakeOrigin(rule: .autoB, inputIdleSeconds: idleSeconds) }
         return nil
-    }
-
-    /// Decided at submit, not at start: input within idleMs means the user is still working, and handing the file to
-    /// superwhisper would steal their focus, so the transcript stays local.
-    static func automaticRoute(idleSeconds: Double?, options: NoWakeWordConfig?) -> AutomaticRoute {
-        guard let idleSeconds, idleSeconds.isFinite, idleSeconds * 1000 >= Double(options?.idleMs ?? 3000) else { return .local }
-        return .superwhisper
     }
 
     static func relaxedWake(_ text: String, readings: [String]) -> Bool {

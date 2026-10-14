@@ -12,9 +12,7 @@ public sealed class LocalHistoryHandoff(
 
     public async Task<HandoffResult> SubmitAsync(DictationAudio audio, CancellationToken cancellation)
     {
-        var result = audio.Wake.IsAutomatic && audio.Route == AutomaticRoute.Local
-            ? new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, "user still operating")
-            : await manual.SubmitAsync(audio, cancellation);
+        var result = await manual.SubmitAsync(audio, cancellation);
         if (result.Status != HandoffStatus.FailedBeforeDispatch || audio.Action is not null
             || !audio.Wake.IsAutomatic && pasteManualFallback is null) return result;
         cancellation.ThrowIfCancellationRequested();

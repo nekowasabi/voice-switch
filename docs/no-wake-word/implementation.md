@@ -34,7 +34,7 @@ Each slice ends with tests and a local commit. Native limitations are not counte
 
 ## Opt-in controls
 
-Set individual fields in `dictation.noWakeWord` after native validation. `followup` opens an 8-second history-only window after a manual recording. `autoIdle` starts on speech even while the keyboard or mouse is in use. At submit, input within `idleMs` (default 3 seconds) keeps the transcript in local history without calling Superwhisper, and the `dictation session: end` line logs `route=local` or `route=superwhisper`. `relaxedReadingDistance2` accepts only whole closed readings of 5 through 9 characters at distance 2. The existing longer-reading matcher remains unchanged. Every field defaults to false.
+Set individual fields in `dictation.noWakeWord` after native validation. `followup` opens an 8-second history-only window after a manual recording. `autoIdle` starts on speech even while the keyboard or mouse is in use. Its recording goes to Superwhisper like an idle one; Superwhisper takes focus while opening the file and the existing restore loop hands it back to the frontmost app. `relaxedReadingDistance2` accepts only whole closed readings of 5 through 9 characters at distance 2. The existing longer-reading matcher remains unchanged. Every field defaults to false.
 
 Automatic recording keeps the configured preroll and starts only after the existing minimum speech duration. It has no near-voice score. A strict wake word spoken during an automatic recording discards it and starts a wake-word dictation. A follow-up recording does not renew the window indefinitely. Unknown idle time and excluded applications block the start. Mac additionally requires a nonempty `dictation.superwhisperMode`.
 

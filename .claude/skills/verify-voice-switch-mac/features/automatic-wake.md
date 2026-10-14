@@ -8,8 +8,8 @@ With `dictation.noWakeWord` switched on, speech can open a dictation without the
 - `auto-busy` (implemented by issue #33; `d3685d6` and earlier fail it). Speech while the user is operating the Mac also logs `dictation session: automatic rule=auto_b inputIdleSeconds=<below 1>`. Checks:
   - `AB1` the session starts at all (the baseline does not, see Gotchas).
   - `AB2` the recording starts at the phrase head, not at the last input. The session's audio length on `dictation session: end ... seconds=` is close to the spoken phrase (the `busy-speech` phrase is about 2 s), not near zero.
-  - `AB3` the route is chosen at submit. Still operating at submit means local recognition into history and no Superwhisper call. The `end` line carries `route=local`; an idle submit carries `route=superwhisper`. No `open -a superwhisper` and no mode switch line appear on the local route.
-  - `AB4` the frontmost app never changes. `busy-input.txt` reports `frontmost changes 0`.
+  - `AB3` the recording reaches Superwhisper even while operating. The log shows `superwhisper mode: <mode>` and a `dictation:` result line (or `dictation delivered`) after the `end` line. A session that only logs `dictation recognition: complete` went to local history and fails AB3 (the 2026-10-14 regression of the first #33 build).
+  - `AB4` focus comes back. Superwhisper may take the front while opening the file; `busy-input.txt` must show the previous app frontmost again within 2 s of `com.superduper.superwhisper`.
   - `AB5` a wake word spoken while operating still wins. `音声入力 今日は晴れです` under busy input logs `automatic replaced by wake word` and a normal dictation.
 - `auto-followup` logs `rule=followup` within `followupMs` of a finished dictation.
 - `auto-relaxed` logs `dictation session: wake-only rule=relaxed_d2`.
@@ -28,7 +28,7 @@ Preconditions:
 - Config `config.stop-auto.json` in this folder (`superwhisperMode: input`, `autoIdle: true`, `idleMs: 1000`), or a scratchpad copy of it.
 
 - **Idle start.** Do not touch the keyboard or mouse. Run `$V say auto-idle "今日は晴れです [[slnc 2000]]"` and `VS_RUN_ID=<id> $V run auto-idle <config>`. The output has `dictation session: automatic rule=auto_b inputIdleSeconds=<n>` with n of at least 1.
-- **Busy start (AB1 to AB4).** `$V say busy-speech "[[slnc 1500]] 今日の会議は三時からです [[slnc 3000]]"`, then `VS_BUSY_INPUT=1 SIMULATE_REALTIME=1 VS_RUN_ID=<id> $V run busy-speech config.stop-auto.json`. `VS_BUSY_INPUT=1` runs `busy-input.swift`, which posts an in-place mouse move every 200 ms for 45 s and samples the frontmost app. Expect, in order: `dictation session: automatic rule=auto_b inputIdleSeconds=0.<n>`, `dictation session: end ... route=local seconds=<about 2>`, one `dictation recognition: complete`, and `busy-input: ... frontmost changes 0`.
+- **Busy start (AB1 to AB4).** `$V say busy-speech "[[slnc 1500]] 今日の会議は三時からです [[slnc 3000]]"`, then `VS_BUSY_INPUT=1 SIMULATE_REALTIME=1 VS_RUN_ID=<id> $V run busy-speech config.stop-auto.json`. `VS_BUSY_INPUT=1` runs `busy-input.swift`, which posts an in-place mouse move every 200 ms for 45 s and samples the frontmost app. Expect, in order: `dictation session: automatic rule=auto_b inputIdleSeconds=0.<n>`, `dictation session: end ... seconds=<about 2>`, `superwhisper mode: input`, a `dictation:` result line, and in `busy-input.txt` no `com.superduper.superwhisper` entry left frontmost for more than 2 s.
 - **Busy wake word (AB5).** `$V say busy-wake "[[slnc 1500]] 音声入力 今日は晴れです [[slnc 3000]]"` and run it the same way. Expect `automatic replaced by wake word`.
 - **Busy cough (AB6).** Run `cough2` with `VS_BUSY_INPUT=1`. Expect `dictation dropped: automatic audio shorter than minHandoffMs`.
 
@@ -39,5 +39,5 @@ Preconditions:
 - Without `VS_BUSY_INPUT`, your own typing during the run changes `inputIdleSeconds`. Do not type during idle-path runs.
 - Baseline on `d3685d6` (2026-10-14, run `busy-baseline`): busy input gives only `dictation recognition: complete id=1 rule=strict inputIdleSeconds=0.007` and no `automatic` line. That is the user's complaint, reproduced. A passing `auto-busy` run must differ from it.
 - `AB4` counts every frontmost change, including the user's own app switches. The 2026-10-14 baseline logged 7 changes, all from the person at the keyboard. Ask the user to leave the Mac alone during the run, or judge AB4 only by changes to `com.superduper.superwhisper` or any change within 2 s after the `end` line.
-- `route=` is the log contract this verification expects the implementation to add. If the implementation names it differently, update this file in the same PR.
+- The first #33 build routed busy sessions to local history (`route=local`) to avoid the focus steal, so Superwhisper never ran while the user worked. That design was dropped; do not reintroduce a busy-only local route.
 - Synthetic Kyoko audio has no keyboard noise, so these runs do not show whether key clicks leak into the recording. That needs a live check with real typing.

@@ -1146,8 +1146,7 @@ final class Listener {
     private func submit(_ d: Dictation, cfg: DictationConfig, reason: String) {
         guard localHistoryState.withLock({ $0.generation == d.captureGeneration }) else { return }
         let token = finishReasonToken(reason)
-        let route = d.origin.isAutomatic ? NoWakePolicy.automaticRoute(idleSeconds: MacInputActivity.idleSeconds(), options: cfg.noWakeWord) : nil
-        log("dictation session: end reason=\(token) \(d.origin.fields) \(route.map { "route=\($0.rawValue) " } ?? "")seconds=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), Double(d.samples.count) / rate)) \(sidField(d.sessionID))")
+        log("dictation session: end reason=\(token) \(d.origin.fields) seconds=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), Double(d.samples.count) / rate)) \(sidField(d.sessionID))")
         if d.origin.isAutomatic {
             if NoWakePolicy.belowMinHandoff(sampleCount: d.samples.count, rate: rate, options: cfg.noWakeWord) {
                 log("dictation dropped: automatic audio shorter than minHandoffMs (\(d.samples.count * 1000 / Int(rate)) ms) reason=\(token) \(sidField(d.sessionID))")
@@ -1156,7 +1155,6 @@ final class Listener {
             Task {
                 guard let generation = claimLocalHistory(d) else { log("local history transcription busy; recording discarded \(sidField(d.sessionID))"); return }
                 defer { localHistoryState.withLock { $0.busy = false } }
-                if route == .local { await transcribeToHistory(d, generation: generation); return }
                 // superwhisper takes focus when it opens the file; hand it back to wherever the user is now, not where the session began.
                 let delivered = await handoff(d.samples, cfg: cfg, target: NSWorkspace.shared.frontmostApplication,
                                               action: nil, origin: d.origin, sessionID: d.sessionID, transcriptPolicy: d.transcriptPolicy,
