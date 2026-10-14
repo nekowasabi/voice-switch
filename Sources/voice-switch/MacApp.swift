@@ -432,6 +432,9 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     guard let result else {
         log("dictation: no superwhisper result within 30 s \(sidField(sessionID))"); return true
     }
+    guard !result.isEmpty else {
+        log("dictation: superwhisper heard no words \(sidField(sessionID))"); return true
+    }
     log("dictation: \(result.count) chars in \(Int(Date().timeIntervalSince(submitted) * 1000)) ms audio=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), Double(samples.count) / rate))s \(sidField(sessionID))")
     guard stillCurrent() else { return true }
     guard DictationHistory.shared.add(id: sessionID, text: result, origin: origin, expectedGeneration: historyGeneration, policy: transcriptPolicy) else { return true }
@@ -461,6 +464,7 @@ func acquireModeOwnership() async -> MacModeOwnership? {
 }
 
 /// Polls superwhisper's recordings folder for the run that started at or after `since` (unix seconds).
+/// "" means the run finished without words; nil means no run finished within 30 s.
 func awaitResult(in dir: String, since: Int, excluding previousRuns: Set<String> = []) async -> String? {
     for _ in 0 ..< 300 {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []
@@ -471,6 +475,9 @@ func awaitResult(in dir: String, since: Int, excluding previousRuns: Set<String>
             for key in ["llmResult", "result"] {
                 if let s = meta[key] as? String, !s.isEmpty { return s }
             }
+            // A finished run that heard no words (noise, a cough) has processingTime and an empty result. Waiting the
+            // full 30 s for it held the handoff lock, which blocked every automatic session behind it.
+            if meta["processingTime"] is NSNumber { return "" }
         }
         try? await Task.sleep(for: .milliseconds(100))
     }
