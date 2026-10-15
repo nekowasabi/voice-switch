@@ -74,7 +74,7 @@ func agreedWordCount(_ samples: [Float], locale: Locale) async throws -> Int {
 }
 
 /// Samples to drop from the end of the dictation when `u` ends with a stop word, else 0.
-/// `heard` is a transcript of `u` already taken for the wake-word check, so the utterance is not recognized twice.
+/// `heard` is a transcript of `u` already taken this frame, so the utterance is not recognized twice.
 /// Runs beside the frame loop, so it may wait on the recognizer.
 func stopWordCut(_ u: [Float], heard: Transcript?, stopWords: [String], locale: Locale, quiet: Bool) async -> Int {
     let t: Transcript
@@ -802,12 +802,16 @@ final class Listener {
         var recent: [Float] = []
         var speechFrames = 0
         var gapFrames = 0
-        // Stop-word judgement, and an automatic session's wake-word check, run beside the frame loop; `stopJob` says which
-        // dictation and generation it belongs to, and keeps an automatic session's utterance for the wake-word dictation.
-        let stopCheck = LatestRecognition<(cut: Int, heard: Transcript?)>()
+        // Stop-word judgement runs beside the frame loop; `stopJob` says which dictation and generation it belongs to.
+        let stopCheck = LatestRecognition<Int>()
         let wordCheck = LatestRecognition<(session: UUID, agreed: Bool)>()
-        var stopJob: (session: UUID, generation: Int, wakeUtterance: [Float]?)?
+        var stopJob: (session: UUID, generation: Int)?
         var stopFrames = 0
+        // An automatic session's wake-word check has its own slot, so a stop or tail job cannot cancel it; only the
+        // session's next utterance, itself checked, supersedes it.
+        let wakeCheck = LatestRecognition<Transcript?>()
+        var wakeJob: (session: UUID, generation: Int, utterance: [Float])?
+        var wakeFrames = 0
         func submitAndArm(_ d: Dictation, cfg: DictationConfig, reason: String) {
             if !d.origin.isAutomatic && d.action == nil, let options = cfg.noWakeWord, options.followup == true, options.valid {
                 followupUntil = clock + Int(rate) * (options.followupMs ?? 8000) / 1000
@@ -864,21 +868,25 @@ final class Listener {
                     // A recognizer that fails confirms, as the handoff hands such a recording off.
                     wordCheck.submit { (session, (try? await agreedWordCount(samples, locale: locale)).map { $0 >= NoWakePolicy.minAgreedCharacters } ?? true) }
                 }
+                wakeFrames += f.count
+                // The automatic session opens on voice activity before any transcript, so a spoken wake word replaces it with the
+                // dictation the user asked for. The idle path below transcribes that utterance again, with the frames that arrived
+                // since, and opens that dictation.
+                if let heard = wakeCheck.take(), let job = wakeJob {
+                    wakeJob = nil
+                    if job.session == d.sessionID, job.generation == generation, heard.map(speaksWake) == true {
+                        dictation = nil; speechFrames = 0
+                        log("dictation session: automatic replaced by wake word")
+                        event = .utterance(job.utterance + d.samples.suffix(wakeFrames))
+                        break session
+                    }
+                }
                 stopFrames += f.count
                 // The stop word is judged beside the frame loop, on the newest utterance only. Frames keep flowing meanwhile,
                 // so the result is taken on a later frame, and the cut also drops the frames that arrived since.
-                if let result = stopCheck.take(), let job = stopJob {
+                // Held while a wake check runs, so a wake word is judged first, as before.
+                if !wakeCheck.pending, let cut = stopCheck.take(), let job = stopJob {
                     stopJob = nil
-                    // The automatic session opens on voice activity before any transcript, so a spoken wake word replaces it with
-                    // the dictation the user asked for. The idle path below transcribes that utterance again, with the frames that
-                    // arrived since, and opens that dictation.
-                    if let u = job.wakeUtterance, job.session == d.sessionID, job.generation == generation, result.heard.map(speaksWake) == true {
-                        dictation = nil; speechFrames = 0
-                        log("dictation session: automatic replaced by wake word")
-                        event = .utterance(u + d.samples.suffix(stopFrames))
-                        break session
-                    }
-                    let cut = result.cut
                     if cut > 0, job.session == d.sessionID, job.generation == generation {
                         d.samples.removeLast(min(cut + stopFrames, d.samples.count))
                         dictation = nil; recent.removeAll(); speechFrames = 0; Hotkeys.end(); endedByUser = true
@@ -888,23 +896,22 @@ final class Listener {
                         continue
                     }
                 }
-                let stopAudio: (u: [Float], checkWake: Bool)? = switch event {
-                case let .utterance(u)?: (u, d.origin.isAutomatic)
-                case let .tail(u)?: (u, false)
+                if d.origin.isAutomatic, case let .utterance(u)? = event {
+                    let locale = Locale(identifier: config.cfg.locale ?? "ja_JP")
+                    wakeCheck.submit { try? await transcribe(u, locale: locale) }
+                    wakeJob = (d.sessionID, generation, u)
+                    wakeFrames = 0
+                }
+                let stopAudio: (u: [Float], heard: Transcript?)? = switch event {
+                case let .utterance(u)?: (u, nil)
+                case let .tail(u)?: (u, nil)
                 default: nil
                 }
-                let words = config.cfg.stopWords ?? []
-                if let stopAudio, !words.isEmpty || stopAudio.checkWake {
+                if let stopAudio, let words = config.cfg.stopWords, !words.isEmpty {
                     let locale = Locale(identifier: config.cfg.locale ?? "ja_JP")
                     let quiet = config.cfg.dictation?.noWakeWord?.enabled == true
-                    stopCheck.submit {
-                        // Recognized once for both checks; stopWordCut recognizes on its own only when this did not.
-                        var heard: Transcript?
-                        if stopAudio.checkWake { heard = try? await transcribe(stopAudio.u, locale: locale) }
-                        let cut = words.isEmpty ? 0 : await stopWordCut(stopAudio.u, heard: heard, stopWords: words, locale: locale, quiet: quiet)
-                        return (cut, heard)
-                    }
-                    stopJob = (d.sessionID, generation, stopAudio.checkWake ? stopAudio.u : nil)
+                    stopCheck.submit { await stopWordCut(stopAudio.u, heard: stopAudio.heard, stopWords: words, locale: locale, quiet: quiet) }
+                    stopJob = (d.sessionID, generation)
                     stopFrames = 0
                 }
                 guard localHistoryState.withLock({ $0.generation == generation }) else { continue }
@@ -921,8 +928,9 @@ final class Listener {
                     }
                     continue
                 }
-                // A pending stop check holds the end, so a stop word is not submitted as text.
-                guard key == .finish || (!stopCheck.pending && (d.silentFrames * frameLen * 1000 / Int(rate) >= (d.origin.isAutomatic ? dc.noWakeWord?.endSilenceMs : nil) ?? dc.endSilenceMs ?? 1200
+                // A pending stop check holds the end, so a stop word is not submitted as text; a pending wake check holds it so
+                // a spoken wake word is not handed to history.
+                guard key == .finish || (!stopCheck.pending && !wakeCheck.pending && (d.silentFrames * frameLen * 1000 / Int(rate) >= (d.origin.isAutomatic ? dc.noWakeWord?.endSilenceMs : nil) ?? dc.endSilenceMs ?? 1200
                     || d.samples.count > Int((dc.maxSeconds ?? 60) * rate))) else { continue }
                 let reason = key == .finish ? "hotkey" : d.samples.count > Int((dc.maxSeconds ?? 60) * rate) ? "maxSeconds"
                     : "\(d.silentFrames * frameLen * 1000 / Int(rate)) ms silence"
