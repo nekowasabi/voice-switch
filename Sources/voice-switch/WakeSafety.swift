@@ -200,6 +200,29 @@ enum NoWakePolicy {
         return row[y.count]
     }
 
+    /// Whisper text with known filler phrases removed, so the rest still counts toward agreement.
+    /// Observed on box whisper.cpp v1.7.5 (app uses b5454): ご視聴ありがとうございました, 音楽. The rest are known whisper fillers, not observed here.
+    static func whisperTextForAgreement(_ text: String) -> String {
+        var t = text
+        for tag in ["(音楽)", "（音楽）", "[音楽]", "【音楽】", "(字幕)", "（字幕）", "[字幕]", "【字幕】", "♪"] {
+            t = t.replacingOccurrences(of: tag, with: "")
+        }
+        let punctuation = Set("。、！!？?.")
+        let bare = t.filter { !$0.isWhitespace && !punctuation.contains($0) }
+        if ["ご視聴ありがとうございました", "ご視聴ありがとうございます", "音楽", "字幕"].contains(bare) { return "" }
+        for tail in ["ご視聴ありがとうございました", "ご視聴ありがとうございます"] {
+            var trimmed = t
+            while let last = trimmed.last, last.isWhitespace || punctuation.contains(last) { trimmed.removeLast() }
+            if trimmed.hasSuffix(tail) { return String(trimmed.dropLast(tail.count)) }
+        }
+        return t
+    }
+
+    /// Characters Apple Speech and Whisper share, after filler phrases are removed from the Whisper side.
+    static func agreedWithWhisper(apple: String, whisper: String) -> Int {
+        agreedCharacters(apple, whisperTextForAgreement(whisper))
+    }
+
     static func belowMinHandoff(sampleCount: Int, rate: Double, options: NoWakeWordConfig?) -> Bool {
         sampleCount < Int(rate) * (options?.minHandoffMs ?? 1000) / 1000
     }
