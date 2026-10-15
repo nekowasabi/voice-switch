@@ -1,0 +1,43 @@
+From 1213d380b28e4d82ff7f855babb01fcc4c8285f5 Mon Sep 17 00:00:00 2001
+From: nekowasabi <nolifeking00@gmail.com>
+Date: Thu, 15 Oct 2026 01:12:01 +0900
+Subject: [PATCH] feat(mac): size whisper audio_ctx to the clip (S2)
+
+---
+ Sources/voice-switch/WhisperGate.swift | 2 ++
+ tests/parity/run_parity.py             | 6 ++++++
+ 2 files changed, 8 insertions(+)
+
+diff --git a/Sources/voice-switch/WhisperGate.swift b/Sources/voice-switch/WhisperGate.swift
+index e9388df..8b2c451 100644
+--- a/Sources/voice-switch/WhisperGate.swift
++++ b/Sources/voice-switch/WhisperGate.swift
+@@ -36,6 +36,8 @@ enum WhisperGate {
+         params.print_timestamps = false
+         params.print_special = false
+         params.n_threads = Int32(max(1, ProcessInfo.processInfo.activeProcessorCount / 2))
++        // Encoder context sized to the clip (whisper pads to 30 s = 1500); box CPU: median 28.1 s -> 7.0 s per call.
++        params.audio_ctx = Int32(min(1500, max(512, samples.count / 320 + 64)))
+         return try "ja".withCString { language in
+             params.language = language
+             guard whisper_full(ctx, params, samples, Int32(samples.count)) == 0 else {
+diff --git a/tests/parity/run_parity.py b/tests/parity/run_parity.py
+index 85f6ade..0f09c1e 100644
+--- a/tests/parity/run_parity.py
++++ b/tests/parity/run_parity.py
+@@ -561,6 +561,12 @@ def check_swift_handoff_markers(result: Result, repo: SourceTree) -> None:
+         wakeui,
+         ["id.id == 4", "WakeMissLabel.shared.record", "(kVK_F8, UInt32(4))"],
+     )
++    require_substrings(
++        result,
++        "Swift whisper audio_ctx sized to clip",
++        repo.code("Sources/voice-switch/WhisperGate.swift"),
++        ["params.audio_ctx = Int32(min(1500, max(512, samples.count / 320 + 64)))"],
++    )
+ 
+ 
+ def check_swift_runtime_call_chain(result: Result, repo: SourceTree) -> None:
+-- 
+2.47.3
+

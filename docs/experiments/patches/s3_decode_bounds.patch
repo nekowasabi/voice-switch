@@ -1,0 +1,65 @@
+diff --git a/Sources/voice-switch/WhisperGate.swift b/Sources/voice-switch/WhisperGate.swift
+index e9388df..4121189 100644
+--- a/Sources/voice-switch/WhisperGate.swift
++++ b/Sources/voice-switch/WhisperGate.swift
+@@ -6,6 +6,8 @@ import whisper
+ /// The model is not bundled (550 MB); `make model` puts it where `modelPath` points.
+ enum WhisperGate {
+     static let modelPath = NSHomeDirectory() + "/Library/Application Support/voice-switch/models/ggml-large-v3-turbo-q5_0.bin"
++    /// Same limit as the Windows recognizer timeout.
++    static let abortSeconds: Double = 10
+ 
+     private static let context: Result<OpaquePointer, Error> = Result {
+         guard FileManager.default.fileExists(atPath: modelPath) else {
+@@ -36,12 +38,29 @@ enum WhisperGate {
+         params.print_timestamps = false
+         params.print_special = false
+         params.n_threads = Int32(max(1, ProcessInfo.processInfo.activeProcessorCount / 2))
+-        return try "ja".withCString { language in
+-            params.language = language
+-            guard whisper_full(ctx, params, samples, Int32(samples.count)) == 0 else {
+-                throw NSError(domain: "voice-switch.whisper", code: 3, userInfo: [NSLocalizedDescriptionKey: "Whisper inference failed"])
++        // Bounded decode: no carry-over between calls, one segment, no temperature fallback, at most 48 tokens.
++        params.no_context = true
++        params.single_segment = true
++        params.temperature_inc = 0
++        params.max_tokens = 48
++        var deadline = Date().timeIntervalSince1970 + abortSeconds
++        return try withUnsafeMutablePointer(to: &deadline) { deadlinePointer in
++            params.abort_callback = { user in
++                guard let user else { return false }
++                return Date().timeIntervalSince1970 > user.load(as: Double.self)
++            }
++            params.abort_callback_user_data = UnsafeMutableRawPointer(deadlinePointer)
++            return try "ja".withCString { language in
++                params.language = language
++                guard whisper_full(ctx, params, samples, Int32(samples.count)) == 0 else {
++                    if Date().timeIntervalSince1970 > deadlinePointer.pointee {
++                        log("whisper: aborted")
++                        return ""
++                    }
++                    throw NSError(domain: "voice-switch.whisper", code: 3, userInfo: [NSLocalizedDescriptionKey: "Whisper inference failed"])
++                }
++                return (0 ..< whisper_full_n_segments(ctx)).map { String(cString: whisper_full_get_segment_text(ctx, $0)) }.joined()
+             }
+-            return (0 ..< whisper_full_n_segments(ctx)).map { String(cString: whisper_full_get_segment_text(ctx, $0)) }.joined()
+         }
+     }
+ }
+diff --git a/tests/parity/run_parity.py b/tests/parity/run_parity.py
+index 85f6ade..cd7f934 100644
+--- a/tests/parity/run_parity.py
++++ b/tests/parity/run_parity.py
+@@ -561,6 +561,12 @@ def check_swift_handoff_markers(result: Result, repo: SourceTree) -> None:
+         wakeui,
+         ["id.id == 4", "WakeMissLabel.shared.record", "(kVK_F8, UInt32(4))"],
+     )
++    require_substrings(
++        result,
++        "Swift whisper decode is bounded and aborts at 10 s",
++        repo.code("Sources/voice-switch/WhisperGate.swift"),
++        ["params.no_context = true", "params.single_segment = true", "params.temperature_inc = 0", "params.max_tokens = 48", "static let abortSeconds: Double = 10", "params.abort_callback = {", "log(\"whisper: aborted\")"],
++    )
+ 
+ 
+ def check_swift_runtime_call_chain(result: Result, repo: SourceTree) -> None:
