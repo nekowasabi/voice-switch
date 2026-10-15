@@ -6,7 +6,7 @@ This directory is the maintained source for verifying what a Mac user of voice-s
 |---|---|---|
 | Wake word runs the command | [wake-command.md](wake-command.md) | no |
 | Stop word | [stop-word.md](stop-word.md) | no |
-| Stop word at the end of a long utterance | [stop-word-long-utterance.md](stop-word-long-utterance.md) | yes (history only, no paste) |
+| Stop word at the end of a long utterance | [stop-word-long-utterance.md](stop-word-long-utterance.md) | yes (stop-word endings paste; silence endings stay in history) |
 | Wake word then dictation | [wake-dictation.md](wake-dictation.md) | yes |
 | Automatic sessions without a wake word | [automatic-wake.md](automatic-wake.md) | yes |
 

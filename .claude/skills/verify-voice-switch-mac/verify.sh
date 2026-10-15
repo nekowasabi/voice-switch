@@ -29,7 +29,8 @@ cmd_doctor() {
   fi
   if say -v '?' | grep -q '^Kyoko '; then echo "ok   say voice Kyoko"; else echo "FAIL Japanese voice Kyoko missing"; ok=1; fi
   if [ -x "$BIN" ]; then
-    if "$BIN" --vad-selftest >/dev/null 2>&1; then echo "ok   --vad-selftest"; else echo "FAIL --vad-selftest"; ok=1; fi
+    # It also fails on a missing Silero resource or Whisper model; its last line says which.
+    if st=$("$BIN" --vad-selftest 2>&1); then echo "ok   --vad-selftest"; else echo "FAIL --vad-selftest: $(printf '%s\n' "$st" | tail -n 1)"; ok=1; fi
   fi
   # Only VS_BUSY_INPUT=1 runs need this, so it warns instead of failing.
   if swift "$SKILL/busy-input.swift" 0 >/dev/null 2>&1; then echo "ok   busy-input can post events"; else echo "warn busy-input cannot post events: grant Accessibility to this terminal or VS_BUSY_INPUT runs are not busy"; fi
@@ -80,7 +81,7 @@ cmd_run() {
   [ -f "$out/busy-pid.txt" ] && { wait "$(cat "$out/busy-pid.txt")" || true; cat "$out/busy-input.txt"; }
   echo "exit=$(cat "$out/exitcode.txt") evidence=$out"
   for m in "$out"/*.marker; do [ -f "$m" ] && basename "$m"; done
-  grep -E 'heard|dictation|phase|fatal|command' "$out/stdout.txt" || true
+  grep -E 'heard|dictation|phase|fatal|command|whisper' "$out/stdout.txt" || true
 }
 
 cmd_cleanup() {

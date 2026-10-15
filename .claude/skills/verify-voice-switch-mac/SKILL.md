@@ -34,7 +34,7 @@ Override the root with `VS_VERIFY_ROOT=<dir>`.
 $V doctor
 ```
 
-It checks that the binary exists, that the Japanese voice `Kyoko` is installed, and that `--vad-selftest` exits 0. It prints the commit and dirty-file count of the build next to the repo's current values. If they differ from what you are proving, rebuild. It also warns about runs that never finished.
+It checks that the binary exists, that the Japanese voice `Kyoko` is installed, and that `--vad-selftest` exits 0. The self-test also fails when the bundled Silero model is missing or the Whisper model is not at `~/Library/Application Support/voice-switch/models/ggml-large-v3-turbo-q5_0.bin`. `make model` downloads the Whisper model (550 MB) without installing the app. The FAIL line quotes the self-test's reason. Doctor also prints the commit and dirty-file count of the build next to the repo's current values. If they differ from what you are proving, rebuild. It also warns about runs that never finished.
 
 ## Drive
 
@@ -45,9 +45,10 @@ VS_RUN_ID=<name> $V run <fixture> [config.json]
 - `config.json` defaults to `config.safe.json` in this folder. It has no `dictation` key, so nothing reaches Superwhisper. `command` and `stopCommand` only `touch` a marker file in the evidence folder (`__EVIDENCE__` is replaced with that folder).
 - To prove a config-dependent feature, write a variant into your scratchpad and pass it. It is copied into the evidence folder.
 - `VS_BUSY_INPUT=1` simulates a user who keeps operating the Mac. It runs `swift busy-input.swift 45` beside the process, which posts an in-place mouse move every 200 ms (nothing is typed, the cursor stays put) and logs every frontmost-app change into `busy-input.txt`. Use it with `SIMULATE_REALTIME=1` so audio time matches wall time.
-- A config with a `dictation` key drives the user's real Superwhisper. It writes a WAV, runs `open -a superwhisper`, may switch Superwhisper modes, and may paste into the frontmost app. Tell the user before running one.
+- A config with a `dictation` key drives the user's real Superwhisper. It writes a WAV, runs `open -a superwhisper`, may switch Superwhisper modes, and may paste into the frontmost app. Wake-word dictations and automatic recordings ended by the stop word paste. Tell the user before running one.
+- To run automatic sessions without Superwhisper, set `dictation.superwhisperMode` to a mode that does not exist (e.g. `vs-verify-missing`). The handoff then returns before `open`, and the recording goes to local history (`dictation recognition: complete id=<n> rule=auto_b`). This does not help wake-word dictations or stop-word endings. They hand off without a mode check and still open Superwhisper.
 
-The command prints the exit code, the evidence folder, any marker files, and the `heard` / `dictation` / `phase` lines. The fixture text and expected lines for each feature are in [features/README.md](features/README.md).
+The command prints the exit code, the evidence folder, any marker files, and the `heard` / `dictation` / `phase` / `whisper` lines (the last covers `whisper: ready` and `superwhisper mode:`). The fixture text and expected lines for each feature are in [features/README.md](features/README.md).
 
 ## Evidence
 
