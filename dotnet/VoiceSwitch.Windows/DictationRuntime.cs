@@ -368,7 +368,7 @@ public sealed class WindowsDictationRuntime
                         var wasAwaiting = session.IsAwaitingBody;
                         var wasIdle = !wasActive && !wasAwaiting;
                         var stopBeforeApply = DictationBoundaries.StandaloneStopRange(outcome.Recognition!, config.StopWords ?? []);
-                        var tailBeforeApply = DictationBoundaries.TryDedicatedTailStop(outcome.Recognition!, config.StopWords ?? [], config.Dictation?.DedicatedStopRecognizer == true);
+                        var tailBeforeApply = DictationBoundaries.TryDedicatedTailStop(outcome.Recognition!, config.StopWords ?? [], config.Dictation);
                         var effectiveStop = stopBeforeApply ?? tailBeforeApply?.Range;
                         var audio = session.Apply(outcome.Recognition!, originalStore.Copy, analysisStore.Next, wakeOrigin);
                         if (wasIdle && !session.IsActive && !session.IsAwaitingBody && outcome.Work.Request.Extent == RecognitionExtent.PrefixHead)
@@ -640,7 +640,7 @@ public sealed class WindowsDictationRuntime
         long rangeEnd,
         ChannelWriter<RecognitionWork> requests,
         Dictionary<long, RecognitionWork> pending) =>
-        QueueRecognition(ev.Kind == "head" ? RecognitionExtent.PrefixHead : RecognitionExtent.ClosedUtterance, ev.Samples.Length, rangeEnd, requests, pending, 0);
+        QueueRecognition(ev.Kind == "head" ? RecognitionExtent.PrefixHead : RecognitionExtent.ClosedUtterance, ev.Samples.Length, rangeEnd, requests, pending, ev.TailSilenceSamples);
 
     private void ApplyConfig(VoiceSwitchConfig next)
     {
@@ -2104,8 +2104,8 @@ if ($env:VOICE_SWITCH_STOP_WORDS) {
 }
 $dedicatedStop = $false
 if ($env:VOICE_SWITCH_DEDICATED_STOP -eq '1') { $dedicatedStop = $true }
-# 0.4 matches DictationBoundaries.StopGrammarMinConfidence when the env var is missing.
-$stopMinConfidence = 0.4
+# 0.25 matches DictationBoundaries.StopGrammarMinConfidence when the env var is missing.
+$stopMinConfidence = 0.25
 if ($env:VOICE_SWITCH_STOP_MIN_CONFIDENCE) {
   $parsedConfidence = 0.0
   $confidenceStyles = [System.Globalization.NumberStyles]::Float
@@ -2151,7 +2151,7 @@ public sealed class VoiceSwitchSapiCollector
     private string tailStopWord;
     private long tailStopStart = -1;
     private long tailStopEnd = -1;
-    private double stopMinConfidence = 0.4;
+    private double stopMinConfidence = 0.25;
 
     public VoiceSwitchSapiCollector(long requestId, long requestStart, long requestEnd)
     {

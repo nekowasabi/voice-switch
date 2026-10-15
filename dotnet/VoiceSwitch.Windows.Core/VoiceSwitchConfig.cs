@@ -18,7 +18,12 @@ public sealed record DictationConfig(
     string? SuperwhisperMode = null,
     NoWakeWordConfig? NoWakeWord = null,
     // Windows only. Second SAPI engine for a stop word after body text. Default false until human voice is measured. macOS ignores it.
-    bool DedicatedStopRecognizer = false);
+    bool DedicatedStopRecognizer = false,
+    // Windows only, with dedicatedStopRecognizer. Both provisional from SW0c (synthetic voice, issue #23); null takes the
+    // DictationBoundaries defaults. SilenceWithin: the VAD must hear no speech later than this after the reported stop end.
+    // CutBackoff: the body audio ends this much before the reported stop start, which SW0c measured late.
+    int? TailStopSilenceWithinMs = null,
+    int? TailStopCutBackoffMs = null);
 
 /// <summary>Load-time guardrails for timing fields that are easy to mistype 10x. No clamp — warn only.</summary>
 public static class DictationTimingGuard

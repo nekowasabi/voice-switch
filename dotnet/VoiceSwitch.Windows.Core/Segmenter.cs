@@ -132,7 +132,7 @@ public sealed class Segmenter
         }
 
         var done = !skipping && utteranceSamples - hangoverSamples >= minSamples
-            ? SegmenterEvent.Utterance(Flatten(utterance))
+            ? SegmenterEvent.Utterance(Flatten(utterance), silentSamples)
             : null;
         utterance.Clear();
         ring.Clear();
@@ -153,7 +153,7 @@ public sealed class Segmenter
 
         var minSamples = MsToSamples(config.MinSpeechMs ?? 300);
         var done = !skipping && utteranceSamples >= minSamples
-            ? SegmenterEvent.Utterance(Flatten(utterance))
+            ? SegmenterEvent.Utterance(Flatten(utterance), silentSamples)
             : null;
         utterance.Clear();
         ring.Clear();
@@ -190,9 +190,10 @@ public sealed class Segmenter
         frames.SelectMany(frame => frame).ToArray();
 }
 
-public sealed record SegmenterEvent(string Kind, float[] Samples)
+// TailSilenceSamples: the VAD-silent run that closed an utterance (the hangover, or less at a flush).
+public sealed record SegmenterEvent(string Kind, float[] Samples, long TailSilenceSamples = 0)
 {
-    public static SegmenterEvent Utterance(float[] samples) => new("utterance", samples);
+    public static SegmenterEvent Utterance(float[] samples, long tailSilenceSamples) => new("utterance", samples, tailSilenceSamples);
     public static SegmenterEvent Head(float[] samples) => new("head", samples);
 }
 
