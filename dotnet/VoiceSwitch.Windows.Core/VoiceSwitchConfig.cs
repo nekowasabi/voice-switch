@@ -59,6 +59,8 @@ public sealed record VoiceSwitchConfig(
     // Parsed for cross-platform config compatibility; Windows does not run macrowhisper (macOS-only CLI hooks).
     System.Text.Json.JsonElement? Macrowhisper = null,
     NoiseReductionOptions? NoiseReduction = null,
+    string? SpeakerEnrollment = null,
+    double? SpeakerThreshold = null,
     // Twin of Mac `macOS`: Windows-only settings.
     WindowsActions? Windows = null)
 {
