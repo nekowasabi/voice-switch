@@ -1135,7 +1135,10 @@ public sealed class WindowsDictationRuntime
             }
             catch (Exception ex) { Log.Info($"word agreement failed; handing off anyway: {ErrorDetail(ex, wake)} sid={audio.SessionId}"); }
         }
-        audio = audio with { Samples = await Task.Run(() => SpeakerGate.WithoutOtherSpeakers(audio.Samples, config, Log.Info)) };
+        // Without an enrollment the gate returns the samples as they are; hopping threads anyway left the handoff in flight
+        // long enough that the next dictation was dropped as overlapping.
+        if (config.SpeakerEnrollment is not null)
+            audio = audio with { Samples = await Task.Run(() => SpeakerGate.WithoutOtherSpeakers(audio.Samples, config, Log.Info)) };
         // Ending it with the stop word shows the user meant to dictate into the window in front, so it is handed off like a
         // wake-word dictation and Superwhisper pastes it. One that ended on silence or maxSeconds stays history-only.
         if (wake.IsAutomatic && audio.Reason == FinishReason.StandaloneStop)
