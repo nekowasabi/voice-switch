@@ -435,7 +435,8 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
             try? await Task.sleep(nanoseconds: 100_000_000)
             await restoreFocusIfSuperwhisper(target)
         }
-        result = await awaitResult(in: recordings, since: Int(submitted.timeIntervalSince1970) - 2, excluding: previousRuns)
+        let waitForLLM = previousMode != nil && superwhisperModeUsesLLM(wantedMode, modeJsons: readSuperwhisperModeJsons())
+        result = await awaitResult(in: recordings, since: Int(submitted.timeIntervalSince1970) - 2, excluding: previousRuns, waitForLLM: waitForLLM)
     } catch {
         log(cfg.noWakeWord?.enabled == true ? "dictation: handing off to superwhisper failed" : "dictation: handing off to superwhisper failed: \(error)")
     }
@@ -477,15 +478,21 @@ func acquireModeOwnership() async -> MacModeOwnership? {
 
 /// Polls superwhisper's recordings folder for the run that started at or after `since` (unix seconds).
 /// "" means the run finished without words; nil means no run finished within 30 s.
-func awaitResult(in dir: String, since: Int, excluding previousRuns: Set<String> = []) async -> String? {
+/// waitForLLM: superwhisper writes `result` first and `llmResult` after its language model; it pastes per the mode active
+/// at that second write, so a temporary mode must stay until then (restoring at the first write pasted automatic recordings).
+func awaitResult(in dir: String, since: Int, excluding previousRuns: Set<String> = [], waitForLLM: Bool = false) async -> String? {
+    var early: String?
     for _ in 0 ..< 300 {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []
         for name in names.sorted().reversed() {
             guard !previousRuns.contains(name), let t = Int(name), t >= since,
                   let data = FileManager.default.contents(atPath: "\(dir)/\(name)/meta.json"),
                   let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
-            for key in ["llmResult", "result"] {
-                if let s = meta[key] as? String, !s.isEmpty { return s }
+            if let s = meta["llmResult"] as? String, !s.isEmpty { return s }
+            if let s = meta["result"] as? String, !s.isEmpty {
+                guard waitForLLM, meta["languageModelProcessingTime"] == nil else { return s }
+                early = s
+                continue
             }
             // A finished run that heard no words (noise, a cough) has processingTime and an empty result. Waiting the
             // full 30 s for it held the handoff lock, which blocked every automatic session behind it.
@@ -493,7 +500,7 @@ func awaitResult(in dir: String, since: Int, excluding previousRuns: Set<String>
         }
         try? await Task.sleep(for: .milliseconds(100))
     }
-    return nil
+    return early
 }
 
 func writeWAV(_ samples: [Float], to url: URL) throws {

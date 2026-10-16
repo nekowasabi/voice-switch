@@ -137,14 +137,17 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
                 restoreFocus(audio.Target);
             }
 
+            var waitForLlm = previousMode is not null && SuperwhisperModes.UsesLanguageModel(wantedMode, ReadModes());
             for (var i = 0; i < 300 && text is null; i++)
             {
-                text = FindResult(recordingsDir, since, previousRuns);
+                text = FindResult(recordingsDir, since, previousRuns, waitForLlm);
                 if (text is null)
                 {
                     await delay(Tick);
                 }
             }
+
+            if (text is null && waitForLlm) text = FindResult(recordingsDir, since, previousRuns);
 
             if (text is not null)
             {
@@ -494,7 +497,9 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
     private static extern int GetShortPathName(string longPath, StringBuilder shortPath, int bufferLength);
 
     // Superwhisper writes one <unix-seconds>/meta.json per run; the newest run at or after `since` is ours.
-    internal static string? FindResult(string recordingsDir, long sinceUnixSeconds, IReadOnlySet<string>? previousRuns = null)
+    // waitForLlm: it writes `result` first and `llmResult` after its language model, and pastes per the mode active at that
+    // second write, so a temporary mode must stay until then (restoring at the first write pasted automatic recordings).
+    internal static string? FindResult(string recordingsDir, long sinceUnixSeconds, IReadOnlySet<string>? previousRuns = null, bool waitForLlm = false)
     {
         string[] dirs;
         try
@@ -526,6 +531,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
                         && value.ValueKind == JsonValueKind.String
                         && value.GetString() is { Length: > 0 } text)
                     {
+                        if (key == "result" && waitForLlm && !meta.RootElement.TryGetProperty("languageModelProcessingTime", out _)) return null;
                         return text;
                     }
                 }
