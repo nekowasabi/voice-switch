@@ -59,6 +59,14 @@ public static class SuperwhisperModes
         catch (JsonException) { return false; }
     }
 
+    public static bool UsesLanguageModel(string? wanted, IEnumerable<string> modeJsons)
+    {
+        if (string.IsNullOrWhiteSpace(wanted)) return false;
+        var jsons = modeJsons.ToArray();
+        var key = ResolveKey(wanted, jsons);
+        return key is not null && jsons.Any(json => Field(json, "key") == key && !string.IsNullOrEmpty(Field(json, "languageModelID")));
+    }
+
     public static string? ActiveMode(string? preferencesJson) =>
         preferencesJson is null ? null : Field(preferencesJson, "activeMode");
 

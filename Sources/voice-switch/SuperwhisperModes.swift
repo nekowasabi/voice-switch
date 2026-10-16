@@ -68,6 +68,13 @@ func jsonStringField(_ json: String, _ name: String) -> String? {
     return value
 }
 
+func superwhisperModeUsesLLM(_ wanted: String?, modeJsons: [String]) -> Bool {
+    guard let wanted, let key = resolveSuperwhisperModeKey(wanted, modeJsons: modeJsons) else { return false }
+    return modeJsons.contains { json in
+        jsonStringField(json, "key") == key && !(jsonStringField(json, "languageModelID") ?? "").isEmpty
+    }
+}
+
 func superwhisperAutoPasteDisabled(_ wanted: String?, modeJsons: [String]) -> Bool {
     guard let wanted, let key = resolveSuperwhisperModeKey(wanted, modeJsons: modeJsons) else { return false }
     let matching = modeJsons.compactMap { json -> [String: Any]? in

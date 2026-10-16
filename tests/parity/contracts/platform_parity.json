@@ -218,11 +218,11 @@
       "id": "dictation_handoff_lifecycle",
       "macos": {
         "file": "Sources/voice-switch/MacApp.swift",
-        "markers": ["\"-g\", \"-a\", \"superwhisper\"", "awaitResult", "\"llmResult\", \"result\"", "no superwhisper result within 30 s"]
+        "markers": ["\"-g\", \"-a\", \"superwhisper\"", "awaitResult", "waitForLLM", "languageModelProcessingTime", "no superwhisper result within 30 s"]
       },
       "windows": {
         "file": "dotnet/VoiceSwitch.Windows/SuperwhisperHandoff.cs",
-        "markers": ["superwhisper://file//", "FindResult", "\"llmResult\", \"result\"", "no superwhisper result within 30 s"]
+        "markers": ["superwhisper://file//", "FindResult", "\"llmResult\", \"result\"", "waitForLlm", "languageModelProcessingTime", "no superwhisper result within 30 s"]
       }
     },
     {
