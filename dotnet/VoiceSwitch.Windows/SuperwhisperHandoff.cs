@@ -88,6 +88,11 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         if (!TryOwnMode(out var ownership))
             return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, "mode ownership unavailable; local history required");
         using var heldOwnership = ownership;
+        if (File.Exists(JournalPath) && !await AwaitRunsSettledAsync())
+        {
+            Log.Info($"superwhisper mode: an earlier run is still in flight; recording goes to local history sid={audio.SessionId}");
+            return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, "an earlier run is still in flight; local history required");
+        }
         if (!await RecoverOwnedAsync(audio.Target))
             return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, "mode recovery is unresolved");
         var actionMode = string.IsNullOrWhiteSpace(audio.Action?.SuperwhisperMode) ? null : audio.Action.SuperwhisperMode.Trim();
@@ -98,6 +103,8 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         var (modeRequested, previousMode) = await EnterModeAsync(wantedMode, audio.Target);
         string? text = null;
         HashSet<string> previousRuns = [];
+        var launched = false;
+        var since = 0L;
         try
         {
             if (controlled && (!modeRequested || !SuperwhisperModes.HasAutoPasteDisabled(wantedMode, ReadModes())))
@@ -117,6 +124,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
                 ownsWav = true;
                 await File.WriteAllBytesAsync(wavPath, Pcm16Wav.Encode(TrimQuietHead(audio.Samples.AsSpan())), cancellation);
                 Launch(argument);
+                launched = true;
             }
             catch (Exception ex)
             {
@@ -128,7 +136,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
                 return new HandoffResult(HandoffStatus.FailedBeforeDispatch, audio.SessionId, null, ex.Message);
             }
 
-            var since = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 2;
+            since = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 2;
             var clock = Stopwatch.StartNew();
             // Opening a file brings Superwhisper to the front, and it skips auto-paste while it is still frontmost.
             for (var i = 0; i < 20; i++)
@@ -156,7 +164,15 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         }
         finally
         {
-            if (previousMode is not null) await RecoverOwnedAsync(audio.Target);
+            // Restoring while Superwhisper still works on the file lets it paste in the restored mode. With no judged run the
+            // recovery state stays, and the next handoff or launch restores it once nothing is in flight.
+            if (previousMode is not null)
+            {
+                if (!launched || text is not null || ReadRuns(recordingsDir, since, previousRuns).Any(meta => SuperwhisperRuns.Classify(meta) != SuperwhisperRun.Unjudged))
+                    await RecoverOwnedAsync(audio.Target);
+                else
+                    Log.Info($"superwhisper mode: kept {wantedMode} until the run finishes sid={audio.SessionId}");
+            }
         }
 
         if (text is null)
@@ -299,6 +315,11 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
             if (!File.Exists(JournalPath)) return true;
             if (!TryOwnMode(out var ownership)) return false;
             using var heldOwnership = ownership;
+            if (!await AwaitRunsSettledAsync())
+            {
+                Log.Info("superwhisper mode: an earlier run is still in flight; the next handoff restores the mode");
+                return false;
+            }
             return await RecoverOwnedAsync(0);
         }
         finally { ModeOwner.Release(); }
@@ -501,6 +522,26 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
     // second write, so a temporary mode must stay until then (restoring at the first write pasted automatic recordings).
     internal static string? FindResult(string recordingsDir, long sinceUnixSeconds, IReadOnlySet<string>? previousRuns = null, bool waitForLlm = false)
     {
+        foreach (var meta in ReadRuns(recordingsDir, sinceUnixSeconds, previousRuns))
+        {
+            foreach (var key in new[] { "llmResult", "result" })
+            {
+                if (meta.TryGetProperty(key, out var value)
+                    && value.ValueKind == JsonValueKind.String
+                    && value.GetString() is { Length: > 0 } text)
+                {
+                    if (key == "result" && waitForLlm && !meta.TryGetProperty("languageModelProcessingTime", out _)) return null;
+                    return text;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    // Newest first; unreadable runs are skipped.
+    private static IEnumerable<JsonElement> ReadRuns(string recordingsDir, long sinceUnixSeconds, IReadOnlySet<string>? previousRuns)
+    {
         string[] dirs;
         try
         {
@@ -508,7 +549,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return null;
+            yield break;
         }
 
         var runs = dirs
@@ -517,31 +558,33 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
             .OrderByDescending(run => run.Time);
         foreach (var run in runs)
         {
+            JsonElement meta;
             try
             {
-                using var meta = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(run.Dir, "meta.json")));
-                if (meta.RootElement.ValueKind != JsonValueKind.Object)
-                {
-                    continue;
-                }
-
-                foreach (var key in new[] { "llmResult", "result" })
-                {
-                    if (meta.RootElement.TryGetProperty(key, out var value)
-                        && value.ValueKind == JsonValueKind.String
-                        && value.GetString() is { Length: > 0 } text)
-                    {
-                        if (key == "result" && waitForLlm && !meta.RootElement.TryGetProperty("languageModelProcessingTime", out _)) return null;
-                        return text;
-                    }
-                }
+                using var document = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(run.Dir, "meta.json")));
+                meta = document.RootElement.Clone();
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
             {
+                continue;
             }
+
+            if (meta.ValueKind == JsonValueKind.Object) yield return meta;
+        }
+    }
+
+    // A handoff that timed out kept its temporary mode; restoring it while that run still works lets the run paste.
+    // Waits up to 30 s for runs of the last three minutes to finish; true when none is left in flight.
+    private async Task<bool> AwaitRunsSettledAsync()
+    {
+        var since = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 180;
+        for (var i = 0; i < 300; i++)
+        {
+            if (!ReadRuns(recordingsDir, since, null).Any(SuperwhisperRuns.InFlight)) return true;
+            await delay(Tick);
         }
 
-        return null;
+        return false;
     }
 
     private void Sweep()

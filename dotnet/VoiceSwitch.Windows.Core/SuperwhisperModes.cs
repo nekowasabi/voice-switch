@@ -30,6 +30,41 @@ public readonly record struct RouteResult(RouteDisposition Disposition, string? 
     public static RouteResult SendFailed(string? body) => new(RouteDisposition.SendFailed, body);
 }
 
+public enum SuperwhisperRun
+{
+    Unjudged,
+    HeardNothing,
+    Transcribed,
+    Polished
+}
+
+// One superwhisper run as its meta.json shows it. Superwhisper first writes a placeholder with duration and
+// processingTime 0 and an empty result; only a filled duration says it has judged the audio.
+public static class SuperwhisperRuns
+{
+    public static SuperwhisperRun Classify(JsonElement meta)
+    {
+        var judged = (meta.TryGetProperty("duration", out var time) || meta.TryGetProperty("processingTime", out time))
+            && time.ValueKind == JsonValueKind.Number && time.GetDouble() > 0;
+        var result = Text(meta, "result");
+        if (!judged) return SuperwhisperRun.Unjudged;
+        if (Text(meta, "llmResult").Length > 0 || (meta.TryGetProperty("languageModelProcessingTime", out _) && result.Length > 0))
+            return SuperwhisperRun.Polished;
+        return result.Length == 0 ? SuperwhisperRun.HeardNothing : SuperwhisperRun.Transcribed;
+    }
+
+    // Still able to paste: unjudged, or transcribed by a mode that has a language model still to run.
+    public static bool InFlight(JsonElement meta) => Classify(meta) switch
+    {
+        SuperwhisperRun.Unjudged => true,
+        SuperwhisperRun.Transcribed => meta.TryGetProperty("languageModelKey", out _),
+        _ => false
+    };
+
+    private static string Text(JsonElement meta, string name) =>
+        meta.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
+}
+
 // Superwhisper keeps one modes\<file>.json per mode ({"key", "name", ...}) and the current one in preferences.json "activeMode".
 public static class SuperwhisperModes
 {

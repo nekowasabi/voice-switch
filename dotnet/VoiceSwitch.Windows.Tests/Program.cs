@@ -19,6 +19,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("controlled handoff ignores results already present before launch", () => Check(NoWakeTests.FreshResultsOnly())),
     ("overlapping handoffs restore modes serially and suppress duplicate delivery", () => Check(NoWakeTests.OverlappingHandoffs())),
     ("mode recovery survives restart and preserves a user mode change", () => Check(NoWakeTests.ModeRecovery())),
+    ("a timed-out handoff keeps its mode until the superwhisper run finishes", () => Check(NoWakeTests.KeepsModeUntilRunFinishes())),
     ("automatic audio without a verified no-auto-paste mode falls back to unpasted local history", () => Check(NoWakeTests.ControlledMode())),
     ("clearing history invalidates pending transcription", () => Check(NoWakeTests.ClearPendingHistory())),
     ("automatic wake gates and immutable provenance", () => Check(NoWakeTests.WakeRules())),

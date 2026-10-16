@@ -335,6 +335,55 @@ internal static class NoWakeTests
         finally { Directory.Delete(root, true); }
     }
 
+    public static bool KeepsModeUntilRunFinishes()
+    {
+        static SuperwhisperRun Kind(string json) => SuperwhisperRuns.Classify(JsonDocument.Parse(json).RootElement);
+        const string placeholder = """{"result":"","processingTime":0,"duration":0}""";
+        const string heardNothing = """{"result":"","processingTime":18,"duration":3000}""";
+        const string llmPending = """{"result":"ああなるほど。","processingTime":1006,"duration":6261,"languageModelKey":"claude-sonnet-5-5"}""";
+        if (Kind(placeholder) != SuperwhisperRun.Unjudged || Kind(heardNothing) != SuperwhisperRun.HeardNothing
+            || Kind("""{"result":"ああなるほど。","processingTime":1006,"duration":6261}""") != SuperwhisperRun.Transcribed
+            || Kind("""{"result":"ああなるほど。","duration":6261,"llmResult":"なるほど。","languageModelProcessingTime":1398}""") != SuperwhisperRun.Polished
+            || !SuperwhisperRuns.InFlight(JsonDocument.Parse(llmPending).RootElement)
+            || SuperwhisperRuns.InFlight(JsonDocument.Parse(heardNothing).RootElement)) return false;
+
+        var directory = Path.Combine(Path.GetTempPath(), "voice-keep-" + Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(directory, "handoff");
+        var modes = Path.Combine(directory, "modes");
+        var recordings = Path.Combine(directory, "recordings");
+        var prefs = Path.Combine(directory, "preferences.json");
+        var meta = Path.Combine(recordings, (DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 1).ToString(), "meta.json");
+        Directory.CreateDirectory(modes);
+        try
+        {
+            File.WriteAllText(Path.Combine(modes, "safe.json"), "{\"key\":\"safe\",\"autoPaste\":false}");
+            File.WriteAllText(prefs, "{\"activeMode\":\"before\"}");
+            var handoff = new RegisteredSuperwhisperHandoff(root, recordings, psi =>
+            {
+                var argument = psi.ArgumentList[0];
+                if (argument.Contains("mode?key="))
+                    File.WriteAllText(prefs, JsonSerializer.Serialize(new { activeMode = argument.Split("key=")[1] }));
+                else
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(meta)!);
+                    File.WriteAllText(meta, placeholder);
+                }
+                return new Process();
+            }, delay: _ => Task.CompletedTask, superwhisperMode: "safe", preferencesPath: prefs, modesDir: modes);
+            var audio = new DictationAudio(Guid.NewGuid(), new(0, 2), ImmutableArray.Create<short>(1, 2), Origin: new(WakeRule.AutoB, 4));
+            var journal = Path.Combine(root, "mode-restore.json");
+            var result = handoff.SubmitAsync(audio, CancellationToken.None).GetAwaiter().GetResult();
+            if (result.Status != HandoffStatus.NoResult || !File.Exists(journal) || !File.ReadAllText(prefs).Contains("safe")) return false;
+            var next = handoff.SubmitAsync(audio with { SessionId = Guid.NewGuid() }, CancellationToken.None).GetAwaiter().GetResult();
+            if (next.Status != HandoffStatus.FailedBeforeDispatch || handoff.RecoverAsync(CancellationToken.None).GetAwaiter().GetResult()
+                || !File.Exists(journal)) return false;
+            File.WriteAllText(meta, heardNothing);
+            return handoff.RecoverAsync(CancellationToken.None).GetAwaiter().GetResult()
+                && !File.Exists(journal) && File.ReadAllText(prefs).Contains("before");
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
     public static bool ControlledMode()
     {
         string[] safe = ["{\"key\":\"safe\",\"name\":\"voice\",\"autoPaste\":false}"];
