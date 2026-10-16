@@ -393,6 +393,11 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     guard let ownership = await acquireModeOwnership() else { return false }
     defer { withExtendedLifetime(ownership) {} }
     let historyGeneration = DictationHistory.shared.generation
+    let recordings = Platform.expandPath(cfg.recordingsDir ?? Platform.defaultRecordingsDir)
+    if (try? MacModeRestoreStore.read()) != nil, !(await awaitRunsSettled(in: recordings)) {
+        log("superwhisper mode: an earlier run is still in flight; recording goes to local history \(sidField(sessionID))")
+        return false
+    }
     guard await recoverSuperwhisperMode(target: target) else { return false }
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("voice-switch")
     let wav = dir.appendingPathComponent("\(UUID().uuidString).wav")
@@ -409,7 +414,6 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
             return false
         }
     }
-    let recordings = Platform.expandPath(cfg.recordingsDir ?? Platform.defaultRecordingsDir)
     let previousRuns: Set<String>
     do {
         previousRuns = FileManager.default.fileExists(atPath: recordings)
@@ -440,7 +444,12 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     } catch {
         log(cfg.noWakeWord?.enabled == true ? "dictation: handing off to superwhisper failed" : "dictation: handing off to superwhisper failed: \(error)")
     }
-    if previousMode != nil { _ = await recoverSuperwhisperMode(target: target) }
+    // Restoring while superwhisper still works on the file lets it paste in the restored mode. With no judged run the
+    // recovery state stays, and the next handoff or launch restores it once nothing is in flight.
+    if previousMode != nil {
+        if result != nil || !launched { _ = await recoverSuperwhisperMode(target: target) }
+        else { log("superwhisper mode: kept \(wantedMode ?? "") until the run finishes \(sidField(sessionID))") }
+    }
     guard launched else { return false }
     guard let result else {
         log("dictation: no superwhisper result within 30 s \(sidField(sessionID))"); return true
@@ -474,33 +483,6 @@ func acquireModeOwnership() async -> MacModeOwnership? {
         try? await Task.sleep(nanoseconds: 100_000_000)
     }
     return nil
-}
-
-/// Polls superwhisper's recordings folder for the run that started at or after `since` (unix seconds).
-/// "" means the run finished without words; nil means no run finished within 30 s.
-/// waitForLLM: superwhisper writes `result` first and `llmResult` after its language model; it pastes per the mode active
-/// at that second write, so a temporary mode must stay until then (restoring at the first write pasted automatic recordings).
-func awaitResult(in dir: String, since: Int, excluding previousRuns: Set<String> = [], waitForLLM: Bool = false) async -> String? {
-    var early: String?
-    for _ in 0 ..< 300 {
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []
-        for name in names.sorted().reversed() {
-            guard !previousRuns.contains(name), let t = Int(name), t >= since,
-                  let data = FileManager.default.contents(atPath: "\(dir)/\(name)/meta.json"),
-                  let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
-            if let s = meta["llmResult"] as? String, !s.isEmpty { return s }
-            if let s = meta["result"] as? String, !s.isEmpty {
-                guard waitForLLM, meta["languageModelProcessingTime"] == nil else { return s }
-                early = s
-                continue
-            }
-            // A finished run that heard no words (noise, a cough) has processingTime and an empty result. Waiting the
-            // full 30 s for it held the handoff lock, which blocked every automatic session behind it.
-            if meta["processingTime"] is NSNumber { return "" }
-        }
-        try? await Task.sleep(for: .milliseconds(100))
-    }
-    return early
 }
 
 func writeWAV(_ samples: [Float], to url: URL) throws {
@@ -1435,7 +1417,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Task { @MainActor in
             do {
                 if let ownership = try? MacModeRestoreStore.acquire() {
-                    _ = await recoverSuperwhisperMode(target: nil)
+                    let recordings = Platform.expandPath(config.cfg.dictation?.recordingsDir ?? Platform.defaultRecordingsDir)
+                    let pending = (try? MacModeRestoreStore.read()) != nil
+                    let settled = pending ? await awaitRunsSettled(in: recordings) : true
+                    if settled {
+                        _ = await recoverSuperwhisperMode(target: nil)
+                    } else {
+                        log("superwhisper mode: an earlier run is still in flight; the next handoff restores the mode")
+                    }
                     withExtendedLifetime(ownership) {}
                 }
                 let locale = Locale(identifier: config.cfg.locale ?? "ja_JP")

@@ -223,7 +223,7 @@
       "id": "dictation_handoff_lifecycle",
       "macos": {
         "file": "Sources/voice-switch/MacApp.swift",
-        "markers": ["\"-g\", \"-a\", \"superwhisper\"", "awaitResult", "waitForLLM", "languageModelProcessingTime", "no superwhisper result within 30 s"]
+        "markers": ["\"-g\", \"-a\", \"superwhisper\"", "awaitResult", "waitForLLM", "until the run finishes", "no superwhisper result within 30 s"]
       },
       "windows": {
         "file": "dotnet/VoiceSwitch.Windows/SuperwhisperHandoff.cs",
