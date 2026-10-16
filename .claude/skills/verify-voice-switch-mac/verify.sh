@@ -19,6 +19,26 @@ cmd_build() {
   git -C "$REPO" rev-parse --short HEAD > "$BUILD/built-from.txt"
   git -C "$REPO" status --porcelain | wc -l | tr -d ' ' > "$BUILD/built-dirty.txt"
   echo "built $BIN"
+  enroll_own
+}
+
+# Speaker gate fixture: the model download and the user's enrollment are idempotent and never fail the build
+# (a missing model is the fail-open case, SG7). The enrollment is the user's 5 newest superwhisper recordings
+# with a transcript (TTS voices calibrated the gate wrongly); speaker/own.txt lists them so a test clip can avoid them.
+enroll_own() {
+  spk=$ROOT/speaker
+  mkdir -p "$spk"
+  make -C "$REPO" speaker-model >/dev/null 2>&1 || echo "warn make speaker-model failed; speaker gate stays unavailable"
+  [ -f "$spk/own.json" ] && return 0
+  : > "$spk/own.txt"
+  for d in $(ls -t "$HOME/Documents/superwhisper/recordings"); do
+    r=$HOME/Documents/superwhisper/recordings/$d
+    [ -f "$r/output.wav" ] && [ -n "$(plutil -extract result raw "$r/meta.json" 2>/dev/null)" ] || continue
+    echo "$r/output.wav" >> "$spk/own.txt"
+    [ "$(wc -l < "$spk/own.txt")" -ge 5 ] && break
+  done
+  # shellcheck disable=SC2046
+  "$BIN" --enroll-speaker "$spk/own.json" $(cat "$spk/own.txt") || echo "warn enrollment failed; speaker gate stays unavailable"
 }
 
 cmd_doctor() {
@@ -42,12 +62,13 @@ cmd_doctor() {
   exit $ok
 }
 
-# say <name> <text>: Kyoko speech. [[slnc 800]] inserts 800 ms of silence.
+# say <name> <text>: Kyoko speech, or VS_SAY_VOICE (another ja_JP voice stands in for a second speaker).
+# [[slnc 800]] inserts 800 ms of silence.
 cmd_say() {
   [ $# -ge 2 ] || die "usage: say <name> <text>"
   mkdir -p "$FIX"
   name=$1; shift
-  say -v Kyoko -o "$FIX/$name.aiff" "$*"
+  say -v "${VS_SAY_VOICE:-Kyoko}" -o "$FIX/$name.aiff" "$*"
   echo "$FIX/$name.aiff"
 }
 
@@ -62,7 +83,7 @@ cmd_run() {
   mkdir -p "$out"
   cp "${2:-$SKILL/config.safe.json}" "$out/config.json"
   # MARK lets a config's command prove its side effect inside the evidence folder.
-  sed -i '' "s#__EVIDENCE__#$out#g" "$out/config.json"
+  sed -i '' "s#__EVIDENCE__#$out#g; s#__CACHE__#$ROOT#g" "$out/config.json"
   cp "$wav" "$out/input.aiff"
   # VS_BUSY_INPUT=1 holds input idle near zero for the whole run, i.e. "the user is operating the Mac".
   if [ -n "${VS_BUSY_INPUT:-}" ]; then
