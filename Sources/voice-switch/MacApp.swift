@@ -393,6 +393,11 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     guard let ownership = await acquireModeOwnership() else { return false }
     defer { withExtendedLifetime(ownership) {} }
     let historyGeneration = DictationHistory.shared.generation
+    let recordings = Platform.expandPath(cfg.recordingsDir ?? Platform.defaultRecordingsDir)
+    if (try? MacModeRestoreStore.read()) != nil, !(await awaitRunsSettled(in: recordings)) {
+        log("superwhisper mode: an earlier run is still in flight; recording goes to local history \(sidField(sessionID))")
+        return false
+    }
     guard await recoverSuperwhisperMode(target: target) else { return false }
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("voice-switch")
     let wav = dir.appendingPathComponent("\(UUID().uuidString).wav")
@@ -409,7 +414,6 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
             return false
         }
     }
-    let recordings = Platform.expandPath(cfg.recordingsDir ?? Platform.defaultRecordingsDir)
     let previousRuns: Set<String>
     do {
         previousRuns = FileManager.default.fileExists(atPath: recordings)
@@ -443,7 +447,7 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     // Restoring while superwhisper still works on the file lets it paste in the restored mode. With no judged run the
     // recovery state stays, and the next handoff or launch restores it once nothing is in flight.
     if previousMode != nil {
-        if result != nil { _ = await recoverSuperwhisperMode(target: target) }
+        if result != nil || !launched { _ = await recoverSuperwhisperMode(target: target) }
         else { log("superwhisper mode: kept \(wantedMode ?? "") until the run finishes \(sidField(sessionID))") }
     }
     guard launched else { return false }

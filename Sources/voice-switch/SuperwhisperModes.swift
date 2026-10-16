@@ -94,21 +94,66 @@ func superwhisperAutoPasteDisabled(_ wanted: String?, modeJsons: [String]) -> Bo
 func awaitResult(in dir: String, since: Int, excluding previousRuns: Set<String> = [], waitForLLM: Bool = false) async -> String? {
     var early: String?
     for _ in 0 ..< 300 {
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []
-        for name in names.sorted().reversed() {
-            guard !previousRuns.contains(name), let t = Int(name), t >= since,
-                  let data = FileManager.default.contents(atPath: "\(dir)/\(name)/meta.json"),
-                  let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
-            // Superwhisper first writes a placeholder with duration and processingTime 0 and an empty result. Only a filled
-            // duration says it has judged the audio, so emptiness alone never ends the wait.
-            let judged = ((meta["duration"] ?? meta["processingTime"]) as? NSNumber)?.doubleValue ?? 0 > 0
-            guard judged else { continue }
-            if let s = meta["llmResult"] as? String, !s.isEmpty { return s }
-            guard let s = meta["result"] as? String, !s.isEmpty else { return "" }
-            guard waitForLLM, meta["languageModelProcessingTime"] == nil else { return s }
-            early = s
+        for (_, run) in superwhisperRuns(in: dir, since: since, excluding: previousRuns) {
+            switch run {
+            case .unjudged: continue
+            case .heardNothing: return ""
+            case let .polished(text): return text
+            case let .transcribed(text):
+                guard waitForLLM else { return text }
+                early = text
+            }
         }
         try? await Task.sleep(for: .milliseconds(100))
     }
     return early
+}
+
+/// One superwhisper run as its meta.json shows it. Superwhisper first writes a placeholder with duration and
+/// processingTime 0 and an empty result; only a filled duration says it has judged the audio.
+enum SuperwhisperRun: Equatable {
+    case unjudged
+    case heardNothing
+    case transcribed(String)
+    case polished(String)
+
+    init(meta: [String: Any]) {
+        let judged = ((meta["duration"] ?? meta["processingTime"]) as? NSNumber)?.doubleValue ?? 0 > 0
+        let result = meta["result"] as? String ?? ""
+        let llm = meta["llmResult"] as? String ?? ""
+        if !judged { self = .unjudged }
+        else if !llm.isEmpty || (meta["languageModelProcessingTime"] != nil && !result.isEmpty) { self = .polished(llm.isEmpty ? result : llm) }
+        else if result.isEmpty { self = .heardNothing }
+        else { self = .transcribed(result) }
+    }
+
+    /// Still able to paste: unjudged, or transcribed by a mode that has a language model still to run.
+    func inFlight(meta: [String: Any]) -> Bool {
+        switch self {
+        case .unjudged: true
+        case .transcribed: meta["languageModelKey"] != nil
+        case .heardNothing, .polished: false
+        }
+    }
+}
+
+/// Newest first.
+func superwhisperRuns(in dir: String, since: Int, excluding previousRuns: Set<String> = []) -> [(meta: [String: Any], run: SuperwhisperRun)] {
+    let names = (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []
+    return names.sorted().reversed().compactMap { name in
+        guard !previousRuns.contains(name), let t = Int(name), t >= since,
+              let data = FileManager.default.contents(atPath: "\(dir)/\(name)/meta.json"),
+              let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return (meta, SuperwhisperRun(meta: meta))
+    }
+}
+
+/// A handoff that timed out kept its temporary mode; restoring it while that run still works lets the run paste.
+/// Waits up to 30 s for runs of the last `window` seconds to finish; true when none is left in flight.
+func awaitRunsSettled(in dir: String, now: Int = Int(Date().timeIntervalSince1970), window: Int = 180) async -> Bool {
+    for _ in 0 ..< 300 {
+        if !superwhisperRuns(in: dir, since: now - window).contains(where: { $0.run.inFlight(meta: $0.meta) }) { return true }
+        try? await Task.sleep(for: .milliseconds(100))
+    }
+    return false
 }

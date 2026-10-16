@@ -42,6 +42,22 @@ Task {
           "without a language model the transcribed result is final")
     check(await run("silent", waitForLLM: true, steps: [(0, placeholder), (500, heardNothing)]) == "",
           "a filled duration with an empty result is a run that heard no words")
+    let now = Int(Date().timeIntervalSince1970)
+    let pending = "\(root)/pending"
+    let late = "\(pending)/\(now - 40)"
+    try! FileManager.default.createDirectory(atPath: late, withIntermediateDirectories: true)
+    let llmPending = #"{"result":"ああなるほど。","processingTime":1006,"duration":6261,"languageModelKey":"claude-sonnet-5-5"}"#
+    try! llmPending.write(toFile: "\(late)/meta.json", atomically: true, encoding: .utf8)
+    let finisher = Task {
+        try? await Task.sleep(nanoseconds: 600_000_000)
+        try! polished.write(toFile: "\(late)/meta.json", atomically: true, encoding: .utf8)
+    }
+    let began = Date()
+    let settled = await awaitRunsSettled(in: pending, now: now)
+    finisher.cancel()
+    check(settled && Date().timeIntervalSince(began) >= 0.5,
+          "recovery after a timed-out handoff waits until that run's language model has finished")
+    check(await awaitRunsSettled(in: "\(root)/none", now: now), "no run in flight settles at once")
     try? FileManager.default.removeItem(atPath: root)
     exit(0)
 }

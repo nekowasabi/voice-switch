@@ -10,17 +10,21 @@ V=$here/verify.sh
 n=${1:?runs per case}; config=${2:?config.json}
 fix=${VS_VERIFY_ROOT:-$HOME/Library/Caches/voice-switch-verify}/fixtures
 for f in sg-own-auto sg-own-stop; do [ -f "$fix/$f.aiff" ] || { echo "missing fixture $fix/$f.aiff (see features/paste-routing.md)"; exit 2; }; done
-osascript -e 'tell application "TextEdit" to activate' -e 'if (count of documents of application "TextEdit") = 0 then tell application "TextEdit" to make new document' >/dev/null
+# A document of its own, so the user's TextEdit documents are never cleared or read; it is closed unsaved at the end.
+doc=$(osascript -e 'tell application "TextEdit"' -e 'activate' -e 'make new document' -e 'name of document 1' -e 'end tell')
+te() { osascript -e "tell application \"TextEdit\" to $1"; }
+trap 'te "close document \"$doc\" saving no" >/dev/null 2>&1 || true' EXIT
 run_id=paste-routing-$(date +%Y%m%d-%H%M%S)
 wrong=0; total=0
 for i in $(seq 1 "$n"); do
   for case in silence stop; do
     fixture=sg-own-auto; want=no-paste
     [ $case = stop ] && { fixture=sg-own-stop; want=paste; }
-    osascript -e 'tell application "TextEdit" to activate' -e 'tell application "TextEdit" to set text of document 1 to ""' >/dev/null
+    te "set text of document \"$doc\" to \"\"" >/dev/null
+    osascript -e 'tell application "TextEdit" to activate' -e "tell application \"TextEdit\" to set index of window \"$doc\" to 1" >/dev/null
     SIMULATE_REALTIME=1 VS_RUN_ID=$run_id/$case-$i "$V" run "$fixture" "$config" >/dev/null
     sleep 2
-    text=$(osascript -e 'tell application "TextEdit" to get text of document 1')
+    text=$(te "get text of document \"$doc\"")
     got=no-paste; [ -n "$text" ] && got=paste
     total=$((total + 1)); [ $got = $want ] || wrong=$((wrong + 1))
     echo "$case-$i want=$want got=$got text=[$text]"
