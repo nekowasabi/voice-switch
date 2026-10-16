@@ -1211,6 +1211,10 @@ final class Listener {
                         return
                     }
                 } catch { log("speech gate failed; handing off anyway: \(error)") }
+                guard SpeakerGate.accepts(d.samples, cfg: config.cfg) else {
+                    log("dictation dropped: automatic audio was another speaker reason=\(token) \(sidField(d.sessionID))")
+                    return
+                }
                 // Silero still hears a voiced cough as speech. Whisper and Apple Speech each invent their own words for it,
                 // while spoken words come out the same from both, so only a recording they agree on reaches superwhisper.
                 // A recording confirmed while it was recorded already agreed; checking it again would only delay superwhisper.
@@ -1227,6 +1231,8 @@ final class Listener {
                 }
                 guard let generation = claimLocalHistory(d) else { log("local history transcription busy; recording discarded \(sidField(d.sessionID))"); return }
                 defer { localHistoryState.withLock { $0.busy = false } }
+                var d = d
+                d.samples = SpeakerGate.withoutOtherSpeakers(d.samples, cfg: config.cfg)
                 // superwhisper takes focus when it opens the file; hand it back to wherever the user is now, not where the session began.
                 // Ending it with the stop word shows the user meant to dictate into the app in front, so it is handed off like a
                 // wake-word dictation and superwhisper pastes it. One that ended on silence or maxSeconds stays history-only.
@@ -1246,6 +1252,8 @@ final class Listener {
         guard claimed else { log("dictation dropped: previous one still in flight \(sidField(d.sessionID))"); return }
         Task {
             defer { handoffBusy.withLock { $0 = false } }
+            var d = d
+            d.samples = SpeakerGate.withoutOtherSpeakers(d.samples, cfg: config.cfg)
             let delivered = await handoff(d.samples, cfg: cfg, target: d.target,
                                           action: d.action, origin: d.origin, sessionID: d.sessionID, transcriptPolicy: d.transcriptPolicy)
             if !delivered { await storeLocal(d) }

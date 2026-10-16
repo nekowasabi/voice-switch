@@ -13,6 +13,12 @@ public static class Program
         try
         {
             var options = CliOptions.Parse(args);
+            if (options.EnrollSpeakerOutput is { } enrollment)
+            {
+                SpeakerGate.Enroll(enrollment, options.EnrollSpeakerInputs);
+                Console.WriteLine($"speaker enrollment: {enrollment}");
+                return 0;
+            }
 
             if (options.Help)
             {
@@ -165,6 +171,7 @@ public static class Program
           voice-switch.exe --recognizers         list installed Windows speech recognizers
           voice-switch.exe --check-device        open the default speech input once and report errors
           voice-switch.exe --check A.wav [B.wav]  print a VAD + recognizer verdict per utterance (PCM16 mono 16 kHz)
+          voice-switch.exe --enroll-speaker OUT.json A.wav...  enroll PCM16 mono 16 kHz WAVs for the speaker gate
           voice-switch.exe --input-wav PATH      run dictation from PCM16 mono 16 kHz WAV, no microphone fallback
           voice-switch.exe --input-wav-fast      read --input-wav structurally without 30 ms pacing
           voice-switch.exe --output-dir PATH     record synthetic dictation WAV handoffs locally, no external launch

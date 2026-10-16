@@ -14,6 +14,8 @@ public sealed record CliOptions(
     string? ConfigPath,
     IReadOnlyList<string> CheckPaths)
 {
+    public string? EnrollSpeakerOutput { get; init; }
+    public IReadOnlyList<string> EnrollSpeakerInputs { get; init; } = [];
     // Why: one exe serves both the tray app and terminal diagnostics; a bare launch (double-click,
     // shortcut, or only --config) or any tray-only flag means the tray, everything else stays CLI.
     public static bool IsTrayLaunch(string[] args) =>
@@ -35,11 +37,19 @@ public sealed record CliOptions(
         string? outputDir = null;
         string? configPath = null;
         var checkPaths = new List<string>();
+        string? enrollOutput = null;
+        var enrollInputs = new List<string>();
 
         for (var i = 0; i < args.Length; i++)
         {
             switch (args[i])
             {
+                case "--enroll-speaker":
+                    if (i + 2 >= args.Length) throw new ArgumentException("--enroll-speaker requires <out.json> <in.wav>...");
+                    enrollOutput = args[++i];
+                    while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) enrollInputs.Add(args[++i]);
+                    if (enrollInputs.Count == 0) throw new ArgumentException("--enroll-speaker requires <out.json> <in.wav>...");
+                    break;
                 case "--help":
                 case "-h":
                     help = true;
@@ -139,6 +149,7 @@ public sealed record CliOptions(
             throw new ArgumentException("--check cannot be combined with --input-wav or --fire.");
         }
 
-        return new CliOptions(help, selfTest, fire, dryRun, recognizers, checkDevice, listenSeconds, inputWavPath, inputWavFast, outputDir, configPath, checkPaths);
+        return new CliOptions(help, selfTest, fire, dryRun, recognizers, checkDevice, listenSeconds, inputWavPath, inputWavFast, outputDir, configPath, checkPaths)
+        { EnrollSpeakerOutput = enrollOutput, EnrollSpeakerInputs = enrollInputs };
     }
 }

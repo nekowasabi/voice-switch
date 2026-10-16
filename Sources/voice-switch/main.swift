@@ -16,11 +16,22 @@ setvbuf(stdout, nil, _IOLBF, 0)
 
 let logURL = Platform.logURL
 var args = Array(CommandLine.arguments.dropFirst())
-let mode = args.first.flatMap { ["--check", "--simulate", "--hotkey-test", "--vad-selftest", "--fire"].contains($0) ? $0 : nil }
+let mode = args.first.flatMap { ["--check", "--simulate", "--hotkey-test", "--vad-selftest", "--fire", "--enroll-speaker", "--speaker-cut"].contains($0) ? $0 : nil }
 if mode != nil { args.removeFirst() }
 let configPath = Platform.defaultConfigPath
 
-if mode == "--vad-selftest" {
+if mode == "--enroll-speaker" {
+    guard args.count >= 2 else { print("usage: --enroll-speaker <out.json> <16k-mono-pcm16.wav>..."); exit(1) }
+    do { try SpeakerGate.enroll(args[0], Array(args.dropFirst())); exit(0) }
+    catch { log("speaker enrollment failed: \(error)"); exit(1) }
+} else if mode == "--speaker-cut" {
+    // Verification only: prints how many samples SpeakerGate.withoutOtherSpeakers keeps, for comparison with the measured rule.
+    guard args.count == 2 else { print("usage: --speaker-cut <enrollment.json> <16k-mono-pcm16.wav>"); exit(1) }
+    var cfg = Config(wakeWords: [], command: "")
+    cfg.speakerEnrollment = args[0]
+    do { print("kept=\(SpeakerGate.withoutOtherSpeakers(try SpeakerGate.readWave(args[1]), cfg: cfg).count)"); exit(0) }
+    catch { log("speaker cut failed: \(error)"); exit(1) }
+} else if mode == "--vad-selftest" {
     // Catches an app bundle that lost the Silero resource; the runtime gate itself fails open.
     guard (try? SpeechGate.voicedWindows([Float](repeating: 0, count: Int(rate)))) == 0 else {
         print("vad-selftest: FAILED (speech gate)")
