@@ -1113,6 +1113,11 @@ public sealed class WindowsDictationRuntime
                 }
             }
             catch (Exception ex) { Log.Info($"speech gate failed; handing off anyway: {ErrorDetail(ex, wake)} sid={audio.SessionId}"); }
+            if (!await Task.Run(() => SpeakerGate.Accepts(audio.Samples, config, Log.Info)))
+            {
+                Log.Info($"dictation dropped: automatic audio was another speaker reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End} sid={audio.SessionId}");
+                return;
+            }
         }
         // Silero still hears a voiced cough as speech; only a recording both recognizers write the same words for goes on.
         if (wake.IsAutomatic && !confirmed && agreedCharacters is { } agreed)
@@ -1130,6 +1135,7 @@ public sealed class WindowsDictationRuntime
             }
             catch (Exception ex) { Log.Info($"word agreement failed; handing off anyway: {ErrorDetail(ex, wake)} sid={audio.SessionId}"); }
         }
+        audio = audio with { Samples = await Task.Run(() => SpeakerGate.WithoutOtherSpeakers(audio.Samples, config, Log.Info)) };
         // Ending it with the stop word shows the user meant to dictate into the window in front, so it is handed off like a
         // wake-word dictation and Superwhisper pastes it. One that ended on silence or maxSeconds stays history-only.
         if (wake.IsAutomatic && audio.Reason == FinishReason.StandaloneStop)

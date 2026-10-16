@@ -30,6 +30,8 @@ struct Config: Decodable {
     var noiseReduction: NoiseReductionOptions?
     /// Absent disables macrowhisper CLI hooks.
     var macrowhisper: MacrowhisperConfig?
+    var speakerEnrollment: String?
+    var speakerThreshold: Double?
 
     init(wakeWords: [String], locale: String? = nil, command: String,
          maxSeconds: Double? = nil, hangoverMs: Int? = nil, prerollMs: Int? = nil,

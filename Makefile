@@ -16,6 +16,8 @@ OLD_PLIST := $(HOME)/Library/LaunchAgents/$(ID).plist
 # WhisperGate.modelPath reads the same path.
 WHISPER_MODEL := $(HOME)/Library/Application Support/voice-switch/models/ggml-large-v3-turbo-q5_0.bin
 WHISPER_MODEL_URL := https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin
+SPEAKER_MODEL := $(HOME)/Library/Application Support/voice-switch/models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx
+SPEAKER_MODEL_URL := https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx
 
 PC_NORM := $(shell printf '%s' "$(PC)" | tr '[:upper:]' '[:lower:]')
 
@@ -79,6 +81,10 @@ relaunch: install ## macOS: quit, rebuild and relaunch (default when PC!=wsl)
 
 model: ## macOS: download the Whisper model automatic recordings are checked with (550 MB, once)
 	@test -f "$(WHISPER_MODEL)" || { mkdir -p "$$(dirname "$(WHISPER_MODEL)")" && curl -fL -o "$(WHISPER_MODEL).part" $(WHISPER_MODEL_URL) && mv "$(WHISPER_MODEL).part" "$(WHISPER_MODEL)"; }
+
+.PHONY: speaker-model
+speaker-model: ## Download the optional speaker embedding model
+	@test -f "$(SPEAKER_MODEL)" || { mkdir -p "$$(dirname "$(SPEAKER_MODEL)")" && curl -fL -o "$(SPEAKER_MODEL).part" $(SPEAKER_MODEL_URL) && mv "$(SPEAKER_MODEL).part" "$(SPEAKER_MODEL)"; }
 
 uninstall: ## macOS: remove installed app
 	-osascript -e 'quit app id "$(ID)"' 2>/dev/null

@@ -24,6 +24,11 @@
   ],
   "allowed_cli_gaps": [
     {
+      "flag": "--speaker-cut",
+      "platform": "windows",
+      "reason": "Verification only: prints how many samples the speaker cut keeps so a script can compare the Swift port with the measured rule. The C# core is compared by calling SpeakerGate.WithoutOtherSpeakers directly."
+    },
+    {
       "flag": "--paused",
       "platform": "macos",
       "reason": "The Windows exe is also its tray app; --paused starts it without opening the microphone, which the macOS menu bar app does from its 一時停止 item instead."
