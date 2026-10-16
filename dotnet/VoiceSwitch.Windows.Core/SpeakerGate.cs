@@ -135,10 +135,11 @@ public static class SpeakerGate
         stage = "model";
         if (!File.Exists(ModelPath)) throw new FileNotFoundException(ModelPath);
         _ = Session.Value;
-        stage = "inference";
+        stage = "speakerThreshold";
         var threshold = config.SpeakerThreshold ?? DefaultThreshold;
         if (!double.IsFinite(threshold) || threshold < -1 || threshold > 1)
             throw new InvalidDataException("invalid threshold");
+        stage = "inference";
         return (enrolled.Embedding, threshold);
     }
 
@@ -149,7 +150,9 @@ public static class SpeakerGate
         double[]? sum = null;
         foreach (var input in inputs)
         {
-            var vector = Embedding(Pcm16Wav.DecodeStrict(new FileInfo(input), int.MaxValue / 2).Select(x => x / 32768f).ToArray());
+            var samples = Pcm16Wav.DecodeStrict(new FileInfo(input), int.MaxValue / 2).Select(x => x / 32768f).ToArray();
+            if (samples.Length < MinSamples) throw new InvalidDataException($"{input} is under 3 s; short audio does not separate speakers");
+            var vector = Embedding(samples);
             _ = Cosine(vector, vector);
             var norm = Math.Sqrt(vector.Sum(x => (double)x * x));
             sum ??= new double[vector.Length];

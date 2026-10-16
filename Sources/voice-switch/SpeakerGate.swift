@@ -106,9 +106,10 @@ enum SpeakerGate {
         stage = "model"
         guard FileManager.default.fileExists(atPath: modelPath) else { throw invalid("run make speaker-model") }
         _ = try session.get()
-        stage = "inference"
+        stage = "speakerThreshold"
         let threshold = cfg.speakerThreshold ?? defaultThreshold
         guard threshold.isFinite, (-1...1).contains(threshold) else { throw invalid("invalid threshold") }
+        stage = "inference"
         return (enrolled.embedding, threshold)
     }
 
@@ -117,7 +118,9 @@ enum SpeakerGate {
         guard !inputs.isEmpty else { throw invalid("no input WAV") }
         var sum = [Double]()
         for input in inputs {
-            let vector = try embedding(try readWave(input))
+            let samples = try readWave(input)
+            guard samples.count >= minSamples else { throw invalid("\(input) is under 3 s; short audio does not separate speakers") }
+            let vector = try embedding(samples)
             _ = try cosine(vector, vector)
             let norm = sqrt(vector.reduce(0.0) { $0 + Double($1) * Double($1) })
             if sum.isEmpty { sum = [Double](repeating: 0, count: vector.count) }
