@@ -9,6 +9,7 @@ This directory is the maintained source for verifying what a Mac user of voice-s
 | Stop word at the end of a long utterance | [stop-word-long-utterance.md](stop-word-long-utterance.md) | yes (stop-word endings paste; silence endings stay in history) |
 | Wake word then dictation | [wake-dictation.md](wake-dictation.md) | yes |
 | Automatic sessions without a wake word | [automatic-wake.md](automatic-wake.md) | yes |
+| Paste routing of automatic recordings (silence end never pastes, stop-word end pastes) | [paste-routing.md](paste-routing.md) | yes (real mode, TextEdit as target) |
 
 ## Baseline preconditions
 
