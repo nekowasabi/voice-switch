@@ -86,3 +86,29 @@ func superwhisperAutoPasteDisabled(_ wanted: String?, modeJsons: [String]) -> Bo
           CFGetTypeID(value) == CFBooleanGetTypeID() else { return false }
     return !value.boolValue
 }
+
+/// Polls superwhisper's recordings folder for the run that started at or after `since` (unix seconds).
+/// "" means the run finished without words; nil means no run finished within 30 s.
+/// waitForLLM: superwhisper writes `result` first and `llmResult` after its language model; it pastes per the mode active
+/// at that second write, so a temporary mode must stay until then (restoring at the first write pasted automatic recordings).
+func awaitResult(in dir: String, since: Int, excluding previousRuns: Set<String> = [], waitForLLM: Bool = false) async -> String? {
+    var early: String?
+    for _ in 0 ..< 300 {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []
+        for name in names.sorted().reversed() {
+            guard !previousRuns.contains(name), let t = Int(name), t >= since,
+                  let data = FileManager.default.contents(atPath: "\(dir)/\(name)/meta.json"),
+                  let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+            // Superwhisper first writes a placeholder with duration and processingTime 0 and an empty result. Only a filled
+            // duration says it has judged the audio, so emptiness alone never ends the wait.
+            let judged = ((meta["duration"] ?? meta["processingTime"]) as? NSNumber)?.doubleValue ?? 0 > 0
+            guard judged else { continue }
+            if let s = meta["llmResult"] as? String, !s.isEmpty { return s }
+            guard let s = meta["result"] as? String, !s.isEmpty else { return "" }
+            guard waitForLLM, meta["languageModelProcessingTime"] == nil else { return s }
+            early = s
+        }
+        try? await Task.sleep(for: .milliseconds(100))
+    }
+    return early
+}
