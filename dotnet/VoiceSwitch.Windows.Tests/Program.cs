@@ -171,6 +171,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation handoff WAV keeps at most 120 ms of quiet before the first speech", () => Check(DictationHandoffWavTrimsQuietHead())),
     ("dictation handoff restores focus 20 times before polling", () => Check(DictationHandoffRestoresFocusBeforePolling())),
     ("superwhisper result lookup picks newest non-empty run", () => Check(SuperwhisperFindResultPicksNewestNonEmpty())),
+            ("superwhisper result lookup waits for the language model when asked", () => Check(SuperwhisperFindResultWaitsForLanguageModel())),
     ("dictation handoff sweeps WAVs older than 10 minutes", () => Check(DictationHandoffSweepsOldFiles())),
     ("runtime launches Superwhisper for consecutive dictations", () => Check(RuntimeLaunchesSuperwhisperForConsecutiveDictations())),
     ("dictation handoff rejects unsupported intake path without writing", () => Check(DictationHandoffRejectsUnsupportedIntakePath())),
@@ -3951,6 +3952,20 @@ static bool SuperwhisperFindResultPicksNewestNonEmpty()
         && RegisteredSuperwhisperHandoff.FindResult(recordings, 99) == "b"
         && RegisteredSuperwhisperHandoff.FindResult(recordings, 108) is null
         && RegisteredSuperwhisperHandoff.FindResult(Path.Combine(temp.Dir, "missing"), 0) is null;
+}
+
+static bool SuperwhisperFindResultWaitsForLanguageModel()
+{
+    using var temp = RuntimeTemp();
+    var recordings = Path.Combine(temp.Dir, "recordings");
+    WriteSuperwhisperMeta(recordings, "200", """{"result":"raw","processingTime":900}""");
+    var beforeLlm = RegisteredSuperwhisperHandoff.FindResult(recordings, 199, waitForLlm: true);
+    var withoutWaiting = RegisteredSuperwhisperHandoff.FindResult(recordings, 199);
+    WriteSuperwhisperMeta(recordings, "200", """{"result":"raw","llmResult":"整形済み","languageModelProcessingTime":1700}""");
+    var afterLlm = RegisteredSuperwhisperHandoff.FindResult(recordings, 199, waitForLlm: true);
+    WriteSuperwhisperMeta(recordings, "201", """{"result":"raw2","llmResult":"","languageModelProcessingTime":1200}""");
+    var emptyLlm = RegisteredSuperwhisperHandoff.FindResult(recordings, 201, waitForLlm: true);
+    return beforeLlm is null && withoutWaiting == "raw" && afterLlm == "整形済み" && emptyLlm == "raw2";
 }
 
 static bool DictationHandoffSweepsOldFiles()
