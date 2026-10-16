@@ -1417,7 +1417,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Task { @MainActor in
             do {
                 if let ownership = try? MacModeRestoreStore.acquire() {
-                    _ = await recoverSuperwhisperMode(target: nil)
+                    let recordings = Platform.expandPath(config.cfg.dictation?.recordingsDir ?? Platform.defaultRecordingsDir)
+                    let pending = (try? MacModeRestoreStore.read()) != nil
+                    let settled = pending ? await awaitRunsSettled(in: recordings) : true
+                    if settled {
+                        _ = await recoverSuperwhisperMode(target: nil)
+                    } else {
+                        log("superwhisper mode: an earlier run is still in flight; the next handoff restores the mode")
+                    }
                     withExtendedLifetime(ownership) {}
                 }
                 let locale = Locale(identifier: config.cfg.locale ?? "ja_JP")
