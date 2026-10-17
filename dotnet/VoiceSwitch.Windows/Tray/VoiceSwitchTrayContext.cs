@@ -99,6 +99,14 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
         diagnosticsTimer.Start();
     }
 
+    // The pause hotkey: whichever of 一時停止 / 開始 the menu would offer right now. True when pausing, null when neither applies.
+    public bool? TogglePause()
+    {
+        if (pauseItem.Enabled) { _ = RunCommandAsync(TrayCommand.Pause); return true; }
+        if (startItem.Enabled) { _ = RunCommandAsync(TrayCommand.Start); return false; }
+        return null;
+    }
+
     public void ShowHistory()
     {
         if (historyWindow is null || historyWindow.IsDisposed) historyWindow = new HistoryWindow();

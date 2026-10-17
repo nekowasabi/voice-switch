@@ -6,7 +6,8 @@ The tray HUD (`dotnet/VoiceSwitch.Windows/Tray/DictationHud.cs`) shows the dicta
 
 - `Followup` `🔁📝`, `Waiting` `🎤`, `Recording` `🔴` (red), the `HistoryAvailable` label `📝👆`.
 - Delivery, from `DeliveryChanged` around each handoff (`Deliver`): `Ended` and a started handoff show `⏳`; `Ended` alone hides after 1.5 s, a handoff holds it. A Superwhisper result shows `✅` for 1.5 s, no result or a throw `❌` for 3 s, a dropped or local-only one hides `⏳`. `📝👆` survives a result or a drop.
-- Acceptance: no `\p{L}` in any label, 7 distinct labels, each fits 64x40, same 7 strings as the Mac HUD, and every glyph renders in `Segoe UI Emoji` (no tofu box).
+- `Notify`: the `pauseShortcut` hotkey shows `🔕` (paused) or `🔔` (resumed), hidden after 1.5 s.
+- Acceptance: no `\p{L}` in any label, 9 distinct labels, each fits 64x40, same 9 strings as the Mac HUD, and every glyph renders in `Segoe UI Emoji` (no tofu box).
 
 ## How to get to it (user POV)
 

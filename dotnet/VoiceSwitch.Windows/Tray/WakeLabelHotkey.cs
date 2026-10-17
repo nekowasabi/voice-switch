@@ -13,11 +13,19 @@ public sealed class WakeLabelHotkey : NativeWindow, IDisposable
     private readonly bool copyRegistered;
     private readonly Action? startRecording;
     private readonly Action? showHistory;
-    public WakeLabelHotkey(Action? showHistory = null, Action? startRecording = null)
+    private readonly bool pauseRegistered;
+    private readonly Action? togglePause;
+    public WakeLabelHotkey(Action? showHistory = null, Action? startRecording = null, KeyChord? pause = null, Action? togglePause = null)
     {
         this.showHistory = showHistory;
         this.startRecording = startRecording;
+        this.togglePause = togglePause;
         CreateHandle(new CreateParams { Parent = new nint(-3) });
+        if (pause is { } chord)
+        {
+            pauseRegistered = RegisterHotKey(Handle, Id + 4, 0x4000 | ModFlags(chord.Mods), (uint)chord.Vk);
+            Log.Info(pauseRegistered ? $"pause hotkey: vk=0x{chord.Vk:X2} mods={chord.Mods}" : "pause hotkey unavailable: the key is already registered");
+        }
         registered = RegisterHotKey(Handle, Id, 0x4000 | 0x2 | 0x4, 0x77);
         startRegistered = RegisterHotKey(Handle, Id + 2, 0x4000 | 0x2 | 0x4, 0x79);
         if (!startRegistered) Log.Info("manual wake hotkey unavailable: Ctrl+Shift+F10 is already registered");
@@ -33,6 +41,7 @@ public sealed class WakeLabelHotkey : NativeWindow, IDisposable
         if (message.Msg == 0x0312 && message.WParam == Id + 1) showHistory?.Invoke();
         if (message.Msg == 0x0312 && message.WParam == Id + 2) startRecording?.Invoke();
         if (message.Msg == 0x0312 && message.WParam == Id + 3) CopyNewestHistory();
+        if (message.Msg == 0x0312 && message.WParam == Id + 4) togglePause?.Invoke();
         base.WndProc(ref message);
     }
     public void Dispose()
@@ -41,8 +50,13 @@ public sealed class WakeLabelHotkey : NativeWindow, IDisposable
         if (historyRegistered) UnregisterHotKey(Handle, Id + 1);
         if (startRegistered) UnregisterHotKey(Handle, Id + 2);
         if (copyRegistered) UnregisterHotKey(Handle, Id + 3);
+        if (pauseRegistered) UnregisterHotKey(Handle, Id + 4);
         DestroyHandle();
     }
+    // RegisterHotKey MOD_* bits differ from KeyMods.
+    private static uint ModFlags(KeyMods mods) =>
+        (mods.HasFlag(KeyMods.Alt) ? 0x1u : 0) | (mods.HasFlag(KeyMods.Control) ? 0x2u : 0)
+        | (mods.HasFlag(KeyMods.Shift) ? 0x4u : 0) | (mods.HasFlag(KeyMods.Win) ? 0x8u : 0);
     // Copies only; pasting stays a manual step, as in the history window.
     private static void CopyNewestHistory()
     {

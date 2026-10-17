@@ -91,6 +91,13 @@ func checkWakeHistory() {
     let missExpiry = WakeMissLabel()
     missExpiry.observe(id: 2, origin: missOrigin, at: missBase)
     precondition(missExpiry.record(now: missBase.addingTimeInterval(10.001)) == nil)
+    // pauseShortcut uses the Windows DictationHotkeys.Parse names, mapped to Carbon codes and modifiers.
+    precondition(PauseShortcut.parse("Control+Shift+F7")! == (0x62, 0x1200))
+    precondition(PauseShortcut.parse("Meta+KeyM")! == (0x2E, 0x100))
+    precondition(PauseShortcut.parse("Alt+Digit5")! == (0x17, 0x800))
+    precondition(PauseShortcut.parse("Space")! == (0x31, 0))
+    precondition(PauseShortcut.parse("Control+Banana") == nil && PauseShortcut.parse("Hyper+F1") == nil)
+    precondition(PauseShortcut.parse("Control") == nil && PauseShortcut.parse("F13") == nil && PauseShortcut.parse("") == nil)
     // Windows FinishReason names for the session end line.
     precondition(finishReasonToken("hotkey") == "FinishCommand")
     precondition(finishReasonToken("maxSeconds") == "MaximumDuration")

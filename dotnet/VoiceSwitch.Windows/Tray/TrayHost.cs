@@ -58,7 +58,8 @@ public static class TrayHost
                 instance.Key);
 
             using var context = new VoiceSwitchTrayContext(supervisor);
-            using var wakeLabelHotkey = new WakeLabelHotkey(context.ShowHistory, hotkeys.RequestStart);
+            using var wakeLabelHotkey = new WakeLabelHotkey(context.ShowHistory, hotkeys.RequestStart, PauseShortcut(options.ConfigPath),
+                () => { if (context.TogglePause() is { } paused) hud.Notify(paused); });
             hud.HistoryRequested += context.ShowHistory;
             void HistoryChanged() => hud.Post(hud.HistoryAvailable);
             DictationHistory.Shared.Changed += HistoryChanged;
@@ -87,6 +88,18 @@ public static class TrayHost
             Log.Fatal(ex.Message);
             return 1;
         }
+    }
+
+    // Read once at launch; a reload does not re-register it. A broken config is the supervisor's to report, so it only means no hotkey here.
+    private static KeyChord? PauseShortcut(string configPath)
+    {
+        string? name;
+        try { name = ConfigLoader.Load(configPath).PauseShortcut; }
+        catch (Exception) { return null; }
+        if (name is null) return null;
+        var chord = DictationHotkeys.Parse(name);
+        if (chord is null) Log.Info($"pause hotkey ignored: cannot parse \"{name}\"");
+        return chord;
     }
 
     // Why: a WinExe gets no console, so CLI output from cmd/PowerShell would vanish. Only attach when

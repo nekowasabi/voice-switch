@@ -95,6 +95,7 @@ enum MacWakeShortcuts {
             if id.id == 2 { Hotkeys.requestStart() }
             if id.id == 3 { MacWakeShortcuts.copyNewestHistory() }
             if id.id == 4, let line = WakeMissLabel.shared.record() { log(line) }
+            if id.id == 5 { (NSApp.delegate as? AppDelegate)?.togglePause() }
             return noErr
         }, 1, &event, nil, &handler)
         guard status == noErr else { log("history hotkey handler unavailable status=\(status)"); return }
@@ -105,6 +106,16 @@ enum MacWakeShortcuts {
             if registered == noErr, let key { keys.append(key) }
             else { log("voice-switch hotkey unavailable id=\(id) status=\(registered)") }
         }
+    }
+
+    // Called once after the config loads; a reload does not re-register it.
+    static func registerPause(_ name: String?) {
+        guard let name else { return }
+        guard let parsed = PauseShortcut.parse(name) else { log("pause hotkey ignored: cannot parse \"\(name)\""); return }
+        var key: EventHotKeyRef?
+        let registered = RegisterEventHotKey(parsed.keyCode, parsed.modifiers, EventHotKeyID(signature: signature, id: 5), GetApplicationEventTarget(), 0, &key)
+        if registered == noErr, let key { keys.append(key); log("pause hotkey: \(name)") }
+        else { log("pause hotkey unavailable: \(name) status=\(registered)") }
     }
 
     // Copies only the newest retained entry. Pasting stays a manual step, as in the HUD.

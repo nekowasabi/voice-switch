@@ -122,7 +122,7 @@ cmd_hud() {
   else
     echo "FAIL Mac and Windows HUD literals differ (parity.diff)"; rc=1
   fi
-  [ "$(wc -l < "$out/mac-literals.txt")" -eq 7 ] || { echo "FAIL expected 7 Mac HUD literals; narrow the grep"; rc=1; }
+  [ "$(wc -l < "$out/mac-literals.txt")" -eq 9 ] || { echo "FAIL expected 9 Mac HUD literals; narrow the grep"; rc=1; }
   if perl -CSD -ne 'print if /\p{L}/' "$out/windows-literals.txt" > "$out/windows-letters.txt" && [ -s "$out/windows-letters.txt" ]; then
     echo "FAIL Windows HUD literals contain letters:"; cat "$out/windows-letters.txt"; rc=1
   else

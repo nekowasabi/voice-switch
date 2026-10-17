@@ -61,6 +61,8 @@ public sealed record VoiceSwitchConfig(
     NoiseReductionOptions? NoiseReduction = null,
     string? SpeakerEnrollment = null,
     double? SpeakerThreshold = null,
+    // Global key that toggles pause/resume, in DictationHotkeys.Parse names ("Control+Shift+F7"). Null registers none.
+    string? PauseShortcut = null,
     // Twin of Mac `macOS`: Windows-only settings.
     WindowsActions? Windows = null)
 {

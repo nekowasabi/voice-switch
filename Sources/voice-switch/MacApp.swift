@@ -1325,7 +1325,7 @@ func playStopSound() {
 }
 
 /// Every HUD label; emoji only so the HUD reads without Japanese. Windows DictationHud.cs mirrors these.
-enum HUDLabel: String { case followup = "🔁📝", waiting = "🎤", recording = "🔴", processing = "⏳", done = "✅", failed = "❌", saved = "📝👆" }
+enum HUDLabel: String { case followup = "🔁📝", waiting = "🎤", recording = "🔴", processing = "⏳", done = "✅", failed = "❌", saved = "📝👆", paused = "🔕", resumed = "🔔" }
 
 /// What superwhisper is doing with a recording, beside the listener's own phase.
 enum DeliveryState { case recording /* superwhisper's own mic recording */, processing, done, failed, saved }
@@ -1377,6 +1377,13 @@ final class HUD {
     private var shown = 0
     private var phase = Listener.Phase.idle
     private var delivery: DeliveryState?
+    private var notice: HUDLabel?
+
+    /// Pause/resume confirmation for 1 s, over whatever the HUD shows; the hotkey otherwise gives no feedback.
+    func notify(_ label: HUDLabel) {
+        notice = label
+        render()
+    }
 
     func historyAvailable() {
         // Wake-word dictation also keeps a copy in history, but its output was delivered, so only an automatic entry earns this label.
@@ -1400,7 +1407,7 @@ final class HUD {
 
     private func render() {
         shown += 1
-        let view: (label: HUDLabel, expiry: Double?)? = switch (phase, delivery) {
+        let view: (label: HUDLabel, expiry: Double?)? = if let notice { (notice, 1) } else { switch (phase, delivery) {
         case (.waiting, _): (.waiting, nil)
         case (.recording, _), (_, .recording?): (.recording, nil)
         case (_, .processing?): (.processing, nil)
@@ -1411,7 +1418,7 @@ final class HUD {
         case (.ended, nil): (.processing, 1.5)
         case (.followup, nil): (.followup, nil)
         case (.idle, nil): nil
-        }
+        } }
         guard let view else { panel.orderOut(nil); return }
         label.stringValue = view.label.rawValue
         label.textColor = view.label == .recording ? .systemRed : .labelColor
@@ -1419,6 +1426,7 @@ final class HUD {
             let mine = shown
             DispatchQueue.main.asyncAfter(deadline: .now() + expiry) { [self] in
                 guard shown == mine else { return }
+                notice = nil
                 if phase == .ended { phase = .idle }
                 if delivery == .failed || delivery == .saved || delivery == .done { delivery = nil }
                 render()
@@ -1475,6 +1483,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         DictationHistory.shared.onChange = { [hud] in DispatchQueue.main.async { hud.historyAvailable() } }
         listener.onRestart = { [weak self] in self?.refresh() }
         listener.deviceUID = UserDefaults.standard.string(forKey: deviceKey)
+        MacWakeShortcuts.registerPause(config.cfg.pauseShortcut)
         let recordings = Platform.expandPath(config.cfg.dictation?.recordingsDir ?? Platform.defaultRecordingsDir)
         // ponytail: 0.5 s CoreAudio poll; a kAudioProcessPropertyIsRunningInput listener if it shows up in CPU.
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.followDirectSuperwhisper(recordings: recordings) }
@@ -1564,6 +1573,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if listener.wanted { listener.stop() } else {
             do { try listener.start() } catch { fail("再開に失敗しました: \(error)") }
         }
+        hud.notify(listener.wanted ? .resumed : .paused)
         refresh()
     }
 

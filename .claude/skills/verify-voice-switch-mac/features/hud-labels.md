@@ -11,12 +11,13 @@ A 64x40 HUD at the top center of the focused display shows the dictation from th
 - `failed` `❌`: no result within 30 s or no words; shown 3 s, then hidden.
 - `followup` `🔁📝`: continuous listening after a wake-word dictation.
 - `saved` `📝👆`: an automatic recording went to history; click opens the history panel; hidden after 1.5 s.
+- `paused` `🔕` / `resumed` `🔔`: the `pauseShortcut` hotkey (or the menu item) toggled listening; shown 1 s over any other label, which then comes back.
 
 Acceptance, checked by `$V hud`:
 
 1. No label contains a letter (`CharacterSet.letters`, `\p{L}` on the Windows literals).
-2. The 7 labels are distinct and fit the 64 pt HUD.
-3. Sequences on the real HUD hold: `ended-then-done`, `failed-hides`, `new-dictation-wins`, `saved-survives-done`, `dropped-ended-hides`.
+2. The 9 labels are distinct and fit the 64 pt HUD.
+3. Sequences on the real HUD hold: `ended-then-done`, `failed-hides`, `new-dictation-wins`, `saved-survives-done`, `dropped-ended-hides`, `notice-then-phase`.
 4. `direct=polished|heard-nothing|esc-deleted|esc-empty ok`, each within 2.5 s: `awaitDirectRun` waits on superwhisper's placeholder meta.json and ends on the judged one (done, failed), and treats a run folder that is deleted or stays empty 1.5 s after the mic closes as Esc (cancelled, HUD closes without ❌). Measured on real superwhisper 2026-10-17: a stop writes meta.json within 0.2 s of the mic closing; Esc deletes the folder at the same moment, and once left it empty.
 5. The Mac `HUDLabel` strings equal the Windows `label.Text` literals (`parity.diff` is empty).
 
@@ -32,7 +33,7 @@ Preconditions:
 
 - `$V build` on the tree you are proving. `$V doctor` built-from matches HEAD and dirty count.
 
-- **Labels and sequences.** `VS_RUN_ID=<id> $V hud`. Proof is the seven `phase=... label=...` lines, five `sequence=<name> ok` lines, four `direct=<name> ok` lines, `PASS: every HUD label is letter-free, distinct, and fits the HUD; every sequence holds`, and the two `ok` source lines.
+- **Labels and sequences.** `VS_RUN_ID=<id> $V hud`. Proof is the nine `phase=... label=...` lines, six `sequence=<name> ok` lines, four `direct=<name> ok` lines, `PASS: every HUD label is letter-free, distinct, and fits the HUD; every sequence holds`, and the two `ok` source lines.
 - **Listener drives delivery.** Copy `config.stop-auto.json` to your scratchpad with `"superwhisperMode": "vs-verify-missing"`, then `$V say busy-speech "[[slnc 1500]] 今日の会議は三時からです [[slnc 3000]]"` and `SIMULATE_REALTIME=1 VS_RUN_ID=<id> $V run busy-speech <config>`. `stdout.txt` must show `phase: recording`, `phase: idle`, `delivery: processing`, `dictation recognition: complete`, `delivery: done`, in that order. Proven 2026-10-17 (run `hud-delivery2`). No superwhisper is touched.
 - Evidence: `evidence/<id>/hud/labels.txt`, `mac-literals.txt`, `windows-literals.txt`, `parity.diff`.
 

@@ -32,6 +32,8 @@ struct Config: Decodable {
     var macrowhisper: MacrowhisperConfig?
     var speakerEnrollment: String?
     var speakerThreshold: Double?
+    /// Global key that toggles pause/resume, e.g. "Control+Shift+F7". Absent registers none. Read once at launch.
+    var pauseShortcut: String?
 
     init(wakeWords: [String], locale: String? = nil, command: String,
          maxSeconds: Double? = nil, hangoverMs: Int? = nil, prerollMs: Int? = nil,

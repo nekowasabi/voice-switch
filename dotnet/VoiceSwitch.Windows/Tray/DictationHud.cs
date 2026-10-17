@@ -37,6 +37,14 @@ public sealed class DictationHud : Form
         label.Text = "📝👆";
     }
 
+    // Pause/resume confirmation, hidden after 1.5 s like ✅; the hotkey otherwise gives no feedback.
+    public void Notify(bool paused)
+    {
+        Show(DictationPhase.Ended);
+        if (paused) label.Text = "🔕";
+        else label.Text = "🔔";
+    }
+
     public DictationHud()
     {
         FormBorderStyle = FormBorderStyle.None;

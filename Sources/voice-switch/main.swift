@@ -53,6 +53,8 @@ if mode == "--enroll-speaker" {
             DictationHistory.shared.add(id: UUID(), text: "hud label proof", origin: WakeOrigin(rule: .autoB, inputIdleSeconds: nil))
             hud.historyAvailable()
         }),
+        ("paused", { hud.notify(.paused) }),
+        ("resumed", { hud.notify(.resumed) }),
     ]
     var lines: [String] = [], labels: [String] = [], failures: [String] = []
     for (name, step) in steps {
@@ -92,7 +94,11 @@ if mode == "--enroll-speaker" {
                                 ("idle", { $0.show(.idle) }, 0.3, processing)]),
         ("saved-survives-done", [("done", { $0.deliver(.saved); $0.deliver(.done) }, 0.3, HUDLabel.saved.rawValue)]),
         ("dropped-ended-hides", [("ended", { $0.show(.ended) }, 0.3, processing),
-                                 ("1.7s", { _ in }, 1.4, "hidden")]),    ]
+                                 ("1.7s", { _ in }, 1.4, "hidden")]),
+        // The pause notice covers a dictation label for 1 s, then the dictation label comes back.
+        ("notice-then-phase", [("paused", { $0.show(.waiting); $0.notify(.paused) }, 0.3, HUDLabel.paused.rawValue),
+                               ("1.3s", { _ in }, 1.0, HUDLabel.waiting.rawValue)]),
+    ]
     for (name, steps) in sequences {
         let settled = Date() + 3
         while visibleLabel() != "hidden" && Date() < settled { RunLoop.main.run(until: Date() + 0.1) }

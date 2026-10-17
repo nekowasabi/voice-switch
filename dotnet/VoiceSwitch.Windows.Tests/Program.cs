@@ -120,6 +120,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation phases and foreground target across two stop-ended dictations", () => Check(DictationPhasesAndTargetAcrossTwoDictations())),
     ("dictation hotkeys parse Superwhisper shortcut names", () => Check(DictationHotkeysParseShortcutNames())),
     ("dictation hotkeys load preferences with per-key fallback", () => Check(DictationHotkeysLoadPreferencesWithFallback())),
+    ("config pauseShortcut loads and parses as a key chord", () => Check(ConfigPauseShortcutParses())),
     ("dictation hotkeys swallow armed presses and their key ups", () => Check(DictationHotkeysSwallowArmedPressesAndKeyUps())),
     ("dictation hotkey finish while recording submits FinishCommand", () => Check(DictationHotkeyFinishWhileRecordingSubmitsFinishCommand())),
     ("dictation hotkey cancel while recording submits nothing", () => Check(DictationHotkeyCancelWhileRecordingSubmitsNothing())),
@@ -2779,6 +2780,20 @@ static bool DictationHotkeysParseShortcutNames() =>
     && DictationHotkeys.Parse("Control") is null
     && DictationHotkeys.Parse("F25") is null
     && DictationHotkeys.Parse("") is null;
+
+static bool ConfigPauseShortcutParses()
+{
+    var path = Path.Combine(Path.GetTempPath(), $"voice-switch-pause-{Guid.NewGuid():N}.json");
+    try
+    {
+        File.WriteAllText(path, """{"wakeWords":["音声入力"],"command":"x","pauseShortcut":"Control+Shift+F7"}""");
+        var set = ConfigLoader.Load(path).PauseShortcut;
+        File.WriteAllText(path, """{"wakeWords":["音声入力"],"command":"x"}""");
+        return set is { } name && DictationHotkeys.Parse(name) == new KeyChord(0x76, KeyMods.Control | KeyMods.Shift)
+            && ConfigLoader.Load(path).PauseShortcut is null;
+    }
+    finally { File.Delete(path); }
+}
 
 static bool DictationHotkeysLoadPreferencesWithFallback()
 {

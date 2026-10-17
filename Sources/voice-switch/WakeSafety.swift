@@ -18,6 +18,33 @@ func sidField(_ id: UUID?) -> String {
     return "sid=\(id.uuidString.lowercased())"
 }
 
+/// `pauseShortcut` names, the same KeyboardEvent.code form Windows DictationHotkeys.Parse reads ("Control+Shift+F7").
+/// Returns a Carbon virtual key code and Carbon modifier mask. Meta/Super/Win is Command. Pure Foundation for the parity harness.
+enum PauseShortcut {
+    private static let modifiers: [String: UInt32] = ["control": 0x1000, "ctrl": 0x1000, "shift": 0x200, "alt": 0x800,
+                                                      "meta": 0x100, "super": 0x100, "win": 0x100]
+    // kVK_* values; letters, digits and F-keys are not sequential on Mac.
+    private static let keys: [String: UInt32] = {
+        var keys: [String: UInt32] = ["Space": 0x31, "Escape": 0x35, "Enter": 0x24, "Tab": 0x30, "Backspace": 0x33]
+        let letters: [UInt32] = [0x00, 0x0B, 0x08, 0x02, 0x0E, 0x03, 0x05, 0x04, 0x22, 0x26, 0x28, 0x25, 0x2E,
+                                 0x2D, 0x1F, 0x23, 0x0C, 0x0F, 0x01, 0x11, 0x20, 0x09, 0x0D, 0x07, 0x10, 0x06]
+        for (i, code) in letters.enumerated() { keys["Key\(Character(UnicodeScalar(65 + i)!))"] = code }
+        for (i, code) in [0x1D, 0x12, 0x13, 0x14, 0x15, 0x17, 0x16, 0x1A, 0x1C, 0x19].enumerated() { keys["Digit\(i)"] = UInt32(code) }
+        for (i, code) in [0x7A, 0x78, 0x63, 0x76, 0x60, 0x61, 0x62, 0x64, 0x65, 0x6D, 0x67, 0x6F].enumerated() { keys["F\(i + 1)"] = UInt32(code) }
+        return keys
+    }()
+
+    static func parse(_ name: String) -> (keyCode: UInt32, modifiers: UInt32)? {
+        let parts = name.split(separator: "+", omittingEmptySubsequences: false).map(String.init)
+        var mask: UInt32 = 0
+        for part in parts.dropLast() {
+            guard let bit = modifiers[part.lowercased()] else { return nil }
+            mask |= bit
+        }
+        return keys[parts.last ?? ""].map { ($0, mask) }
+    }
+}
+
 /// One MISS label per observed recognition, pressed via Ctrl+Shift+F8 within 10 s.
 /// Pure Foundation so the Linux parity harness can test it; the hotkey itself stays
 /// a RegisterEventHotKey (no CGEventTap, no new permissions).

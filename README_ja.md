@@ -132,6 +132,7 @@ LaunchServices、実マイク、Superwhisper の録音・文字起こし・貼�
 - Ctrl+Shift+F10 は手動録音の開始
 - Ctrl+Shift+F9 または HUD のクリックは履歴
 - Windows の Ctrl+Shift+F8 は直近の取りこぼしに MISS ラベルを付ける
+- config.json の `pauseShortcut`（例 `"Control+Shift+F7"`）は一時停止と再開を切り替える。書かなければ登録しない。修飾キーは `Control`・`Shift`・`Alt`（Mac は Option）・`Meta`（Mac は Command、Windows は Win）、キーは `KeyA`〜`KeyZ`・`Digit0`〜`Digit9`・`F1`〜`F12`（Windows は `F24` まで）・`Space`・`Escape`・`Enter`・`Tab`・`Backspace`。読むのは起動時だけなので、変えたらアプリを再起動する
 
 ウェイクワードと Ctrl+Shift+F10 の録音はモードを切り替えず、その時点の Superwhisper のモードで変換し、貼り付けも Superwhisper に任せます。変換結果は履歴にも残りますが、停止時の HUD に履歴の表示（📝👆）が出るのは自動録音のときだけです。
 

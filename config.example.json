@@ -11,6 +11,7 @@
   "minSpeechMs": 300,
   "vadRatio": 3.0,
   "vadMinRMS": 0.005,
+  "pauseShortcut": "Control+Shift+F7",
   "dictation": {
     "recordingsDir": "~/Documents/superwhisper/recordings",
     "endSilenceMs": 1200, "startTimeoutMs": 3000,
