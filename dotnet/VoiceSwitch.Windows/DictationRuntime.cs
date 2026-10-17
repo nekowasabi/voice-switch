@@ -42,6 +42,19 @@ public interface IDictationRuntimeObserver
 
     // Lone wake word only. Return true when a sound was played so the runtime ignores the microphone briefly.
     bool PlayWakeSound() => false;
+
+    // Mac HUD DeliveryState: Processing when a handoff begins, then exactly one of the others when it ends.
+    void DeliveryChanged(DeliveryState state) { }
+}
+
+public enum DeliveryState
+{
+    Processing,
+    Done,
+    // No Superwhisper result, or the handoff threw.
+    Failed,
+    // A gate dropped it, or it went to local history only.
+    Dropped
 }
 
 public sealed class WindowsDictationRuntime
@@ -1099,6 +1112,14 @@ public sealed class WindowsDictationRuntime
     // confirmed: the recognizers already agreed on words while it was recorded; checking again would only delay Superwhisper.
     private async Task RunHandoffAsync(DictationAudio audio, bool confirmed)
     {
+        observer?.DeliveryChanged(DeliveryState.Processing);
+        var delivered = DeliveryState.Failed;
+        try { delivered = await HandOffAsync(audio, confirmed); }
+        finally { observer?.DeliveryChanged(delivered); }
+    }
+
+    private async Task<DeliveryState> HandOffAsync(DictationAudio audio, bool confirmed)
+    {
         var wake = audio.Wake;
         // A cough or a keystroke still opens Superwhisper and leaves its own empty or "よっ!" entry; Silero finds no voice in them.
         // Off the capture loop: a long recording is thousands of Silero windows.
@@ -1109,14 +1130,14 @@ public sealed class WindowsDictationRuntime
                 if (await Task.Run(() => voicedWindows(audio.Samples)) == 0)
                 {
                     Log.Info($"dictation dropped: automatic audio had no speech reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End} sid={audio.SessionId}");
-                    return;
+                    return DeliveryState.Dropped;
                 }
             }
             catch (Exception ex) { Log.Info($"speech gate failed; handing off anyway: {ErrorDetail(ex, wake)} sid={audio.SessionId}"); }
             if (!await Task.Run(() => SpeakerGate.Accepts(audio.Samples, config, Log.Info)))
             {
                 Log.Info($"dictation dropped: automatic audio was another speaker reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End} sid={audio.SessionId}");
-                return;
+                return DeliveryState.Dropped;
             }
         }
         // Silero still hears a voiced cough as speech; only a recording both recognizers write the same words for goes on.
@@ -1130,7 +1151,7 @@ public sealed class WindowsDictationRuntime
                 if (shared < NoWakePolicy.MinAgreedCharacters)
                 {
                     Log.Info($"dictation dropped: automatic audio had no agreed words reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End} sid={audio.SessionId}");
-                    return;
+                    return DeliveryState.Dropped;
                 }
             }
             catch (Exception ex) { Log.Info($"word agreement failed; handing off anyway: {ErrorDetail(ex, wake)} sid={audio.SessionId}"); }
@@ -1151,10 +1172,17 @@ public sealed class WindowsDictationRuntime
             var result = await handoff.SubmitAsync(audio, wake.IsAutomatic ? localCancellation : CancellationToken.None);
             observer?.HandoffSubmitted(audio, result);
             Log.Info($"dictation handoff: {result.Status} sid={result.Id} wav={result.Path ?? "-"} reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End} {(config.Dictation?.NoWakeWord?.Enabled == true || wake.IsAutomatic ? "details suppressed" : result.Message)}");
+            return result.Status switch
+            {
+                HandoffStatus.Transcribed => DeliveryState.Done,
+                HandoffStatus.NoResult or HandoffStatus.FailedBeforeDispatch => DeliveryState.Failed,
+                _ => DeliveryState.Dropped
+            };
         }
         catch (Exception ex)
         {
             Log.Info($"dictation handoff failed: {ErrorDetail(ex, wake)} reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End} sid={audio.SessionId}");
+            return DeliveryState.Failed;
         }
     }
 

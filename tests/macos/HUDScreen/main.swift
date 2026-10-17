@@ -91,7 +91,7 @@ func checkScreen(_ index: Int) throws {
                 "検証アプリが最前面ではありません")
     try require(screens[pointerIndex].frame.contains(NSEvent.mouseLocation), "検証中にマウスポインターが別画面へ移動しました")
     let area = target.visibleFrame
-    let expected = NSRect(x: area.midX - 80, y: area.maxY - 52, width: 160, height: 40)
+    let expected = NSRect(x: area.midX - 32, y: area.maxY - 52, width: 64, height: 40)
     for phase in [Listener.Phase.waiting, .recording, .ended] {
         hud.show(phase)
         guard let panel = app.windows.first(where: { $0 is NSPanel && $0.isVisible }) else {

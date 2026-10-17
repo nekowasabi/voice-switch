@@ -19,7 +19,7 @@ public sealed class DictationHud : Form
     {
         Dock = DockStyle.Fill,
         TextAlign = ContentAlignment.MiddleCenter,
-        // Segoe UI Emoji renders the microphone glyph; plain Segoe UI would show a box.
+        // Segoe UI Emoji renders the label emoji; plain Segoe UI would show a box.
         Font = new Font("Segoe UI Emoji", 12f, FontStyle.Bold),
         ForeColor = Color.White
     };
@@ -34,7 +34,7 @@ public sealed class DictationHud : Form
         if (phase is DictationPhase.Waiting or DictationPhase.Recording or DictationPhase.Followup
             || DictationHistory.Shared.Snapshot() is not [{ Origin.IsAutomatic: true }, ..]) return;
         Show(DictationPhase.Ended);
-        label.Text = "履歴に保存・クリック";
+        label.Text = "📝👆";
     }
 
     public DictationHud()
@@ -43,7 +43,7 @@ public sealed class DictationHud : Form
         TopMost = true;
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
-        Size = new Size(160, 40);
+        Size = new Size(64, 40);
         BackColor = Color.FromArgb(32, 32, 32);
         Controls.Add(label);
         label.Click += (_, _) => HistoryRequested?.Invoke();
@@ -100,24 +100,62 @@ public sealed class DictationHud : Form
                 ShowWindow(Handle, SwHide);
                 return;
             case DictationPhase.Followup:
-                label.Text = "連続待受・履歴のみ";
+                label.Text = "🔁📝";
                 label.ForeColor = Color.White;
                 break;
             case DictationPhase.Waiting:
-                label.Text = "🎙 どうぞ";
+                label.Text = "🎤";
                 label.ForeColor = Color.White;
                 break;
             case DictationPhase.Recording:
-                label.Text = "● 録音中";
+                label.Text = "🔴";
                 label.ForeColor = Color.FromArgb(255, 80, 80);
                 break;
             case DictationPhase.Ended:
-                label.Text = "■ 録音終了";
-                label.ForeColor = Color.White;
+                // Mac `(.ended, nil)`: a recording dropped before its handoff never reports a delivery, so ⏳ hides after
+                // 1.5 s unless the handoff's own Processing holds it.
+                Deliver(DeliveryState.Processing);
+                hide.Interval = 1500;
                 hide.Start();
-                break;
+                return;
         }
 
+        Place();
+    }
+
+    // UI thread only. Mirrors Mac HUD.deliver: ⏳ while Superwhisper works, ✅ for 1.5 s, ❌ for 3 s.
+    // A late result never covers a new dictation, and 📝👆 survives a Done or Dropped (Mac sequence saved-survives-done).
+    public void Deliver(DeliveryState state)
+    {
+        if (phase is DictationPhase.Waiting or DictationPhase.Recording or DictationPhase.Followup) return;
+        if (label.Text == "📝👆" && state is DeliveryState.Done or DeliveryState.Dropped) return;
+        hide.Stop();
+        switch (state)
+        {
+            case DeliveryState.Processing:
+                label.Text = "⏳";
+                break;
+            case DeliveryState.Done:
+                label.Text = "✅";
+                hide.Interval = 1500;
+                hide.Start();
+                break;
+            case DeliveryState.Failed:
+                label.Text = "❌";
+                hide.Interval = 3000;
+                hide.Start();
+                break;
+            default:
+                if (label.Text == "⏳") ShowWindow(Handle, SwHide);
+                return;
+        }
+
+        label.ForeColor = Color.White;
+        Place();
+    }
+
+    private void Place()
+    {
         // Why: Follow the foreground window instead of the pointer; dictation targets the focused display.
         var foreground = WindowFocus.Foreground();
         var screen = foreground != 0 ? Screen.FromHandle(foreground) : Screen.FromPoint(Cursor.Position);

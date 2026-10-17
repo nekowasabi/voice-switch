@@ -3,7 +3,7 @@
 // mic -> 16 kHz mono -> energy VAD cuts utterances -> short ones go to on-device STT
 // (Apple Speech on macOS) -> whole-utterance match against config wake words.
 //
-// usage (macOS): VoiceSwitch.app / voice-switch [--check|--simulate|--fire|--vad-selftest]
+// usage (macOS): VoiceSwitch.app / voice-switch [--check|--simulate|--fire|--vad-selftest|--hud-labels]
 // usage (Windows Swift legacy stub): voice-switch.exe [--fire|--vad-selftest|--help]
 //
 // Build: default `make` → macOS app; `PC=wsl make` → Windows (.NET runtime).
@@ -16,7 +16,7 @@ setvbuf(stdout, nil, _IOLBF, 0)
 
 let logURL = Platform.logURL
 var args = Array(CommandLine.arguments.dropFirst())
-let mode = args.first.flatMap { ["--check", "--simulate", "--hotkey-test", "--vad-selftest", "--fire", "--enroll-speaker", "--speaker-cut"].contains($0) ? $0 : nil }
+let mode = args.first.flatMap { ["--check", "--simulate", "--hotkey-test", "--vad-selftest", "--fire", "--enroll-speaker", "--speaker-cut", "--hud-labels"].contains($0) ? $0 : nil }
 if mode != nil { args.removeFirst() }
 let configPath = Platform.defaultConfigPath
 
@@ -31,6 +31,120 @@ if mode == "--enroll-speaker" {
     cfg.speakerEnrollment = args[0]
     do { print("kept=\(SpeakerGate.withoutOtherSpeakers(try SpeakerGate.readWave(args[1]), cfg: cfg).count)"); exit(0) }
     catch { log("speaker cut failed: \(error)"); exit(1) }
+} else if mode == "--hud-labels" {
+    // Verification only: shows every HUD label, writes labels.txt (and a PNG per label when screen recording is
+    // allowed) into the given folder, and fails unless every label is letter-free, distinct, and fits the HUD, and every label sequence holds.
+    guard args.count == 1 else { print("usage: --hud-labels <evidence-dir>"); exit(1) }
+    let dir = URL(fileURLWithPath: args[0])
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    app.finishLaunching()
+    let hud = HUD()
+    let steps: [(String, () -> Void)] = [
+        ("followup", { hud.show(.followup) }),
+        ("waiting", { hud.show(.waiting) }),
+        ("recording", { hud.show(.recording) }),
+        ("processing", { hud.show(.idle); hud.deliver(.processing) }),
+        ("failed", { hud.deliver(.failed) }),
+        ("done", { hud.deliver(.done) }),
+        // historyAvailable relabels only when the newest history entry is automatic.
+        ("history", {
+            hud.show(.idle)
+            DictationHistory.shared.add(id: UUID(), text: "hud label proof", origin: WakeOrigin(rule: .autoB, inputIdleSeconds: nil))
+            hud.historyAvailable()
+        }),
+    ]
+    var lines: [String] = [], labels: [String] = [], failures: [String] = []
+    for (name, step) in steps {
+        step()
+        RunLoop.main.run(until: Date() + 0.3)
+        guard let panel = app.windows.first(where: { $0 is NSPanel && $0.isVisible }),
+              let field = panel.contentView?.subviews.compactMap({ $0 as? NSTextField }).first else {
+            failures.append("\(name): HUD not visible"); continue
+        }
+        let text = field.stringValue, width = field.intrinsicContentSize.width
+        labels.append(text)
+        lines.append("phase=\(name) label=\(text) width=\(Int(width.rounded(.up))) hud=\(Int(panel.frame.width))")
+        if text.isEmpty { failures.append("\(name): empty label") }
+        if text.unicodeScalars.contains(where: CharacterSet.letters.contains) { failures.append("\(name): label has letters: \(text)") }
+        if width > panel.frame.width { failures.append("\(name): label is wider than the HUD") }
+        let shot = Process()
+        shot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        shot.arguments = ["-x", "-o", "-l", String(panel.windowNumber), dir.appendingPathComponent("\(name).png").path]
+        try? shot.run()
+        shot.waitUntilExit()
+    }
+    if Set(labels).count != labels.count { failures.append("labels are not distinct") }
+    func visibleLabel() -> String {
+        guard let panel = app.windows.first(where: { $0 is NSPanel && $0.isVisible }),
+              let field = panel.contentView?.subviews.compactMap({ $0 as? NSTextField }).first else { return "hidden" }
+        return field.stringValue
+    }
+    let processing = HUDLabel.processing.rawValue
+    // Each step: what to do, how long to let timers run, and what the HUD must then show.
+    let sequences: [(String, [(String, (HUD) -> Void, TimeInterval, String)])] = [
+        ("ended-then-done", [("ended", { $0.show(.ended) }, 0.3, processing),
+                             ("done", { $0.deliver(.processing); $0.deliver(.done) }, 0.3, HUDLabel.done.rawValue),
+                             ("1.3s", { _ in }, 1.0, "hidden")]),
+        ("failed-hides", [("failed", { $0.deliver(.processing); $0.deliver(.failed) }, 0.3, HUDLabel.failed.rawValue),
+                          ("3.3s", { _ in }, 3.0, "hidden")]),
+        ("new-dictation-wins", [("waiting", { $0.deliver(.processing); $0.show(.waiting) }, 0.3, HUDLabel.waiting.rawValue),
+                                ("idle", { $0.show(.idle) }, 0.3, processing)]),
+        ("saved-survives-done", [("done", { $0.deliver(.saved); $0.deliver(.done) }, 0.3, HUDLabel.saved.rawValue)]),
+        ("dropped-ended-hides", [("ended", { $0.show(.ended) }, 0.3, processing),
+                                 ("1.7s", { _ in }, 1.4, "hidden")]),    ]
+    for (name, steps) in sequences {
+        let settled = Date() + 3
+        while visibleLabel() != "hidden" && Date() < settled { RunLoop.main.run(until: Date() + 0.1) }
+        let seq = HUD()
+        var seen: [String] = [], ok = true
+        for (step, act, wait, want) in steps {
+            act(seq)
+            RunLoop.main.run(until: Date() + wait)
+            let got = visibleLabel()
+            seen.append("\(step)=\(got)")
+            if got != want { ok = false; failures.append("sequence \(name): \(step) showed \(got), wanted \(want)") }
+        }
+        lines.append("sequence=\(name) \(ok ? "ok" : "FAIL") \(seen.joined(separator: " "))")
+        seq.show(.idle)
+        seq.deliver(nil)
+    }
+    // superwhisper's own toggle key, as measured on 2026-10-17: the run folder appears empty when recording starts; a stop
+    // writes meta.json as the mic closes and judges it later, while Esc deletes the folder or leaves it empty.
+    let placeholder: [String: Any] = ["duration": 0, "processingTime": 0, "result": ""]
+    let judgedLater: [(String, [String: Any]?, Bool, DirectRunEnd)] = [
+        ("polished", ["duration": 5753, "result": "テスト", "llmResult": "テスト。", "languageModelKey": "k", "languageModelProcessingTime": 1221], false, .done),
+        ("heard-nothing", ["duration": 900, "processingTime": 120, "result": ""], false, .failed),
+        ("esc-deleted", nil, true, .cancelled),
+        ("esc-empty", nil, false, .cancelled),
+    ]
+    for (name, judged, deleted, want) in judgedLater {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("voice-switch-direct-\(UUID().uuidString)")
+        let run = root.appendingPathComponent(String(Int(Date().timeIntervalSince1970)))
+        try? FileManager.default.createDirectory(at: run, withIntermediateDirectories: true)
+        func writeMeta(_ meta: [String: Any]) { try? JSONSerialization.data(withJSONObject: meta).write(to: run.appendingPathComponent("meta.json")) }
+        let since = Int(Date().timeIntervalSince1970) - 1
+        if deleted { try? FileManager.default.removeItem(at: run) } else if judged != nil { writeMeta(placeholder) }
+        var got: DirectRunEnd?
+        let began = Date()
+        Task { @MainActor in got = await awaitDirectRun(in: root.path, since: since, current: { true }) }
+        RunLoop.main.run(until: Date() + 0.5)
+        let early = got
+        if let judged { writeMeta(judged) }
+        let deadline = Date() + 3
+        while got == nil && Date() < deadline { RunLoop.main.run(until: Date() + 0.1) }
+        let seconds = Date().timeIntervalSince(began)
+        try? FileManager.default.removeItem(at: root)
+        let ok = early == nil && got == want && seconds < 2.5
+        lines.append("direct=\(name) \(ok ? "ok" : "FAIL") end=\(got.map { "\($0)" } ?? "none") seconds=\(String(format: "%.1f", seconds))")
+        if !ok { failures.append("direct \(name): wanted \(want) within 2.5 s, got \(got.map { "\($0)" } ?? "none") after \(seconds) s, early=\(String(describing: early))") }
+    }
+    lines += failures.map { "FAIL \($0)" }
+    lines.append(failures.isEmpty ? "PASS: every HUD label is letter-free, distinct, and fits the HUD; every sequence holds" : "FAIL: \(failures.count) check(s)")
+    let report = lines.joined(separator: "\n") + "\n"
+    try? report.write(to: dir.appendingPathComponent("labels.txt"), atomically: true, encoding: .utf8)
+    print(report, terminator: "")
+    exit(failures.isEmpty ? 0 : 1)
 } else if mode == "--vad-selftest" {
     // Catches an app bundle that lost the Silero resource; the runtime gate itself fails open.
     guard (try? SpeechGate.voicedWindows([Float](repeating: 0, count: Int(rate)))) == 0 else {
@@ -71,6 +185,7 @@ if mode == "--enroll-speaker" {
     _ = NSApplication.shared
     let hud = HUD()
     listener.onPhase = { log("phase: \($0)"); hud.show($0) }
+    listener.onDelivery = { hud.deliver($0) }
     Task {
         do {
             try await ensureModel(Locale(identifier: listener.config.cfg.locale ?? "ja_JP"))

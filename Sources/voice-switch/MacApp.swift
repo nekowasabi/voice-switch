@@ -387,18 +387,20 @@ func macPasteSafety(target: NSRunningApplication, lastInput: TimeInterval) -> Pa
 /// superwhisper transcribes the file. Wake-word audio keeps the active mode and lets superwhisper paste.
 /// Automatic audio switches to `dictation.superwhisperMode`, which must have auto-paste off, and stays in history.
 /// An action's text goes only to its URL, so it switches to its own mode or, failing that, `dictation.superwhisperMode`.
-/// False means nothing was dispatched and the caller should fall back to local history.
-func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplication?, action: WakeAction?, origin: WakeOrigin = WakeOrigin(rule: .strict, inputIdleSeconds: nil), sessionID: UUID = UUID(), transcriptPolicy: AutomaticTranscriptPolicy = .disabled, stillCurrent: () -> Bool = { true }) async -> Bool {
-    if DictationHistory.shared.select(sessionID) != nil { return true }
-    guard let ownership = await acquireModeOwnership() else { return false }
+/// notDispatched means the caller should fall back to local history; noResult means superwhisper returned no words.
+enum HandoffOutcome { case notDispatched, noResult, delivered }
+
+func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplication?, action: WakeAction?, origin: WakeOrigin = WakeOrigin(rule: .strict, inputIdleSeconds: nil), sessionID: UUID = UUID(), transcriptPolicy: AutomaticTranscriptPolicy = .disabled, stillCurrent: () -> Bool = { true }) async -> HandoffOutcome {
+    if DictationHistory.shared.select(sessionID) != nil { return .delivered }
+    guard let ownership = await acquireModeOwnership() else { return .notDispatched }
     defer { withExtendedLifetime(ownership) {} }
     let historyGeneration = DictationHistory.shared.generation
     let recordings = Platform.expandPath(cfg.recordingsDir ?? Platform.defaultRecordingsDir)
     if (try? MacModeRestoreStore.read()) != nil, !(await awaitRunsSettled(in: recordings)) {
         log("superwhisper mode: an earlier run is still in flight; recording goes to local history \(sidField(sessionID))")
-        return false
+        return .notDispatched
     }
-    guard await recoverSuperwhisperMode(target: target) else { return false }
+    guard await recoverSuperwhisperMode(target: target) else { return .notDispatched }
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("voice-switch")
     let wav = dir.appendingPathComponent("\(UUID().uuidString).wav")
     defer { try? FileManager.default.removeItem(at: wav) }
@@ -406,12 +408,12 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     // Nobody asked for an automatic recording, so it may only enter a mode verified not to paste.
     let controlled = origin.isAutomatic
     let wantedMode = controlled ? cfg.superwhisperMode : action == nil ? nil : action?.superwhisperMode ?? cfg.superwhisperMode
-    if controlled { guard superwhisperAutoPasteDisabled(wantedMode, modeJsons: readSuperwhisperModeJsons()) else { return false } }
+    if controlled { guard superwhisperAutoPasteDisabled(wantedMode, modeJsons: readSuperwhisperModeJsons()) else { return .notDispatched } }
     let (modeRequested, previousMode) = await enterSuperwhisperMode(wantedMode, target: target)
     if controlled {
         guard modeRequested, superwhisperAutoPasteDisabled(wantedMode, modeJsons: readSuperwhisperModeJsons()) else {
             _ = await recoverSuperwhisperMode(target: target)
-            return false
+            return .notDispatched
         }
     }
     let previousRuns: Set<String>
@@ -420,7 +422,7 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
             ? Set(try FileManager.default.contentsOfDirectory(atPath: recordings)) : []
     } catch {
         _ = await recoverSuperwhisperMode(target: target)
-        return false
+        return .notDispatched
     }
     var result: String?
     var launched = false
@@ -450,29 +452,29 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
         if result != nil || !launched { _ = await recoverSuperwhisperMode(target: target) }
         else { log("superwhisper mode: kept \(wantedMode ?? "") until the run finishes \(sidField(sessionID))") }
     }
-    guard launched else { return false }
+    guard launched else { return .notDispatched }
     guard let result else {
-        log("dictation: no superwhisper result within 30 s \(sidField(sessionID))"); return true
+        log("dictation: no superwhisper result within 30 s \(sidField(sessionID))"); return .noResult
     }
     guard !result.isEmpty else {
-        log("dictation: superwhisper heard no words \(sidField(sessionID))"); return true
+        log("dictation: superwhisper heard no words \(sidField(sessionID))"); return .noResult
     }
     log("dictation: \(result.count) chars in \(Int(Date().timeIntervalSince(submitted) * 1000)) ms audio=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), Double(samples.count) / rate))s \(sidField(sessionID))")
-    guard stillCurrent() else { return true }
-    guard DictationHistory.shared.add(id: sessionID, text: result, origin: origin, expectedGeneration: historyGeneration, policy: transcriptPolicy) else { return true }
-    if controlled { return true }
+    guard stillCurrent() else { return .delivered }
+    guard DictationHistory.shared.add(id: sessionID, text: result, origin: origin, expectedGeneration: historyGeneration, policy: transcriptPolicy) else { return .delivered }
+    if controlled { return .delivered }
     if let action {
         let p = Platform.urlProcess(action.url)
         p.arguments = action.openArguments(input: result)
         Platform.runURLProcess(p, wait: false)
-        return true
+        return .delivered
     }
     let route = await routeDictation(result)
     // Wake-word audio never switches mode, so superwhisper has already pasted unless the pane took it.
     if decideDictationDelivery(modeRequested: modeRequested, route: route.disposition) == .superwhisper {
         log("dictation delivered: superwhisper")
     }
-    return true
+    return .delivered
 }
 
 /// The mode lock is per user and non-blocking, so wait for a handoff already in flight instead of dropping this one.
@@ -781,6 +783,14 @@ final class Listener {
 
     /// Called on the main thread whenever the dictation phase changes.
     var onPhase: ((Phase) -> Void)?
+
+    /// Called on the main thread while superwhisper processes a handed-off recording; nil when it is done.
+    var onDelivery: ((DeliveryState?) -> Void)?
+
+    private func reportDelivery(_ state: DeliveryState?) {
+        log("delivery: \(state.map { "\($0)" } ?? "done")")
+        DispatchQueue.main.async { self.onDelivery?(state) }
+    }
 
     private func consume(_ stream: AsyncStream<CaptureFrame>) async {
         var seg = Segmenter(cfg: config.cfg)
@@ -1227,10 +1237,12 @@ final class Listener {
                 // wake-word dictation and superwhisper pastes it. One that ended on silence or maxSeconds stays history-only.
                 let origin = token == "StandaloneStop" ? WakeOrigin(rule: .strict, inputIdleSeconds: d.origin.inputIdleSeconds) : d.origin
                 if origin != d.origin { log("dictation session: automatic ended by stop word, pasting like a wake-word dictation \(sidField(d.sessionID))") }
-                let delivered = await handoff(d.samples, cfg: cfg, target: NSWorkspace.shared.frontmostApplication,
-                                              action: nil, origin: origin, sessionID: d.sessionID, transcriptPolicy: d.transcriptPolicy,
-                                              stillCurrent: { self.localHistoryState.withLock { $0.generation == generation } })
-                if !delivered { await transcribeToHistory(d, generation: generation) }
+                reportDelivery(.processing)
+                let outcome = await handoff(d.samples, cfg: cfg, target: NSWorkspace.shared.frontmostApplication,
+                                            action: nil, origin: origin, sessionID: d.sessionID, transcriptPolicy: d.transcriptPolicy,
+                                            stillCurrent: { self.localHistoryState.withLock { $0.generation == generation } })
+                if outcome == .notDispatched { await transcribeToHistory(d, generation: generation) }
+                reportDelivery(outcome == .noResult ? .failed : .done)
             }
             return
         }
@@ -1243,9 +1255,11 @@ final class Listener {
             defer { handoffBusy.withLock { $0 = false } }
             var d = d
             d.samples = SpeakerGate.withoutOtherSpeakers(d.samples, cfg: config.cfg)
-            let delivered = await handoff(d.samples, cfg: cfg, target: d.target,
-                                          action: d.action, origin: d.origin, sessionID: d.sessionID, transcriptPolicy: d.transcriptPolicy)
-            if !delivered { await storeLocal(d) }
+            reportDelivery(.processing)
+            let outcome = await handoff(d.samples, cfg: cfg, target: d.target,
+                                        action: d.action, origin: d.origin, sessionID: d.sessionID, transcriptPolicy: d.transcriptPolicy)
+            if outcome == .notDispatched { await storeLocal(d) }
+            reportDelivery(outcome == .noResult ? .failed : .done)
         }
     }
 
@@ -1310,6 +1324,28 @@ func playStopSound() {
     if UserDefaults.standard.bool(forKey: soundKey) { stopChime?.play() }
 }
 
+/// Every HUD label; emoji only so the HUD reads without Japanese. Windows DictationHud.cs mirrors these.
+enum HUDLabel: String { case followup = "🔁📝", waiting = "🎤", recording = "🔴", processing = "⏳", done = "✅", failed = "❌", saved = "📝👆" }
+
+/// What superwhisper is doing with a recording, beside the listener's own phase.
+enum DeliveryState { case recording /* superwhisper's own mic recording */, processing, done, failed, saved }
+
+enum DirectRunEnd { case done, failed, cancelled, superseded }
+
+/// How the newest superwhisper run since `since` ended, polled from the moment its recording stopped.
+@MainActor func awaitDirectRun(in recordings: String, since: Int, current: () -> Bool) async -> DirectRunEnd {
+    for tick in 0 ..< 300 {
+        guard current() else { return .superseded }
+        let runs = superwhisperRuns(in: recordings, since: since)
+        if let newest = runs.first, !newest.run.inFlight(meta: newest.meta) { return newest.run == .heardNothing ? .failed : .done }
+        // superwhisper writes meta.json within 0.2 s of the mic closing; Esc instead deletes the run folder or leaves it
+        // empty (measured 2026-10-17). 1.5 s also covers the 0.5 s mic poll.
+        if tick >= 15 && runs.isEmpty { return .cancelled }
+        try? await Task.sleep(for: .milliseconds(100))
+    }
+    return current() ? .failed : .superseded
+}
+
 /// Floating label at the top of the screen while a dictation is open; the menu bar may be hidden.
 final class HUD {
     private let label = NSTextField(labelWithString: "")
@@ -1340,34 +1376,58 @@ final class HUD {
 
     private var shown = 0
     private var phase = Listener.Phase.idle
+    private var delivery: DeliveryState?
 
     func historyAvailable() {
         // Wake-word dictation also keeps a copy in history, but its output was delivered, so only an automatic entry earns this label.
         guard phase != .recording && phase != .waiting && phase != .followup,
               DictationHistory.shared.snapshot().first?.origin.isAutomatic == true else { return }
-        show(.ended)
-        label.stringValue = "履歴に保存・クリック"
+        deliver(.saved)
     }
 
     func show(_ phase: Listener.Phase) {
         self.phase = phase
+        render()
+    }
+
+    /// .done leaves 📝👆 up, since the automatic path saves to history before its handoff returns.
+    func deliver(_ state: DeliveryState?) {
+        // The handoff that .ended was waiting for has begun or finished, so .ended no longer holds the HUD.
+        if phase == .ended { phase = .idle }
+        if delivery != .saved || (state != nil && state != .done) { delivery = state }
+        render()
+    }
+
+    private func render() {
         shown += 1
-        switch phase {
-        case .idle: panel.orderOut(nil); return
-        case .followup: label.stringValue = "連続待受・履歴のみ"; label.textColor = .labelColor
-        case .waiting: label.stringValue = "🎙 どうぞ"; label.textColor = .labelColor
-        case .recording: label.stringValue = "● 録音中"; label.textColor = .systemRed
-        case .ended:
-            label.stringValue = "■ 録音終了"; label.textColor = .labelColor
+        let view: (label: HUDLabel, expiry: Double?)? = switch (phase, delivery) {
+        case (.waiting, _): (.waiting, nil)
+        case (.recording, _), (_, .recording?): (.recording, nil)
+        case (_, .processing?): (.processing, nil)
+        case (_, .failed?): (.failed, 3)
+        case (_, .done?): (.done, 1)
+        case (_, .saved?): (.saved, 1.5)
+        // A short recording dropped before its handoff never reports a delivery.
+        case (.ended, nil): (.processing, 1.5)
+        case (.followup, nil): (.followup, nil)
+        case (.idle, nil): nil
+        }
+        guard let view else { panel.orderOut(nil); return }
+        label.stringValue = view.label.rawValue
+        label.textColor = view.label == .recording ? .systemRed : .labelColor
+        if let expiry = view.expiry {
             let mine = shown
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [self] in
-                if shown == mine { panel.orderOut(nil) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + expiry) { [self] in
+                guard shown == mine else { return }
+                if phase == .ended { phase = .idle }
+                if delivery == .failed || delivery == .saved || delivery == .done { delivery = nil }
+                render()
             }
         }
         // Follow the focused window even when the pointer remains on another display.
         let screen = NSScreen.main ?? NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) }
         guard let area = screen?.visibleFrame else { return }
-        let size = NSSize(width: 160, height: 40)
+        let size = NSSize(width: 64, height: 40)
         panel.setFrame(NSRect(x: area.midX - size.width / 2, y: area.maxY - size.height - 12, width: size.width, height: size.height), display: true)
         panel.orderFrontRegardless()
     }
@@ -1411,13 +1471,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         listener = Listener(config: config)
         listener.onPhase = { [hud] in hud.show($0) }
+        listener.onDelivery = { [hud] in hud.deliver($0) }
         DictationHistory.shared.onChange = { [hud] in DispatchQueue.main.async { hud.historyAvailable() } }
         listener.onRestart = { [weak self] in self?.refresh() }
         listener.deviceUID = UserDefaults.standard.string(forKey: deviceKey)
+        let recordings = Platform.expandPath(config.cfg.dictation?.recordingsDir ?? Platform.defaultRecordingsDir)
+        // ponytail: 0.5 s CoreAudio poll; a kAudioProcessPropertyIsRunningInput listener if it shows up in CPU.
+        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.followDirectSuperwhisper(recordings: recordings) }
         Task { @MainActor in
             do {
                 if let ownership = try? MacModeRestoreStore.acquire() {
-                    let recordings = Platform.expandPath(config.cfg.dictation?.recordingsDir ?? Platform.defaultRecordingsDir)
                     let pending = (try? MacModeRestoreStore.read()) != nil
                     let settled = pending ? await awaitRunsSettled(in: recordings) : true
                     if settled {
@@ -1439,6 +1502,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 fail("起動に失敗しました: \(error)")
             }
             refresh()
+        }
+    }
+
+    private var directSince: Int?
+    private var directGeneration = 0
+
+    /// superwhisper started with its own key; the user turns its HUD off, so ours shows the recording and the run after it.
+    private func followDirectSuperwhisper(recordings: String) {
+        let recording = micInUse(by: ["com.superduper.superwhisper"]) != nil
+        if recording, directSince == nil {
+            // superwhisper names the run folder after the second recording began and creates it then, so a folder
+            // snapshot here already holds this run (2026-10-17: run 1792208408 was excluded and ⏳ never ended).
+            // The 0.5 s poll sees the mic at most a second late.
+            directSince = Int(Date().timeIntervalSince1970) - 1
+            directGeneration += 1
+            log("superwhisper direct: recording")
+            hud.deliver(.recording)
+        } else if !recording, let since = directSince {
+            directSince = nil
+            let generation = directGeneration
+            log("superwhisper direct: processing")
+            hud.deliver(.processing)
+            Task { @MainActor [weak self, hud] in
+                // A later recording owns the HUD; this run's outcome must not overwrite it.
+                let end = await awaitDirectRun(in: recordings, since: since, current: { self?.directGeneration == generation })
+                guard end != .superseded else { return }
+                log("superwhisper direct: \(end)")
+                hud.deliver(end == .done ? .done : end == .failed ? .failed : nil)
+            }
         }
     }
 

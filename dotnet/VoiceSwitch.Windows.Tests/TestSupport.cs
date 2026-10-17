@@ -355,7 +355,10 @@ sealed class PhaseRecorder : IDictationRuntimeObserver
     }
 
     public List<DictationPhase> Phases { get; } = new();
+    public List<DeliveryState> Deliveries { get; } = new();
     public bool StopSound { get; init; }
+
+    public void DeliveryChanged(DeliveryState state) => Deliveries.Add(state);
     public int StopSounds { get; private set; }
 
     public void PhaseChanged(DictationPhase phase)

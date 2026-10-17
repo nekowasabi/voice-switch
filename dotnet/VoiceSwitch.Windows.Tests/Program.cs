@@ -2761,7 +2761,9 @@ static bool DictationPhasesAndTargetAcrossTwoDictations()
     return RunWithTimeout(runtime, TimeSpan.FromSeconds(5)) == 0
         && handoff.Submissions.Select(audio => audio.Target).SequenceEqual([(nint)0x42, (nint)0x43])
         && handoff.Submissions.All(audio => audio.Reason == FinishReason.StandaloneStop)
-        && observer.Phases.SequenceEqual([DictationPhase.Recording, DictationPhase.Ended, DictationPhase.Recording, DictationPhase.Ended]);
+        && observer.Phases.SequenceEqual([DictationPhase.Recording, DictationPhase.Ended, DictationPhase.Recording, DictationPhase.Ended])
+        // A dry-run handoff is not a Superwhisper result, so the HUD's ⏳ is dropped rather than turned into ✅.
+        && observer.Deliveries.SequenceEqual([DeliveryState.Processing, DeliveryState.Dropped, DeliveryState.Processing, DeliveryState.Dropped]);
 }
 
 static bool DictationHotkeysParseShortcutNames() =>

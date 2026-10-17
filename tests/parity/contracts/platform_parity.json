@@ -24,6 +24,11 @@
   ],
   "allowed_cli_gaps": [
     {
+      "flag": "--hud-labels",
+      "platform": "windows",
+      "reason": "Verification only: shows every macOS HUD label and checks it for the verify-voice-switch-mac skill. The Windows HUD labels are checked from the same skill by comparing the DictationHud.cs literals."
+    },
+    {
       "flag": "--speaker-cut",
       "platform": "windows",
       "reason": "Verification only: prints how many samples the speaker cut keeps so a script can compare the Swift port with the measured rule. The C# core is compared by calling SpeakerGate.WithoutOtherSpeakers directly."

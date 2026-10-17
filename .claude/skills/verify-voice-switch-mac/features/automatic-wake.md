@@ -4,7 +4,7 @@ With `dictation.noWakeWord` switched on, speech can open a dictation without the
 
 ## Sub-features
 
-- `auto-idle` logs `dictation session: automatic rule=auto_b` after the keyboard and mouse were idle. The result goes to Superwhisper's no-auto-paste mode.
+- `auto-idle` logs `dictation session: automatic rule=auto_b inputIdleSeconds=<n>`. Input idle is only logged; it no longer gates the start (`MacApp.swift` "input idle no longer gates it"). The result goes to Superwhisper's no-auto-paste mode, and the listener logs `delivery: processing` before the handoff and `delivery: done` (or `failed` when Superwhisper returned no words) after it. `verify.sh run` does not echo `delivery:` lines; read `stdout.txt`.
 - `auto-busy` (implemented by issue #33; `d3685d6` and earlier fail it). Speech while the user is operating the Mac also logs `dictation session: automatic rule=auto_b inputIdleSeconds=<below 1>`. Checks:
   - `AB1` the session starts at all (the baseline does not, see Gotchas).
   - `AB2` the recording starts at the phrase head, not at the last input. The session's audio length on `dictation session: end ... seconds=` is close to the spoken phrase (the `busy-speech` phrase is about 2 s), not near zero.
@@ -35,7 +35,7 @@ Preconditions:
 - The user agreed to a run that may drive their Superwhisper and switch its mode. The busy path must not touch Superwhisper; if it does, that is the failure being shown.
 - Config `config.stop-auto.json` in this folder (`superwhisperMode: input`, `autoIdle: true`), or a scratchpad copy of it.
 
-- **Idle start.** Do not touch the keyboard or mouse. Run `$V say auto-idle "今日は晴れです [[slnc 2000]]"` and `VS_RUN_ID=<id> $V run auto-idle <config>`. The output has `dictation session: automatic rule=auto_b inputIdleSeconds=<n>` with n of at least 1.
+- **Idle start.** Do not touch the keyboard or mouse. Run `$V say auto-idle "今日は晴れです [[slnc 2000]]"` and `VS_RUN_ID=<id> $V run auto-idle <config>`. The output has `dictation session: automatic rule=auto_b inputIdleSeconds=<n>`; n is informational, a run of 2026-10-17 started at 1.2 s. Without Superwhisper, use a scratchpad copy with `"superwhisperMode": "vs-verify-missing"` and `SIMULATE_REALTIME=1`: run `maint` (2026-10-17, `busy-speech`) logged `rule=auto_b`, `confirmed by agreed words`, `phase: recording`, `end reason=Silence ... seconds=2.34`, `delivery: processing`, `dictation recognition: complete`, `delivery: done`.
 - **Busy start (AB1 to AB4).** `$V say busy-speech "[[slnc 1500]] 今日の会議は三時からです [[slnc 3000]]"`, then `VS_BUSY_INPUT=1 SIMULATE_REALTIME=1 VS_RUN_ID=<id> $V run busy-speech config.stop-auto.json`. `VS_BUSY_INPUT=1` runs `busy-input.swift`, which posts an in-place mouse move every 200 ms for 45 s and samples the frontmost app. Expect, in order: `dictation session: automatic rule=auto_b inputIdleSeconds=0.<n>`, `dictation session: end ... seconds=<about 2>`, `superwhisper mode: input`, a `dictation:` result line, and in `busy-input.txt` no `com.superduper.superwhisper` entry left frontmost for more than 2 s.
 - **Busy wake word (AB5).** `$V say busy-wake "[[slnc 1500]] 音声入力 今日は晴れです [[slnc 3000]]"` and run it the same way. Expect `automatic replaced by wake word`.
 - **Busy short word (AB6).** Run `short-ohayo` with `VS_BUSY_INPUT=1 SIMULATE_REALTIME=1`. Expect `dictation dropped: automatic audio shorter than minHandoffMs`.

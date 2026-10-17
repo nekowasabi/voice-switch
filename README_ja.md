@@ -133,7 +133,7 @@ LaunchServices、実マイク、Superwhisper の録音・文字起こし・貼�
 - Ctrl+Shift+F9 または HUD のクリックは履歴
 - Windows の Ctrl+Shift+F8 は直近の取りこぼしに MISS ラベルを付ける
 
-ウェイクワードと Ctrl+Shift+F10 の録音はモードを切り替えず、その時点の Superwhisper のモードで変換し、貼り付けも Superwhisper に任せます。変換結果は履歴にも残りますが、停止時の HUD に「履歴に保存」と出るのは自動録音のときだけです。
+ウェイクワードと Ctrl+Shift+F10 の録音はモードを切り替えず、その時点の Superwhisper のモードで変換し、貼り付けも Superwhisper に任せます。変換結果は履歴にも残りますが、停止時の HUD に履歴の表示（📝👆）が出るのは自動録音のときだけです。
 
 ### 雑音と咳払いを Superwhisper に渡さない
 

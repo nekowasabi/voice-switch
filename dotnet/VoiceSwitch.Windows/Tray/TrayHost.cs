@@ -53,7 +53,8 @@ public static class TrayHost
                     ForegroundWindow: WindowFocus.Foreground,
                     RestoreFocus: target => hud.Post(() => WindowFocus.RestoreIfSuperwhisperForeground(target)),
                     Hotkeys: hotkeys,
-                    MicDevice: () => TraySettings.MicDevice)),
+                    MicDevice: () => TraySettings.MicDevice,
+                    OnDelivery: state => hud.Post(() => hud.Deliver(state)))),
                 instance.Key);
 
             using var context = new VoiceSwitchTrayContext(supervisor);

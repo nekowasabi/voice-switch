@@ -24,7 +24,8 @@ cmd_build() {
 
 # Speaker gate fixture: the model download and the user's enrollment are idempotent and never fail the build
 # (a missing model is the fail-open case, SG7). The enrollment is the user's 5 newest superwhisper recordings
-# with a transcript (TTS voices calibrated the gate wrongly); speaker/own.txt lists them so a test clip can avoid them.
+# with a transcript and 3 s or more (TTS voices calibrated the gate wrongly; --enroll-speaker rejects the whole set when one
+# clip is under 3 s); speaker/own.txt lists them so a test clip can avoid them.
 enroll_own() {
   spk=$ROOT/speaker
   mkdir -p "$spk"
@@ -34,6 +35,7 @@ enroll_own() {
   for d in $(ls -t "$HOME/Documents/superwhisper/recordings"); do
     r=$HOME/Documents/superwhisper/recordings/$d
     [ -f "$r/output.wav" ] && [ -n "$(plutil -extract result raw "$r/meta.json" 2>/dev/null)" ] || continue
+    [ "$(plutil -extract duration raw "$r/meta.json" 2>/dev/null | cut -d. -f1)" -ge 3000 ] 2>/dev/null || continue
     echo "$r/output.wav" >> "$spk/own.txt"
     [ "$(wc -l < "$spk/own.txt")" -ge 5 ] && break
   done
@@ -105,6 +107,31 @@ cmd_run() {
   grep -E 'heard|dictation|phase|fatal|command|whisper' "$out/stdout.txt" || true
 }
 
+# hud: shows every label of the built binary's real HUD (no microphone, no Superwhisper), then compares
+# the label literals of the Mac and Windows HUD sources. Exit 0 only when every check passes.
+cmd_hud() {
+  out=$EVID/${VS_RUN_ID:-$(date +%Y%m%d-%H%M%S)}/hud
+  mkdir -p "$out"
+  rc=0
+  "$BIN" --hud-labels "$out" || rc=1
+  # Source literals cover Windows, which this Mac cannot render.
+  grep '^enum HUDLabel' "$REPO/Sources/voice-switch/MacApp.swift" | grep -oE '[a-z]+ = "[^"]*"' | sed 's/.*= //' | LC_ALL=C sort > "$out/mac-literals.txt"
+  grep -oE 'label\.Text = "[^"]*"' "$REPO/dotnet/VoiceSwitch.Windows/Tray/DictationHud.cs" | sed 's/.*= //' | LC_ALL=C sort > "$out/windows-literals.txt"
+  if diff "$out/mac-literals.txt" "$out/windows-literals.txt" > "$out/parity.diff"; then
+    echo "ok   Mac and Windows HUD literals match"
+  else
+    echo "FAIL Mac and Windows HUD literals differ (parity.diff)"; rc=1
+  fi
+  [ "$(wc -l < "$out/mac-literals.txt")" -eq 7 ] || { echo "FAIL expected 7 Mac HUD literals; narrow the grep"; rc=1; }
+  if perl -CSD -ne 'print if /\p{L}/' "$out/windows-literals.txt" > "$out/windows-letters.txt" && [ -s "$out/windows-letters.txt" ]; then
+    echo "FAIL Windows HUD literals contain letters:"; cat "$out/windows-letters.txt"; rc=1
+  else
+    echo "ok   Windows HUD literals are letter-free"
+  fi
+  echo "exit=$rc evidence=$out"
+  return $rc
+}
+
 cmd_cleanup() {
   for p in "$EVID"/*/*/pid.txt; do
     [ -f "$p" ] || continue
@@ -119,10 +146,11 @@ cmd_cleanup() {
   echo "removed $BUILD; kept $EVID and $FIX"
 }
 
-[ $# -ge 1 ] || die "usage: verify.sh build|doctor|say|run|cleanup"
+[ $# -ge 1 ] || die "usage: verify.sh build|doctor|say|run|hud|cleanup"
 c=$1; shift
 case $c in
   build) cmd_build ;;
+  hud) cmd_hud ;;
   doctor) cmd_doctor ;;
   say) cmd_say "$@" ;;
   run) cmd_run "$@" ;;

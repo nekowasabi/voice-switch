@@ -11,6 +11,7 @@ This directory is the maintained source for verifying what a Mac user of voice-s
 | Automatic sessions without a wake word | [automatic-wake.md](automatic-wake.md) | yes |
 | Speaker gate: automatic recordings of another voice are dropped, and 2 s+ stretches of another voice are cut from handed-off audio | [speaker-gate.md](speaker-gate.md) | SG9, SG4 yes (missing-mode config; SG4 automatic only) |
 | Paste routing of automatic recordings (silence end never pastes, stop-word end pastes) | [paste-routing.md](paste-routing.md) | yes (real mode, TextEdit as target) |
+| HUD: emoji labels, ⏳ until superwhisper finishes, ✅/❌, superwhisper's own toggle key and Esc | [hud-labels.md](hud-labels.md) | no (`$V hud`); the direct toggle recipe yes |
 
 ## Baseline preconditions
 
