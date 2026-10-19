@@ -26,7 +26,7 @@
     {
       "flag": "--hud-labels",
       "platform": "windows",
-      "reason": "Verification only: shows every macOS HUD label and checks it for the verify-voice-switch-mac skill. The Windows HUD labels are checked from the same skill by comparing the DictationHud.cs literals."
+      "reason": "Verification only: shows every macOS HUD glyph and checks it for the verify-voice-switch-mac skill. The Windows HUD glyphs are checked from the same skill by comparing the HudGlyph names in DictationHud.cs."
     },
     {
       "flag": "--speaker-cut",

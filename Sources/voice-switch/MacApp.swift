@@ -1324,8 +1324,169 @@ func playStopSound() {
     if UserDefaults.standard.bool(forKey: soundKey) { stopChime?.play() }
 }
 
-/// Every HUD label; emoji only so the HUD reads without Japanese. Windows DictationHud.cs mirrors these.
-enum HUDLabel: String { case followup = "🔁📝", waiting = "🎤", recording = "🔴", processing = "⏳", done = "✅", failed = "❌", saved = "📝👆", paused = "🔕", resumed = "🔔" }
+/// Every HUD glyph, drawn as a vector path so the HUD no longer depends on emoji artwork. Windows DictationHud.cs
+/// mirrors these names and shapes; only the drawing code differs per platform.
+enum HUDLabel: String, CaseIterable {
+    case followup, waiting, recording, processing, done, failed, saved, paused, resumed
+}
+
+/// Draws one `HUDLabel` in a 24x24 design space. Recording and processing animate at 30 fps while visible;
+/// every other glyph is static, so a hidden HUD costs nothing.
+final class HUDGlyphView: NSView {
+    private(set) var glyph: HUDLabel = .waiting
+    private var ticker: Timer?
+    private var began = Date()
+
+    override var isFlipped: Bool { false }
+
+    func show(_ glyph: HUDLabel) {
+        // A glyph that reappears after the HUD hid starts its animation from zero, so a second dictation pulses again.
+        if self.glyph != glyph || ticker == nil { began = Date() }
+        self.glyph = glyph
+        let animated = glyph == .recording || glyph == .processing
+        if animated, ticker == nil {
+            ticker = Timer.scheduledTimer(withTimeInterval: 1 / 30, repeats: true) { [weak self] _ in self?.needsDisplay = true }
+        } else if !animated {
+            stop()
+        }
+        needsDisplay = true
+    }
+
+    /// Call when the HUD hides, so the animation timer does not outlive the visible pill.
+    func stop() {
+        ticker?.invalidate()
+        ticker = nil
+    }
+
+    deinit { ticker?.invalidate() }
+
+    override func draw(_: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        let side = min(bounds.width, bounds.height)
+        guard side > 0 else { return }
+        ctx.saveGState()
+        ctx.translateBy(x: (bounds.width - side) / 2, y: (bounds.height - side) / 2)
+        ctx.scaleBy(x: side / 24, y: side / 24)
+        drawGlyph()
+        ctx.restoreGState()
+    }
+
+    /// Fixed colors, matching `ColorFor` in DictationHud.cs. Dynamic colors would resolve to black over the dark
+    /// HUD material in light mode, because the panel does not inherit the HUD appearance from the window.
+    private enum Ink {
+        static let white = NSColor(srgbRed: 0.949, green: 0.949, blue: 0.957, alpha: 1)
+        static let red = NSColor(srgbRed: 1, green: 0.271, blue: 0.227, alpha: 1)
+        static let green = NSColor(srgbRed: 0.188, green: 0.820, blue: 0.345, alpha: 1)
+        static let gray = NSColor(srgbRed: 0.557, green: 0.557, blue: 0.576, alpha: 1)
+    }
+
+    private func color(for glyph: HUDLabel) -> NSColor {
+        switch glyph {
+        case .waiting: return Ink.white.withAlphaComponent(0.65)
+        case .recording, .failed: return Ink.red
+        case .done, .saved: return Ink.green
+        case .processing: return Ink.white.withAlphaComponent(0.9)
+        case .paused: return Ink.gray
+        case .followup: return Ink.white.withAlphaComponent(0.8)
+        case .resumed: return Ink.white.withAlphaComponent(0.75)
+        }
+    }
+
+    private func stroke(_ path: NSBezierPath, _ color: NSColor, width: CGFloat = 1.8) {
+        color.setStroke()
+        path.lineWidth = width
+        path.lineCapStyle = .round
+        path.lineJoinStyle = .round
+        path.stroke()
+    }
+
+    private func drawGlyph() {
+        let color = color(for: glyph)
+        switch glyph {
+        case .waiting:
+            mic(color)
+        case .resumed:
+            // A play triangle: "listening is back on", next to the pause bars it toggles with.
+            let play = NSBezierPath()
+            play.move(to: NSPoint(x: 9, y: 17))
+            play.line(to: NSPoint(x: 17.5, y: 12))
+            play.line(to: NSPoint(x: 9, y: 7))
+            play.close()
+            stroke(play, color, width: 1.7)
+        case .recording:
+            let elapsed = Date().timeIntervalSince(began)
+            let pulse = elapsed.truncatingRemainder(dividingBy: 1.4) / 1.4
+            color.withAlphaComponent(0.4 * (1 - pulse)).setFill()
+            NSBezierPath(ovalIn: NSRect(x: 12 - 5.5 - 5 * pulse, y: 12 - 5.5 - 5 * pulse,
+                                        width: 11 + 10 * pulse, height: 11 + 10 * pulse)).fill()
+            color.setFill()
+            NSBezierPath(ovalIn: NSRect(x: 6.5, y: 6.5, width: 11, height: 11)).fill()
+        case .processing:
+            let track = NSBezierPath()
+            track.appendArc(withCenter: NSPoint(x: 12, y: 12), radius: 8.5, startAngle: 0, endAngle: 360, clockwise: false)
+            stroke(track, Ink.white.withAlphaComponent(0.18), width: 2)
+            let angle = Date().timeIntervalSince(began) / 1.1 * 360
+            let arc = NSBezierPath()
+            arc.appendArc(withCenter: NSPoint(x: 12, y: 12), radius: 8.5, startAngle: angle - 90, endAngle: angle + 10, clockwise: false)
+            stroke(arc, color, width: 2.2)
+        case .done:
+            let check = NSBezierPath()
+            check.move(to: NSPoint(x: 6, y: 11.5))
+            check.line(to: NSPoint(x: 9.7, y: 7.8))
+            check.line(to: NSPoint(x: 18, y: 16.2))
+            stroke(check, color, width: 1.9)
+        case .saved:
+            // A check with an underline: the result was also filed into history.
+            let check = NSBezierPath()
+            check.move(to: NSPoint(x: 6, y: 13))
+            check.line(to: NSPoint(x: 9.5, y: 9.5))
+            check.line(to: NSPoint(x: 17, y: 17))
+            stroke(check, color)
+            let rule = NSBezierPath()
+            rule.move(to: NSPoint(x: 8, y: 5.5))
+            rule.line(to: NSPoint(x: 16, y: 5.5))
+            stroke(rule, color, width: 1.6)
+        case .failed:
+            let cross = NSBezierPath()
+            cross.move(to: NSPoint(x: 6.5, y: 17.5))
+            cross.line(to: NSPoint(x: 17.5, y: 6.5))
+            cross.move(to: NSPoint(x: 17.5, y: 17.5))
+            cross.line(to: NSPoint(x: 6.5, y: 6.5))
+            stroke(cross, color, width: 1.9)
+        case .paused:
+            color.setFill()
+            NSBezierPath(roundedRect: NSRect(x: 8.7, y: 6, width: 2.4, height: 12), xRadius: 1.2, yRadius: 1.2).fill()
+            NSBezierPath(roundedRect: NSRect(x: 12.9, y: 6, width: 2.4, height: 12), xRadius: 1.2, yRadius: 1.2).fill()
+        case .followup:
+            // A loop arrow: the follow-up window is open without a wake word. The head sits on the arc's end
+            // (330°), not its start, so it reads as an arrow rather than a stray tick.
+            let loop = NSBezierPath()
+            loop.appendArc(withCenter: NSPoint(x: 12, y: 12), radius: 7, startAngle: 50, endAngle: 330, clockwise: false)
+            let end = CGFloat(330) * .pi / 180
+            let tip = NSPoint(x: 12 + 7 * cos(end), y: 12 + 7 * sin(end))
+            let travel = NSPoint(x: -sin(end), y: cos(end))
+            let normal = NSPoint(x: cos(end), y: sin(end))
+            let back = NSPoint(x: tip.x - travel.x * 3.4, y: tip.y - travel.y * 3.4)
+            loop.move(to: NSPoint(x: back.x + normal.x * 2.4, y: back.y + normal.y * 2.4))
+            loop.line(to: tip)
+            loop.line(to: NSPoint(x: back.x - normal.x * 2.4, y: back.y - normal.y * 2.4))
+            stroke(loop, color, width: 1.7)
+        }
+    }
+
+    private func mic(_ color: NSColor) {
+        let capsule = NSBezierPath(roundedRect: NSRect(x: 9, y: 10, width: 6, height: 11), xRadius: 3, yRadius: 3)
+        stroke(capsule, color, width: 1.6)
+        let cradle = NSBezierPath()
+        cradle.move(to: NSPoint(x: 6, y: 12.5))
+        cradle.appendArc(withCenter: NSPoint(x: 12, y: 12.5), radius: 6, startAngle: 180, endAngle: 360, clockwise: false)
+        stroke(cradle, color, width: 1.6)
+        let stem = NSBezierPath()
+        stem.move(to: NSPoint(x: 12, y: 6.5))
+        stem.line(to: NSPoint(x: 12, y: 3.5))
+        stroke(stem, color, width: 1.6)
+    }
+}
 
 /// What superwhisper is doing with a recording, beside the listener's own phase.
 enum DeliveryState { case recording /* superwhisper's own mic recording */, processing, done, failed, saved }
@@ -1348,7 +1509,7 @@ enum DirectRunEnd { case done, failed, cancelled, superseded }
 
 /// Floating label at the top of the screen while a dictation is open; the menu bar may be hidden.
 final class HUD {
-    private let label = NSTextField(labelWithString: "")
+    private let glyphView = HUDGlyphView()
     private lazy var panel: NSPanel = {
         let p = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
         p.level = .statusBar
@@ -1360,15 +1521,18 @@ final class HUD {
         let bg = NSVisualEffectView()
         bg.material = .hudWindow
         bg.state = .active
+        // The glyph palette assumes a dark pill, so pin the appearance instead of following the system theme.
+        bg.appearance = NSAppearance(named: .darkAqua)
         bg.wantsLayer = true
         bg.layer?.cornerRadius = 12
-        label.font = .systemFont(ofSize: 15, weight: .semibold)
-        label.translatesAutoresizingMaskIntoConstraints = false
+        glyphView.translatesAutoresizingMaskIntoConstraints = false
         bg.addGestureRecognizer(NSClickGestureRecognizer(target: HistoryPanel.shared, action: #selector(HistoryPanel.show)))
-        bg.addSubview(label)
+        bg.addSubview(glyphView)
         NSLayoutConstraint.activate([
-            label.centerXAnchor.constraint(equalTo: bg.centerXAnchor),
-            label.centerYAnchor.constraint(equalTo: bg.centerYAnchor),
+            glyphView.centerXAnchor.constraint(equalTo: bg.centerXAnchor),
+            glyphView.centerYAnchor.constraint(equalTo: bg.centerYAnchor),
+            glyphView.widthAnchor.constraint(equalToConstant: 22),
+            glyphView.heightAnchor.constraint(equalToConstant: 22),
         ])
         p.contentView = bg
         return p
@@ -1378,6 +1542,9 @@ final class HUD {
     private var phase = Listener.Phase.idle
     private var delivery: DeliveryState?
     private var notice: HUDLabel?
+
+    /// The glyph currently on screen, or nil when the HUD is hidden. `--hud-labels` reads it.
+    var visibleGlyph: HUDLabel? { panel.isVisible ? glyphView.glyph : nil }
 
     /// Pause/resume confirmation for 1 s, over whatever the HUD shows; the hotkey otherwise gives no feedback.
     func notify(_ label: HUDLabel) {
@@ -1397,7 +1564,7 @@ final class HUD {
         render()
     }
 
-    /// .done leaves 📝👆 up, since the automatic path saves to history before its handoff returns.
+    /// .done leaves the saved glyph up, since the automatic path saves to history before its handoff returns.
     func deliver(_ state: DeliveryState?) {
         // The handoff that .ended was waiting for has begun or finished, so .ended no longer holds the HUD.
         if phase == .ended { phase = .idle }
@@ -1419,9 +1586,9 @@ final class HUD {
         case (.followup, nil): (.followup, nil)
         case (.idle, nil): nil
         } }
-        guard let view else { panel.orderOut(nil); return }
-        label.stringValue = view.label.rawValue
-        label.textColor = view.label == .recording ? .systemRed : .labelColor
+        // Animation must stop with the pill: a hidden HUD that keeps a 30 fps timer burns CPU for nothing.
+        guard let view else { glyphView.stop(); panel.orderOut(nil); return }
+        glyphView.show(view.label)
         if let expiry = view.expiry {
             let mine = shown
             DispatchQueue.main.asyncAfter(deadline: .now() + expiry) { [self] in

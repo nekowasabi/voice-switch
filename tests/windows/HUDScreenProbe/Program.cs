@@ -44,21 +44,28 @@ internal static class Program
 
                 Check(Screen.FromHandle(target.Handle).DeviceName == screen.DeviceName,
                     "The test window did not reach the requested display.");
-                foreach (var phase in new[] { DictationPhase.Waiting, DictationPhase.Recording, DictationPhase.Ended })
+                foreach (var (phase, want) in new[]
+                         {
+                             (DictationPhase.Waiting, HudGlyph.Waiting),
+                             (DictationPhase.Recording, HudGlyph.Recording),
+                             (DictationPhase.Ended, HudGlyph.Processing)
+                         })
                 {
                     hud.Show(phase);
                     Check(IsWindowVisible(hud.Handle), $"{phase}: native HUD window is hidden.");
+                    Check(hud.VisibleGlyph == want, $"{phase}: glyph is {hud.VisibleGlyph?.ToString() ?? "none"}, wanted {want}.");
                     Check(GetWindowRect(hud.Handle, out var rectangle), "GetWindowRect failed.");
                     var actual = Rectangle.FromLTRB(rectangle.Left, rectangle.Top, rectangle.Right, rectangle.Bottom);
                     var expected = new Rectangle(area.Left + (area.Width - hud.Width) / 2,
                         area.Top + 12, hud.Width, hud.Height);
-                    Console.WriteLine($"{phase}: pointer={pointerScreen.DeviceName}, foreground={screen.DeviceName}, HUD={actual}, expected={expected}");
+                    Console.WriteLine($"{phase}: pointer={pointerScreen.DeviceName}, foreground={screen.DeviceName}, glyph={hud.VisibleGlyph}, HUD={actual}, expected={expected}");
                     Check(actual == expected, $"{phase}: HUD is not at the foreground display's top center.");
                     Check(hud.Bounds == actual, $"{phase}: managed bounds differ from the native window rectangle.");
                     CheckUnchanged(target.Handle, pointerScreen.DeviceName);
                 }
 
                 Check(WaitFor(() => !IsWindowVisible(hud.Handle), 3000), "Ended: HUD did not auto-hide.");
+                Check(hud.VisibleGlyph is null, "Ended: the glyph is still reported visible after the auto-hide.");
                 CheckUnchanged(target.Handle, pointerScreen.DeviceName);
                 hud.Show(DictationPhase.Recording);
                 hud.Show(DictationPhase.Idle);

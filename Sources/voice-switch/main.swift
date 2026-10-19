@@ -32,8 +32,8 @@ if mode == "--enroll-speaker" {
     do { print("kept=\(SpeakerGate.withoutOtherSpeakers(try SpeakerGate.readWave(args[1]), cfg: cfg).count)"); exit(0) }
     catch { log("speaker cut failed: \(error)"); exit(1) }
 } else if mode == "--hud-labels" {
-    // Verification only: shows every HUD label, writes labels.txt (and a PNG per label when screen recording is
-    // allowed) into the given folder, and fails unless every label is letter-free, distinct, and fits the HUD, and every label sequence holds.
+    // Verification only: shows every HUD glyph, writes glyphs.txt (and a PNG per glyph when screen recording is
+    // allowed) into the given folder, and fails unless every glyph is distinct, drawn, centered, and every sequence holds.
     guard args.count == 1 else { print("usage: --hud-labels <evidence-dir>"); exit(1) }
     let dir = URL(fileURLWithPath: args[0])
     let app = NSApplication.shared
@@ -61,39 +61,41 @@ if mode == "--enroll-speaker" {
         step()
         RunLoop.main.run(until: Date() + 0.3)
         guard let panel = app.windows.first(where: { $0 is NSPanel && $0.isVisible }),
-              let field = panel.contentView?.subviews.compactMap({ $0 as? NSTextField }).first else {
+              let glyphView = panel.contentView?.subviews.compactMap({ $0 as? HUDGlyphView }).first,
+              let glyph = hud.visibleGlyph else {
             failures.append("\(name): HUD not visible"); continue
         }
-        let text = field.stringValue, width = field.intrinsicContentSize.width
-        labels.append(text)
-        lines.append("phase=\(name) label=\(text) width=\(Int(width.rounded(.up))) hud=\(Int(panel.frame.width))")
-        if text.isEmpty { failures.append("\(name): empty label") }
-        if text.unicodeScalars.contains(where: CharacterSet.letters.contains) { failures.append("\(name): label has letters: \(text)") }
-        if width > panel.frame.width { failures.append("\(name): label is wider than the HUD") }
+        labels.append(glyph.rawValue)
+        // Centering is checked in the glyph's own superview space, where its constraints live.
+        let frame = glyphView.frame
+        let host = glyphView.superview?.bounds ?? .zero
+        let centered = abs(frame.midX - host.midX) < 0.5 && abs(frame.midY - host.midY) < 0.5
+        lines.append("phase=\(name) glyph=\(glyph.rawValue) frame=\(Int(frame.width))x\(Int(frame.height)) hud=\(Int(panel.frame.width))x\(Int(panel.frame.height)) centered=\(centered ? "yes" : "no")")
+        if !centered { failures.append("\(name): glyph is not centered in the HUD") }
+        if frame.width > host.width || frame.height > host.height { failures.append("\(name): glyph is larger than the HUD") }
         let shot = Process()
         shot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
         shot.arguments = ["-x", "-o", "-l", String(panel.windowNumber), dir.appendingPathComponent("\(name).png").path]
         try? shot.run()
         shot.waitUntilExit()
     }
-    if Set(labels).count != labels.count { failures.append("labels are not distinct") }
-    func visibleLabel() -> String {
-        guard let panel = app.windows.first(where: { $0 is NSPanel && $0.isVisible }),
-              let field = panel.contentView?.subviews.compactMap({ $0 as? NSTextField }).first else { return "hidden" }
-        return field.stringValue
+    if Set(labels).count != HUDLabel.allCases.count {
+        failures.append("expected \(HUDLabel.allCases.count) distinct glyphs, saw \(Set(labels).count): \(labels.joined(separator: ","))")
     }
-    let processing = HUDLabel.processing.rawValue
+    func visibleGlyph() -> String {
+        hud.visibleGlyph?.rawValue ?? "hidden"
+    }
     // Each step: what to do, how long to let timers run, and what the HUD must then show.
     let sequences: [(String, [(String, (HUD) -> Void, TimeInterval, String)])] = [
-        ("ended-then-done", [("ended", { $0.show(.ended) }, 0.3, processing),
+        ("ended-then-done", [("ended", { $0.show(.ended) }, 0.3, HUDLabel.processing.rawValue),
                              ("done", { $0.deliver(.processing); $0.deliver(.done) }, 0.3, HUDLabel.done.rawValue),
                              ("1.3s", { _ in }, 1.0, "hidden")]),
         ("failed-hides", [("failed", { $0.deliver(.processing); $0.deliver(.failed) }, 0.3, HUDLabel.failed.rawValue),
                           ("3.3s", { _ in }, 3.0, "hidden")]),
         ("new-dictation-wins", [("waiting", { $0.deliver(.processing); $0.show(.waiting) }, 0.3, HUDLabel.waiting.rawValue),
-                                ("idle", { $0.show(.idle) }, 0.3, processing)]),
+                                ("idle", { $0.show(.idle) }, 0.3, HUDLabel.processing.rawValue)]),
         ("saved-survives-done", [("done", { $0.deliver(.saved); $0.deliver(.done) }, 0.3, HUDLabel.saved.rawValue)]),
-        ("dropped-ended-hides", [("ended", { $0.show(.ended) }, 0.3, processing),
+        ("dropped-ended-hides", [("ended", { $0.show(.ended) }, 0.3, HUDLabel.processing.rawValue),
                                  ("1.7s", { _ in }, 1.4, "hidden")]),
         // The pause notice covers a dictation label for 1 s, then the dictation label comes back.
         ("notice-then-phase", [("paused", { $0.show(.waiting); $0.notify(.paused) }, 0.3, HUDLabel.paused.rawValue),
@@ -101,13 +103,13 @@ if mode == "--enroll-speaker" {
     ]
     for (name, steps) in sequences {
         let settled = Date() + 3
-        while visibleLabel() != "hidden" && Date() < settled { RunLoop.main.run(until: Date() + 0.1) }
+        while visibleGlyph() != "hidden" && Date() < settled { RunLoop.main.run(until: Date() + 0.1) }
         let seq = HUD()
         var seen: [String] = [], ok = true
         for (step, act, wait, want) in steps {
             act(seq)
             RunLoop.main.run(until: Date() + wait)
-            let got = visibleLabel()
+            let got = seq.visibleGlyph?.rawValue ?? "hidden"
             seen.append("\(step)=\(got)")
             if got != want { ok = false; failures.append("sequence \(name): \(step) showed \(got), wanted \(want)") }
         }
@@ -146,9 +148,9 @@ if mode == "--enroll-speaker" {
         if !ok { failures.append("direct \(name): wanted \(want) within 2.5 s, got \(got.map { "\($0)" } ?? "none") after \(seconds) s, early=\(String(describing: early))") }
     }
     lines += failures.map { "FAIL \($0)" }
-    lines.append(failures.isEmpty ? "PASS: every HUD label is letter-free, distinct, and fits the HUD; every sequence holds" : "FAIL: \(failures.count) check(s)")
+    lines.append(failures.isEmpty ? "PASS: every HUD glyph is distinct, centered, and fits the HUD; every sequence holds" : "FAIL: \(failures.count) check(s)")
     let report = lines.joined(separator: "\n") + "\n"
-    try? report.write(to: dir.appendingPathComponent("labels.txt"), atomically: true, encoding: .utf8)
+    try? report.write(to: dir.appendingPathComponent("glyphs.txt"), atomically: true, encoding: .utf8)
     print(report, terminator: "")
     exit(failures.isEmpty ? 0 : 1)
 } else if mode == "--vad-selftest" {
