@@ -107,26 +107,31 @@ cmd_run() {
   grep -E 'heard|dictation|phase|fatal|command|whisper' "$out/stdout.txt" || true
 }
 
-# hud: shows every label of the built binary's real HUD (no microphone, no Superwhisper), then compares
-# the label literals of the Mac and Windows HUD sources. Exit 0 only when every check passes.
+# hud: shows every glyph of the built binary's real HUD (no microphone, no Superwhisper), then compares
+# the glyph names of the Mac and Windows HUD sources. Exit 0 only when every check passes.
 cmd_hud() {
   out=$EVID/${VS_RUN_ID:-$(date +%Y%m%d-%H%M%S)}/hud
   mkdir -p "$out"
   rc=0
   "$BIN" --hud-labels "$out" || rc=1
-  # Source literals cover Windows, which this Mac cannot render.
-  grep '^enum HUDLabel' "$REPO/Sources/voice-switch/MacApp.swift" | grep -oE '[a-z]+ = "[^"]*"' | sed 's/.*= //' | LC_ALL=C sort > "$out/mac-literals.txt"
-  grep -oE 'label\.Text = "[^"]*"' "$REPO/dotnet/VoiceSwitch.Windows/Tray/DictationHud.cs" | sed 's/.*= //' | LC_ALL=C sort > "$out/windows-literals.txt"
-  if diff "$out/mac-literals.txt" "$out/windows-literals.txt" > "$out/parity.diff"; then
-    echo "ok   Mac and Windows HUD literals match"
+  # Glyph names cover Windows, which this Mac cannot render. Both HUDs draw vector paths now, so a shared
+  # name contract is what keeps the two platforms showing the same nine states.
+  awk '/^enum HUDLabel/ { inside = 1 } inside && /case / { gsub(/^[ \t]*case[ \t]+/, ""); gsub(/[ \t]*\{.*/, ""); n = split($0, names, /,[ \t]*/); for (i = 1; i <= n; i++) print names[i] } inside && /^}/ { inside = 0 }' \
+    "$REPO/Sources/voice-switch/MacApp.swift" | tr 'A-Z' 'a-z' | LC_ALL=C sort > "$out/mac-glyphs.txt"
+  awk '/^public enum HudGlyph/ { inside = 1; next } inside && /^}/ { inside = 0 } inside { print }' \
+    "$REPO/dotnet/VoiceSwitch.Windows/Tray/DictationHud.cs" | grep -v '^[[:space:]]*{' | sed 's/[[:space:],]//g' | sed '/^$/d' \
+    | tr 'A-Z' 'a-z' | LC_ALL=C sort > "$out/windows-glyphs.txt"
+  if diff "$out/mac-glyphs.txt" "$out/windows-glyphs.txt" > "$out/parity.diff"; then
+    echo "ok   Mac and Windows HUD glyph names match"
   else
-    echo "FAIL Mac and Windows HUD literals differ (parity.diff)"; rc=1
+    echo "FAIL Mac and Windows HUD glyph names differ (parity.diff)"; rc=1
   fi
-  [ "$(wc -l < "$out/mac-literals.txt")" -eq 9 ] || { echo "FAIL expected 9 Mac HUD literals; narrow the grep"; rc=1; }
-  if perl -CSD -ne 'print if /\p{L}/' "$out/windows-literals.txt" > "$out/windows-letters.txt" && [ -s "$out/windows-letters.txt" ]; then
-    echo "FAIL Windows HUD literals contain letters:"; cat "$out/windows-letters.txt"; rc=1
+  [ "$(wc -l < "$out/mac-glyphs.txt")" -eq 9 ] || { echo "FAIL expected 9 Mac HUD glyphs; narrow the awk"; rc=1; }
+  # Regression guard: the HUD must not go back to emoji or text labels.
+  if grep -nE 'label\.Text|labelWithString' "$REPO/Sources/voice-switch/MacApp.swift" "$REPO/dotnet/VoiceSwitch.Windows/Tray/DictationHud.cs" > "$out/text-labels.txt"; then
+    echo "FAIL the HUD still draws text labels (text-labels.txt)"; rc=1
   else
-    echo "ok   Windows HUD literals are letter-free"
+    echo "ok   both HUDs draw vector glyphs, not text"
   fi
   echo "exit=$rc evidence=$out"
   return $rc

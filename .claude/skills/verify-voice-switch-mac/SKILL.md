@@ -48,7 +48,7 @@ VS_RUN_ID=<name> $V run <fixture> [config.json]
 - A config with a `dictation` key drives the user's real Superwhisper. It writes a WAV, runs `open -a superwhisper`, may switch Superwhisper modes, and may paste into the frontmost app. Wake-word dictations and automatic recordings ended by the stop word paste. Tell the user before running one.
 - To run automatic sessions without Superwhisper, set `dictation.superwhisperMode` to a mode that does not exist (e.g. `vs-verify-missing`). The handoff then returns before `open`, and the recording goes to local history (`dictation recognition: complete id=<n> rule=auto_b`). This does not help wake-word dictations or stop-word endings. They hand off without a mode check and still open Superwhisper.
 
-HUD labels have their own drive, `VS_RUN_ID=<name> $V hud`. It runs `voice-switch --hud-labels <evidence>/hud`, which shows every HUD label on the real `HUD` class and checks it, then compares the Mac and Windows label literals. See [features/hud-labels.md](features/hud-labels.md).
+HUD glyphs have their own drive, `VS_RUN_ID=<name> $V hud`. It runs `voice-switch --hud-labels <evidence>/hud`, which shows every HUD glyph on the real `HUD` class and checks it, then compares the Mac and Windows glyph names. See [features/hud-labels.md](features/hud-labels.md).
 
 The `run` command prints the exit code, the evidence folder, any marker files, and the `heard` / `dictation` / `phase` / `whisper` lines (the last covers `whisper: ready` and `superwhisper mode:`). The fixture text and expected lines for each feature are in [features/README.md](features/README.md).
 
