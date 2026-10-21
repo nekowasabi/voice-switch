@@ -34,5 +34,6 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [Automatic-recording gates](./automatic-gates.md) covers the Silero and speech.cpp checks before handoff, the recording HUD waiting for agreement, and the stop-word paste.
 - [Transcription recall](./transcription-recall.md) counts phrases Superwhisper drops from a captured WAV. The KPI is zero.
 - [Speaker gate](./speaker-gate.md) drops automatic recordings of another voice and cuts 2 s+ stretches of another voice from handed-off audio (SG9, SG4, built only); the rest is the acceptance list, with the playback front end.
+- [Local transcription](./local-transcription.md) transcribes dictation without Superwhisper (Cohere GGUF on transcribe.cpp). It is not drivable yet; the engine baseline runs from the Mac skill.
 - [HUD glyphs](./hud-labels.md) covers the vector HUD glyphs. Source checks run from the Mac skill; rendering needs a Windows desktop.
 - [Tray host and IPC](./tray-ipc.md) covers start, pause, reload, and quit of the tray app. It is not drivable on this machine yet.
