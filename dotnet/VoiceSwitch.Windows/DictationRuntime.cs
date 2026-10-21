@@ -1160,12 +1160,12 @@ public sealed class WindowsDictationRuntime
         // long enough that the next dictation was dropped as overlapping.
         if (config.SpeakerEnrollment is not null)
             audio = audio with { Samples = await Task.Run(() => SpeakerGate.WithoutOtherSpeakers(audio.Samples, config, Log.Info)) };
-        // Ending it with the stop word shows the user meant to dictate into the window in front, so it is handed off like a
-        // wake-word dictation and Superwhisper pastes it. One that ended on silence or maxSeconds stays history-only.
-        if (wake.IsAutomatic && audio.Reason == FinishReason.StandaloneStop)
+        // Ending it with the stop word or the finish key shows the user meant to dictate into the window in front, so it is handed
+        // off like a wake-word dictation and Superwhisper pastes it. One that ended on silence or maxSeconds stays history-only.
+        if (wake.IsAutomatic && audio.Reason is FinishReason.StandaloneStop or FinishReason.FinishCommand)
         {
             audio = audio with { Origin = new WakeOrigin(WakeRule.Strict, audio.Wake.InputIdleSeconds) };
-            Log.Info($"dictation session: automatic ended by stop word, pasting like a wake-word dictation sid={audio.SessionId}");
+            Log.Info($"dictation session: automatic ended by {audio.Reason}, pasting like a wake-word dictation sid={audio.SessionId}");
         }
         try
         {

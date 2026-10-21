@@ -528,9 +528,10 @@ enum Hotkeys {
     nonisolated(unsafe) static var triedTap = false
 
     /// Called when a dictation starts: re-read the shortcuts (the user may have changed them) and arm the tap.
-    static func begin() {
+    static func begin(finishOnly: Bool = false) {
         let defaults = UserDefaults(suiteName: "com.superduper.superwhisper")
-        let read = [("KeyboardShortcuts_toggleRecording", Command.finish), ("KeyboardShortcuts_cancelRecording", .cancel)].map {
+        let keys = [("KeyboardShortcuts_toggleRecording", Command.finish), ("KeyboardShortcuts_cancelRecording", .cancel)]
+        let read = keys.prefix(finishOnly ? 1 : 2).map {
             (key: $0.0, command: $0.1, shortcut: defaults?.string(forKey: $0.0).flatMap(parseShortcut))
         }
         let shortcuts = read.compactMap { r in r.shortcut.map { ($0, r.command) } }
@@ -847,7 +848,7 @@ final class Listener {
                let heard = try? await transcribe(u, locale: Locale(identifier: config.cfg.locale ?? "ja_JP")) {
                 guard localHistoryState.withLock({ $0.generation == generation }) else { continue }
                 if speaksWake(heard) {
-                    dictation = nil; speechFrames = 0
+                    dictation = nil; speechFrames = 0; Hotkeys.end()
                     log("dictation session: automatic replaced by wake word")
                 } else {
                     heardDuringAutomatic = heard
@@ -954,8 +955,10 @@ final class Listener {
                 // The whole phrase with its preroll, even when it overlaps typing.
                 let samples = recent
                 if !samples.isEmpty {
-                    // No hotkeys: the user is mid-task elsewhere and their Escape belongs to that app, so only silence or a stop word ends it.
+                    // Finish only: the user is mid-task elsewhere and their Escape belongs to that app. The finish key is the manual
+                    // stop for when the stop word is misheard.
                     dictation = Dictation(samples: samples, generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: true, origin: origin)
+                    Hotkeys.begin(finishOnly: true)
                     log("dictation session: automatic \(origin.fields) \(sidField(dictation?.sessionID))")
                     continue
                 }
@@ -1233,10 +1236,10 @@ final class Listener {
                 var d = d
                 d.samples = SpeakerGate.withoutOtherSpeakers(d.samples, cfg: config.cfg)
                 // superwhisper takes focus when it opens the file; hand it back to wherever the user is now, not where the session began.
-                // Ending it with the stop word shows the user meant to dictate into the app in front, so it is handed off like a
-                // wake-word dictation and superwhisper pastes it. One that ended on silence or maxSeconds stays history-only.
-                let origin = token == "StandaloneStop" ? WakeOrigin(rule: .strict, inputIdleSeconds: d.origin.inputIdleSeconds) : d.origin
-                if origin != d.origin { log("dictation session: automatic ended by stop word, pasting like a wake-word dictation \(sidField(d.sessionID))") }
+                // Ending it with the stop word or the finish key shows the user meant to dictate into the app in front, so it is handed
+                // off like a wake-word dictation and superwhisper pastes it. One that ended on silence or maxSeconds stays history-only.
+                let origin = token == "StandaloneStop" || token == "FinishCommand" ? WakeOrigin(rule: .strict, inputIdleSeconds: d.origin.inputIdleSeconds) : d.origin
+                if origin != d.origin { log("dictation session: automatic ended by \(token), pasting like a wake-word dictation \(sidField(d.sessionID))") }
                 reportDelivery(.processing)
                 let outcome = await handoff(d.samples, cfg: cfg, target: NSWorkspace.shared.frontmostApplication,
                                             action: nil, origin: origin, sessionID: d.sessionID, transcriptPolicy: d.transcriptPolicy,
