@@ -141,7 +141,7 @@ enum DictationTimingGuard {
     static func warnIfNeeded(_ cfg: Config) {
         if shouldWarnHighEndSilence(cfg.dictation?.endSilenceMs),
            let ms = cfg.dictation?.endSilenceMs {
-            log("dictation timing warn: endSilenceMs unusually high (\(ms)); example is 2400")
+            log("dictation timing warn: endSilenceMs unusually high (\(ms)); example is 1500")
         }
         if shouldWarnHighStartTimeout(cfg.dictation?.startTimeoutMs),
            let ms = cfg.dictation?.startTimeoutMs {

@@ -1,0 +1,343 @@
+{
+  "issue": 48,
+  "base": "e22fa59ff4d176dc20165e90f52b954372397a90",
+  "items": [
+    {
+      "id": "DRIFT-1",
+      "feature": "citation-drift",
+      "required": true,
+      "kind": "contains_all",
+      "path": ".cursor/skills/verify-end-model/drift.md",
+      "needles": [
+        "e22fa59ff4d176dc20165e90f52b954372397a90",
+        "MacApp.swift:919",
+        "stopCheck.pending",
+        "MacApp.swift:1239",
+        "DictationRuntime.cs:1006",
+        "pending.Count > 0",
+        "DictationRuntime.cs:1168",
+        "config.example.json:17",
+        "issue cited L32",
+        "config.example.windows-url.json:15",
+        "issue cited L28",
+        "LINE DRIFT",
+        "code fallback is already 1200"
+      ]
+    },
+    {
+      "id": "P0-SAVE-1",
+      "feature": "save-only-end",
+      "required": true,
+      "kind": "absent",
+      "needle": "pasting like a wake-word dictation",
+      "paths": [
+        "Sources/voice-switch/MacApp.swift",
+        "dotnet/VoiceSwitch.Windows/DictationRuntime.cs",
+        "dotnet/VoiceSwitch.Windows.Tests/NoWakeTests.cs",
+        "README.md",
+        "README_ja.md",
+        ".claude/skills/verify-voice-switch/features/automatic-gates.md",
+        ".claude/skills/verify-voice-switch-mac/features/automatic-wake.md",
+        ".claude/skills/verify-voice-switch-mac/features/paste-routing.md",
+        ".claude/skills/verify-voice-switch-mac/features/stop-word-long-utterance.md"
+      ]
+    },
+    {
+      "id": "P0-SAVE-2",
+      "feature": "save-only-end",
+      "required": true,
+      "kind": "absent",
+      "needle": "token == \"StandaloneStop\" ? WakeOrigin",
+      "paths": ["Sources/voice-switch/MacApp.swift"]
+    },
+    {
+      "id": "P0-SAVE-3",
+      "feature": "save-only-end",
+      "required": true,
+      "kind": "absent",
+      "needle": "WakeRule.Strict, audio.Wake.InputIdleSeconds",
+      "paths": ["dotnet/VoiceSwitch.Windows/DictationRuntime.cs"]
+    },
+    {
+      "id": "P0-SAVE-4",
+      "feature": "save-only-end",
+      "required": true,
+      "kind": "present",
+      "needle": "AutomaticEndsStayHistoryOnly",
+      "paths": ["dotnet/VoiceSwitch.Windows.Tests/NoWakeTests.cs", "dotnet/VoiceSwitch.Windows.Tests/Program.cs"]
+    },
+    {
+      "id": "P0-SAVE-5",
+      "feature": "save-only-end",
+      "required": true,
+      "kind": "absent",
+      "needle": "Wake.IsAutomatic: false",
+      "paths": ["dotnet/VoiceSwitch.Windows.Tests/NoWakeTests.cs"]
+    },
+    {
+      "id": "P0-SAVE-6",
+      "feature": "save-only-end",
+      "required": true,
+      "kind": "absent",
+      "needle": "pastes when ended by the stop word",
+      "paths": ["dotnet/VoiceSwitch.Windows.Tests/Program.cs"]
+    },
+    {
+      "id": "P0-SAVE-7",
+      "feature": "save-only-end",
+      "required": true,
+      "kind": "contains_all",
+      "path": "dotnet/VoiceSwitch.Windows.Tests/NoWakeTests.cs",
+      "needles": [
+        "AutomaticEndsStayHistoryOnly",
+        "trimExcluded",
+        "FinishReason.StandaloneStop",
+        "FinishReason.FinishCommand"
+      ]
+    },
+    {
+      "id": "P0-CLOCK-1",
+      "feature": "vad-clock-end",
+      "required": true,
+      "kind": "absent",
+      "needle": "!stopCheck.pending",
+      "paths": ["Sources/voice-switch/MacApp.swift"]
+    },
+    {
+      "id": "P0-CLOCK-2",
+      "feature": "vad-clock-end",
+      "required": true,
+      "kind": "absent",
+      "needle": "pending.Count > 0",
+      "paths": ["dotnet/VoiceSwitch.Windows/DictationRuntime.cs"]
+    },
+    {
+      "id": "P0-CLOCK-6",
+      "feature": "vad-clock-end",
+      "required": true,
+      "kind": "absent",
+      "needle": "pending.Count == 0 && session.AdvanceSpeechTo(lastLiveSpeechEnd, originalStore.Copy) is { } advanced",
+      "paths": ["dotnet/VoiceSwitch.Windows/DictationRuntime.cs"]
+    },
+    {
+      "id": "P0-CLOCK-3",
+      "feature": "vad-clock-end",
+      "required": true,
+      "kind": "present",
+      "needle": "SilenceEndsWhileRecognitionPending",
+      "paths": ["dotnet/VoiceSwitch.Windows.Tests/Program.cs"]
+    },
+    {
+      "id": "P0-CLOCK-4",
+      "feature": "vad-clock-end",
+      "required": true,
+      "kind": "contains_all",
+      "path": "dotnet/VoiceSwitch.Windows.Tests/Program.cs",
+      "needles": [
+        "SilenceEndsWhileRecognitionPending",
+        "dictation silence: fired",
+        "pending="
+      ]
+    },
+    {
+      "id": "P0-CLOCK-5",
+      "feature": "vad-clock-end",
+      "required": true,
+      "kind": "present",
+      "needle": "SpeechDuringGraceDoesNotEnd",
+      "paths": ["dotnet/VoiceSwitch.Windows.Tests/Program.cs"]
+    },
+    {
+      "id": "P0-DEFAULT-1",
+      "feature": "silence-default-and-sound",
+      "required": true,
+      "kind": "json_equals",
+      "pointer": "dictation.endSilenceMs",
+      "value": 1500,
+      "paths": [
+        "config.example.json",
+        "config.example.windows.json",
+        "config.example.windows-url.json",
+        "config.example.macrowhisper.json"
+      ]
+    },
+    {
+      "id": "P0-DEFAULT-2",
+      "feature": "silence-default-and-sound",
+      "required": true,
+      "kind": "absent",
+      "needle": "endSilenceMs ?? 1200",
+      "paths": ["Sources/voice-switch/MacApp.swift"]
+    },
+    {
+      "id": "P0-DEFAULT-3",
+      "feature": "silence-default-and-sound",
+      "required": true,
+      "kind": "absent",
+      "needle": "EndSilenceMs ?? 1200",
+      "paths": [
+        "dotnet/VoiceSwitch.Windows.Core/DictationCore.cs",
+        "dotnet/VoiceSwitch.Windows/DictationRuntime.cs"
+      ]
+    },
+    {
+      "id": "P0-DEFAULT-4",
+      "feature": "silence-default-and-sound",
+      "required": true,
+      "kind": "present",
+      "needle": "example is 1500",
+      "paths": [
+        "Sources/voice-switch/Config.swift",
+        "dotnet/VoiceSwitch.Windows/DictationRuntime.cs"
+      ]
+    },
+    {
+      "id": "P0-DEFAULT-5",
+      "feature": "silence-default-and-sound",
+      "required": true,
+      "kind": "absent",
+      "needle": "example is 2400",
+      "paths": [
+        "Sources/voice-switch/Config.swift",
+        "dotnet/VoiceSwitch.Windows/DictationRuntime.cs"
+      ]
+    },
+    {
+      "id": "P0-DEFAULT-6",
+      "feature": "silence-default-and-sound",
+      "required": true,
+      "kind": "present",
+      "needle": "OmittedEndSilenceMsDefaultsTo1500",
+      "paths": ["dotnet/VoiceSwitch.Windows.Tests/Program.cs"]
+    },
+    {
+      "id": "P0-SOUND-1",
+      "feature": "silence-default-and-sound",
+      "required": true,
+      "kind": "absent",
+      "needle": "if key == .finish { playStopSound() }",
+      "paths": ["Sources/voice-switch/MacApp.swift"]
+    },
+    {
+      "id": "P0-SOUND-2",
+      "feature": "silence-default-and-sound",
+      "required": true,
+      "kind": "present",
+      "needle": "FinishReason.Silence or FinishReason.StandaloneStop or FinishReason.FinishCommand",
+      "paths": ["dotnet/VoiceSwitch.Windows/DictationRuntime.cs"]
+    },
+    {
+      "id": "P0-SOUND-3",
+      "feature": "silence-default-and-sound",
+      "required": true,
+      "kind": "present",
+      "needle": "SilenceEndPlaysStopSound",
+      "paths": ["dotnet/VoiceSwitch.Windows.Tests/Program.cs"]
+    },
+    {
+      "id": "P0-HARNESS-1",
+      "feature": "harness-cases",
+      "required": true,
+      "kind": "present",
+      "needle": "silence-while-recognition-pending",
+      "paths": [
+        "tests/windows/NoiseBenchmark/Program.cs",
+        "tests/parity/fixtures/end_model.json",
+        "tests/parity/run_parity.py",
+        "tests/parity/swift/main.swift"
+      ]
+    },
+    {
+      "id": "P0-HARNESS-2",
+      "feature": "harness-cases",
+      "required": true,
+      "kind": "present",
+      "needle": "resume-during-grace",
+      "paths": [
+        "tests/windows/NoiseBenchmark/Program.cs",
+        "tests/parity/fixtures/end_model.json",
+        "tests/parity/run_parity.py",
+        "tests/parity/swift/main.swift"
+      ]
+    },
+    {
+      "id": "P0-HARNESS-3",
+      "feature": "harness-cases",
+      "required": true,
+      "kind": "present",
+      "needle": "button-end",
+      "paths": [
+        "tests/windows/NoiseBenchmark/Program.cs",
+        "tests/parity/fixtures/end_model.json",
+        "tests/parity/run_parity.py",
+        "tests/parity/swift/main.swift"
+      ]
+    },
+    {
+      "id": "P0-HARNESS-4",
+      "feature": "harness-cases",
+      "required": true,
+      "kind": "contains_all",
+      "path": "tests/windows/NoiseBenchmark/Program.cs",
+      "needles": [
+        "\"intentional-silence\" => new HarnessExpectation(true, 0, [], null)",
+        "\"late-stop-after-silence\" => new HarnessExpectation(true, 1, [FinishReason.Silence.ToString()], null)",
+        "\"embedded-stop\" => new HarnessExpectation(true, 1, [FinishReason.Silence.ToString()], null)",
+        "\"silence-while-recognition-pending\" => new HarnessExpectation(true, 1, [FinishReason.Silence.ToString()], null)",
+        "\"resume-during-grace\" => new HarnessExpectation(true, 1, [FinishReason.Silence.ToString()], null)",
+        "\"button-end\" => new HarnessExpectation(true, 1, [FinishReason.FinishCommand.ToString()], null)"
+      ]
+    },
+    {
+      "id": "P0-HARNESS-5",
+      "feature": "harness-cases",
+      "required": true,
+      "kind": "contains_all",
+      "path": "tests/parity/fixtures/end_model.json",
+      "needles": [
+        "\"id\": \"silence-while-recognition-pending\"",
+        "\"id\": \"resume-during-grace\"",
+        "\"id\": \"button-end\"",
+        "\"reason\": \"Silence\"",
+        "\"reason\": \"FinishCommand\"",
+        "\"pastes\": false",
+        "\"endSound\": true"
+      ]
+    },
+    {
+      "id": "P0-FIELD-LATENCY",
+      "feature": "harness-cases",
+      "required": false,
+      "kind": "device",
+      "reason": "Last speech frame to Processing stays p95 <= 2.2s for an automatic session even with artificial recognizer delay. This needs the real microphone path. The unit stand-in is P0-CLOCK-3."
+    },
+    {
+      "id": "P0-FIELD-EARLY",
+      "feature": "harness-cases",
+      "required": false,
+      "kind": "device",
+      "reason": "Early-cut rate stays under 3 to 5 percent on a Japanese dictation corpus with think-pauses of 0.8, 1.2, 1.6, 2.0, and 2.5 seconds. That corpus is not in this repo. The mechanism stand-in is P0-CLOCK-5."
+    },
+    {
+      "id": "P0-FIELD-MIX",
+      "feature": "harness-cases",
+      "required": false,
+      "kind": "device",
+      "reason": "Silence's share of end reasons rises, StandaloneStop's share falls, and discarded short recordings do not increase. This needs production logs."
+    },
+    {
+      "id": "P1-HUD",
+      "feature": "harness-cases",
+      "required": false,
+      "kind": "deferred",
+      "reason": "Phase 1 HUD states are out of the Phase 0 gate. Do not block the Phase 0 PR on them."
+    },
+    {
+      "id": "P2-ROUTE",
+      "feature": "harness-cases",
+      "required": false,
+      "kind": "deferred",
+      "reason": "Phase 2 prefix routes are out of the Phase 0 gate. Decision 1 (three destinations, no per-app split) applies when Phase 2 starts."
+    }
+  ]
+}

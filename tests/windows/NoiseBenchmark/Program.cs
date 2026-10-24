@@ -222,6 +222,9 @@ static HarnessExpectation HarnessExpectationFor(string caseId)
         "consecutive-sessions" => new HarnessExpectation(true, 2, [FinishReason.StandaloneStop.ToString(), FinishReason.StandaloneStop.ToString()], null),
         "intentional-silence" => new HarnessExpectation(true, 0, [], null),
         "late-stop-after-silence" => new HarnessExpectation(true, 1, [FinishReason.Silence.ToString()], null),
+        "silence-while-recognition-pending" => new HarnessExpectation(true, 1, [FinishReason.Silence.ToString()], null),
+        "resume-during-grace" => new HarnessExpectation(true, 1, [FinishReason.Silence.ToString()], null),
+        "button-end" => new HarnessExpectation(true, 1, [FinishReason.FinishCommand.ToString()], null),
         _ => new HarnessExpectation(true, null, null, null)
     };
 }

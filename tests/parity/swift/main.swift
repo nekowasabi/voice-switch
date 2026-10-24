@@ -225,10 +225,17 @@ struct PaneRouteFixture: Decodable {
     var resolve_body: [ResolveBody]
 }
 
+struct EndModelCase: Decodable {
+    var id: String
+    var reason: String
+    var pastes: Bool
+    var endSound: Bool
+}
+
 var failures: [String] = []
 let args = CommandLine.arguments
-guard args.count == 4 else {
-    FileHandle.standardError.write(Data("usage: swift-parity text_matching.json segmenter.json pane_route.json\n".utf8))
+guard args.count == 5 else {
+    FileHandle.standardError.write(Data("usage: swift-parity text_matching.json segmenter.json pane_route.json end_model.json\n".utf8))
     exit(2)
 }
 
@@ -236,6 +243,14 @@ let decoder = JSONDecoder()
 let textFixture = try decoder.decode(TextFixture.self, from: Data(contentsOf: URL(fileURLWithPath: args[1])))
 let segmenterFixture = try decoder.decode(SegmenterFixture.self, from: Data(contentsOf: URL(fileURLWithPath: args[2])))
 let paneFixture = try decoder.decode(PaneRouteFixture.self, from: Data(contentsOf: URL(fileURLWithPath: args[3])))
+let endModel = try decoder.decode([EndModelCase].self, from: Data(contentsOf: URL(fileURLWithPath: args[4])))
+func endCase(_ id: String) -> EndModelCase? { endModel.first { $0.id == id } }
+let silenceWhilePending = endCase("silence-while-recognition-pending")
+let resumeDuringGrace = endCase("resume-during-grace")
+let buttonEnd = endCase("button-end")
+precondition(silenceWhilePending?.reason == "Silence" && silenceWhilePending?.pastes == false && silenceWhilePending?.endSound == true)
+precondition(resumeDuringGrace?.reason == "Silence" && resumeDuringGrace?.pastes == false && resumeDuringGrace?.endSound == true)
+precondition(buttonEnd?.reason == "FinishCommand" && buttonEnd?.pastes == false && buttonEnd?.endSound == true)
 
 for item in textFixture.normalization {
     let actual = normalize(item.input)
@@ -299,6 +314,7 @@ for item in paneFixture.resolve_body {
 
 if failures.isEmpty {
     print("PASS behavior fixtures")
+    print("PASS end model fixtures")
     print("PASS pane route fixtures")
     print("PASS pane extract fixtures")
     print("PASS pane candidates fixtures")
