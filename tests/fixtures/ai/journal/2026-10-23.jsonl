@@ -1,0 +1,15 @@
+{"endReason": "silence", "id": "e1", "origin": "automatic", "recordingSeconds": 0.4, "schemaVersion": 1, "text": "うん", "timestamp": "2026-10-23T09:00:00+09:00"}
+{"endReason": "silence", "id": "e2", "origin": "automatic", "recordingSeconds": 3.0, "schemaVersion": 1, "text": "えーと、明日までに報告書を出さなきゃ", "timestamp": "2026-10-23T09:01:00+09:00"}
+{"endReason": "silence", "id": "e3", "origin": "wake", "recordingSeconds": 2.1, "schemaVersion": 1, "text": "APIのレート制限って何だっけ", "timestamp": "2026-10-23T09:05:00+09:00"}
+{"endReason": "button", "id": "e4", "origin": "wake", "recordingSeconds": 4.0, "schemaVersion": 1, "text": "田中さんへの返信の下書き、来週の件は承知しました", "timestamp": "2026-10-23T09:10:00+09:00"}
+{"endReason": "silence", "id": "e5", "origin": "manual", "recordingSeconds": 2.5, "schemaVersion": 1, "text": "クロードにテストを書いてと頼みたい", "timestamp": "2026-10-23T09:12:00+09:00"}
+{"endReason": "silence", "id": "e6", "origin": "automatic", "recordingSeconds": 3.3, "schemaVersion": 1, "text": "保存先はジャーナルディレクトリでいくことにした", "timestamp": "2026-10-23T09:20:00+09:00"}
+{"endReason": "stopWord", "id": "e7", "origin": "wake", "recordingSeconds": 2.0, "schemaVersion": 1, "text": "ミューズ、昨日の決定を要約して", "timestamp": "2026-10-23T09:30:00+09:00"}
+{"endReason": "silence", "id": "e8", "origin": "wake", "recordingSeconds": 2.2, "schemaVersion": 1, "text": "ミューズ、この内容でGitHubのIssueを作って", "timestamp": "2026-10-23T09:32:00+09:00"}
+{"endReason": "silence", "id": "e9", "origin": "automatic", "recordingSeconds": 1.5, "schemaVersion": 1, "text": "請求書の金額、まだ見てない", "timestamp": "2026-10-23T09:40:00+09:00"}
+{"endReason": "silence", "id": "e10", "origin": "automatic", "recordingSeconds": 2.0, "schemaVersion": 1, "text": "やっぱり請求書は金曜までに出さないと", "timestamp": "2026-10-23T09:42:00+09:00"}
+{"endReason": "button", "id": "e11", "origin": "manual", "recordingSeconds": 2.0, "schemaVersion": 1, "text": "やっぱり請求書は金曜までに出さないと", "timestamp": "2026-10-23T09:43:00+09:00"}
+{"endReason": "silence", "id": "e12", "origin": "automatic", "recordingSeconds": 2.4, "schemaVersion": 1, "text": "なんか疲れた、この設計でいいのか不安", "timestamp": "2026-10-23T10:00:00+09:00"}
+{"endReason": "silence", "id": "e13", "origin": "automatic", "recordingSeconds": 1.8, "schemaVersion": 1, "text": "人生とは何だろう？", "timestamp": "2026-10-23T10:05:00+09:00"}
+{"endReason": "silence", "id": "e14", "origin": "automatic", "recordingSeconds": 3.5, "schemaVersion": 1, "text": "仕様を調べなきゃいけないし、田中さんに聞く文面もいる", "timestamp": "2026-10-23T11:20:00+09:00"}
+{"endReason": "silence", "id": "e15", "origin": "automatic", "recordingSeconds": 3.0, "schemaVersion": 1, "text": "この件のアイデア、音声の保存はテキストだけでいいかもしれない", "timestamp": "2026-10-23T11:40:00+09:00"}
