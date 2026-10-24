@@ -227,7 +227,7 @@ internal static class NoWakeTests
             else { Add(70, 9000); Add(30, 0); }
             var config = new VoiceSwitchConfig(["wake"], "en-US", "unused", MaxSeconds: 2.5,
                 HangoverMs: 120, PrerollMs: 60, MinSpeechMs: 90, VadMinRMS: 0.005f, StopWords: ["stop"],
-                Dictation: new(EndSilenceMs: stopWord ? 1200 : 240, NoWakeWord: new(AutoIdle: true, MinHandoffMs: 0)));
+                Dictation: new(EndSilenceMs: stopWord ? 3000 : 240, NoWakeWord: new(AutoIdle: true, MinHandoffMs: 0)));
             var handoff = new CountingHandoff();
             var recognizer = new ScriptedDictationRecognizer(request =>
             {
@@ -260,8 +260,86 @@ internal static class NoWakeTests
             && cough is (0, false, _, _) && cough.Log.Contains("dictation agreement: shared=1 ")
                && cough.Log.Contains("dictation dropped: automatic audio had no agreed words")
             && broken is (1, true, _, _) && broken.Log.Contains("automatic confirmed by unavailable word agreement")
-            && stopped.Handed == 1 && stopped.Audio is { Reason: FinishReason.StandaloneStop, Wake.IsAutomatic: false }
-               && stopped.Log.Contains("automatic ended by stop word, pasting like a wake-word dictation");
+            && stopped.Handed == 1 && stopped.Audio is { Reason: FinishReason.StandaloneStop, Wake.IsAutomatic: true };
+    }
+
+    public static bool AutomaticEndsStayHistoryOnly()
+    {
+        (DictationAudio? Audio, string Log, int Code) Run(string mode)
+        {
+            var frames = new List<PcmFrame>();
+            void Add(int count, short value)
+            {
+                for (var i = 0; i < count; i++)
+                    frames.Add(new(frames.Count * Segmenter.FrameLength,
+                        Enumerable.Range(0, Segmenter.FrameLength).Select(j => (short)(j % 2 == 0 ? value : -value)).ToImmutableArray()));
+            }
+            const int hangoverMs = 300;
+            var closedUtteranceGap = Segmenter.Frames(hangoverMs) + 1;
+            Add(4, 0);
+            Add(16, 9000);
+            if (mode == "stop")
+            {
+                Add(closedUtteranceGap, 0);
+                Add(12, 9000);
+                Add(12, 0);
+            }
+            else
+            {
+                Add(mode == "silence" ? 40 : 10, 0);
+            }
+            var config = new VoiceSwitchConfig(["wake"], "en-US", "unused", MaxSeconds: 30,
+                HangoverMs: hangoverMs, PrerollMs: 60, MinSpeechMs: 90, VadMinRMS: 0.005f, StopWords: ["stop"],
+                Dictation: new(EndSilenceMs: mode == "silence" ? 600 : 3000, NoWakeWord: new(AutoIdle: true, MinHandoffMs: 0)));
+            var handoff = new CountingHandoff();
+            var recognizer = new ScriptedDictationRecognizer(request =>
+            {
+                var text = mode == "stop" && request.Range.Start >= 20 * Segmenter.FrameLength ? "stop" : "body";
+                return Task.FromResult(new RecognizedUtterance(request.Id, request.Extent, request.Range, text, [new LexicalRun(text, request.Range)]));
+            });
+            var hotkeys = new DictationHotkeys();
+            hotkeys.Begin(DictationHotkeys.Load(null));
+            var pressed = false;
+            double? idle = 4;
+            void DisarmNextAutomaticSession() => idle = null;
+            var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(frames), recognizer, handoff, true, inputIdleSeconds: () => idle,
+                micInUseBy: _ => null, voicedWindows: _ => 1, hotkeys: hotkeys, readShortcuts: () => null);
+            var previous = Console.Out;
+            using var output = new CapturingTextWriter(line =>
+            {
+                if (!line.Contains("dictation session: automatic ") || !line.Contains("range="))
+                {
+                    return;
+                }
+
+                DisarmNextAutomaticSession();
+                if (mode == "finish" && !pressed)
+                {
+                    pressed = true;
+                    hotkeys.OnKey(0x20, KeyMods.Control, down: true, nowMs: 0);
+                }
+            });
+            int code;
+            try
+            {
+                Console.SetOut(output);
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+                code = runtime.RunAsync(timeout.Token).GetAwaiter().GetResult();
+            }
+            finally { Console.SetOut(previous); }
+            return (handoff.Seen.LastOrDefault(), output.ToString(), code);
+        }
+
+        var silence = Run("silence");
+        var finish = Run("finish");
+        var stopped = Run("stop");
+        var ok = silence.Code == 0 && silence.Audio is { Reason: FinishReason.Silence, Wake.IsAutomatic: true }
+            && finish.Code == 0 && finish.Audio is { Reason: FinishReason.FinishCommand, Wake.IsAutomatic: true }
+            && stopped.Code == 0 && stopped.Audio is { Reason: FinishReason.StandaloneStop, Wake.IsAutomatic: true }
+            && stopped.Log.Contains("trimExcluded");
+        if (!ok)
+            Console.Error.WriteLine($"history-only silence={silence.Code}/{silence.Audio?.Reason}/{silence.Audio?.Wake.IsAutomatic} finish={finish.Code}/{finish.Audio?.Reason}/{finish.Audio?.Wake.IsAutomatic} stop={stopped.Code}/{stopped.Audio?.Reason}/{stopped.Audio?.Wake.IsAutomatic} trim={stopped.Log.Contains("trimExcluded")}");
+        return ok;
     }
 
     // A playback trace at one level from a minute ago to a minute ahead, so every mic frame of the test pairs with a bin.

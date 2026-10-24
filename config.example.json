@@ -14,7 +14,7 @@
   "pauseShortcut": "Control+Shift+F7",
   "dictation": {
     "recordingsDir": "~/Documents/superwhisper/recordings",
-    "endSilenceMs": 1200, "startTimeoutMs": 3000,
+    "endSilenceMs": 1500, "startTimeoutMs": 3000,
     "maxSeconds": 60,
     "excludeBundleIDs": [],
     "superwhisperMode": "voice_switch",

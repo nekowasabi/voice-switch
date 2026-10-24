@@ -1,0 +1,5 @@
+[
+  {"id": "silence-while-recognition-pending", "reason": "Silence", "pastes": false, "endSound": true},
+  {"id": "resume-during-grace", "reason": "Silence", "pastes": false, "endSound": true},
+  {"id": "button-end", "reason": "FinishCommand", "pastes": false, "endSound": true}
+]

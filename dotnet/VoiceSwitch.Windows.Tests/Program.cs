@@ -23,7 +23,8 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("automatic audio without a verified no-auto-paste mode falls back to unpasted local history", () => Check(NoWakeTests.ControlledMode())),
     ("clearing history invalidates pending transcription", () => Check(NoWakeTests.ClearPendingHistory())),
     ("automatic wake gates and immutable provenance", () => Check(NoWakeTests.WakeRules())),
-    ("automatic recording shows 録音中 only once two recognizers agree, drops a cough they disagree on, hands off when they fail, and pastes when ended by the stop word", () => Check(NoWakeTests.AutomaticWordAgreement())),
+    ("automatic recording shows 録音中 only once two recognizers agree, drops a cough they disagree on, hands off when they fail, and stays in history when ended by the stop word", () => Check(NoWakeTests.AutomaticWordAgreement())),
+    ("automatic silence, finish, and stop-word ends stay in history", () => Check(NoWakeTests.AutomaticEndsStayHistoryOnly())),
     ("automatic runtime repeats sessions, fails closed on idle or microphone uncertainty, yields to a spoken wake word, records fragmented speech from its start, and logs playback-vs-mic levels at start and end", () => Check(NoWakeTests.AutomaticRuntime())),
     ("loopback shadow fields give medians, the above-zero share, silent and unknown", () => Check(NoWakeTests.LoopbackShadowFields())),
     ("transcript shape counts letters and spots filler-only text without the text", () => Check(NoWakeTests.TranscriptShapeFields())),
@@ -95,6 +96,10 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation runtime waits for open stop utterance before silence", () => Check(DictationRuntimeWaitsForOpenStopUtteranceBeforeSilence())),
     ("dictation runtime short silence waits for open utterance", () => Check(DictationRuntimeShortSilenceWaitsForOpenUtterance())),
     ("dictation runtime ignores late stop after silence finish", () => Check(DictationRuntimeIgnoresLateStopAfterSilenceFinish())),
+    ("silence ends while a recognition is still pending", () => Check(SilenceEndsWhileRecognitionPending())),
+    ("speech during the silence grace stays one recording", () => Check(SpeechDuringGraceDoesNotEnd())),
+    ("omitted endSilenceMs defaults to 1500", () => Check(OmittedEndSilenceMsDefaultsTo1500())),
+    ("silence end plays the stop sound and a start timeout does not", () => Check(SilenceEndPlaysStopSound())),
     ("dictation runtime keeps the body when a recognition fails inside it", () => Check(DictationRuntimeKeepsBodyWhenRecognitionFailsInsideIt())),
     ("dictation runtime keeps embedded stop in silence body", () => Check(DictationRuntimeKeepsEmbeddedStopInSilenceBody())),
     ("dictation runtime keeps active body embedded stop in separate utterance", () => Check(DictationRuntimeKeepsActiveBodyEmbeddedStopInSeparateUtterance())),
@@ -1892,7 +1897,7 @@ static bool DictationRuntimeRecoversAfterLongNonwakeAudio()
 
 static bool DictationRuntimeWaitsForOpenStopUtteranceBeforeSilence()
 {
-    var config = DictationRuntimeTestConfig(startTimeoutMs: 3000, endSilenceMs: 1200, maxSeconds: 10);
+    var config = DictationRuntimeTestConfig(startTimeoutMs: 3000, endSilenceMs: 3000, maxSeconds: 10);
     var frames = new List<PcmFrame>();
     AddFrames(frames, 3, loud: false);
     AddFrames(frames, 12, loud: true);
@@ -1941,7 +1946,7 @@ static bool DictationRuntimeFinishesOnDedicatedTailStop()
 {
     var config = DictationRuntimeTestConfig(startTimeoutMs: 3000, endSilenceMs: 1200, maxSeconds: 10) with
     {
-        Dictation = DictationRuntimeTestConfig().Dictation! with { DedicatedStopRecognizer = true, EndSilenceMs = 1200, StartTimeoutMs = 3000, MaxSeconds = 10 }
+        Dictation = DictationRuntimeTestConfig().Dictation! with { DedicatedStopRecognizer = true, EndSilenceMs = 3000, StartTimeoutMs = 3000, MaxSeconds = 10 }
     };
     var frames = new List<PcmFrame>();
     AddFrames(frames, 3, loud: false);
@@ -2014,9 +2019,9 @@ static bool DictationRuntimeFinishesOnDedicatedTailStop()
 
 static bool DictationRuntimeOneBreathTailStopKeepsForegroundWindow()
 {
-    var config = DictationRuntimeTestConfig(endSilenceMs: 1200) with
+    var config = DictationRuntimeTestConfig(endSilenceMs: 3000) with
     {
-        Dictation = DictationRuntimeTestConfig().Dictation! with { DedicatedStopRecognizer = true }
+        Dictation = DictationRuntimeTestConfig().Dictation! with { DedicatedStopRecognizer = true, EndSilenceMs = 3000 }
     };
     var frames = new List<PcmFrame>();
     AddFrames(frames, 3, loud: false);
@@ -2214,7 +2219,7 @@ static bool DictationRuntimeKeepsActiveBodyEmbeddedStopInSeparateUtterance()
 
 static bool DictationRuntimeShortSilenceWaitsForOpenUtterance()
 {
-    var config = DictationRuntimeTestConfig(startTimeoutMs: 3000, endSilenceMs: 100, maxSeconds: 10);
+    var config = DictationRuntimeTestConfig(startTimeoutMs: 3000, endSilenceMs: 600, maxSeconds: 10);
     var prefix = new List<PcmFrame>();
     AddFrames(prefix, 3, loud: false);
     AddFrames(prefix, 12, loud: true);
@@ -4654,6 +4659,111 @@ static bool DictationDryRunKeepsAudioInMemory()
         && result.Path is null
         && launches == 0
         && !Directory.Exists(root);
+}
+
+static bool SilenceEndsWhileRecognitionPending()
+{
+    var release = 0;
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 4, loud: false);
+    AddFrames(frames, 20, loud: true);
+    AddFrames(frames, 40, loud: false);
+    var config = new VoiceSwitchConfig(["wake"], "en-US", "unused", MaxSeconds: 30,
+        HangoverMs: 300, PrerollMs: 60, MinSpeechMs: 90, VadMinRMS: 0.005f,
+        Dictation: new(EndSilenceMs: 600, NoWakeWord: new(AutoIdle: true, MinHandoffMs: 0)));
+    var recognizer = new ScriptedDictationRecognizer(async request =>
+    {
+        for (var i = 0; i < 200 && Volatile.Read(ref release) == 0; i++)
+            await Task.Delay(10);
+        return new RecognizedUtterance(request.Id, request.Extent, request.Range, "body", [Run("body", request.Range.Start, request.Range.End)]);
+    });
+    var handoff = new RecordingDictationHandoff();
+    var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(frames), recognizer, handoff, dryRun: true,
+        inputIdleSeconds: () => 4, micInUseBy: _ => null, voicedWindows: _ => 1);
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(8), out var output, line =>
+    {
+        if (line.Contains("dictation silence: fired", StringComparison.Ordinal))
+            Volatile.Write(ref release, 1);
+    });
+    var fired = output.Split('\n').FirstOrDefault(line => line.Contains("dictation silence: fired", StringComparison.Ordinal));
+    var pendingAt = fired?.IndexOf("pending=", StringComparison.Ordinal) ?? -1;
+    var pendingText = pendingAt >= 0 ? fired![(pendingAt + "pending=".Length)..] : "";
+    var pendingOk = int.TryParse(new string(pendingText.TakeWhile(char.IsDigit).ToArray()), out var pending) && pending > 0;
+    var audio = handoff.Submissions.SingleOrDefault();
+    var ok = code == 0 && pendingOk && audio is { Reason: FinishReason.Silence, Wake.IsAutomatic: true } && handoff.Submissions.Count == 1;
+    if (!ok)
+        Console.Error.WriteLine($"silence-pending code={code} pendingOk={pendingOk} pending={pendingText} submissions={handoff.Submissions.Count} reason={audio?.Reason} auto={audio?.Wake.IsAutomatic} fired={fired}");
+    return ok;
+}
+
+static bool SpeechDuringGraceDoesNotEnd()
+{
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 4, loud: false);
+    AddFrames(frames, 15, loud: true);
+    AddFrames(frames, 12, loud: false);
+    AddFrames(frames, 15, loud: true);
+    AddFrames(frames, 50, loud: false);
+    var config = new VoiceSwitchConfig(["wake"], "en-US", "unused", MaxSeconds: 30,
+        HangoverMs: 300, PrerollMs: 60, MinSpeechMs: 90, VadMinRMS: 0.005f,
+        Dictation: new(EndSilenceMs: 900, NoWakeWord: new(AutoIdle: true, MinHandoffMs: 0)));
+    var handoff = new RecordingDictationHandoff();
+    var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(frames), Recognizing("body"), handoff, dryRun: true,
+        inputIdleSeconds: () => 4, micInUseBy: _ => null, voicedWindows: _ => 1);
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(8), out var output);
+    var audio = handoff.Submissions.SingleOrDefault();
+    var ends = output.Split('\n').Count(line => line.Contains("end reason=", StringComparison.Ordinal));
+    var firstSpeechEnd = 19 * Segmenter.FrameLength;
+    var secondSpeech = 31 * Segmenter.FrameLength;
+    var ok = code == 0 && ends == 1 && audio is { Reason: FinishReason.Silence, Wake.IsAutomatic: true }
+        && audio.Range.Start < firstSpeechEnd && audio.Range.End > secondSpeech;
+    if (!ok)
+        Console.Error.WriteLine($"grace code={code} ends={ends} submissions={handoff.Submissions.Count} reason={audio?.Reason} range={audio?.Range.Start}..{audio?.Range.End} auto={audio?.Wake.IsAutomatic}");
+    return ok;
+}
+
+static bool OmittedEndSilenceMsDefaultsTo1500()
+{
+    var config = DictationRuntimeTestConfig() with
+    {
+        Dictation = DictationRuntimeTestConfig().Dictation! with { EndSilenceMs = null }
+    };
+    var session = StartedSession(config, out _);
+    var samples = (long)Math.Round(1500 * Segmenter.Rate / 1000.0, MidpointRounding.AwayFromZero);
+    var deadlineOk = session.PendingBody is { } body && session.SilenceDeadline == body.End + samples;
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 2, loud: false);
+    var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(frames), Recognizing("wake"), new RecordingDictationHandoff(), dryRun: true);
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output);
+    var ok = deadlineOk && code == 0 && output.Contains("endSilenceMs=1500", StringComparison.Ordinal);
+    if (!ok)
+        Console.Error.WriteLine($"omitted deadlineOk={deadlineOk} body={session.PendingBody} deadline={session.SilenceDeadline} code={code}");
+    return ok;
+}
+
+static bool SilenceEndPlaysStopSound()
+{
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 50, loud: false);
+    var observer = new PhaseRecorder { StopSound = true };
+    var handoff = new RecordingDictationHandoff();
+    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 1200), new FixturePcmCapture(frames, delayAfterFrame: 24), Recognizing("wakebody"), handoff, dryRun: true, observer);
+    var silence = RunWithTimeout(runtime, TimeSpan.FromSeconds(5)) == 0
+        && handoff.Submissions.SingleOrDefault() is { Reason: FinishReason.Silence }
+        && observer.StopSounds == 1;
+
+    var timeoutFrames = new List<PcmFrame>();
+    AddFrames(timeoutFrames, 3, loud: false);
+    AddFrames(timeoutFrames, 12, loud: true);
+    AddFrames(timeoutFrames, 40, loud: false);
+    var timeoutObserver = new PhaseRecorder { StopSound = true };
+    var timeout = new WindowsDictationRuntime(DictationRuntimeTestConfig(startTimeoutMs: 300), new FixturePcmCapture(timeoutFrames, delayAfterFrame: 24), Recognizing("wake"), new RecordingDictationHandoff(), dryRun: true, timeoutObserver);
+    var quiet = RunWithTimeout(timeout, TimeSpan.FromSeconds(5)) == 0 && timeoutObserver.StopSounds == 0;
+    if (!silence || !quiet)
+        Console.Error.WriteLine($"stop-sound silence={silence} sounds={observer.StopSounds} reason={handoff.Submissions.SingleOrDefault()?.Reason} timeoutSounds={timeoutObserver.StopSounds}");
+    return silence && quiet;
 }
 
 static VoiceSwitchConfig DictationConfig() =>

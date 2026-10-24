@@ -13,7 +13,7 @@
   "pauseShortcut": "Control+Shift+F7",
   "dictation": {
     "recordingsDir": "%LOCALAPPDATA%\\com.superwhisper.app\\recordings",
-    "endSilenceMs": 2400, "startTimeoutMs": 3000,
+    "endSilenceMs": 1500, "startTimeoutMs": 3000,
     "maxSeconds": 60,
     "excludeProcessNames": [],
     "superwhisperMode": "voice_switch",

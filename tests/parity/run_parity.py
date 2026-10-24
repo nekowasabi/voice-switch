@@ -24,6 +24,12 @@ CLI_FIXTURE = HERE / "fixtures" / "cli.json"
 PANE_ROUTE_FIXTURE = HERE / "fixtures" / "pane_route.json"
 SPEECH_GATE_FIXTURE = HERE / "fixtures" / "speech_gate.json"
 SWIFT_HARNESS = HERE / "swift" / "main.swift"
+END_MODEL_FIXTURE = HERE / "fixtures" / "end_model.json"
+END_MODEL_CASES = {
+    "silence-while-recognition-pending": "Silence",
+    "resume-during-grace": "Silence",
+    "button-end": "FinishCommand",
+}
 
 
 def main() -> int:
@@ -36,6 +42,7 @@ def main() -> int:
     repo = SourceTree(ROOT)
     result = Result()
 
+    check_end_model_fixture(result)
     check_capability_markers(result, repo, contract)
     check_allowed_capability_gaps(result, repo, contract)
     check_static_call_chains(result, repo)
@@ -821,6 +828,25 @@ def windows_cs_files() -> list[str]:
     ]
 
 
+def check_end_model_fixture(result: Result) -> None:
+    loaded = json.loads(END_MODEL_FIXTURE.read_text(encoding="utf-8"))
+    if not isinstance(loaded, list):
+        result.fail("end model fixture must be a list of cases")
+        return
+    by_id = {item["id"]: item for item in loaded}
+    if set(by_id) != set(END_MODEL_CASES):
+        result.fail(f"end model ids {sorted(by_id)} != {sorted(END_MODEL_CASES)}")
+        return
+    for case_id, reason in END_MODEL_CASES.items():
+        item = by_id[case_id]
+        if item.get("pastes") is not False or item.get("endSound") is not True or item.get("reason") != reason:
+            result.fail(
+                f"end model {case_id} pastes={item.get('pastes')} reason={item.get('reason')} endSound={item.get('endSound')}"
+            )
+        else:
+            result.ok(f"end model {case_id} reason={reason} pastes=false endSound=true")
+
+
 def check_windows_core_behavior(result: Result, text_fixture: dict, segmenter_fixture: dict, pane_route_fixture: dict) -> None:
     dotnet = shutil.which("dotnet") or str(Path.home() / ".local/share/mise/shims/dotnet")
     if not Path(dotnet).exists() and shutil.which("dotnet") is None:
@@ -842,6 +868,8 @@ def check_windows_core_behavior(result: Result, text_fixture: dict, segmenter_fi
                 "run",
                 "--project",
                 str(tmp_path / "Harness.csproj"),
+                "--",
+                str(END_MODEL_FIXTURE),
             ],
             cwd=ROOT,
             text=True,
@@ -897,7 +925,7 @@ def check_swift_core_behavior(result: Result, require_swift: bool) -> None:
             result.fail("Swift pure harness failed to compile:\n" + completed.stdout + completed.stderr)
             return
         completed = subprocess.run(
-            [str(binary), str(TEXT_FIXTURE), str(SEGMENTER_FIXTURE), str(PANE_ROUTE_FIXTURE)],
+            [str(binary), str(TEXT_FIXTURE), str(SEGMENTER_FIXTURE), str(PANE_ROUTE_FIXTURE), str(END_MODEL_FIXTURE)],
             cwd=ROOT,
             text=True,
             stdout=subprocess.PIPE,
@@ -1026,6 +1054,7 @@ def harness_program(text_fixture: dict, segmenter_fixture: dict, pane_route_fixt
     text_json = json.dumps(text_fixture, ensure_ascii=False)
     segmenter_json = json.dumps(segmenter_fixture, ensure_ascii=False)
     pane_route_json = json.dumps(pane_route_fixture, ensure_ascii=False)
+    end_cases_cs = "\n".join(f'    ["{case_id}"] = "{reason}",' for case_id, reason in END_MODEL_CASES.items())
     return textwrap.dedent(
         f"""\
         using System.Text.Json;
@@ -1139,6 +1168,24 @@ def harness_program(text_fixture: dict, segmenter_fixture: dict, pane_route_fixt
             Check(actual == expected, $"resolve body {{item.GetProperty("name").GetString()}} expected={{expected}} actual={{actual}}");
         }}
 
+        var endModel = JsonDocument.Parse(File.ReadAllText(args[0])).RootElement;
+        var endExpected = new Dictionary<string, string>
+        {{
+{end_cases_cs}
+        }};
+        var endSeen = new HashSet<string>();
+        foreach (var item in endModel.EnumerateArray())
+        {{
+            var id = item.GetProperty("id").GetString()!;
+            endSeen.Add(id);
+            Check(endExpected.TryGetValue(id, out var endReason)
+                && item.GetProperty("reason").GetString() == endReason
+                && item.GetProperty("pastes").GetBoolean() == false
+                && item.GetProperty("endSound").GetBoolean(),
+                $"end model {{id}} pastes or reason or endSound");
+        }}
+        Check(endSeen.SetEquals(endExpected.Keys), "end model case ids");
+
         if (failures.Count > 0)
         {{
             foreach (var failure in failures) Console.Error.WriteLine("FAIL " + failure);
@@ -1146,6 +1193,7 @@ def harness_program(text_fixture: dict, segmenter_fixture: dict, pane_route_fixt
         }}
 
         Console.WriteLine("PASS behavior fixtures");
+        Console.WriteLine("PASS end model fixtures");
         Console.WriteLine("PASS pane route fixtures");
         Console.WriteLine("PASS pane extract fixtures");
         Console.WriteLine("PASS pane candidates fixtures");

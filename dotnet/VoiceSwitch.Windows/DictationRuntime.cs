@@ -278,7 +278,7 @@ public sealed class WindowsDictationRuntime
                             }
                         }
 
-                        if (pending.Count == 0 && session.AdvanceSpeechTo(lastLiveSpeechEnd, originalStore.Copy) is { } advanced)
+                        if (session.AdvanceSpeechTo(lastLiveSpeechEnd, originalStore.Copy) is { } advanced)
                         {
                             Submit(advanced);
                             session = ResetSession(pending, advanced.Range.End);
@@ -691,10 +691,10 @@ public sealed class WindowsDictationRuntime
 
     private void LogTiming()
     {
-        Log.Info($"dictation timing: startTimeoutMs={config.Dictation?.StartTimeoutMs ?? 3000} endSilenceMs={config.Dictation?.EndSilenceMs ?? 1200} hangoverMs={config.HangoverMs ?? 300} minSpeechMs={config.MinSpeechMs ?? 300} maxSeconds={config.Dictation?.MaxSeconds ?? config.MaxSeconds ?? 60} wakeReadings=\"{string.Join(',', config.Wakes().Select(wake => $"{wake.Text}={wake.Reading}"))}\"");
+        Log.Info($"dictation timing: startTimeoutMs={config.Dictation?.StartTimeoutMs ?? 3000} endSilenceMs={config.Dictation?.EndSilenceMs ?? 1500} hangoverMs={config.HangoverMs ?? 300} minSpeechMs={config.MinSpeechMs ?? 300} maxSeconds={config.Dictation?.MaxSeconds ?? config.MaxSeconds ?? 60} wakeReadings=\"{string.Join(',', config.Wakes().Select(wake => $"{wake.Text}={wake.Reading}"))}\"");
         if (DictationTimingGuard.ShouldWarnHighEndSilence(config.Dictation?.EndSilenceMs))
         {
-            Log.Info($"dictation timing warn: endSilenceMs unusually high ({config.Dictation?.EndSilenceMs}); example is 2400");
+            Log.Info($"dictation timing warn: endSilenceMs unusually high ({config.Dictation?.EndSilenceMs}); example is 1500");
         }
 
         if (DictationTimingGuard.ShouldWarnHighStartTimeout(config.Dictation?.StartTimeoutMs))
@@ -1003,7 +1003,7 @@ public sealed class WindowsDictationRuntime
             return false;
         }
 
-        if (pending.Count > 0 || open)
+        if (open)
         {
             LogSilence("deferred", analysisStore.Next, body.End, silenceAt, pending.Count, open);
             return false;
@@ -1076,7 +1076,7 @@ public sealed class WindowsDictationRuntime
         var stopped = audio.Reason is FinishReason.StandaloneStop or FinishReason.FinishCommand;
         endedByUser |= stopped;
         // The user wants to know the recording is over, so ring before Superwhisper is launched, automatic sessions included.
-        if (stopped && observer?.PlayStopSound() == true)
+        if (audio.Reason is FinishReason.Silence or FinishReason.StandaloneStop or FinishReason.FinishCommand && observer?.PlayStopSound() == true)
         {
             deafUntil = analysisStore.Next + MsToSamples(600);
         }
@@ -1160,13 +1160,6 @@ public sealed class WindowsDictationRuntime
         // long enough that the next dictation was dropped as overlapping.
         if (config.SpeakerEnrollment is not null)
             audio = audio with { Samples = await Task.Run(() => SpeakerGate.WithoutOtherSpeakers(audio.Samples, config, Log.Info)) };
-        // Ending it with the stop word shows the user meant to dictate into the window in front, so it is handed off like a
-        // wake-word dictation and Superwhisper pastes it. One that ended on silence or maxSeconds stays history-only.
-        if (wake.IsAutomatic && audio.Reason == FinishReason.StandaloneStop)
-        {
-            audio = audio with { Origin = new WakeOrigin(WakeRule.Strict, audio.Wake.InputIdleSeconds) };
-            Log.Info($"dictation session: automatic ended by stop word, pasting like a wake-word dictation sid={audio.SessionId}");
-        }
         try
         {
             var result = await handoff.SubmitAsync(audio, wake.IsAutomatic ? localCancellation : CancellationToken.None);

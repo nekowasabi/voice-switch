@@ -915,15 +915,14 @@ final class Listener {
                     }
                     continue
                 }
-                // A pending stop check holds the end, so a stop word is not submitted as text.
-                guard key == .finish || (!stopCheck.pending && (d.silentFrames * frameLen * 1000 / Int(rate) >= (d.origin.isAutomatic ? dc.noWakeWord?.endSilenceMs : nil) ?? dc.endSilenceMs ?? 1200
-                    || d.samples.count > Int((dc.maxSeconds ?? 60) * rate))) else { continue }
+                guard key == .finish || d.silentFrames * frameLen * 1000 / Int(rate) >= (d.origin.isAutomatic ? dc.noWakeWord?.endSilenceMs : nil) ?? dc.endSilenceMs ?? 1500
+                    || d.samples.count > Int((dc.maxSeconds ?? 60) * rate) else { continue }
                 let reason = key == .finish ? "hotkey" : d.samples.count > Int((dc.maxSeconds ?? 60) * rate) ? "maxSeconds"
                     : "\(d.silentFrames * frameLen * 1000 / Int(rate)) ms silence"
                 d.samples.removeLast(d.silentFrames * frameLen)
                 dictation = nil; recent.removeAll(); speechFrames = 0; Hotkeys.end(); endedByUser = key == .finish
                 log("dictation ended by \(reason) after \(d.samples.count * 1000 / Int(rate)) ms of audio \(sidField(d.sessionID))")
-                if key == .finish { playStopSound() }
+                if reason != "maxSeconds" { playStopSound() }
                 submitAndArm(d, cfg: dc, reason: finishReasonToken(reason))
                 continue
             }
@@ -1233,13 +1232,9 @@ final class Listener {
                 var d = d
                 d.samples = SpeakerGate.withoutOtherSpeakers(d.samples, cfg: config.cfg)
                 // superwhisper takes focus when it opens the file; hand it back to wherever the user is now, not where the session began.
-                // Ending it with the stop word shows the user meant to dictate into the app in front, so it is handed off like a
-                // wake-word dictation and superwhisper pastes it. One that ended on silence or maxSeconds stays history-only.
-                let origin = token == "StandaloneStop" ? WakeOrigin(rule: .strict, inputIdleSeconds: d.origin.inputIdleSeconds) : d.origin
-                if origin != d.origin { log("dictation session: automatic ended by stop word, pasting like a wake-word dictation \(sidField(d.sessionID))") }
                 reportDelivery(.processing)
                 let outcome = await handoff(d.samples, cfg: cfg, target: NSWorkspace.shared.frontmostApplication,
-                                            action: nil, origin: origin, sessionID: d.sessionID, transcriptPolicy: d.transcriptPolicy,
+                                            action: nil, origin: d.origin, sessionID: d.sessionID, transcriptPolicy: d.transcriptPolicy,
                                             stillCurrent: { self.localHistoryState.withLock { $0.generation == generation } })
                 if outcome == .notDispatched { await transcribeToHistory(d, generation: generation) }
                 reportDelivery(outcome == .noResult ? .failed : .done)
