@@ -1,0 +1,97 @@
+skill: verify-voice-switch-ai
+source: create-verification-skill
+live calibration: not run
+Mac 未検証
+Windows 未検証
+
+doctor:
+python=3.12.3
+cloud=off
+jevMinConfidence=unset
+fixture=yes
+journalDefault=/home/ubuntu/.local/share/voice-switch/journal
+journalDefaultMac=~/Library/Application Support/voice-switch/journal
+journalDefaultWindows=%LOCALAPPDATA%\voice-switch\journal
+ready=yes
+
+try:
+out=/tmp/voice-switch-ai-try
+cloud=off
+journal_unchanged=yes
+triage: local=none@1.00 -> memo
+triage: local=task@1.00 -> tray
+triage: local=research@1.00 -> tray
+triage: local=draft@1.00 -> tray
+triage: local=agent@1.00 -> tray
+triage: local=none@1.00 -> journal
+triage: muse=research@1.00 -> execute
+triage: muse=agent@1.00 -> tray
+triage: local=ambiguous jev=off -> memo
+triage: local=task@1.00 -> tray
+triage: local=task@1.00 -> tray
+triage: local=ambiguous jev=off -> memo
+triage: local=ambiguous jev=off -> memo
+triage: local=ambiguous jev=off -> memo
+triage: local=ambiguous jev=off -> memo
+triage: local=none@1.00 -> journal
+triage: local=ambiguous jev=off -> memo
+recall: e14 related=e4
+recall: e16 related=e6
+recall: e17 related=e9
+recall: conclusion-change e6 e16
+digest: date=2026-10-23 decisions=1 openLoops=2 stuck=1
+digest: date=2026-10-24 decisions=1 openLoops=0 stuck=1
+digest: week=2026-W43
+tray: count=6
+search: hits=3
+search: conclusion-change
+
+probe-list:
+cases=40
+edge=backchannel count=5
+edge=clear count=16
+edge=decision count=2
+edge=explicit count=1
+edge=feeling count=3
+edge=fragment count=4
+edge=issue count=1
+edge=mixed count=4
+edge=rhetorical count=4
+
+probe-score:
+source: synthetic
+rows: 4
+raw_none_precision: 1.00
+raw_tray_noise: 0.33
+recommended_min_confidence: 0.92
+none_precision_at_recommendation: 1.00
+tray_noise_at_recommendation: 0.00
+pane floor 0.8 is not used. Set dictation.ai.jevMinConfidence from this report after a live run.
+coverage=4/40 missed=0
+
+items:
+V00 PASS unittest exit 0
+V16 PASS doctor cloud=off jevMinConfidence=unset ready=yes
+V01 PASS journal_unchanged=yes
+V19 PASS fake key stays jev=off
+V03 PASS local task line
+V04 PASS ambiguous memo line
+V05 PASS muse execute line
+V06 PASS muse tray line
+V10 PASS week and conclusion change
+V12 PASS related past
+V13 PASS search conclusion change
+V02 PASS dir 0o700 file 0o600
+V07 PASS e2 title summary tags deadline cleanup
+V08 PASS merged e9 e10 e11
+V06b PASS issue draft externalWrite false
+V09 PASS daily digest sections
+V10b PASS weekly conclusion change
+V11 PASS research queue and agent staging
+V18 PASS no GitHub URL in derived files
+V14 PASS probe cases=40 with edges
+V15 PASS synthetic floor 0.92, pane floor not used
+V17 PASS second triage keeps tray bytes
+V13b PASS empty search exit 2
+
+failed: none

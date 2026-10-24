@@ -1,0 +1,6 @@
+[
+  {"utterance": "うん", "choice": "none", "confidence": 0.92},
+  {"utterance": "明日までに報告書を出さなきゃ", "choice": "task", "confidence": 0.95},
+  {"utterance": "なんか疲れた", "choice": "task", "confidence": 0.41},
+  {"utterance": "APIのレート制限って何だっけ", "choice": "research", "confidence": 0.93}
+]

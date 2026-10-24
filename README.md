@@ -239,3 +239,40 @@ An automatic recording passes three checks before Superwhisper opens. Wake-word 
 Short replies such as うん or はい can also be dropped by the third check. When the Silero model or a recognizer cannot load (Whisper on the Mac, speech.cpp on Windows), the app logs it and hands the recording off without that check. `voice-switch --check a.wav` prints `voiced=` and `agreed=` with both transcripts on stderr, to see why a file would be kept or dropped.
 
 Mac native build and runtime are unverified. Audio, permission, UI, and real-world accuracy checks are still required. Read the [implementation and settings](docs/no-wake-word/implementation.md), [native checklist](docs/no-wake-word/native-validation.md), and [acceptance gates](docs/wake-acceptance.md) before enabling this feature.
+
+## Journal proposals
+
+`scripts/voice-switch-ai` reads a daily JSONL journal and writes triage, a proposal tray, and digests beside it. It does not modify the journal. Cloud calls stay off unless `dictation.ai.cloud` is true and `dictation.ai.jevMinConfidence` is a number. The sample config is `config.example.ai.json`. The key, when you use Jev, is the environment variable `TYPESAFE_API_KEY` or `JEV_API_KEY`. Do not put the key in the config file.
+
+No open pull request for the journal writer (#49) was available, so this branch is based on main. `JsonlJournalReader` is the read side. The menu-bar app and the Windows tray do not call this CLI. Mac 未検証. Windows 未検証.
+
+Run the sample. On Windows, if `python3` is not the launcher, use `py -3` and backslashes.
+
+```sh
+python3 scripts/voice-switch-ai try
+```
+
+```text
+py -3 scripts\voice-switch-ai try
+```
+
+Stdout includes `cloud=off`, `journal_unchanged=yes`, and `triage: local=task@1.00 -> tray`. The derived directory is `voice-switch-ai-try` under the temp directory.
+
+Other commands, from the repository root:
+
+```sh
+python3 scripts/voice-switch-ai doctor
+python3 scripts/voice-switch-ai triage --journal tests/fixtures/ai/journal --out /tmp/voice-switch-ai-try
+python3 scripts/voice-switch-ai digest daily --journal tests/fixtures/ai/journal --out /tmp/voice-switch-ai-try --date 2026-10-23
+python3 scripts/voice-switch-ai digest weekly --journal tests/fixtures/ai/journal --out /tmp/voice-switch-ai-try --date 2026-10-23
+python3 scripts/voice-switch-ai tray list --out /tmp/voice-switch-ai-try
+python3 scripts/voice-switch-ai tray approve --out /tmp/voice-switch-ai-try --id tray-e2
+python3 scripts/voice-switch-ai search --journal tests/fixtures/ai/journal --out /tmp/voice-switch-ai-try 保存先
+python3 scripts/tray_jev_probe.py --list
+python3 scripts/tray_jev_probe.py --score tests/fixtures/ai/jev_score_synthetic.json
+python3 -m unittest discover -s tests/ai -v
+```
+
+`tray approve` marks a row approved and prints `approved locally; no write API called`. It does not create a GitHub issue or paste.
+
+A live floor comes only from `python3 scripts/tray_jev_probe.py` with a key in the environment. Copy `recommended_min_confidence` into `dictation.ai.jevMinConfidence`. The synthetic score file prints `0.92` and the line `pane floor 0.8 is not used`. That `0.92` is not a live result. Leave the floor unset until you run the probe yourself. While it is unset, triage does not call Jev.

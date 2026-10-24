@@ -147,3 +147,40 @@ LaunchServices、実マイク、Superwhisper の録音・文字起こし・貼�
 「うん」「はい」のような短い相づちは、3 つ目の確認で捨てられることがあります。Silero のモデルや認識器（Mac は Whisper、Windows は speech.cpp）を読み込めないときは、その旨を記録し、その確認を飛ばして渡します。`voice-switch --check a.wav` は、標準エラーに `voiced=` と `agreed=`、2 つの書き起こしを出します。ファイルが残る理由と捨てられる理由を確かめるときに使えます。
 
 Mac 未検証。実機での音声・権限・UI と精度の評価はまだ必要です。[実装と設定](docs/no-wake-word/implementation.md)、[実機チェック](docs/no-wake-word/native-validation.md)、[合格ライン](docs/wake-acceptance.md) を確認してから有効にしてください。
+
+## 保存した発話の提案トレイ
+
+`scripts/voice-switch-ai` は日別 JSONL のジャーナルを読み、仕分けと提案トレイとダイジェストを別のディレクトリに書く。ジャーナルのバイト列は変えない。クラウドへ送るのは `dictation.ai.cloud` が true で、かつ `dictation.ai.jevMinConfidence` が数値のときだけ。見本は `config.example.ai.json`。Jev を使うときの鍵は環境変数 `TYPESAFE_API_KEY` または `JEV_API_KEY`。設定ファイルには書かない。
+
+#49 のオープンな PR は無かったので、この分岐は main から作った。読み取り口は `JsonlJournalReader`。メニューバーアプリと Windows のトレイはこの CLI を呼ばない。Mac 未検証。Windows 未検証。
+
+サンプルを流す。Windows で `python3` が無いときは `py -3` とバックスラッシュを使う。
+
+```sh
+python3 scripts/voice-switch-ai try
+```
+
+```text
+py -3 scripts\voice-switch-ai try
+```
+
+標準出力に `cloud=off`、`journal_unchanged=yes`、`triage: local=task@1.00 -> tray` が出る。派生ファイルは一時ディレクトリの `voice-switch-ai-try`。
+
+リポジトリのルートで、ほかのコマンドは次のとおり。
+
+```sh
+python3 scripts/voice-switch-ai doctor
+python3 scripts/voice-switch-ai triage --journal tests/fixtures/ai/journal --out /tmp/voice-switch-ai-try
+python3 scripts/voice-switch-ai digest daily --journal tests/fixtures/ai/journal --out /tmp/voice-switch-ai-try --date 2026-10-23
+python3 scripts/voice-switch-ai digest weekly --journal tests/fixtures/ai/journal --out /tmp/voice-switch-ai-try --date 2026-10-23
+python3 scripts/voice-switch-ai tray list --out /tmp/voice-switch-ai-try
+python3 scripts/voice-switch-ai tray approve --out /tmp/voice-switch-ai-try --id tray-e2
+python3 scripts/voice-switch-ai search --journal tests/fixtures/ai/journal --out /tmp/voice-switch-ai-try 保存先
+python3 scripts/tray_jev_probe.py --list
+python3 scripts/tray_jev_probe.py --score tests/fixtures/ai/jev_score_synthetic.json
+python3 -m unittest discover -s tests/ai -v
+```
+
+`tray approve` は行を approved にし、`approved locally; no write API called` と出す。GitHub Issue は作らない。貼り付けもしない。
+
+ライブの下限は、環境に鍵を置いて `python3 scripts/tray_jev_probe.py` を実行したときの `recommended_min_confidence` だけを `dictation.ai.jevMinConfidence` に入れる。合成スコアは `0.92` と `pane floor 0.8 is not used` を出す。この `0.92` はライブの結果ではない。自分でプローブを走らせるまで下限は空のままにする。空のあいだ、仕分けは Jev を呼ばない。

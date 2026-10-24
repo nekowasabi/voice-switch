@@ -153,3 +153,14 @@ win-verify: ## Verify Windows path layout / Makefile routing (no Swift SDK requi
 	@grep -q 'defaultSuperwhisperToggle' Sources/voice-switch/Platform.swift
 	@grep -q 'SpeechPowerShell' dotnet/VoiceSwitch.Windows/Program.cs
 	@echo "win-verify: ok (PC=$(PC) PC_NORM=$(PC_NORM) default-goal=$(.DEFAULT_GOAL))"
+
+.PHONY: ai-test ai-try ai-verify
+
+ai-test: ## Run the journal AI unit tests
+	python3 -m unittest discover -s tests/ai -v
+
+ai-try: ## Run the offline sample journal through triage, digest, tray, and search
+	python3 scripts/voice-switch-ai try
+
+ai-verify: ## Run the journal AI verification checklist
+	python3 .cursor/skills/verify-voice-switch-ai/drive.py

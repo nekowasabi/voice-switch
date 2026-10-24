@@ -1,0 +1,11 @@
+{
+  "dictation": {
+    "journalDir": "~/Library/Application Support/voice-switch/journal",
+    "ai": {
+      "derivedDir": "~/Library/Application Support/voice-switch/ai",
+      "cloud": false,
+      "jevMinConfidence": null,
+      "allowedExecutions": ["summarize", "recall"]
+    }
+  }
+}
