@@ -940,6 +940,7 @@ final class Listener {
                 if automaticWakeAllowed() {
                     dictation = Dictation(samples: [], generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: false)
                     Hotkeys.begin()
+                    DictationJournal.note(dictation!.sessionID, manual: true)
                     log("dictation session: manual-hotkey \(dictation!.origin.fields) \(sidField(dictation!.sessionID))")
                 }
                 continue
@@ -994,6 +995,7 @@ final class Listener {
             if case .tail = event { continue }
             let (u, isHead) = switch event { case let .utterance(u): (u, false); case let .head(u): (u, true); case .tail: ([], false) }
             config.reloadIfChanged()
+            DictationJournal.bind(config.cfg.dictation?.journalDir)
             seg.cfg = config.cfg
             let transcript: Transcript
             let began = Date()
@@ -1190,6 +1192,7 @@ final class Listener {
     private func submit(_ d: Dictation, cfg: DictationConfig, reason: String) {
         guard localHistoryState.withLock({ $0.generation == d.captureGeneration }) else { return }
         let token = finishReasonToken(reason)
+        DictationJournal.note(d.sessionID, endReason: token, recordingSeconds: Double(d.samples.count) / rate)
         log("dictation session: end reason=\(token) \(d.origin.fields) seconds=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), Double(d.samples.count) / rate)) \(sidField(d.sessionID))")
         // A wake word followed straight by the stop word leaves a few frames. Superwhisper returns nothing for them and
         // the 30 s wait holds the handoff lock, so the next wake dictation and every automatic session behind it stall.
@@ -1644,6 +1647,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         do { config = try ConfigFile(path: configPath) } catch {
             fail("設定ファイルを読めません: \(configPath)\n\(error)"); return
         }
+        DictationJournal.bind(config.cfg.dictation?.journalDir)
         listener = Listener(config: config)
         listener.onPhase = { [hud] in hud.show($0) }
         listener.onDelivery = { [hud] in hud.deliver($0) }

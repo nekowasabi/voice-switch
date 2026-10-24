@@ -136,17 +136,22 @@ final class DictationHistory {
         self.retention = retention
     }
 
+    var journal: DictationJournal?
     @discardableResult
-    func add(id: UUID, text: String, origin: WakeOrigin, expectedGeneration: Int? = nil, policy: AutomaticTranscriptPolicy = .disabled) -> Bool {
+    func add(id: UUID, text: String, origin: WakeOrigin, expectedGeneration: Int? = nil, policy: AutomaticTranscriptPolicy = .disabled, endReason: String? = nil, recordingSeconds: Double? = nil, manual: Bool = false) -> Bool {
         guard text.utf16.count <= 100_000, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !policy.rejects(text, origin: origin) else { return false }
         lock.lock()
         prune()
         guard expectedGeneration == nil || expectedGeneration == currentGeneration else { lock.unlock(); return false }
         guard !entries.contains(where: { $0.id == id }) else { lock.unlock(); return false }
-        entries.append(DictationHistoryEntry(id: id, text: text, origin: origin, createdAt: now()))
+        let created = now()
+        entries.append(DictationHistoryEntry(id: id, text: text, origin: origin, createdAt: created))
         if entries.count > capacity { entries.removeFirst(entries.count - capacity) }
         lock.unlock()
+        let noted = DictationJournal.take(id)
+        let sink = journal ?? (self === DictationHistory.shared ? DictationJournal.active : nil)
+        sink?.record(id: id, at: created, text: text, origin: origin, endReason: endReason ?? noted.endReason, recordingSeconds: recordingSeconds ?? noted.recordingSeconds, manual: manual || noted.manual)
         onChange?()
         return true
     }

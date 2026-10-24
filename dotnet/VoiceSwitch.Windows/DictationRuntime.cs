@@ -670,6 +670,7 @@ public sealed class WindowsDictationRuntime
         }
 
         config = next;
+        if (DictationJournal.Enabled) DictationJournal.Bind(next, Log.Info);
         segmenter.Config = next;
         originalStore.EnsureCapacity(RetainedSamples(next, 10));
         analysisStore.EnsureCapacity(RetainedSamples(next, 10));
@@ -782,6 +783,7 @@ public sealed class WindowsDictationRuntime
             {
                 target = window;
                 hotkeys?.Begin(DictationHotkeys.Load(readShortcuts()));
+                JournalNotes.Note(session.SessionId, manual: true);
                 Log.Info($"dictation session: manual-hotkey {session.Origin.Fields} {Sid(session)}");
                 return true;
             }
@@ -1072,6 +1074,7 @@ public sealed class WindowsDictationRuntime
 
     private void Submit(DictationAudio audio)
     {
+        JournalNotes.Note(audio.SessionId, audio.Reason.ToString(), audio.Range.Length / Segmenter.Rate);
         Log.Info($"dictation session: end reason={audio.Reason} {audio.Wake.Fields} range={audio.Range.Start}..{audio.Range.End} seconds={audio.Range.Length / Segmenter.Rate:0.00} sid={audio.SessionId} {LevelFields(audio.Range)}");
         var stopped = audio.Reason is FinishReason.StandaloneStop or FinishReason.FinishCommand;
         endedByUser |= stopped;

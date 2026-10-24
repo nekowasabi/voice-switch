@@ -113,6 +113,9 @@ struct DictationConfig: Decodable {
     /// Windows only. A second SAPI engine hears a stop word after body text.
     /// macOS decodes the key and does not use it. Apple Speech is not covered. Absent stays off.
     var dedicatedStopRecognizer: Bool? = nil
+    /// Folder of daily `yyyy-MM-dd.jsonl` files, or one file when the path ends in `.jsonl`.
+    /// Absent uses the platform default. An unusable path is logged and the default is used.
+    var journalDir: String? = nil
 
     init(recordingsDir: String? = nil, endSilenceMs: Int? = nil, maxSeconds: Double? = nil,
          excludeBundleIDs: [String]? = nil, startTimeoutMs: Int? = nil) {

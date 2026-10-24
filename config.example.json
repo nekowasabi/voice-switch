@@ -13,6 +13,7 @@
   "vadMinRMS": 0.005,
   "pauseShortcut": "Control+Shift+F7",
   "dictation": {
+    "journalDir": "~/Documents/voice-switch/journal",
     "recordingsDir": "~/Documents/superwhisper/recordings",
     "endSilenceMs": 1200, "startTimeoutMs": 3000,
     "maxSeconds": 60,

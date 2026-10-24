@@ -2,6 +2,9 @@
   <ItemGroup>
     <!-- Same ONNX Runtime version as the macOS Swift package, so both run Silero alike. -->
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.24.2" />
+    <!-- net8.0 has no inbox ACL types. The Windows app already calls them; the journal uses the same ones. -->
+    <PackageReference Include="System.Security.AccessControl" Version="6.0.1" />
+    <PackageReference Include="System.Security.Principal.Windows" Version="5.0.0" />
     <EmbeddedResource Include="..\..\Sources\voice-switch\Resources\silero_vad.onnx" LogicalName="silero_vad.onnx" />
   </ItemGroup>
 </Project>

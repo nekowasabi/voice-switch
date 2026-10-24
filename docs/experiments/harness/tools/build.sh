@@ -9,7 +9,7 @@ repo=${1:-$here/../../../..}
 out=${2:-$here/bin}
 swiftc=${SWIFTC:-swiftc}
 policy=$repo/Sources/voice-switch/WakeSafety.swift
-srcs=(); for f in Config WakeSafety Transcript Segmenter Platform SuperwhisperModes PaneRoute; do srcs+=("$repo/Sources/voice-switch/$f.swift"); done  # same set as tests/parity/run_parity.py
+srcs=(); for f in Config DictationJournal WakeSafety Transcript Segmenter Platform SuperwhisperModes PaneRoute; do srcs+=("$repo/Sources/voice-switch/$f.swift"); done  # same set as tests/parity/run_parity.py
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$out"
 needs() { case $1 in agree_pair) echo agreedWithWhisper;; hallucination_filter) echo whisperTextForAgreement;; *) echo agreedCharacters;; esac; }
