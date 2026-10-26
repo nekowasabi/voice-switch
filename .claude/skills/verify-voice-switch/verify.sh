@@ -87,6 +87,26 @@ recall() {
   "$PS" -NoProfile -ExecutionPolicy Bypass -Command "& '$(win "$SKILL/superwhisper-recall.ps1")' -Cases '$(win "$cases")' -OutDir '$(win "$out")' -PadMs $pads"
 }
 
+# Live microphone + render loopback at once, raw and as a Communications (OS AEC) stream. features/playback-silence.md.
+# The user's tray is paused for the recording, so speaker playback is never pasted, and resumed even on failure.
+aec() {
+  local name="${1:?name, e.g. video-only}" seconds="${2:?seconds}" play="${3:-}"
+  local bin="$ROOT/aecprobe-bin" tray=/mnt/c/takeda/tools/voice-switch/voice-switch.exe
+  # Built outside the repo so obj/ and bin/ never land in the skill folder.
+  if [ ! -x "$bin/aecprobe.exe" ]; then
+    mkdir -p "$ROOT/aecprobe-src" && cp "$SKILL/aecprobe/Program.cs" "$SKILL/aecprobe/aecprobe.csproj" "$ROOT/aecprobe-src/"
+    "$DOTNET" publish "$ROOT/aecprobe-src/aecprobe.csproj" -c Release -r win-x64 --self-contained false -o "$bin" >/dev/null
+  fi
+  local out="$ROOT/aecprobe/$name"
+  [ -x "$tray" ] && "$tray" --tray-command pause >/dev/null || true
+  # A start right after pause can land the runtime in Error ("collection ... marked as complete", product bug); start once more.
+  trap '[ -x "$tray" ] && { "$tray" --tray-command start >/dev/null; sleep 2; "$tray" --tray-command status | grep -q "\"State\": \"Error\"" && "$tray" --tray-command start >/dev/null; "$tray" --tray-command status | grep -o "\"State\": \"[A-Za-z]*\"" | head -n 1; } || true' RETURN
+  "$bin/aecprobe.exe" "$(win "$out")" "$seconds" ${play:+"$(win "$play")"}
+  for kind in raw comms; do cp "$out/mic-$kind.wav" "$FIXTURES/aec-$name-$kind.wav"; done
+  cp "$out/loopback.wav" "$FIXTURES/aec-$name-loopback.wav"
+  echo "fixtures aec-$name-raw aec-$name-comms aec-$name-loopback"
+}
+
 cleanup() {
   for pidfile in "$EVIDENCE"/*/*/pid.txt; do
     [ -f "$pidfile" ] || continue
@@ -109,6 +129,7 @@ case "${1:-}" in
   wav) shift; wav "$@" ;;
   phrases) phrases ;;
   recall) shift; recall "$@" ;;
+  aec) shift; aec "$@" ;;
   cleanup) cleanup ;;
-  *) echo "usage: $0 build | fixtures | doctor | wav <fixture> [config.json] | phrases | recall [cases.json] [padMs,...] | cleanup" >&2; exit 2 ;;
+  *) echo "usage: $0 build | fixtures | doctor | wav <fixture> [config.json] | aec <name> <seconds> [play.wav] | phrases | recall [cases.json] [padMs,...] | cleanup" >&2; exit 2 ;;
 esac

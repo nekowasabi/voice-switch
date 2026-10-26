@@ -12,6 +12,7 @@ This directory is the maintained source for verifying what a Mac user of voice-s
 | Speaker gate: automatic recordings of another voice are dropped, and 2 s+ stretches of another voice are cut from handed-off audio | [speaker-gate.md](speaker-gate.md) | SG9, SG4 yes (missing-mode config; SG4 automatic only) |
 | Paste routing of automatic recordings (silence end never pastes, stop-word end pastes) | [paste-routing.md](paste-routing.md) | yes (real mode, TextEdit as target) |
 | Local transcription without Superwhisper (LT0 engine baseline runs today; LT1–LT6 wait for the implementation) | [local-transcription.md](local-transcription.md) | LT0 reads its recordings only; LT5 yes |
+| Only the user's voice starts a recording: speaker playback is echo-cancelled before the VAD (not yet run on a Mac) | [playback-silence.md](playback-silence.md) | VO1 no (missing-mode config); VO2 yes |
 | HUD: vector glyphs, spinner until superwhisper finishes, check/cross, superwhisper's own toggle key and Esc | [hud-labels.md](hud-labels.md) | no (`$V hud`); the direct toggle recipe yes |
 
 ## Baseline preconditions

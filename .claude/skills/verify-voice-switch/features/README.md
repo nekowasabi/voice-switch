@@ -32,6 +32,7 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [Silence produces nothing](./no-speech.md) covers audio with no speech.
 - [Automatic no-wake recording](./automatic-wake.md) covers `noWakeWord.autoIdle` and the spoken wake word taking priority over it.
 - [Automatic-recording gates](./automatic-gates.md) covers the Silero and speech.cpp checks before handoff, the recording HUD waiting for agreement, and the stop-word paste.
+- [Only the user's voice starts a recording](./playback-silence.md) covers speaker playback and room noise that must stay silent so an automatic recording never blocks the user (OS AEC on a Communications stream, measured on the `$V aec` probe; the app side is planned).
 - [Transcription recall](./transcription-recall.md) counts phrases Superwhisper drops from a captured WAV. The KPI is zero.
 - [Speaker gate](./speaker-gate.md) drops automatic recordings of another voice and cuts 2 s+ stretches of another voice from handed-off audio (SG9, SG4, built only); the rest is the acceptance list, with the playback front end.
 - [Local transcription](./local-transcription.md) transcribes dictation without Superwhisper (Cohere GGUF on transcribe.cpp). It is not drivable yet; the engine baseline runs from the Mac skill.
