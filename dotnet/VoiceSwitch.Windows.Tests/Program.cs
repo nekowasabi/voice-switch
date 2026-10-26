@@ -56,6 +56,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation wake and stop boundaries are explicit", () => Check(DictationWakeAndStopBoundariesAreExplicit())),
     ("dictation stop grammar result needs the confidence floor", () => Check(DictationStopGrammarResultNeedsConfidenceFloor())),
     ("stop word judgement behaves the same for the default and another word", () => Check(StopWordJudgementIsWordIndependent())),
+    ("a stop word ending an utterance finishes the open body like Mac stopWordStart", () => Check(TrailingStopWordFinishesOpenBody())),
     ("config fills locale default stop words only when absent", () => Check(ConfigFillsLocaleDefaultStopWords())),
     ("dictation lone wake waits for body", () => Check(DictationLoneWakeWaitsForBody())),
     ("dictation rejected wake hypothesis opens a wait but never a body", () => Check(DictationRejectedWakeOpensWaitOnly())),
@@ -139,6 +140,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation segmenter uses partial EOF sample duration", () => Check(DictationSegmenterUsesPartialEofSampleDuration())),
     ("dictation segmenter rebases the floor after steady noise from the first frame", () => Check(DictationSegmenterRebasesFloorAfterSteadyNoiseFromFirstFrame())),
     ("dictation runtime hears the wake word after long steady noise above the threshold", () => Check(DictationRuntimeHearsWakeAfterLongSteadyNoise())),
+    ("dictation runtime stops on a stop word at the end of an utterance longer than the segmenter cap", () => Check(DictationRuntimeStopsOnStopWordAfterCap())),
     ("dictation runtime finalizes body at synthetic EOF", () => Check(DictationRuntimeFinalizesBodyAtSyntheticEof())),
     ("dictation runtime keeps partial EOF PCM range exact", () => Check(DictationRuntimeKeepsPartialEofPcmRangeExact())),
     ("dictation local recording handoff writes byte-exact bodies", () => Check(DictationLocalRecordingHandoffWritesByteExactBodies())),
@@ -1006,6 +1008,37 @@ static bool ConfigFillsLocaleDefaultStopWords()
         && Stop(""","stopWords":["おしまい終了"]""")!.SequenceEqual(["おしまい終了"])
         && Stop(""","stopWords":[]""")!.Length == 0
         && Stop(""","locale":"fr-FR" """.Trim()) is null;
+}
+
+// Live failure 2026-10-26 18:12-18:15: sessions ran to maxSeconds while every closed utterance and tail was "standaloneStop=False".
+// Mac stops on a stop word that ends an utterance (Transcript.swift stopWordStart); Windows only on one said alone.
+static bool TrailingStopWordFinishesOpenBody()
+{
+    var words = new[] { "入力ストップ" };
+    var trailing = Recognized(3, RecognitionExtent.ClosedUtterance, 23000, 32000, "晴れです入力ストップ。", false,
+        Run("晴れです", 23000, 26000), Run("入力", 26500, 28000), Run("ストップ。", 28000, 30000));
+    var embedded = Recognized(4, RecognitionExtent.ClosedUtterance, 23000, 32000, "今日は入力ストップです", false,
+        Run("今日は", 23000, 25000), Run("入力", 25000, 26500), Run("ストップ", 26500, 28000), Run("です", 28000, 32000));
+    var partial = Recognized(5, RecognitionExtent.ClosedUtterance, 23000, 32000, "晴れですストップ", false,
+        Run("晴れです", 23000, 26000), Run("ストップ", 28000, 30000));
+    var head = trailing with { Id = 6, Extent = RecognitionExtent.PrefixHead };
+    var grammar = trailing with { Id = 7, FromStopGrammar = true, Confidence = 0.1 };
+
+    var session = new DictationSession(DictationConfig());
+    var store = StoreWithRamp(0, 40000);
+    session.Apply(Recognized(1, RecognitionExtent.ClosedUtterance, 0, 10000, "音声入力", false, Run("音声", 0, 4000), Run("入力", 4000, 10000)), store.Copy);
+    session.Apply(Recognized(2, RecognitionExtent.ClosedUtterance, 13000, 20000, "今日は", false, Run("今日は", 13000, 20000)), store.Copy);
+    var kept = session.Apply(embedded, store.Copy) is null && session.Apply(partial, store.Copy) is null && session.Apply(head, store.Copy) is null;
+    var audio = session.Apply(trailing, store.Copy);
+
+    return DictationBoundaries.TrailingStopRange(trailing, words) == new SampleRange(26500, 30000)
+        && DictationBoundaries.TrailingStopRange(embedded, words) is null
+        && DictationBoundaries.TrailingStopRange(partial, words) is null
+        && DictationBoundaries.TrailingStopRange(head, words) is null
+        && DictationBoundaries.TrailingStopRange(grammar, words) is null
+        && kept
+        && audio is { Reason: FinishReason.StandaloneStop }
+        && audio.Range == new SampleRange(13000, 26500);
 }
 
 static bool DictationLoneWakeWaitsForBody()
@@ -3240,6 +3273,37 @@ static bool DictationRuntimeHearsWakeAfterLongSteadyNoise()
         && output.Contains("dictation vad: floor rebased", StringComparison.Ordinal)
         && handoff.Submissions.Count == 0
         && observer.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Idle]);
+}
+
+// Live failure 2026-10-26 17:53-17:54: room noise kept every pause under the 300 ms hangover, so the utterance ran past the cap,
+// only its head was recognized, and the stop word at its end was never heard; the session ran to maxSeconds.
+static bool DictationRuntimeStopsOnStopWordAfterCap()
+{
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 12, loud: false);
+    AddFrames(frames, 120, loud: true);
+    AddFrames(frames, 15, loud: false);
+    AddFrames(frames, 60, loud: false);
+    var closed = 0;
+    var recognizer = new ScriptedDictationRecognizer(request => Task.FromResult(request.Extent == RecognitionExtent.PrefixHead
+        ? Utterance(request, "body")
+        : ++closed == 1
+            ? Utterance(request, "wake-body")
+            : new RecognizedUtterance(request.Id, request.Extent, request.Range, "入力ストップ",
+                [Run("入力ストップ", request.Range.End - Segmenter.FrameLength * 13, request.Range.End - Segmenter.FrameLength * 10)])));
+    var handoff = new RecordingDictationHandoff();
+    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(), new FixturePcmCapture(frames, [26, 161]), recognizer, handoff, dryRun: true);
+    var code = RunWithTimeout(runtime, TimeSpan.FromSeconds(5));
+    var audio = handoff.Submissions.SingleOrDefault();
+    var tail = recognizer.Requests.LastOrDefault(request => request.Extent == RecognitionExtent.ClosedUtterance);
+    return code == 0
+        && recognizer.Requests.Any(request => request.Extent == RecognitionExtent.PrefixHead)
+        && tail is not null
+        && tail.Range.End >= 147 * Segmenter.FrameLength
+        && audio is { Reason: FinishReason.StandaloneStop }
+        && audio.Range.End == tail.Range.End - Segmenter.FrameLength * 13;
 }
 
 static bool DictationRuntimeFinalizesBodyAtSyntheticEof()

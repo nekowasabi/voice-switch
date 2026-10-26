@@ -318,7 +318,9 @@ public sealed class WindowsDictationRuntime
                             // Mac logs "heard:" for what it transcribes while idle and never transcribes the body. Here a body longer
                             // than the segmenter cap arrives as PrefixHead and stays private; a closed utterance inside a session is
                             // a stop-word candidate, so its text, grammar and confidence are logged to make stop misses tunable.
-                            var heard = config.Dictation?.NoWakeWord?.Enabled == true || (session.IsActive || session.IsAwaitingBody) && observed.Extent != RecognitionExtent.ClosedUtterance
+                            // The tail of an over-cap body is body text too and stays private like its head.
+                            var heard = config.Dictation?.NoWakeWord?.Enabled == true || outcome.Work.BodyTail
+                                || (session.IsActive || session.IsAwaitingBody) && observed.Extent != RecognitionExtent.ClosedUtterance
                                 ? $" textLen={TranscriptShape.Length(observed.Text)} filler={(TranscriptShape.IsFiller(observed.Text) ? 1 : 0)} conf={(observed.Confidence is double shapeConf ? shapeConf.ToString("0.00", CultureInfo.InvariantCulture) : "-")} rejectedLen={(observed.RejectedText is { } rejectedShape ? TranscriptShape.Length(rejectedShape) : 0)}"
                                 : $" text=\"{observed.Text}\" conf={(observed.Confidence is double conf ? conf.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) : "-")}{(observed.RejectedText is { } rejectedText ? $" rejectedText=\"{rejectedText}\"" : "")} grammar={(observed.FromStopGrammar ? "stop" : "dictation")} reading=\"{string.Join(' ', observed.Lexemes.Where(lexeme => lexeme.Reading is not null).Select(lexeme => lexeme.Reading))}\"{(observed.Alternates.IsDefaultOrEmpty ? "" : $" alts=\"{string.Join('|', observed.Alternates.Select(alternate => $"{alternate.Text}/{alternate.Reading}"))}\"")}";
                             Log.Info($"dictation recognition: complete id={outcome.Work.Request.Id} extent={outcome.Work.Request.Extent} range={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End} rejected={observed.HadRejectedSpeech} leadingWake={leadingWake} standaloneStop={stopRange is not null} stopRange={(stopRange is null ? "-" : $"{stopRange.Value.Start}..{stopRange.Value.End}")} pendingBefore={pendingBefore}{heard}{TailStopLog(observed)} {origin.Fields} {Sid(session)}");
@@ -382,7 +384,8 @@ public sealed class WindowsDictationRuntime
                         var wasIdle = !wasActive && !wasAwaiting;
                         var stopBeforeApply = DictationBoundaries.StandaloneStopRange(outcome.Recognition!, config.StopWords ?? []);
                         var tailBeforeApply = DictationBoundaries.TryDedicatedTailStop(outcome.Recognition!, config.StopWords ?? [], config.Dictation?.DedicatedStopRecognizer == true);
-                        var effectiveStop = stopBeforeApply ?? tailBeforeApply?.Range;
+                        var trailingBeforeApply = wasActive ? DictationBoundaries.TrailingStopRange(outcome.Recognition!, config.StopWords ?? []) : null;
+                        var effectiveStop = stopBeforeApply ?? trailingBeforeApply ?? tailBeforeApply?.Range;
                         var audio = session.Apply(outcome.Recognition!, originalStore.Copy, analysisStore.Next, wakeOrigin);
                         if (wasIdle && !session.IsActive && !session.IsAwaitingBody && outcome.Work.Request.Extent == RecognitionExtent.PrefixHead)
                         {
@@ -442,7 +445,9 @@ public sealed class WindowsDictationRuntime
                         {
                             if (audio.Reason == FinishReason.StandaloneStop && effectiveStop is { } stop)
                             {
-                                var tailNote = stopBeforeApply is null && tailBeforeApply is { } tail
+                                var tailNote = stopBeforeApply is not null ? ""
+                                    : trailingBeforeApply is not null ? " trailing=True"
+                                    : tailBeforeApply is { } tail
                                     ? $" tailStop=True tailConf={tail.Confidence.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)} tailRange={tail.Range.Start}..{tail.Range.End}"
                                     : "";
                                 Log.Info($"dictation session: standalone-stop id={outcome.Work.Request.Id} trimExcluded={audio.Range.End}..{stop.End}{tailNote} sid={audio.SessionId}");
@@ -638,6 +643,17 @@ public sealed class WindowsDictationRuntime
             Log.Info($"dictation vad: cap reached at={frame.Start} samples={ev.Samples.Length} rms={segmenter.LastRms:0.0000} floor={segmenter.Floor:0.0000} threshold={segmenter.Threshold:0.0000}");
         }
 
+        if (ev.Kind == "tail")
+        {
+            // Mac judges a tail only inside a dictation: alone it is a fragment of speech, never a wake word.
+            if (!session.IsActive && !session.IsAwaitingBody)
+            {
+                return true;
+            }
+
+            Log.Info($"dictation vad: tail at={frame.Start} samples={ev.Samples.Length}");
+        }
+
         // Mac checks between utterances: only here, with nothing open, can wake words and timings change under no one.
         if (!session.IsActive && !session.IsAwaitingBody && pending.Count == 0 && reloadConfig() is { } next)
         {
@@ -653,7 +669,7 @@ public sealed class WindowsDictationRuntime
         long rangeEnd,
         ChannelWriter<RecognitionWork> requests,
         Dictionary<long, RecognitionWork> pending) =>
-        QueueRecognition(ev.Kind == "head" ? RecognitionExtent.PrefixHead : RecognitionExtent.ClosedUtterance, ev.Samples.Length, rangeEnd, requests, pending, 0);
+        QueueRecognition(ev.Kind == "head" ? RecognitionExtent.PrefixHead : RecognitionExtent.ClosedUtterance, ev.Samples.Length, rangeEnd, requests, pending, 0, ev.Kind == "tail");
 
     private void ApplyConfig(VoiceSwitchConfig next)
     {
@@ -729,7 +745,8 @@ public sealed class WindowsDictationRuntime
         long rangeEnd,
         ChannelWriter<RecognitionWork> requests,
         Dictionary<long, RecognitionWork> pending,
-        long tailSilenceSamples)
+        long tailSilenceSamples,
+        bool bodyTail = false)
     {
         var range = new SampleRange(rangeEnd - length, rangeEnd);
         var request = new RecognitionRequest(
@@ -738,7 +755,7 @@ public sealed class WindowsDictationRuntime
             range,
             analysisStore.Copy(range),
             tailSilenceSamples);
-        var work = new RecognitionWork(request);
+        var work = new RecognitionWork(request, bodyTail);
         if (!requests.TryWrite(work))
         {
             return false;
@@ -1266,7 +1283,7 @@ public sealed class WindowsDictationRuntime
     private static long MsToSamples(int ms) =>
         checked((long)Math.Round(ms * Segmenter.Rate / 1000.0, MidpointRounding.AwayFromZero));
 
-    private sealed record RecognitionWork(RecognitionRequest Request);
+    private sealed record RecognitionWork(RecognitionRequest Request, bool BodyTail = false);
     private sealed record RecognitionOutcome(RecognitionWork Work, RecognizedUtterance? Recognition, Exception? Error);
 }
 

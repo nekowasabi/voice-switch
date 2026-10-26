@@ -236,6 +236,12 @@ public static class CheckMode
                     continue;
                 }
 
+                // Mac check mode skips .tail too: it only ends a dictation.
+                if (ev.Kind == "tail")
+                {
+                    continue;
+                }
+
                 earlyHit = false;
                 var range = new SampleRange(end - ev.Samples.Length, end);
                 var extent = ev.Kind == "head" ? RecognitionExtent.PrefixHead : RecognitionExtent.ClosedUtterance;

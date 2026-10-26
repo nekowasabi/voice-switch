@@ -463,6 +463,35 @@ public static class DictationBoundaries
         return new SampleRange(lexemes[0].Range.Start, lexemes[^1].Range.End);
     }
 
+    // Mac stopWordStart: a stop word that ends the utterance on a word boundary, after other speech. Read from the end, so
+    // "今日は入力ストップです" never matches. The stop grammar answers verbatim and stays with StandaloneStopRange's floor.
+    public static SampleRange? TrailingStopRange(RecognizedUtterance recognition, IEnumerable<string> stopWords)
+    {
+        if (recognition.Extent != RecognitionExtent.ClosedUtterance || recognition.HadRejectedSpeech || recognition.FromStopGrammar)
+        {
+            return null;
+        }
+
+        var words = stopWords.Select(TextMatching.Normalize).Where(word => word.Length > 0).ToHashSet();
+        var runs = recognition.Lexemes.Where(run => TextMatching.Normalize(run.Text).Length > 0).ToArray();
+        var suffix = "";
+        for (var i = runs.Length - 1; i >= 0; i--)
+        {
+            suffix = TextMatching.Normalize(runs[i].Text) + suffix;
+            if (words.Contains(suffix))
+            {
+                return new SampleRange(runs[i].Range.Start, runs[^1].Range.End);
+            }
+
+            if (!words.Any(word => word.EndsWith(suffix, StringComparison.Ordinal)))
+            {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
     // Dedicated recognizer (option C): wildcard + stop-word grammar on its own engine.
     // BodyText and BodyLexemes are the dictation hypothesis that ends before the stop.
     // A lexeme that runs into the stop (End > stop start) is the garbled tail and is dropped.
@@ -667,7 +696,8 @@ public sealed class DictationSession
             return Finish(new SampleRange(bodyStart.Value, Math.Min(lastSpeechEnd, maxEnd)), FinishReason.MaximumDuration, copyAudio);
         }
 
-        if (DictationBoundaries.StandaloneStopRange(recognition, config.StopWords ?? []) is { } stop)
+        if ((DictationBoundaries.StandaloneStopRange(recognition, config.StopWords ?? [])
+            ?? DictationBoundaries.TrailingStopRange(recognition, config.StopWords ?? [])) is { } stop)
         {
             return Finish(new SampleRange(bodyStart.Value, Math.Max(bodyStart.Value, stop.Start)), FinishReason.StandaloneStop, copyAudio);
         }
