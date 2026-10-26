@@ -23,6 +23,8 @@ PC_NORM := $(shell printf '%s' "$(PC)" | tr '[:upper:]' '[:lower:]')
 
 ifeq ($(PC_NORM),wsl)
 .DEFAULT_GOAL := win
+# SpeakerGate.ModelPath on Windows is %LOCALAPPDATA%\voice-switch\models; deferred so other targets skip cmd.exe.
+SPEAKER_MODEL = $(shell wslpath "$$(cmd.exe /c 'echo %LOCALAPPDATA%' 2>/dev/null | tr -d '\r')")/voice-switch/models/$(notdir $(SPEAKER_MODEL_URL))
 else
 .DEFAULT_GOAL := relaunch
 endif
