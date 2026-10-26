@@ -188,7 +188,18 @@
       },
       "windows": {
         "file": "dotnet/VoiceSwitch.Windows/Program.cs",
-        "markers": ["config.Dictation is not null", "new WindowsDictationRuntime", "WinMmCapture.Open()"]
+        "markers": ["config.Dictation is not null", "new WindowsDictationRuntime", "MicCapture.Open(null, config)"]
+      }
+    },
+    {
+      "id": "dictation_echo_cancelled_input",
+      "macos": {
+        "file": "Sources/voice-switch/MacApp.swift",
+        "markers": ["echoCancellation != false", "setVoiceProcessingEnabled(true)", "enableAdvancedDucking: false", "echo cancellation unavailable, raw input"]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows/EchoCancelledCapture.cs",
+        "markers": ["EchoCancellation != false", "SetEchoCancellationRenderEndpoint", "CommunicationsCategory", "echo cancellation unavailable, raw input"]
       }
     },
     {

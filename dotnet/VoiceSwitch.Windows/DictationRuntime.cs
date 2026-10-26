@@ -1319,7 +1319,7 @@ public sealed class WinMmCapture : IPcmCapture
 
     // The input device the open capture reads, by name; null while none is open. The tray compares it with
     // EffectiveDevice to notice an unplug or a new default device, which WinMM never reports to an open handle.
-    public static string? CurrentDevice { get => Volatile.Read(ref currentDevice); private set => Volatile.Write(ref currentDevice, value); }
+    public static string? CurrentDevice { get => Volatile.Read(ref currentDevice); internal set => Volatile.Write(ref currentDevice, value); }
     private static string? currentDevice;
 
     // pinned: a device name chosen in the tray, or null for the system default. A pinned device that is not

@@ -40,7 +40,7 @@ public sealed class ProductionRuntimeFactory(string configPath, TrayRuntimeHooks
         if (handoff is RegisteredSuperwhisperHandoff registered && !await registered.RecoverAsync(cancellation))
             Log.Info("superwhisper mode recovery pending; manual dictation will use local history");
         IPcmCapture capture = source.WavPath is null
-            ? WinMmCapture.Open(hooks.MicDevice?.Invoke())
+            ? MicCapture.Open(hooks.MicDevice?.Invoke(), config)
             : new WavPcmCapture(source.WavPath, paced: true);
         if (source.RecordOnlyDir is null) handoff = LocalHistoryHandoff.Wrap(handoff, config, WindowFocus.Paste);
         var observer = new TrayRuntimeObserver(hooks);

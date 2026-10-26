@@ -165,6 +165,8 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("superwhisper mode decide does not paste after no-body skip", () => Check(SuperwhisperModeDecideDoesNotPasteAfterNoBodySkip())),
     ("config loads optional dictation.superwhisperMode", () => Check(ConfigLoadsOptionalSuperwhisperMode())),
     ("config loads dictation.dedicatedStopRecognizer and defaults it off", () => Check(ConfigLoadsDedicatedStopRecognizer())),
+    ("config loads dictation.echoCancellation and defaults it on", () => Check(ConfigLoadsEchoCancellation())),
+    ("echo-cancelled capture downsamples 48 kHz stereo and 44.1 kHz mono to 16 kHz mono at the same level", () => Check(EchoCancelledDownsamplerKeepsRateAndLevel())),
     ("config loads windows.actions and rejects invalid ones", () => Check(ConfigLoadsWindowsActions())),
     ("wake action URL carries the text as one input item", () => Check(WakeActionUrlCarriesInput())),
     ("dictation action wake selects its action after the default wakes", () => Check(DictationActionWakeSelectsAction())),
@@ -4262,6 +4264,37 @@ static bool ConfigLoadsDedicatedStopRecognizer()
         && !off.Dictation!.DedicatedStopRecognizer
         && !absent.Dictation!.DedicatedStopRecognizer
         && new DictationConfig().DedicatedStopRecognizer == false;
+}
+
+static bool ConfigLoadsEchoCancellation()
+{
+    using var temp = RuntimeTemp();
+    VoiceSwitchConfig Load(string name, string dictation)
+    {
+        var path = Path.Combine(temp.Dir, name);
+        File.WriteAllText(path, $$"""{ "wakeWords": ["音声入力"], "command": "wake", "dictation": {{dictation}} }""");
+        return ConfigLoader.Load(path);
+    }
+
+    return Load("on.json", """{ "echoCancellation": true }""").Dictation!.EchoCancellation != false
+        && Load("off.json", """{ "echoCancellation": false }""").Dictation!.EchoCancellation == false
+        && Load("absent.json", """{ "recordingsDir": "rec" }""").Dictation!.EchoCancellation != false;
+}
+
+// 48 kHz stereo and 44.1 kHz mono both come out as 16 kHz mono at the same level, so 30 ms is one segmenter frame.
+static bool EchoCancelledDownsamplerKeepsRateAndLevel()
+{
+    bool Check(int rate, int channels)
+    {
+        var input = new float[rate * channels];
+        for (var i = 0; i < rate; i++)
+            for (var c = 0; c < channels; c++) input[i * channels + c] = 0.5f;
+        var output = new List<short>();
+        new EchoCancelledCapture.Downsampler(rate).Push(input, channels, output);
+        return Math.Abs(output.Count - Segmenter.Rate) <= 1 && output.All(s => Math.Abs(s - 16384) <= 1);
+    }
+
+    return Check(48000, 2) && Check(44100, 1);
 }
 
 static bool DedicatedStopScriptStaysOnItsOwnEngine()

@@ -122,7 +122,7 @@ public static class Program
                     }
                     else
                     {
-                        capture = WinMmCapture.Open();
+                        capture = MicCapture.Open(null, config);
                     }
 
                     if (!effectiveDryRun && options.OutputDir is null) handoff = LocalHistoryHandoff.Wrap(handoff, config, Tray.WindowFocus.Paste);

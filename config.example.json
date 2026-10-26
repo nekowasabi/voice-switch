@@ -18,6 +18,7 @@
     "maxSeconds": 60,
     "excludeBundleIDs": [],
     "superwhisperMode": "voice_switch",
+    "echoCancellation": true,
     "noWakeWord": {
       "followup": false,
       "autoIdle": false,

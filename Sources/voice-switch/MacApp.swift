@@ -631,6 +631,8 @@ final class Listener {
     var onRestart: (() -> Void)?
     private var restartError: String?
     private var retryScheduled = false
+    /// Set once voice processing failed to start; later restarts keep the raw input instead of failing again.
+    private var voiceProcessingFailed = false
     /// When the tap last delivered audio. Display sleep can make coreaudiod drop the input without
     /// AVAudioEngineConfigurationChange (2026-10-13 log), and every end condition counts frames, so a dictation open then never ends.
     private let lastBuffer = OSAllocatedUnfairLock(initialState: Date())
@@ -683,6 +685,18 @@ final class Listener {
 
     func start() throws {
         var deviceName = "system default"
+        // Windows twin: MicCapture.Open. Enabled before the device pin because it swaps the input unit for voice processing I/O.
+        if config.cfg.dictation?.echoCancellation != false, !voiceProcessingFailed, !engine.inputNode.isVoiceProcessingEnabled {
+            do {
+                try engine.inputNode.setVoiceProcessingEnabled(true)
+                // Voice processing ducks other apps by default; the video the user watches must keep its volume.
+                engine.inputNode.voiceProcessingOtherAudioDuckingConfiguration =
+                    AVAudioVoiceProcessingOtherAudioDuckingConfiguration(enableAdvancedDucking: false, duckingLevel: .min)
+                log("echo cancellation: voice processing on")
+            } catch {
+                log("echo cancellation unavailable, raw input: \(error)")
+            }
+        }
         if let uid = deviceUID {
             if var id = audioDeviceID(uid: uid), let au = engine.inputNode.audioUnit {
                 var current = AudioDeviceID(0)
@@ -721,7 +735,16 @@ final class Listener {
             }
         }
         engine.prepare()
-        try engine.start()
+        do {
+            try engine.start()
+        } catch where engine.inputNode.isVoiceProcessingEnabled {
+            // Voice processing can fail only at start; without this the restart loop would retry it forever.
+            log("echo cancellation unavailable, raw input: \(error)")
+            voiceProcessingFailed = true
+            node.removeTap(onBus: 0)
+            engine = AVAudioEngine()
+            return try start()
+        }
         running = true
         wanted = true
         log("listening on \(deviceName) at \(fmt.sampleRate) Hz for \(config.cfg.wakeWords)")
