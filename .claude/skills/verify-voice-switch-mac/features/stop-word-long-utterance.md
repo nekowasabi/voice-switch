@@ -1,6 +1,6 @@
 # Stop word at the end of a long utterance
 
-During a dictation, saying the stop word right after a long sentence, without a pause in between, ends the dictation and keeps the stop word out of the text. An utterance longer than `maxSeconds` (2.5 s) reaches the stop check through the `.tail` event `Segmenter.swift` emits at its end, and the stop word is matched as a suffix (PR #31). Before that fix the stop word was recorded as text; the baseline notes below are kept for comparison. On the automatic path the cut recording still has to pass Silero and the Apple Speech plus Whisper agreement before Superwhisper gets it, so a `dictation dropped:` line after the stop means no history entry, though the stop itself still worked. Since 07edefc an automatic recording ended by the stop word is handed off like a wake-word dictation. It logs `dictation session: automatic ended by stop word, pasting like a wake-word dictation`, does not switch to the no-paste mode, and Superwhisper pastes into the app in front. Recordings that end on silence still go to the no-paste mode and stay in history.
+During a dictation, saying the stop word right after a long sentence, without a pause in between, ends the dictation and keeps the stop word out of the text. An utterance longer than `maxSeconds` (2.5 s) reaches the stop check through the `.tail` event `Segmenter.swift` emits at its end, and the stop word is matched as a suffix (PR #31). Before that fix the stop word was recorded as text; the baseline notes below are kept for comparison. On the automatic path the cut recording still has to pass Silero and the Apple Speech plus Whisper agreement before Superwhisper gets it, so a `dictation dropped:` line after the stop means no history entry, though the stop itself still worked. Since 07edefc an automatic recording ended by the stop word is handed off like a wake-word dictation. It logs `dictation session: automatic ended by StandaloneStop, pasting like a wake-word dictation`, does not switch to the no-paste mode, and Superwhisper pastes into the app in front. Recordings that end on silence still go to the no-paste mode and stay in history.
 
 ## Sub-features
 
@@ -43,7 +43,7 @@ Expected lines in `stdout.txt` after `dictation session: automatic rule=auto_b`:
 
 | Fixture | Expected |
 |---|---|
-| `long-tail` | `dictation finished by stop word`, then `end reason=StandaloneStop` and `automatic ended by stop word, pasting like a wake-word dictation` |
+| `long-tail` | `dictation finished by stop word`, then `end reason=StandaloneStop` and `automatic ended by StandaloneStop, pasting like a wake-word dictation` |
 | `short-pause` | same as `long-tail` |
 | `continued` | `dictation ended by 1200 ms silence` |
 | `embedded-long` | `dictation ended by 1200 ms silence` |

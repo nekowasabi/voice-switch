@@ -8,7 +8,7 @@ An automatic recording (`noWakeWord.autoIdle`) passes three checks before Superw
 - `AG2` speech is confirmed while it is recorded, then shows the HUD: `automatic confirmed by agreed words` before `dictation phase: Recording`, and no `dictation agreement:` line at the end.
 - `AG3` a cough the recognizers disagree on is dropped: `dictation agreement: shared=<n>` with n < 3, then `dictation dropped: automatic audio had no agreed words`.
 - `AG4` without speech.cpp, the recording goes through: stdout starts with `word agreement: <model> unavailable`, and the confirm line says `unavailable word agreement`.
-- `AG5` an automatic recording ended by the stop word goes out as a wake-word dictation: `automatic ended by stop word, pasting like a wake-word dictation`.
+- `AG5` an automatic recording ended by the stop word goes out as a wake-word dictation: `automatic ended by StandaloneStop, pasting like a wake-word dictation`.
 
 ## How to get to it (user POV)
 
@@ -20,7 +20,7 @@ Preconditions: baseline from the index. `$V fixtures` writes `auto-hiss`, `auto-
 
 - `AG1` `auto-hiss`: `automatic rule=auto_b` → `end reason=Silence` → `had no speech`, `handoff_wavs=0`.
 - `AG2` and `AG4` `auto-speech`: `automatic rule=auto_b` → `automatic confirmed by ...` → `dictation phase: Recording` → `end reason=Silence` → one handoff. With speech.cpp installed the line says `agreed words`. Without it you get AG4.
-- `AG5` `auto-stop`: `standalone-stop trimExcluded=<a>..<b>` → `end reason=StandaloneStop range=<x>..<a>` → `automatic ended by stop word, pasting like a wake-word dictation` → one handoff. The handoff range ends where the stop word starts.
+- `AG5` `auto-stop`: `standalone-stop trimExcluded=<a>..<b>` → `end reason=StandaloneStop range=<x>..<a>` → `automatic ended by StandaloneStop, pasting like a wake-word dictation` → one handoff. The handoff range ends where the stop word starts.
 - `AG3` `auto-backchannel` (needs speech.cpp): `automatic rule=auto_b` → `end reason=Silence` → `dictation agreement: shared=2` → `had no agreed words`, `handoff_wavs=0`, and no `dictation phase: Recording` line. A real cough is not in the repo because it is the user's voice. Check one with `voice-switch.exe --check <wav>` from the build folder. stderr has `<file>\tvoiced=<n>` and `<file>\tagreed=<n>\tparakeet=<text>\tqwen=<text>`.
 
 ## Gotchas

@@ -261,7 +261,7 @@ internal static class NoWakeTests
                && cough.Log.Contains("dictation dropped: automatic audio had no agreed words")
             && broken is (1, true, _, _) && broken.Log.Contains("automatic confirmed by unavailable word agreement")
             && stopped.Handed == 1 && stopped.Audio is { Reason: FinishReason.StandaloneStop, Wake.IsAutomatic: false }
-               && stopped.Log.Contains("automatic ended by stop word, pasting like a wake-word dictation");
+               && stopped.Log.Contains("automatic ended by StandaloneStop, pasting like a wake-word dictation");
     }
 
     // A playback trace at one level from a minute ago to a minute ahead, so every mic frame of the test pairs with a bin.
