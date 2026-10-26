@@ -36,4 +36,5 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [Speaker gate](./speaker-gate.md) drops automatic recordings of another voice and cuts 2 s+ stretches of another voice from handed-off audio (SG9, SG4, built only); the rest is the acceptance list, with the playback front end.
 - [Local transcription](./local-transcription.md) transcribes dictation without Superwhisper (Cohere GGUF on transcribe.cpp). It is not drivable yet; the engine baseline runs from the Mac skill.
 - [HUD glyphs](./hud-labels.md) covers the vector HUD glyphs. Source checks run from the Mac skill; rendering needs a Windows desktop.
+- [Stop sound](./stop-sound.md) tells apart one stop ring, the chime's two notes, and Superwhisper's own sound when a stop sounds doubled. It needs the live tray.
 - [Tray host and IPC](./tray-ipc.md) covers start, pause, reload, and quit of the tray app. It is not drivable on this machine yet.
