@@ -853,6 +853,11 @@ final class Listener {
     // from another source held it for 8000 ms (2026-10-28); a late start keeps the phrase from its preroll.
     // Make it a config value if short live phrases get dropped.
     static let minVoiceSeconds = 1.5
+    static let noVoiceActivity = "no voice activity (speaker playback is not a voice)"
+
+    private func voiceBeingHeard() -> Bool {
+        voiceActivity.withLock { $0.device != 0 && $0.onSince != nil }
+    }
 
     /// True when no gate is set, or the detector has heard one voice for minVoiceSeconds now or within the last 1.5 s.
     private func voiceRecentlyActive() -> Bool {
@@ -917,7 +922,8 @@ final class Listener {
         }
     }
 
-    enum Phase { case idle, waiting, recording, ended, followup }
+    /// `hearing`: a voice is heard but the voice activity gate has not opened an automatic session yet.
+    enum Phase { case idle, waiting, hearing, recording, ended, followup }
 
     /// Called on the main thread whenever the dictation phase changes.
     var onPhase: ((Phase) -> Void)?
@@ -939,6 +945,10 @@ final class Listener {
         var recent: [Float] = []
         var speechFrames = 0
         var gapFrames = 0
+        // A phrase that would have opened an automatic session but for voice activity detection, which needs
+        // minVoiceSeconds of voice: a first sentence often ends before that, and the next sentence then opens the session.
+        var phraseHeldByVoice = false
+        var heldPhrase: (samples: [Float], until: Int)?
         // Stop-word judgement runs beside the frame loop; `stopJob` says which dictation and generation it belongs to.
         let stopCheck = LatestRecognition<Int>()
         let wordCheck = LatestRecognition<(session: UUID, agreed: Bool)>()
@@ -968,7 +978,11 @@ final class Listener {
             var endedByUser = false
             // Derived from `dictation` after every frame (defer covers each `continue`) instead of at each place that sets it.
             defer {
-                let phase: Phase = endedByUser ? .ended : dictation.map { !$0.heardSpeech ? .waiting : $0.confirmed ? .recording : .idle } ?? (clock < followupUntil && config.cfg.dictation?.noWakeWord?.followup == true ? .followup : .idle)
+                let phase: Phase = endedByUser ? .ended : dictation.map { !$0.heardSpeech ? .waiting : $0.confirmed ? .recording : .idle }
+                    ?? (clock < followupUntil && config.cfg.dictation?.noWakeWord?.followup == true ? .followup
+                        // The gate holds an automatic session back for minVoiceSeconds; the mic glyph shows the voice is heard meanwhile.
+                        : voiceBeingHeard() && config.cfg.dictation?.noWakeWord?.enabled == true
+                            && (lastAutomaticBlock == nil || lastAutomaticBlock == Listener.noVoiceActivity) ? .hearing : .idle)
                 // .ended hides itself after a moment; the idle that follows it is not a change.
                 if phase != shown, !(shown == .ended && phase == .idle) {
                     shown = phase
@@ -1068,7 +1082,14 @@ final class Listener {
             // speechFrames counts the voiced frames of the phrase being spoken, joined across gaps up to the hangover,
             // which the VAD alone splits into short runs.
             if seg.lastWasSpeech { speechFrames += 1; gapFrames = 0 }
-            else if speechFrames > 0 { gapFrames += 1; if gapFrames > frames(ms: config.cfg.hangoverMs ?? 300) { speechFrames = 0 } }
+            else if speechFrames > 0 {
+                gapFrames += 1
+                if gapFrames > frames(ms: config.cfg.hangoverMs ?? 300) {
+                    // ponytail: one held phrase for 5 s; a third sentence before the gate opens drops the first.
+                    if phraseHeldByVoice { heldPhrase = (recent, clock + Int(rate) * 5) }
+                    speechFrames = 0; phraseHeldByVoice = false
+                }
+            }
             recent += f
             // A live phrase is kept so an automatic session that starts late still records it from the beginning.
             // ponytail: capped at 10 s of audio; a longer phrase keeps only its tail.
@@ -1087,17 +1108,23 @@ final class Listener {
             if seg.lastWasSpeech && speechFrames >= frames(ms: config.cfg.minSpeechMs ?? 300),
                let mode = config.cfg.dictation?.superwhisperMode, !mode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                let idle = MacInputActivity.idleSeconds(),
-               let origin = NoWakePolicy.onSpeech(options, idleSeconds: idle, inFollowupWindow: clock < followupUntil),
-               automaticWakeAllowed() {
-                // The whole phrase with its preroll, even when it overlaps typing.
-                let samples = recent
-                if !samples.isEmpty {
-                    // Finish only: the user is mid-task elsewhere and their Escape belongs to that app. The finish key is the manual
-                    // stop for when the stop word is misheard.
-                    dictation = Dictation(samples: samples, generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: true, origin: origin)
-                    Hotkeys.begin(finishOnly: true)
-                    log("dictation session: automatic \(origin.fields) \(sidField(dictation?.sessionID))")
-                    continue
+               let origin = NoWakePolicy.onSpeech(options, idleSeconds: idle, inFollowupWindow: clock < followupUntil) {
+                if !automaticWakeAllowed() {
+                    if lastAutomaticBlock == Listener.noVoiceActivity { phraseHeldByVoice = true }
+                } else {
+                    // The whole phrase with its preroll, even when it overlaps typing, after a phrase the gate held back.
+                    let held = heldPhrase.flatMap { clock < $0.until ? $0.samples : nil } ?? []
+                    heldPhrase = nil; phraseHeldByVoice = false
+                    if !held.isEmpty { log("dictation session: automatic keeps \(held.count * 1000 / Int(rate)) ms held for voice activity") }
+                    let samples = held + recent
+                    if !samples.isEmpty {
+                        // Finish only: the user is mid-task elsewhere and their Escape belongs to that app. The finish key is the manual
+                        // stop for when the stop word is misheard.
+                        dictation = Dictation(samples: samples, generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: true, origin: origin)
+                        Hotkeys.begin(finishOnly: true)
+                        log("dictation session: automatic \(origin.fields) \(sidField(dictation?.sessionID))")
+                        continue
+                    }
                 }
             }
             // Experimental early wake (cfg.earlyWakeMs): STT on the open utterance before the hangover. A transcript that
@@ -1271,7 +1298,7 @@ final class Listener {
 
     private func automaticWakeBlock() -> String? {
         if localHistoryState.withLock({ $0.busy }) { return "previous recording still transcribing" }
-        if !voiceRecentlyActive() { return "no voice activity (speaker playback is not a voice)" }
+        if !voiceRecentlyActive() { return Listener.noVoiceActivity }
         if let busy = micInUse(by: config.cfg.skipWhileMicInUseBy ?? [], failClosed: true) { return "\(busy) is using the microphone" }
         if let excluded = config.cfg.dictation?.excludeBundleIDs, !excluded.isEmpty {
             guard let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else { return "frontmost app unknown" }
@@ -1683,6 +1710,7 @@ final class HUD {
     private var phase = Listener.Phase.idle
     private var delivery: DeliveryState?
     private var notice: HUDLabel?
+    private var loggedLabel: HUDLabel?
 
     /// The glyph currently on screen, or nil when the HUD is hidden. `--hud-labels` reads it.
     var visibleGlyph: HUDLabel? { panel.isVisible ? glyphView.glyph : nil }
@@ -1725,8 +1753,15 @@ final class HUD {
         // A short recording dropped before its handoff never reports a delivery.
         case (.ended, nil): (.processing, 1.5)
         case (.followup, nil): (.followup, nil)
+        // Below every delivery, so superwhisper's own recording keeps its red dot while the user speaks into it.
+        case (.hearing, nil): (.waiting, nil)
         case (.idle, nil): nil
         } }
+        // A HUD the user reported missing leaves no other trace, so each visible change is logged.
+        if view?.label != loggedLabel {
+            loggedLabel = view?.label
+            log("hud: \(view.map { "\($0.label)" } ?? "hidden") phase=\(phase) delivery=\(delivery.map { "\($0)" } ?? "-")")
+        }
         // Animation must stop with the pill: a hidden HUD that keeps a 30 fps timer burns CPU for nothing.
         guard let view else { glyphView.stop(); panel.orderOut(nil); return }
         glyphView.show(view.label)
