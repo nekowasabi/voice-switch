@@ -615,6 +615,74 @@ func audioDeviceID(uid: String) -> AudioDeviceID? {
     return status == noErr && id != 0 ? id : nil
 }
 
+private func audioProperty<T>(_ id: AudioObjectID, _ selector: AudioObjectPropertySelector, _ initial: T,
+                              scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal) -> T? {
+    var addr = AudioObjectPropertyAddress(mSelector: selector, mScope: scope, mElement: kAudioObjectPropertyElementMain)
+    var value = initial
+    var size = UInt32(MemoryLayout<T>.size)
+    return AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &value) == noErr ? value : nil
+}
+
+private func audioObjectIDs(_ id: AudioObjectID, _ selector: AudioObjectPropertySelector,
+                            scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal) -> [AudioObjectID] {
+    var addr = AudioObjectPropertyAddress(mSelector: selector, mScope: scope, mElement: kAudioObjectPropertyElementMain)
+    var size: UInt32 = 0
+    guard AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) == noErr, size > 0 else { return [] }
+    var ids = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+    guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &ids) == noErr else { return [] }
+    return ids
+}
+
+/// Physical microphones only. While voice processing runs, every output device grows an echo-reference input
+/// stream (terminal type 'spkr' or 0) and an aggregate device appears; pinning one of those fails with -10851.
+func inputDeviceIDs() -> [AudioDeviceID] {
+    audioObjectIDs(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDevices).filter { id in
+        audioProperty(id, kAudioDevicePropertyTransportType, UInt32(0)) != kAudioDeviceTransportTypeAggregate
+            && audioObjectIDs(id, kAudioDevicePropertyStreams, scope: kAudioDevicePropertyScopeInput).contains { stream in
+                let terminal = audioProperty(stream, kAudioStreamPropertyTerminalType, UInt32(0)) ?? 0
+                return terminal != 0 && terminal != kAudioStreamTerminalTypeSpeaker
+            }
+    }
+}
+
+func defaultInputDeviceID() -> AudioDeviceID? {
+    audioProperty(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultInputDevice, AudioDeviceID(0)).flatMap { $0 == 0 ? nil : $0 }
+}
+
+func builtInInputDeviceID() -> AudioDeviceID? {
+    inputDeviceIDs().first { audioProperty($0, kAudioDevicePropertyTransportType, UInt32(0)) == kAudioDeviceTransportTypeBuiltIn }
+}
+
+func audioDeviceUID(_ id: AudioDeviceID) -> String? {
+    audioProperty(id, kAudioDevicePropertyDeviceUID, nil as Unmanaged<CFString>?).flatMap { $0?.takeRetainedValue() as String? }
+}
+
+func audioDeviceName(_ id: AudioDeviceID) -> String {
+    audioProperty(id, kAudioObjectPropertyName, nil as Unmanaged<CFString>?).flatMap { $0?.takeRetainedValue() as String? } ?? "device \(id)"
+}
+
+/// Where start() takes audio from. Both are raw input: voice processing changed the mic for every other app
+/// (superwhisper recorded silence, measured 2026-10-28), so echo cancellation comes from HAL voice activity detection instead.
+enum InputRoute: Equatable {
+    case systemDefault
+    case pinned(AudioDeviceID)
+
+    var deviceID: AudioDeviceID? {
+        switch self {
+        case .systemDefault: return defaultInputDeviceID()
+        case .pinned(let id): return id
+        }
+    }
+
+    /// A saved device that is unplugged falls back to the built-in mic; the saved choice itself is kept.
+    static func resolve(savedUID: String?) -> (route: InputRoute, missing: Bool) {
+        guard let uid = savedUID else { return (.systemDefault, false) }
+        let id = audioDeviceID(uid: uid).flatMap { inputDeviceIDs().contains($0) ? $0 : nil }
+        guard let target = id ?? builtInInputDeviceID() else { return (.systemDefault, true) }
+        return (.pinned(target), id == nil)
+    }
+}
+
 /// Owns the microphone. stop() releases it fully (menu-bar mic indicator goes off).
 final class Listener {
     let config: ConfigFile
@@ -631,8 +699,10 @@ final class Listener {
     var onRestart: (() -> Void)?
     private var restartError: String?
     private var retryScheduled = false
-    /// Set once voice processing failed to start; later restarts keep the raw input instead of failing again.
-    private var voiceProcessingFailed = false
+    /// The device whose HAL voice activity detection gates automatic recordings (0 = no gate), when its current voice began,
+    /// and when the last voice long enough to count ended.
+    private let voiceActivity = OSAllocatedUnfairLock(initialState: (device: AudioDeviceID(0), onSince: Date?.none, lastVoiceEnd: Date.distantPast))
+    private var voiceActivityListened: Set<AudioDeviceID> = []
     /// When the tap last delivered audio. Display sleep can make coreaudiod drop the input without
     /// AVAudioEngineConfigurationChange (2026-10-13 log), and every end condition counts frames, so a dictation open then never ends.
     private let lastBuffer = OSAllocatedUnfairLock(initialState: Date())
@@ -643,10 +713,8 @@ final class Listener {
         nextRecognitionId.withLock { state in let id = state; state += 1; return id }
     }
     /// CoreAudio device UID; nil follows the system default input. Set only while stopped.
-    var deviceUID: String? {
-        // A pinned input unit never follows the system default again, so start over with a fresh engine.
-        didSet { engine = AVAudioEngine() }
-    }
+    var deviceUID: String?
+    private var activeRoute: InputRoute?
 
     init(config: ConfigFile) {
         self.config = config
@@ -661,6 +729,15 @@ final class Listener {
             guard let self, self.wanted, note.object as? AVAudioEngine === self.engine else { return }
             log("audio configuration changed, restarting input")
             self.restart()
+        }
+        // Unplugging the saved mic moves to the built-in one and plugging it back returns to it; neither always posts a configuration change.
+        for selector in [kAudioHardwarePropertyDevices, kAudioHardwarePropertyDefaultInputDevice] {
+            var addr = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+            AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &addr, .main) { [weak self] _, _ in
+                guard let self, self.wanted, InputRoute.resolve(savedUID: self.deviceUID).route != self.activeRoute else { return }
+                log("input devices changed, restarting input")
+                self.restart()
+            }
         }
         Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in self?.checkStall() }
         // Loading Whisper and compiling its Metal kernels takes seconds; pay it now, not in front of the first automatic recording.
@@ -680,40 +757,26 @@ final class Listener {
         guard silentFor >= 10 * pow(2, Double(min(stallRestarts, 5))) else { return }
         log("input stalled: no audio for \(Int(silentFor)) s, restarting")
         stallRestarts += 1
-        halt(); engine = AVAudioEngine(); attemptStart()
+        halt(); activeRoute = nil; attemptStart()
     }
 
     func start() throws {
-        var deviceName = "system default"
-        // Windows twin: MicCapture.Open. Enabled before the device pin because it swaps the input unit for voice processing I/O.
-        if config.cfg.dictation?.echoCancellation != false, !voiceProcessingFailed, !engine.inputNode.isVoiceProcessingEnabled {
-            do {
-                try engine.inputNode.setVoiceProcessingEnabled(true)
-                // Voice processing ducks other apps by default; the video the user watches must keep its volume.
-                engine.inputNode.voiceProcessingOtherAudioDuckingConfiguration =
-                    AVAudioVoiceProcessingOtherAudioDuckingConfiguration(enableAdvancedDucking: false, duckingLevel: .min)
-                log("echo cancellation: voice processing on")
-            } catch {
-                log("echo cancellation unavailable, raw input: \(error)")
+        let (route, missing) = InputRoute.resolve(savedUID: deviceUID)
+        // A pinned unit never follows the system default again, so a different route needs a fresh engine.
+        if route != activeRoute { engine = AVAudioEngine(); activeRoute = route }
+        if case .pinned(var id) = route {
+            guard let au = engine.inputNode.audioUnit else { throw NSError(domain: "pin", code: 1) }
+            var current = AudioDeviceID(0)
+            var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+            AudioUnitGetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &current, &size)
+            // Setting it posts AVAudioEngineConfigurationChange; skipping a no-op set keeps restarts from looping.
+            if current != id {
+                let status = AudioUnitSetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &id, size)
+                if status != noErr { throw NSError(domain: NSOSStatusErrorDomain, code: Int(status)) }
             }
         }
-        if let uid = deviceUID {
-            if var id = audioDeviceID(uid: uid), let au = engine.inputNode.audioUnit {
-                var current = AudioDeviceID(0)
-                var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-                AudioUnitGetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &current, &size)
-                // Setting it posts AVAudioEngineConfigurationChange; skipping a no-op set keeps restarts from looping.
-                if current != id {
-                    let status = AudioUnitSetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &id, size)
-                    if status != noErr { throw NSError(domain: NSOSStatusErrorDomain, code: Int(status)) }
-                }
-                deviceName = AVCaptureDevice(uniqueID: uid)?.localizedName ?? uid
-            } else {
-                log("input device \(uid) not found, using system default")
-                // The unit may still be pinned to the vanished device.
-                engine = AVAudioEngine()
-            }
-        }
+        let deviceName = route.deviceID.map(audioDeviceName) ?? "system default"
+        if missing, let uid = deviceUID { log("input device \(uid) not found, falling back to \(deviceName)") }
         let node = engine.inputNode
         // outputFormat stays at the previous device's rate after CurrentDevice is switched
         // (48 kHz vs the webcam's 16 kHz), and a tap with that format gets no buffers at all.
@@ -735,19 +798,70 @@ final class Listener {
             }
         }
         engine.prepare()
-        do {
-            try engine.start()
-        } catch where engine.inputNode.isVoiceProcessingEnabled {
-            // Voice processing can fail only at start; without this the restart loop would retry it forever.
-            log("echo cancellation unavailable, raw input: \(error)")
-            voiceProcessingFailed = true
-            node.removeTap(onBus: 0)
-            engine = AVAudioEngine()
-            return try start()
-        }
+        try engine.start()
         running = true
         wanted = true
         log("listening on \(deviceName) at \(fmt.sampleRate) Hz for \(config.cfg.wakeWords)")
+        if config.cfg.dictation?.echoCancellation != false { watchVoiceActivity(on: route.deviceID) }
+    }
+
+    /// Windows twin: MicCapture.Open. HAL voice activity detection runs on an echo-cancelled copy of the input,
+    /// so speaker playback never turns it on (0 of 240 polls, measured 2026-10-28), and other apps keep the raw mic.
+    private func watchVoiceActivity(on id: AudioDeviceID?) {
+        let previous = voiceActivity.withLock { state in
+            let old = state.device
+            state = (0, nil, .distantPast)
+            return old
+        }
+        if previous != 0, previous != id { setVoiceActivityDetection(previous, on: false) }
+        guard let id else { return }
+        guard setVoiceActivityDetection(id, on: true) else {
+            log("echo cancellation unavailable, raw input: no voice activity detection on \(audioDeviceName(id))")
+            return
+        }
+        voiceActivity.withLock { $0.device = id }
+        guard voiceActivityListened.insert(id).inserted else { return }
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVoiceActivityDetectionState,
+                                              mScope: kAudioDevicePropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
+        // The listener fires once per transition, so the state is kept here rather than polled.
+        AudioObjectAddPropertyListenerBlock(id, &addr, .main) { [weak self] _, _ in
+            guard let self, let on = audioProperty(id, kAudioDevicePropertyVoiceActivityDetectionState, UInt32(0),
+                                                    scope: kAudioDevicePropertyScopeInput) else { return }
+            self.voiceActivity.withLock { state in
+                guard state.device == id else { return }
+                let now = Date()
+                if on != 0 {
+                    if state.onSince == nil { state.onSince = now }
+                } else {
+                    if let since = state.onSince, now.timeIntervalSince(since) >= Listener.minVoiceSeconds { state.lastVoiceEnd = now }
+                    state.onSince = nil
+                }
+            }
+        }
+    }
+
+    @discardableResult
+    private func setVoiceActivityDetection(_ id: AudioDeviceID, on: Bool) -> Bool {
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVoiceActivityDetectionEnable,
+                                              mScope: kAudioDevicePropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
+        var value: UInt32 = on ? 1 : 0
+        return AudioObjectHasProperty(id, &addr)
+            && AudioObjectSetPropertyData(id, &addr, 0, nil, UInt32(MemoryLayout<UInt32>.size), &value) == noErr
+    }
+
+    // ponytail: fixed threshold. Speaker playback still blipped the detector for 725–1236 ms in 3 of 6 runs while a voice
+    // from another source held it for 8000 ms (2026-10-28); a late start keeps the phrase from its preroll.
+    // Make it a config value if short live phrases get dropped.
+    static let minVoiceSeconds = 1.5
+
+    /// True when no gate is set, or the detector has heard one voice for minVoiceSeconds now or within the last 1.5 s.
+    private func voiceRecentlyActive() -> Bool {
+        voiceActivity.withLock { state in
+            let now = Date()
+            if state.device == 0 { return true }
+            if let since = state.onSince, now.timeIntervalSince(since) >= Listener.minVoiceSeconds { return true }
+            return now.timeIntervalSince(state.lastVoiceEnd) < 1.5
+        }
     }
 
     /// realtime paces frames like the mic does, which matters when the consumer awaits mid-stream.
@@ -759,7 +873,7 @@ final class Listener {
         }
     }
 
-    func stop() { wanted = false; halt() }
+    func stop() { wanted = false; halt(); watchVoiceActivity(on: nil) }
 
     private func halt() {
         let generation = localHistoryState.withLock { state in state.generation += 1; return state.generation }
@@ -1157,6 +1271,7 @@ final class Listener {
 
     private func automaticWakeBlock() -> String? {
         if localHistoryState.withLock({ $0.busy }) { return "previous recording still transcribing" }
+        if !voiceRecentlyActive() { return "no voice activity (speaker playback is not a voice)" }
         if let busy = micInUse(by: config.cfg.skipWhileMicInUseBy ?? [], failClosed: true) { return "\(busy) is using the microphone" }
         if let excluded = config.cfg.dictation?.excludeBundleIDs, !excluded.isEmpty {
             guard let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else { return "frontmost app unknown" }
@@ -1171,8 +1286,8 @@ final class Listener {
         do { try start(); restartError = nil } catch {
             // One log line per distinct error, the retry repeats every 10 s while the device is away.
             if restartError != "\(error)" { restartError = "\(error)"; log("restart failed, retrying every 10 s: \(error)") }
-            // The one recovery seen in the field (2026-10-03 log) went through a fresh engine.
-            engine = AVAudioEngine()
+            // The one recovery seen in the field (2026-10-03 log) went through a fresh engine; start() builds one when the route is unset.
+            activeRoute = nil
             if !retryScheduled {
                 retryScheduled = true
                 DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
@@ -1773,9 +1888,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Rebuilt on every open so plugged/unplugged devices show up.
     func menuNeedsUpdate(_ menu: NSMenu) {
         let selected = UserDefaults.standard.string(forKey: deviceKey)
-        let devices = AVCaptureDevice.DiscoverySession(deviceTypes: [.microphone, .external], mediaType: .audio, position: .unspecified).devices
+        let devices = inputDeviceIDs().compactMap { id in audioDeviceUID(id).map { (audioDeviceName(id), Optional($0)) } }
         menu.removeAllItems()
-        for (title, uid) in [("システムのデフォルト", nil)] + devices.map({ ($0.localizedName, Optional($0.uniqueID)) }) {
+        for (title, uid) in [("システムのデフォルト", nil)] + devices {
             let i = NSMenuItem(title: title, action: #selector(selectDevice), keyEquivalent: "")
             i.target = self
             i.representedObject = uid

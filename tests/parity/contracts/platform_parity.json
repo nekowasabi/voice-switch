@@ -195,7 +195,7 @@
       "id": "dictation_echo_cancelled_input",
       "macos": {
         "file": "Sources/voice-switch/MacApp.swift",
-        "markers": ["echoCancellation != false", "setVoiceProcessingEnabled(true)", "enableAdvancedDucking: false", "echo cancellation unavailable, raw input"]
+        "markers": ["echoCancellation != false", "kAudioDevicePropertyVoiceActivityDetectionEnable", "no voice activity (speaker playback is not a voice)", "echo cancellation unavailable, raw input"]
       },
       "windows": {
         "file": "dotnet/VoiceSwitch.Windows/EchoCancelledCapture.cs",
@@ -283,7 +283,7 @@
       "id": "menu_bar_device_and_login_items",
       "macos": {
         "file": "Sources/voice-switch/MacApp.swift",
-        "markers": ["NSStatusBar.system.statusItem", "AVCaptureDevice.DiscoverySession", "SMAppService.mainApp"]
+        "markers": ["NSStatusBar.system.statusItem", "inputDeviceIDs().compactMap", "SMAppService.mainApp"]
       },
       "windows": {
         "file": "dotnet/VoiceSwitch.Windows/Tray/VoiceSwitchTrayContext.cs",

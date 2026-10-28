@@ -113,8 +113,8 @@ struct DictationConfig: Decodable {
     /// Windows only. A second SAPI engine hears a stop word after body text.
     /// macOS decodes the key and does not use it. Apple Speech is not covered. Absent stays off.
     var dedicatedStopRecognizer: Bool? = nil
-    /// Cancel what the speakers play before the VAD so playback never starts a recording (Mac + Windows).
-    /// Absent means on; false keeps the raw input.
+    /// Keep speaker playback from starting an automatic recording (Mac + Windows). Windows cancels it before the VAD;
+    /// macOS keeps the raw mic and requires HAL voice activity detection. Absent means on; false turns it off.
     var echoCancellation: Bool? = nil
 
     init(recordingsDir: String? = nil, endSilenceMs: Int? = nil, maxSeconds: Double? = nil,
