@@ -14,11 +14,11 @@ HANDOFF = ROOT / "dotnet" / "VoiceSwitch.Windows" / "SuperwhisperHandoff.cs"
 
 BASELINE = [
     (SWIFT, 'func openArguments(input: String) -> [String]'),
-    (SWIFT, 'filter { $0.name != "input" }'),
-    (SWIFT, 'URLQueryItem(name: "input", value: value)'),
+    (SWIFT, 'filter { $0.name != param }'),
+    (SWIFT, 'URLQueryItem(name: param, value: value)'),
     (CORE / "VoiceSwitchConfig.cs", "public string InputUrl(string input)"),
-    (CORE / "VoiceSwitchConfig.cs", '.Where(item => item.Split(\'=\', 2)[0] != "input")'),
-    (CORE / "VoiceSwitchConfig.cs", '.Append("input=" + EncodeUnreserved(input))'),
+    (CORE / "VoiceSwitchConfig.cs", '.Where(item => item.Split(\'=\', 2)[0] != param)'),
+    (CORE / "VoiceSwitchConfig.cs", '.Append(param + "=" + EncodeUnreserved(text))'),
     (MAC, "openArguments(input:"),
     (HANDOFF, "LaunchUrl(action.InputUrl(text))"),
     (MAC, "if controlled { return .delivered }"),
