@@ -126,39 +126,46 @@ drive_grokbot_text_limits() {
   local out
   out="$(evidence_dir grokbot-text-limits)"
   cat > "$out/config.json" <<'JSON'
-{"wakeWords":["音声入力"],"command":"wake","windows":{"actions":[{"name":"grokbot","wakeWords":["グロック"],"url":"grokbot://app/v1/prompt?id=YOUR_BOT_ID","inputParam":"text"}]}}
+{"wakeWords":["音声入力"],"command":"wake","windows":{"actions":[{"name":"grokbot","wakeWords":["グロック"],"url":"grokbot://app/v1/prompt?id=YOUR_BOT_ID","inputParam":"text"},{"name":"progress","wakeWords":["progress"],"url":"alter://action/26B00BAB-5655-4581-BCA0-F3880E746CC9"}]}}
 JSON
   python3 - "$DOTNET" "$PROBE_DLL" "$out" <<'PY'
 import pathlib, subprocess, sys
 dotnet, dll, out = sys.argv[1], sys.argv[2], pathlib.Path(sys.argv[3])
 cfg = out / "config.json"
 
-def run(text):
-    p = subprocess.run([dotnet, "exec", dll, "load", "--config", str(cfg), "--name", "grokbot", "--text", text],
+def run(name, text):
+    p = subprocess.run([dotnet, "exec", dll, "load", "--config", str(cfg), "--name", name, "--text", text],
                        capture_output=True, text=True)
     (out / "last-stderr.txt").write_text(p.stderr)
     if p.returncode != 0:
         raise SystemExit(f"probe failed: {p.stderr}")
-    url = p.stdout.strip()
-    prefix = "grokbot://app/v1/prompt?id=YOUR_BOT_ID&text="
-    if not url.startswith(prefix):
-        raise SystemExit(f"missing text= param: {url}")
-    return url, url[len(prefix):]
+    return p.stdout.strip()
+
+def query_value(url, key):
+    _, _, query = url.partition("?")
+    query, _, _ = query.partition("#")
+    for item in query.split("&"):
+        name, _, value = item.partition("=")
+        if name == key:
+            return value
+    return None
 
 failures = []
-url, value = run("hello\r\n\tworld\n")
+url = run("grokbot", "hello\r\n\tworld\n")
+value = query_value(url, "text")
 if value != "hello%20world":
     failures.append(f"newline collapse: {url}")
 # 1000-char cap, no split of %E4%BB%8A (UTF-8 for 今) and no split of %XX.
 long_text = "今" * 400
-url, value = run(long_text)
+url = run("grokbot", long_text)
+value = query_value(url, "text")
+if value is None:
+    failures.append(f"missing text= param: {url}")
+    value = ""
 if len(value) > 1000:
     failures.append(f"encoded longer than 1000: {len(value)}")
-if len(value) % 9 != 0:
+if value and len(value) % 9 != 0:
     failures.append(f"cut inside %E4%BB%8A: len={len(value)} url={url}")
-if "%" in value and (len(value) < 3 or value[-3] != "%" and "%" in value[-2:]):
-    failures.append(f"cut inside %XX: {value[-8:]}")
-# A trailing % without two hex digits is a split percent-escape.
 i = 0
 while i < len(value):
     if value[i] == "%":
@@ -168,12 +175,21 @@ while i < len(value):
         i += 3
     else:
         i += 1
-(out / "stdout.txt").write_text(url + "\n" + f"encoded_len={len(value)}\n")
+# Cap is grokbot-only: the same 400 × 今 on a non-grokbot URL stays longer than 1000.
+other = run("progress", long_text)
+other_value = query_value(other, "input")
+if other_value is None:
+    failures.append(f"non-grokbot missing input=: {other}")
+elif len(other_value) <= 1000:
+    failures.append(f"non-grokbot was capped: encoded_len={len(other_value)} url={other}")
+(out / "stdout.txt").write_text(
+    url + "\n" + f"encoded_len={len(value)}\n" + other + "\n" + f"non_grokbot_encoded_len={len(other_value or '')}\n"
+)
 if failures:
     (out / "fail.txt").write_text("\n".join(failures) + "\n")
     print("FAIL " + " | ".join(failures), file=sys.stderr)
     raise SystemExit(1)
-print(f"ok encoded_len={len(value)}")
+print(f"ok encoded_len={len(value)} non_grokbot_encoded_len={len(other_value)}")
 PY
   echo "exit=0 evidence=$out"
 }
@@ -206,8 +222,28 @@ drive_grokbot_config_docs() {
   cat "$out/stdout.txt"
   [ "$code" -eq 0 ] || die "config.example.grokbot.json did not load (see $out)"
   grep -q 'name=grokbot' "$out/stdout.txt" || die "example did not list a grokbot action"
-  grep -q 'YOUR_BOT_ID' "$example" || die "example missing YOUR_BOT_ID placeholder"
-  grep -q 'inputParam' "$example" || die "example missing inputParam"
+  python3 - "$example" <<'PY'
+import json, sys
+from pathlib import Path
+cfg = json.loads(Path(sys.argv[1]).read_text())
+
+def check(block, label):
+    actions = (block or {}).get("actions") or []
+    grok = next((a for a in actions if a.get("name") == "grokbot"), None)
+    if grok is None:
+        raise SystemExit(f"{label} missing name=grokbot")
+    if grok.get("inputParam") != "text":
+        raise SystemExit(f'{label} missing "inputParam": "text"')
+    url = grok.get("url") or ""
+    if "YOUR_BOT_ID" not in url:
+        raise SystemExit(f"{label} URL missing YOUR_BOT_ID")
+    if "grokbot://app/v1/prompt" not in url:
+        raise SystemExit(f"{label} URL is not grokbot://app/v1/prompt")
+
+check(cfg.get("macOS"), "macOS.actions")
+check(cfg.get("windows"), "windows.actions")
+print("ok both action blocks")
+PY
   [ -f "$REPO/docs/grokbot-message.md" ] || die "missing docs/grokbot-message.md"
   grep -q 'documented, not live-tested' "$REPO/docs/grokbot-message.md" || die "docs/grokbot-message.md missing documented, not live-tested"
   grep -q 'Grok Bot' "$REPO/README.md" || die "README.md missing Grok Bot"

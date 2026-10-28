@@ -50,7 +50,7 @@ The probe is the harness. It calls production `WakeAction.InputUrl` / `ConfigLoa
 $V tests                         # full Windows.Tests run
 $V tests "wake action URL"       # --only substring
 $V swift-mirror baseline         # existing input= machinery in Swift and C#
-$V swift-mirror grokbot          # inputParam + grokbot limits + truncated log
+$V swift-mirror grokbot          # inputParam + grokbot limits + grokbot prompt text truncated log
 $V win-build                     # optional: Release win-x64 compile of the Windows app
 ```
 

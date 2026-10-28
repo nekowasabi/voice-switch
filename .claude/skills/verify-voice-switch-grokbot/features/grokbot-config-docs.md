@@ -5,7 +5,7 @@ A committed example config shows both `macOS.actions` and `windows.actions` grok
 ## Sub-features
 
 - `CD1` `config.example.grokbot.json` loads through `ConfigLoader` and lists `name=grokbot`.
-- `CD2` the example contains `YOUR_BOT_ID` and `inputParam`, never a real bot id or token.
+- `CD2` both `macOS.actions` and `windows.actions` contain an entry with `"inputParam": "text"` and `YOUR_BOT_ID` in the URL. Never a real bot id or token.
 - `CD3` `docs/grokbot-message.md` records the prompt-link contract as documented, not live-tested, and names webhooks as a future option only.
 
 ## How to get to it (user POV)
@@ -21,7 +21,7 @@ Preconditions:
 - The example file and docs exist. Until they are added, this recipe fails.
 
 - **Load the example.** Run `VS_RUN_ID=<name> $V drive grokbot-config-docs`.
-- **Proof.** `exit=0`. `stdout.txt` contains `name=grokbot` and the URL with `YOUR_BOT_ID`. `docs/grokbot-message.md` contains `documented, not live-tested`. `README.md` and `README_ja.md` contain `Grok Bot`.
+- **Proof.** `exit=0`. `stdout.txt` contains `name=grokbot`. Both `macOS.actions` and `windows.actions` have `"inputParam": "text"` and `YOUR_BOT_ID` in the URL. `docs/grokbot-message.md` contains `documented, not live-tested`. `README.md` and `README_ja.md` contain `Grok Bot`.
 
 ## Gotchas
 

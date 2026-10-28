@@ -58,8 +58,8 @@ def main() -> int:
         ("Windows.Core InputParam", "InputParam" in cs),
         ("Windows.Core GrokBotPrompt", "GrokBotPrompt" in cs),
         ("Windows.Core /v1/prompt", "/v1/prompt" in cs),
-        ("MacApp.swift truncated", "truncated" in mac),
-        ("SuperwhisperHandoff.cs truncated", "truncated" in handoff),
+        ("MacApp.swift grokbot prompt text truncated", "grokbot prompt text truncated" in mac),
+        ("SuperwhisperHandoff.cs grokbot prompt text truncated", "grokbot prompt text truncated" in handoff),
     ]
     missing = [name for name, ok in checks if not ok]
     if missing:
