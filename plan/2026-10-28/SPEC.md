@@ -14,19 +14,26 @@ Do not set `VS_VERIFY_ROOT`. CLI evidence uses `/tmp/voice-switch-dotnet-verify/
 ## 1. Restore
 
 ```bash
-dotnet restore dotnet/VoiceSwitch.Windows/VoiceSwitch.Windows.csproj -r win-x64 --ignore-failed-sources --disable-parallel
-dotnet restore dotnet/VoiceSwitch.Windows.Tests/VoiceSwitch.Windows.Tests.csproj --ignore-failed-sources --disable-parallel
+set -euo pipefail
+{
+  dotnet restore dotnet/VoiceSwitch.Windows/VoiceSwitch.Windows.csproj -r win-x64 --ignore-failed-sources --disable-parallel
+  dotnet restore dotnet/VoiceSwitch.Windows.Tests/VoiceSwitch.Windows.Tests.csproj --ignore-failed-sources --disable-parallel
+} > /tmp/vs-refactor-restore.out
+test -s /tmp/vs-refactor-restore.out
 ```
 
-Pass: exit 0, and stdout contains `Restored` for `VoiceSwitch.Windows.csproj` and for `VoiceSwitch.Windows.Tests.csproj`.
+Pass: exit 0. Both restore commands exit 0 and the captured log is non-empty. A warm cache prints `up-to-date for restore` and may print `Restored` only for `VoiceSwitch.Windows.Core.csproj`. The script does not require the word `Restored` on `VoiceSwitch.Windows.csproj` or `VoiceSwitch.Windows.Tests.csproj`.
 
 ## 2. WinExe build
 
 ```bash
-dotnet build dotnet/VoiceSwitch.Windows/VoiceSwitch.Windows.csproj -c Release -r win-x64 --no-restore
+set -euo pipefail
+dotnet build dotnet/VoiceSwitch.Windows/VoiceSwitch.Windows.csproj -c Release -r win-x64 --no-restore > /tmp/vs-refactor-build.out 2>&1
+grep -F -q '0 Warning(s)' /tmp/vs-refactor-build.out
+grep -F -q '0 Error(s)' /tmp/vs-refactor-build.out
 ```
 
-Pass: exit 0, and stdout contains `0 Warning(s)` and `0 Error(s)`.
+Pass: exit 0. `/tmp/vs-refactor-build.out` contains `0 Warning(s)` and `0 Error(s)`. The csproj does not treat warnings as errors, so this grep is what rejects a warning. A build that only exits 0 is not enough.
 
 ## 3. Behavior suite
 
@@ -49,7 +56,7 @@ python3 tests/parity/run_parity.py > /tmp/vs-refactor-parity.out
 grep -F -q 'SUMMARY pass=118 allow=23 fail=0' /tmp/vs-refactor-parity.out
 ```
 
-Pass: exit 0, and stdout contains `SUMMARY pass=118 allow=23 fail=0`.
+Pass: exit 0. `/tmp/vs-refactor-parity.out` contains `SUMMARY pass=118 allow=23 fail=0`. The script itself prints nothing on success.
 
 ## 5. Python unit tests
 
@@ -60,7 +67,7 @@ grep -F -q 'Ran 40 tests' /tmp/vs-refactor-py.out
 grep -F -q 'OK' /tmp/vs-refactor-py.out
 ```
 
-Pass: exit 0, and stdout contains `Ran 40 tests` and `OK`.
+Pass: exit 0. `/tmp/vs-refactor-py.out` contains `Ran 40 tests` and `OK`. Unittest writes that text to stderr; the script merges it into the file. The script itself prints nothing on success.
 
 ## 6. Test project links every top-level Windows source
 
@@ -90,32 +97,41 @@ Pass: exit 0, and stdout contains `top-level windows sources linked: ok`. A new 
 ```bash
 set -euo pipefail
 diff_out=$(git diff --stat origin/main -- Sources/ tests/parity)
+status_out=$(git status --short --untracked-files=all -- Sources/ tests/parity)
 test -z "$diff_out"
+test -z "$status_out"
 ```
 
-Pass: exit 0, and `git diff --stat origin/main -- Sources/ tests/parity` prints nothing.
+Pass: exit 0. The diff against `origin/main` is empty, and `git status --short --untracked-files=all` prints nothing for those paths. `git diff` alone ignores untracked files, so the status check is required.
 
 ## 8. Existing verification skills stay untouched
 
 ```bash
 set -euo pipefail
 diff_out=$(git diff --stat origin/main -- .claude/skills/verify-voice-switch .claude/skills/verify-voice-switch-mac)
+status_out=$(git status --short --untracked-files=all -- .claude/skills/verify-voice-switch .claude/skills/verify-voice-switch-mac)
 test -z "$diff_out"
+test -z "$status_out"
 ```
 
-Pass: exit 0, and that diff prints nothing. `.claude/skills/verify-voice-switch-dotnet/` is the new Linux skill and is allowed to differ.
+Pass: exit 0. The diff against `origin/main` is empty, and `git status --short --untracked-files=all` prints nothing for those two directories. `.claude/skills/verify-voice-switch-dotnet/` is the new Linux skill and is allowed to differ. Untracked files under the two named directories fail this item.
 
 ## 9. Formatter is clean on touched C# files
 
 ```bash
 set -euo pipefail
-files=$(git diff --name-only --diff-filter=ACMR origin/main -- '*.cs')
-if [ -z "$files" ]; then
+mapfile -t files < <(
+  {
+    git diff --name-only --diff-filter=ACMR origin/main -- '*.cs'
+    git ls-files --others --exclude-standard -- '*.cs'
+  } | sed '/^$/d' | sort -u
+)
+if [ "${#files[@]}" -eq 0 ]; then
   echo "no csharp files differ from origin/main"
   exit 0
 fi
 status=0
-for f in $files; do
+for f in "${files[@]}"; do
   case "$f" in
     dotnet/VoiceSwitch.Windows.Core/*) proj=dotnet/VoiceSwitch.Windows.Core/VoiceSwitch.Windows.Core.csproj ;;
     dotnet/VoiceSwitch.Windows.Tests/*) proj=dotnet/VoiceSwitch.Windows.Tests/VoiceSwitch.Windows.Tests.csproj ;;
@@ -127,9 +143,11 @@ done
 exit "$status"
 ```
 
-Pass: exit 0. With no C# diff against `origin/main`, the script prints `no csharp files differ from origin/main`. After a slice, every changed `*.cs` file passes `dotnet format <its csproj> --verify-no-changes --no-restore --include <file>`.
+Pass: exit 0. With no tracked or untracked `*.cs` difference from `origin/main`, the script prints `no csharp files differ from origin/main` and does not run `dotnet format`. After a slice, every such file passes `dotnet format <its csproj> --verify-no-changes --no-restore --include <file>`. `git diff` alone misses untracked files, so the `git ls-files --others` list is required.
 
-`NoWakeTests.cs` has two pre-existing whitespace findings. Leave that file alone, and this item does not format it.
+`NoWakeTests.cs` has two pre-existing WHITESPACE findings, at lines 137 and 210. Leave that file unchanged. This item formats it only if the diff or the untracked list includes it.
+
+`DictationRuntime.cs` has three pre-existing WHITESPACE findings, at lines 2147–2149 (the two comment lines and `internal const string Script` above the recognizer script). On this baseline the file matches `origin/main`, so item 9 does not format it and those findings stay. Slice 1 edits the file, and this item then runs `dotnet format --verify-no-changes` on it. That fails until those three lines are corrected. Running `dotnet format` on the touched file does that whitespace rewrite. Keep it. Do not change the characters inside the `"""` script.
 
 ## 10. CLI help
 
@@ -190,7 +208,7 @@ grep -F -q 'fatal: --dry-run cannot be combined with --fire.' /tmp/voice-switch-
 grep -F -q 'hint: copy config.example.windows.json to ' /tmp/voice-switch-dotnet-verify/evidence/spec-fire-dry-run/stdout.txt
 ```
 
-Pass: exit 0. The app exits 1 with that fatal tail and the hint tail. This must happen before any command is started.
+Pass: exit 0. The app exits 1, stderr contains that fatal tail, and stdout contains that hint tail. The fatal text is the `CliOptions.Parse` rejection. The script does not record child processes.
 
 ## 14. Pre-existing url-actions failure
 
