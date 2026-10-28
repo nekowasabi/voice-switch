@@ -109,6 +109,10 @@ struct DictationConfig: Decodable {
     /// Superwhisper mode key or display name for voice-switch dictations (Mac + Windows).
     /// Unset keeps auto-paste behavior; set switches mode around handoff and pastes when not routed.
     var superwhisperMode: String?
+    /// macOS: superwhisper mode key or display name that wake-word dictations paste in (auto-paste on). voice-switch
+    /// selects it at launch and before each wake-word handoff, since superwhisper was seen running the first recording
+    /// after a relaunch in another mode (2026-10-28). Unset keeps superwhisper's active mode.
+    var pasteMode: String?
     var noWakeWord: NoWakeWordConfig?
     /// Windows only. A second SAPI engine hears a stop word after body text.
     /// macOS decodes the key and does not use it. Apple Speech is not covered. Absent stays off.

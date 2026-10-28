@@ -310,6 +310,18 @@ func recoverSuperwhisperMode(target: NSRunningApplication?) async -> Bool {
     }
 }
 
+/// At launch and before each wake-word handoff. The switch is sent even when the stored activeModeKey already names the
+/// mode: superwhisper ran a recording in `message` while storing `default` (2026-10-28 13:25:10), so the stored value is not trusted.
+func selectPasteMode(_ wanted: String) async {
+    guard let key = resolveSuperwhisperModeKey(wanted.trimmingCharacters(in: .whitespacesAndNewlines), modeJsons: readSuperwhisperModeJsons()) else {
+        log("superwhisper mode \"\(wanted)\" not found; pasteMode ignored")
+        return
+    }
+    let active = readSuperwhisperActiveMode()
+    if active != key { log("superwhisper mode: \(key) selected (was \(active ?? "unknown"))") }
+    _ = await switchSuperwhisperMode(key, target: nil)
+}
+
 /// Clipboard + Cmd+V into the wake-time app. Used when mode auto-paste is off and pane did not take it.
 func pasteDictation(_ text: String, target: NSRunningApplication?) -> Bool {
     guard AXIsProcessTrusted(), let target, let idle = MacInputActivity.idleSeconds(), idle >= 1 else { return false }
@@ -384,7 +396,8 @@ func macPasteSafety(target: NSRunningApplication, lastInput: TimeInterval) -> Pa
         clipboardRestorable: true, inputUnchanged: currentInput.map { abs($0 - lastInput) < 0.02 } ?? false)
 }
 
-/// superwhisper transcribes the file. Wake-word audio keeps the active mode and lets superwhisper paste.
+/// superwhisper transcribes the file. Wake-word audio switches to `dictation.pasteMode` when set (else keeps the active
+/// mode) and lets superwhisper paste.
 /// Automatic audio switches to `dictation.superwhisperMode`, which must have auto-paste off, and stays in history.
 /// An action's text goes only to its URL, so it switches to its own mode or, failing that, `dictation.superwhisperMode`.
 /// notDispatched means the caller should fall back to local history; noResult means superwhisper returned no words.
@@ -409,6 +422,7 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     let controlled = origin.isAutomatic
     let wantedMode = controlled ? cfg.superwhisperMode : action == nil ? nil : action?.superwhisperMode ?? cfg.superwhisperMode
     if controlled { guard superwhisperAutoPasteDisabled(wantedMode, modeJsons: readSuperwhisperModeJsons()) else { return .notDispatched } }
+    if !controlled, action == nil, let mode = cfg.pasteMode { await selectPasteMode(mode) }
     let (modeRequested, previousMode) = await enterSuperwhisperMode(wantedMode, target: target)
     if controlled {
         guard modeRequested, superwhisperAutoPasteDisabled(wantedMode, modeJsons: readSuperwhisperModeJsons()) else {
@@ -470,8 +484,8 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
         return .delivered
     }
     let route = await routeDictation(result)
-    // Wake-word audio never switches mode, so superwhisper has already pasted unless the pane took it.
-    if decideDictationDelivery(modeRequested: modeRequested, route: route.disposition) == .superwhisper {
+    // Wake-word audio runs in the active mode or pasteMode, both auto-paste, so superwhisper has already pasted unless the pane took it.
+    if decideDictationDelivery(modeRequested: false, route: route.disposition) == .superwhisper {
         log("dictation delivered: superwhisper")
     }
     return .delivered
@@ -978,7 +992,8 @@ final class Listener {
             var endedByUser = false
             // Derived from `dictation` after every frame (defer covers each `continue`) instead of at each place that sets it.
             defer {
-                let phase: Phase = endedByUser ? .ended : dictation.map { !$0.heardSpeech ? .waiting : $0.confirmed ? .recording : .idle }
+                // An automatic session awaiting its agreed words keeps the mic glyph, so the pill does not vanish between it and the red dot.
+                let phase: Phase = endedByUser ? .ended : dictation.map { !$0.heardSpeech ? .waiting : $0.confirmed ? .recording : .hearing }
                     ?? (clock < followupUntil && config.cfg.dictation?.noWakeWord?.followup == true ? .followup
                         // The gate holds an automatic session back for minVoiceSeconds; the mic glyph shows the voice is heard meanwhile.
                         : voiceBeingHeard() && config.cfg.dictation?.noWakeWord?.enabled == true
@@ -992,6 +1007,10 @@ final class Listener {
             if f.isEmpty { seg = Segmenter(cfg: config.cfg); dictation = nil; followupUntil = 0; recent = []; speechFrames = 0; Hotkeys.end(); continue }
             seg.adaptFloor = dictation == nil
             let event = seg.push(f)
+            // Without voice processing the raw built-in mic keeps the room noise, so the energy floor rises and quiet speech
+            // stays under it (floor 0.0179, threshold 0.0537 on 2026-10-28: the mic glyph showed for 4 s and nothing started).
+            // HAL voice activity detection hears that speech, so either one counts as speaking.
+            let speaking = seg.lastWasSpeech || voiceBeingHeard()
             // The automatic session opens on voice activity before any transcript, so a spoken wake word replaces it with the
             // dictation the user asked for. The idle path below transcribes the same utterance again and opens that dictation.
             var heardDuringAutomatic: Transcript?
@@ -1014,7 +1033,7 @@ final class Listener {
                     log("dictation cancelled \(sidField(d.sessionID))"); continue
                 }
                 d.samples += f
-                d.silentFrames = seg.lastWasSpeech ? 0 : d.silentFrames + 1
+                d.silentFrames = speaking ? 0 : d.silentFrames + 1
                 if !d.confirmed, let check = wordCheck.take(), check.session == d.sessionID, check.agreed {
                     d.confirmed = true
                     log("dictation session: automatic confirmed by agreed words \(sidField(d.sessionID))")
@@ -1054,7 +1073,7 @@ final class Listener {
                     stopFrames = 0
                 }
                 guard localHistoryState.withLock({ $0.generation == generation }) else { continue }
-                if d.deafFrames > 0 { d.deafFrames -= 1 } else if !d.heardSpeech && seg.lastWasSpeech {
+                if d.deafFrames > 0 { d.deafFrames -= 1 } else if !d.heardSpeech && speaking {
                     // Drop the wait before the text, keeping a preroll so the first syllable is whole.
                     d.samples = Array(d.samples.suffix(frames(ms: config.cfg.prerollMs ?? 300) * frameLen + frameLen))
                     d.heardSpeech = true
@@ -1081,7 +1100,7 @@ final class Listener {
             }
             // speechFrames counts the voiced frames of the phrase being spoken, joined across gaps up to the hangover,
             // which the VAD alone splits into short runs.
-            if seg.lastWasSpeech { speechFrames += 1; gapFrames = 0 }
+            if speaking { speechFrames += 1; gapFrames = 0 }
             else if speechFrames > 0 {
                 gapFrames += 1
                 if gapFrames > frames(ms: config.cfg.hangoverMs ?? 300) {
@@ -1105,7 +1124,7 @@ final class Listener {
             }
             let options = config.cfg.dictation?.noWakeWord
             // Starts even while the user types or moves the mouse; input idle no longer gates it.
-            if seg.lastWasSpeech && speechFrames >= frames(ms: config.cfg.minSpeechMs ?? 300),
+            if speaking && speechFrames >= frames(ms: config.cfg.minSpeechMs ?? 300),
                let mode = config.cfg.dictation?.superwhisperMode, !mode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                let idle = MacInputActivity.idleSeconds(),
                let origin = NoWakePolicy.onSpeech(options, idleSeconds: idle, inFollowupWindow: clock < followupUntil) {
@@ -1694,6 +1713,7 @@ final class HUD {
         bg.wantsLayer = true
         bg.layer?.cornerRadius = 12
         glyphView.translatesAutoresizingMaskIntoConstraints = false
+        glyphView.wantsLayer = true
         bg.addGestureRecognizer(NSClickGestureRecognizer(target: HistoryPanel.shared, action: #selector(HistoryPanel.show)))
         bg.addSubview(glyphView)
         NSLayoutConstraint.activate([
@@ -1741,7 +1761,8 @@ final class HUD {
         render()
     }
 
-    private func render() {
+    /// hideNow: an expiry ends the pill on time; only a state change waits for the next state before hiding.
+    private func render(hideNow: Bool = false) {
         shown += 1
         let view: (label: HUDLabel, expiry: Double?)? = if let notice { (notice, 1) } else { switch (phase, delivery) {
         case (.waiting, _): (.waiting, nil)
@@ -1763,7 +1784,24 @@ final class HUD {
             log("hud: \(view.map { "\($0.label)" } ?? "hidden") phase=\(phase) delivery=\(delivery.map { "\($0)" } ?? "-")")
         }
         // Animation must stop with the pill: a hidden HUD that keeps a 30 fps timer burns CPU for nothing.
-        guard let view else { glyphView.stop(); panel.orderOut(nil); return }
+        // The next state often arrives a moment later (recording → processing), so the pill waits briefly before hiding
+        // instead of vanishing and reappearing.
+        guard let view else {
+            if hideNow { glyphView.stop(); panel.orderOut(nil); return }
+            let mine = shown
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [self] in
+                guard shown == mine else { return }
+                glyphView.stop(); panel.orderOut(nil)
+            }
+            return
+        }
+        // A glyph change on the visible pill fades, so it reads as the same HUD changing its icon.
+        if panel.isVisible, glyphView.glyph != view.label, let layer = glyphView.layer {
+            let fade = CATransition()
+            fade.type = .fade
+            fade.duration = 0.15
+            layer.add(fade, forKey: "glyph")
+        }
         glyphView.show(view.label)
         if let expiry = view.expiry {
             let mine = shown
@@ -1772,7 +1810,7 @@ final class HUD {
                 notice = nil
                 if phase == .ended { phase = .idle }
                 if delivery == .failed || delivery == .saved || delivery == .done { delivery = nil }
-                render()
+                render(hideNow: true)
             }
         }
         // Follow the focused window even when the pointer remains on another display.
@@ -1837,6 +1875,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     let settled = pending ? await awaitRunsSettled(in: recordings) : true
                     if settled {
                         _ = await recoverSuperwhisperMode(target: nil)
+                        if let wanted = config.cfg.dictation?.pasteMode { await selectPasteMode(wanted) }
                     } else {
                         log("superwhisper mode: an earlier run is still in flight; the next handoff restores the mode")
                     }

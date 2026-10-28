@@ -16,6 +16,8 @@ public sealed record DictationConfig(
     string[]? ExcludeProcessNames = null,
     // Superwhisper mode key or name used for voice-switch dictations; meant to be a mode with auto-paste off.
     string? SuperwhisperMode = null,
+    // macOS only. Superwhisper mode that wake-word dictations paste in; Windows decodes it and does not use it.
+    string? PasteMode = null,
     NoWakeWordConfig? NoWakeWord = null,
     // Windows only. Second SAPI engine for a stop word after body text. Default false until human voice is measured. macOS ignores it.
     bool DedicatedStopRecognizer = false,

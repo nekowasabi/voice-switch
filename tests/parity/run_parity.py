@@ -511,7 +511,7 @@ def check_mac_superwhisper_mode_handoff(result: Result, repo: SourceTree) -> Non
             "superwhisper://mode?key=",
             "superwhisper mode restored from recovery state",
             "let route = await routeDictation(result)",
-            "decideDictationDelivery(modeRequested: modeRequested, route: route.disposition)",
+            "decideDictationDelivery(modeRequested: false, route: route.disposition)",
             "dictation delivered: superwhisper",
             # B2: modeRequested only after post-switch activeMode == key (failed poll → no paste).
             "guard readSuperwhisperActiveMode() == key else",
