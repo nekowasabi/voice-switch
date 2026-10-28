@@ -212,8 +212,10 @@ struct WakeAction: Decodable {
     /// Superwhisper mode (key or name) used for this action's dictation, typically one with auto-paste off
     /// so the text reaches only the URL. Absent falls back to `dictation.superwhisperMode`.
     let superwhisperMode: String?
+    /// Query item carrying the dictation. JSON `inputParam`; defaults to `input` when omitted or null.
+    let inputParam: String?
 
-    private enum CodingKeys: String, CodingKey { case name, wakeWords, url, superwhisperMode }
+    private enum CodingKeys: String, CodingKey { case name, wakeWords, url, superwhisperMode, inputParam }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -221,6 +223,11 @@ struct WakeAction: Decodable {
         wakeWords = try c.decode([String].self, forKey: .wakeWords)
         url = try c.decode(ActionURL.self, forKey: .url)
         superwhisperMode = try c.decodeIfPresent(String.self, forKey: .superwhisperMode)
+        inputParam = try c.decodeIfPresent(String.self, forKey: .inputParam)
+        if let p = inputParam, !GrokBotPrompt.isValidInputParam(p) {
+            throw DecodingError.dataCorruptedError(forKey: .inputParam, in: c,
+                debugDescription: "Wake action inputParam must be a non-empty RFC 3986 unreserved query name.")
+        }
         guard !wakeWords.isEmpty else {
             throw DecodingError.dataCorruptedError(forKey: .wakeWords, in: c,
                 debugDescription: "Wake action needs at least one wake word.")
@@ -229,13 +236,63 @@ struct WakeAction: Decodable {
 
     /// `open` arguments with the URL's `input` query replaced by `input` (one item, percent-encoded).
     func openArguments(input: String) -> [String] {
+        let param = inputParam ?? "input"
+        let text: String
+        if GrokBotPrompt.isPrompt(url.rawValue) {
+            let (fitted, _) = GrokBotPrompt.fit(input)
+            text = fitted
+        } else {
+            text = input
+        }
         guard var parts = URLComponents(string: url.rawValue) else { return url.openArguments }
         let unreserved = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
-        let value = input.addingPercentEncoding(withAllowedCharacters: unreserved) ?? ""
-        var items = (parts.percentEncodedQueryItems ?? []).filter { $0.name != "input" }
-        items.append(URLQueryItem(name: "input", value: value))
+        let value = text.addingPercentEncoding(withAllowedCharacters: unreserved) ?? ""
+        var items = (parts.percentEncodedQueryItems ?? []).filter { $0.name != param }
+        items.append(URLQueryItem(name: param, value: value))
         parts.percentEncodedQueryItems = items
         return ["-g", "--", parts.string ?? url.rawValue]
+    }
+}
+
+/// Grok Bot prompt-link limits (documented, not live-tested; staff forum 2026-10-16).
+/// Mirrors Core GrokBotPrompt line for line: collapse CR/LF/tab runs, trim,
+/// cap the percent-encoded value at 1000 characters on a whole UTF-8 scalar.
+enum GrokBotPrompt {
+    static func isPrompt(_ url: String) -> Bool {
+        guard let parts = URLComponents(string: url),
+              parts.scheme?.lowercased() == "grokbot",
+              parts.host?.lowercased() == "app",
+              parts.path == "/v1/prompt" else { return false }
+        return true
+    }
+
+    static func isValidInputParam(_ value: String) -> Bool {
+        guard !value.isEmpty else { return false }
+        return value.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "." || $0 == "_" || $0 == "~") }
+    }
+
+    static func fit(_ text: String) -> (fitted: String, truncated: Bool) {
+        let collapsed = text.replacingOccurrences(of: "[\\r\\n\\t]+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let unreserved = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~".utf8)
+        var fitted = ""
+        var encodedLength = 0
+        for scalar in collapsed.unicodeScalars {
+            var chunk = ""
+            for b in String(scalar).utf8 {
+                if unreserved.contains(b), let scalarValue = UnicodeScalar(b) {
+                    chunk.append(Character(scalarValue))
+                } else {
+                    chunk += String(format: "%%%02X", b)
+                }
+            }
+            if encodedLength + chunk.count > 1000 {
+                return (fitted, true)
+            }
+            fitted += String(scalar)
+            encodedLength += chunk.count
+        }
+        return (fitted, false)
     }
 }
 

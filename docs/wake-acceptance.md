@@ -4,7 +4,7 @@ These gates are fixed before the no-wake-word implementation and any new evaluat
 
 ## Safety gate
 
-Every automatic wake must remain local. It must never paste, change the clipboard without an explicit selection, invoke an action URL, route to tmux, call Jev, or send audio to a cloud transcription model. A later strict wake or finish hotkey must not upgrade an automatic session. A failed input-idle query must fail closed.
+Every automatic wake must remain local. It must never paste, change the clipboard without an explicit selection, invoke an action URL, route to tmux, call Jev, or send audio to a cloud transcription model. A later strict wake or finish hotkey must not upgrade an automatic session. A failed input-idle query must fail closed. A grokbot prompt link is an action URL and follows the same gate: automatic sessions never open it.
 
 Manual paste must first retain the result in history. It must stop when focus cannot be confirmed, the target may be a password field, IME composition cannot be ruled out, clipboard contents cannot be restored, or input resumed. Unknown safety state means history only.
 

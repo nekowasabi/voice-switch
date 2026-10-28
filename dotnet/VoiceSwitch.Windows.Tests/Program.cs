@@ -169,6 +169,12 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("echo-cancelled capture downsamples 48 kHz stereo and 44.1 kHz mono to 16 kHz mono at the same level", () => Check(EchoCancelledDownsamplerKeepsRateAndLevel())),
     ("config loads windows.actions and rejects invalid ones", () => Check(ConfigLoadsWindowsActions())),
     ("wake action URL carries the text as one input item", () => Check(WakeActionUrlCarriesInput())),
+    ("wake action URL with default inputParam stays byte-identical to input=", () => Check(WakeActionUrlDefaultInputParamStaysByteIdentical())),
+    ("wake action inputParam=text puts the dictation in text=", () => Check(WakeActionInputParamTextPutsDictationInText())),
+    ("grokbot prompt collapses CR LF tab runs to one space and trims", () => Check(GrokbotPromptCollapsesWhitespace())),
+    ("grokbot prompt caps percent-encoded text at 1000 without splitting %XX or UTF-8", () => Check(GrokbotPromptCapsEncodedText())),
+    ("config rejects invalid inputParam at load", () => Check(ConfigRejectsInvalidInputParam())),
+    ("automatic session never opens an action URL", () => Check(AutomaticSessionNeverOpensActionUrl())),
     ("dictation action wake selects its action after the default wakes", () => Check(DictationActionWakeSelectsAction())),
     ("dictation handoff with an action opens its URL instead of routing or pasting", () => Check(DictationHandoffActionOpensUrl())),
     ("dictation handoff switches mode only for automatic audio", () => Check(DictationHandoffSwitchesModeOnlyForAutomaticAudio())),
@@ -4446,6 +4452,184 @@ static bool DictationHandoffActionOpensUrl()
     return Submit("voice_switch", "input-voice-switch").SequenceEqual(["mode action-mode", "file", "mode default", opened])
         && Submit("voice_switch", null).SequenceEqual(["mode new-mode-1", "file", "mode default", opened])
         && routes == 0;
+}
+
+static bool WakeActionUrlDefaultInputParamStaysByteIdentical()
+{
+    const string uuid = "alter://action/26B00BAB-5655-4581-BCA0-F3880E746CC9";
+    const string sentence = "今日 a&b=c+d#e?f";
+    const string encoded = "%E4%BB%8A%E6%97%A5%20a%26b%3Dc%2Bd%23e%3Ff";
+    var noQueryOmitted = new WakeAction("p", ["p"], uuid).InputUrl(sentence);
+    var noQueryExplicit = new WakeAction("p", ["p"], uuid, InputParam: "input").InputUrl(sentence);
+    var withQueryOmitted = new WakeAction("p", ["p"], uuid + "?input=Sample%20text&k=v").InputUrl(sentence);
+    var withQueryExplicit = new WakeAction("p", ["p"], uuid + "?input=Sample%20text&k=v", InputParam: "input").InputUrl(sentence);
+    return noQueryOmitted == uuid + "?input=" + encoded
+        && noQueryExplicit == noQueryOmitted
+        && withQueryOmitted == uuid + "?k=v&input=" + encoded
+        && withQueryExplicit == withQueryOmitted;
+}
+
+static bool WakeActionInputParamTextPutsDictationInText()
+{
+    const string url = "grokbot://app/v1/prompt?id=YOUR_BOT_ID";
+    var built = new WakeAction("grokbot", ["グロック", "grok bot"], url, InputParam: "text").InputUrl("hello world");
+    return built == "grokbot://app/v1/prompt?id=YOUR_BOT_ID&text=hello%20world";
+}
+
+static bool GrokbotPromptCollapsesWhitespace()
+{
+    const string url = "grokbot://app/v1/prompt?id=YOUR_BOT_ID";
+    var built = new WakeAction("grokbot", ["g"], url, InputParam: "text").InputUrl("hello\r\n\tworld\n");
+    return built == url + "&text=hello%20world";
+}
+
+static bool GrokbotPromptCapsEncodedText()
+{
+    const string grokUrl = "grokbot://app/v1/prompt?id=YOUR_BOT_ID";
+    const string otherUrl = "alter://action/26B00BAB-5655-4581-BCA0-F3880E746CC9";
+    var longText = string.Concat(Enumerable.Repeat("今", 400));
+    var grok = new WakeAction("grokbot", ["g"], grokUrl, InputParam: "text").InputUrl(longText);
+    var grokIndex = grok.IndexOf("text=", StringComparison.Ordinal);
+    if (grokIndex < 0)
+    {
+        return false;
+    }
+
+    var grokValue = grok[(grokIndex + "text=".Length)..].Split(['&', '#'])[0];
+    if (grokValue.Length == 0 || grokValue.Length > 1000 || grokValue.Length % 9 != 0)
+    {
+        return false;
+    }
+
+    for (var i = 0; i < grokValue.Length; i++)
+    {
+        if (grokValue[i] == '%')
+        {
+            if (i + 2 >= grokValue.Length || !char.IsAsciiHexDigit(grokValue[i + 1]) || !char.IsAsciiHexDigit(grokValue[i + 2]))
+            {
+                return false;
+            }
+
+            i += 2;
+        }
+    }
+
+    var other = new WakeAction("p", ["p"], otherUrl).InputUrl(longText);
+    var otherIndex = other.IndexOf("input=", StringComparison.Ordinal);
+    if (otherIndex < 0)
+    {
+        return false;
+    }
+
+    var otherValue = other[(otherIndex + "input=".Length)..].Split(['&', '#'])[0];
+    return otherValue.Length > 1000;
+}
+
+static bool ConfigRejectsInvalidInputParam()
+{
+    static string WithParam(string paramJson) =>
+        """{"wakeWords":["音声入力"],"command":"wake","windows":{"actions":[{"name":"grokbot","wakeWords":["g"],"url":"grokbot://app/v1/prompt?id=YOUR_BOT_ID",""" + paramJson + "}]}}";
+    foreach (var bad in new[] { "", " ", "a b", "a=b", "a&b", "a%b", "a/b", "a?b", "あ" })
+    {
+        var json = WithParam("\"inputParam\":" + JsonSerializer.Serialize(bad));
+        if (!Rejects(json, "inputParam"))
+        {
+            return false;
+        }
+    }
+
+    var omittedPath = Path.Combine(Path.GetTempPath(), $"voice-switch-{Guid.NewGuid():N}.json");
+    File.WriteAllText(omittedPath, """{"wakeWords":["音声入力"],"command":"wake","windows":{"actions":[{"name":"grokbot","wakeWords":["g"],"url":"grokbot://app/v1/prompt?id=YOUR_BOT_ID"}]}}""");
+    try
+    {
+        var omitted = ConfigLoader.Load(omittedPath);
+        if (omitted.Windows?.Actions?.Single().InputParam is not null)
+        {
+            return false;
+        }
+    }
+    finally
+    {
+        File.Delete(omittedPath);
+    }
+
+    var explicitPath = Path.Combine(Path.GetTempPath(), $"voice-switch-{Guid.NewGuid():N}.json");
+    File.WriteAllText(explicitPath, WithParam("\"inputParam\":\"input\""));
+    try
+    {
+        var explicitInput = ConfigLoader.Load(explicitPath);
+        if (explicitInput.Windows?.Actions?.Single().InputParam != "input")
+        {
+            return false;
+        }
+    }
+    finally
+    {
+        File.Delete(explicitPath);
+    }
+
+    return true;
+}
+
+static bool AutomaticSessionNeverOpensActionUrl()
+{
+    var grokbot = new WakeAction("grokbot", ["グロック", "grok bot"], "grokbot://app/v1/prompt?id=YOUR_BOT_ID", InputParam: "text");
+    var config = DictationConfig() with
+    {
+        Dictation = DictationConfig().Dictation! with { NoWakeWord = new NoWakeWordConfig(AutoIdle: true, FollowupMs: 8000) },
+        Windows = new WindowsActions([grokbot]),
+    };
+    var session = new DictationSession(config);
+    if (!session.StartAutomatic(new SampleRange(0, 100), new WakeOrigin(WakeRule.AutoB, 4), 100))
+    {
+        return false;
+    }
+
+    if (session.Action is not null)
+    {
+        return false;
+    }
+
+    using var temp = RuntimeTemp();
+    var root = Path.Combine(temp.Dir, "handoff");
+    var recordings = Path.Combine(temp.Dir, "recordings");
+    var modes = Path.Combine(temp.Dir, "modes");
+    var preferences = Path.Combine(temp.Dir, "preferences.json");
+    Directory.CreateDirectory(modes);
+    File.WriteAllText(Path.Combine(modes, "dedicated.json"), """{"key":"new-mode-1","name":"voice_switch","autoPaste":false}""");
+    File.WriteAllText(Path.Combine(modes, "default.json"), """{"key":"default","name":"Default"}""");
+    File.WriteAllText(preferences, """{"activeMode":"default"}""");
+    var launches = new List<string>();
+    Func<ProcessStartInfo, Process?> start = psi =>
+    {
+        var argument = psi.ArgumentList[0];
+        if (argument.StartsWith("superwhisper://mode?key=", StringComparison.Ordinal))
+        {
+            var key = Uri.UnescapeDataString(argument["superwhisper://mode?key=".Length..]);
+            File.WriteAllText(preferences, $$"""{"activeMode":"{{key}}"}""");
+            launches.Add("mode " + key);
+        }
+        else if (argument.StartsWith("superwhisper://file//", StringComparison.Ordinal))
+        {
+            WriteSuperwhisperMeta(recordings, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(), """{"llmResult":"hello"}""");
+            launches.Add("file in " + SuperwhisperModes.ActiveMode(File.ReadAllText(preferences)));
+        }
+        else
+        {
+            launches.Add($"{psi.FileName} {string.Join(' ', psi.ArgumentList)}");
+        }
+
+        return Process.GetCurrentProcess();
+    };
+    var handoff = new RegisteredSuperwhisperHandoff(root, recordings, start, delay: _ => Task.CompletedTask,
+        onTranscribed: _ => Task.FromResult(RouteResult.NotRouted),
+        superwhisperMode: "voice_switch",
+        preferencesPath: preferences,
+        modesDir: modes);
+    var action = new WakeAction("grokbot", ["グロック"], "grokbot://app/v1/prompt?id=YOUR_BOT_ID", InputParam: "text");
+    var result = SubmitHandoff(handoff, new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2), Target: 0x42, Action: action, Origin: new(WakeRule.AutoB, 4)));
+    return result.Status == HandoffStatus.Transcribed
+        && !launches.Any(launch => launch.Contains("rundll32", StringComparison.Ordinal));
 }
 
 static bool DictationHandoffSwitchesModeOnlyForAutomaticAudio()
