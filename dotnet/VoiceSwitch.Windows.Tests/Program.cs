@@ -188,6 +188,8 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("automatic session never opens an action URL", () => Check(AutomaticSessionNeverOpensActionUrl())),
     ("dictation action wake selects its action after the default wakes", () => Check(DictationActionWakeSelectsAction())),
     ("dictation handoff with an action opens its URL instead of routing or pasting", () => Check(DictationHandoffActionOpensUrl())),
+    ("config loads a mail action and rejects smtp without a mailto recipient or host", () => Check(ConfigLoadsMailAction())),
+    ("dictation handoff with an smtp action mails the text and opens no URL", () => Check(DictationHandoffMailActionSendsMail())),
     ("dictation handoff switches mode only for automatic audio", () => Check(DictationHandoffSwitchesModeOnlyForAutomaticAudio())),
     ("automatic audio stays out of Superwhisper when the mode switch fails", () => Check(DictationHandoffKeepsAutomaticAudioOutOfSuperwhisperWhenModeSwitchFails())),
     ("dictation handoff keeps WAV when Superwhisper writes no result", () => Check(DictationHandoffKeepsWavWithoutResult())),
@@ -4636,6 +4638,56 @@ static bool DictationHandoffActionOpensUrl()
     return Submit("voice_switch", "input-voice-switch").SequenceEqual(["mode action-mode", "file", "mode default", opened])
         && Submit("voice_switch", null).SequenceEqual(["mode new-mode-1", "file", "mode default", opened])
         && routes == 0;
+}
+
+static bool ConfigLoadsMailAction()
+{
+    static string WithAction(string action) =>
+        $$$"""{"wakeWords":["音声入力"],"command":"wake","windows":{"actions":[{{{action}}}]}}""";
+    using var temp = RuntimeTemp();
+    var path = Path.Combine(temp.Dir, "mail.json");
+    File.WriteAllText(path, WithAction("""{"name":"grokbot","wakeWords":["gb"],"url":"mailto:takets+default@mail.grokbot.com?subject=prompt","smtp":{"host":"smtp.example.com","user":"me@example.com"}}"""));
+    var action = ConfigLoader.Load(path).Windows!.Actions!.Single();
+    return action.Smtp == new SmtpSettings("smtp.example.com", "me@example.com", 587, null, "VOICE_SWITCH_SMTP_PASSWORD")
+        && MailAction.Parse(action.Url) == ("takets+default@mail.grokbot.com", "prompt")
+        && MailAction.Parse("mailto:a%40b.example?Subject=%E4%BB%8A&body=x") == ("a@b.example", "今")
+        && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"grokbot://app/v1/prompt","smtp":{"host":"h","user":"u"}}"""), "windows.actions[0].smtp")
+        && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"mailto:?subject=prompt","smtp":{"host":"h","user":"u"}}"""), "windows.actions[0].smtp")
+        && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"mailto:a@b.example","smtp":{"host":"","user":"u"}}"""), "windows.actions[0].smtp");
+}
+
+static bool DictationHandoffMailActionSendsMail()
+{
+    using var temp = RuntimeTemp();
+    var recordings = Path.Combine(temp.Dir, "recordings");
+    var modes = Path.Combine(temp.Dir, "modes");
+    var preferences = Path.Combine(temp.Dir, "preferences.json");
+    Directory.CreateDirectory(modes);
+    File.WriteAllText(Path.Combine(modes, "dedicated.json"), """{"key":"new-mode-1","name":"voice_switch"}""");
+    File.WriteAllText(Path.Combine(modes, "default.json"), """{"key":"default","name":"Default"}""");
+    File.WriteAllText(preferences, """{"activeMode":"default"}""");
+    var opened = new List<string>();
+    Func<ProcessStartInfo, Process?> start = psi =>
+    {
+        var argument = psi.ArgumentList[0];
+        if (argument.StartsWith("superwhisper://mode?key=", StringComparison.Ordinal))
+            File.WriteAllText(preferences, $$"""{"activeMode":"{{Uri.UnescapeDataString(argument["superwhisper://mode?key=".Length..])}}"}""");
+        else if (argument.StartsWith("superwhisper://file//", StringComparison.Ordinal))
+            WriteSuperwhisperMeta(recordings, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(), """{"llmResult":"一行目\n二行目"}""");
+        else
+            opened.Add(string.Join(' ', psi.ArgumentList));
+        return Process.GetCurrentProcess();
+    };
+    var sent = new List<(SmtpSettings Smtp, string To, string Subject, string Body)>();
+    var handoff = new RegisteredSuperwhisperHandoff(Path.Combine(temp.Dir, "handoff"), recordings, start, delay: _ => Task.CompletedTask,
+        superwhisperMode: "voice_switch", preferencesPath: preferences, modesDir: modes,
+        sendMail: (smtp, to, subject, body, _) => { sent.Add((smtp, to, subject, body)); return Task.CompletedTask; });
+    var smtp = new SmtpSettings("smtp.example.com", "me@example.com");
+    var action = new WakeAction("grokbot", ["gb"], "mailto:takets+default@mail.grokbot.com?subject=prompt", Smtp: smtp);
+    var result = SubmitHandoff(handoff, new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2), Target: 0x42, Action: action));
+    return result.Status == HandoffStatus.Transcribed
+        && sent.SequenceEqual([(smtp, "takets+default@mail.grokbot.com", "prompt", "一行目\n二行目")])
+        && opened.Count == 0;
 }
 
 static bool WakeActionUrlDefaultInputParamStaysByteIdentical()

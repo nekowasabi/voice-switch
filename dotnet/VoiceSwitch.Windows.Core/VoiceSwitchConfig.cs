@@ -120,7 +120,7 @@ public sealed record WakeWord(string Text, string Reading)
 public sealed record WindowsActions(WakeAction[]? Actions = null);
 
 /// <summary>A wake phrase whose dictation opens its own URL with the text as `input=` instead of being pasted or routed.</summary>
-public sealed record WakeAction(string Name, string[] WakeWords, string Url, string? SuperwhisperMode = null, string? InputParam = null)
+public sealed record WakeAction(string Name, string[] WakeWords, string Url, string? SuperwhisperMode = null, string? InputParam = null, SmtpSettings? Smtp = null)
 {
     [JsonIgnore]
     public string?[]? WakeReadings { get; init; }
@@ -261,6 +261,14 @@ public static class ConfigLoader
             if (!IsActionUrl(action.Url))
             {
                 throw new InvalidDataException($"{field}.url must be an absolute application URL (for example superwhisper://record); encode spaces as %20, use valid percent escapes, and do not use file/data/javascript URLs.");
+            }
+
+            if (action.Smtp is { } smtp
+                && (!MailAction.IsMailto(action.Url) || MailAction.Parse(action.Url).To.Length == 0
+                    || string.IsNullOrWhiteSpace(smtp.Host) || string.IsNullOrWhiteSpace(smtp.User)
+                    || smtp.Port is < 1 or > 65535 || string.IsNullOrWhiteSpace(smtp.PasswordEnv)))
+            {
+                throw new InvalidDataException($"{field}.smtp needs a mailto: url with a recipient, a host, a user, a port 1..65535, and passwordEnv.");
             }
         }
 

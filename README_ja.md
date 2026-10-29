@@ -63,7 +63,20 @@ Grok Bot への送信（任意）: ウェイクワードで Grok Bot のプロ�
 }
 ```
 
-`YOUR_BOT_ID` は、Bot のメニューの「Copy link」で得たリンクの末尾の ID に置き換える。実際の ID はリポジトリに入れない。「グロック」と言ってから本文を話すと、その Bot の入力欄に本文が入った状態で開く。自動では送信しないので、送信ボタンは自分で押す。入力欄にすでに文字があるときは書き込まない。全体の例は [config.example.grokbot.json](config.example.grokbot.json)、文字数などの制限は [docs/grokbot-message.md](docs/grokbot-message.md)。
+`YOUR_BOT_ID` は、Bot のメニューの「Copy link」で得たリンクの末尾の ID に置き換える。実際の ID はリポジトリに入れない。「グロック」と言ってから本文を話すと、その Bot の入力欄に本文が入った状態で開く。自動では送信しないので、送信ボタンは自分で押す。入力欄にすでに文字があるときは書き込まない。全体の例は [config.example.grokbot.json](config.example.grokbot.json)、文字数などの制限は [docs/grokbot-message.md](docs/grokbot-message.md)。Windows の PC 1 台（2026-10-29）では、`id` の有無にかかわらず、プロンプトリンクを開いても入力欄は空のままだった。原因は分かっていない。
+
+送信ボタンを押さずに Bot に指示したいときは、メールで送る（Windows のみ）。Grok Bot は `you+default@mail.grokbot.com` のような Bot 宛てのアドレスでメールの指示を受け付ける。voice-switch はメールを送るだけで、受け取った Bot が何をするかは Grok Bot 側の動作になる。アクションの `url` を `mailto:` にし、`smtp` にアカウントを書く。音声入力の内容が本文になる。
+
+```json
+{
+  "name": "grokbot",
+  "wakeWords": ["グロック", "grok bot"],
+  "url": "mailto:YOU+default@mail.grokbot.com?subject=prompt",
+  "smtp": { "host": "smtp.gmail.com", "port": 587, "user": "you@gmail.com", "passwordEnv": "VOICE_SWITCH_SMTP_PASSWORD" }
+}
+```
+
+宛先と件名は `mailto:` の URL から読む。差出人の `from` は省略すると `user` になる。Grok Bot のアカウントに登録したアドレスから送ること。パスワードは config に書かず、`passwordEnv` が指す環境変数（既定は `VOICE_SWITCH_SMTP_PASSWORD`。Gmail ならアプリ パスワード）から読む。`setx VOICE_SWITCH_SMTP_PASSWORD <パスワード>` を実行してから、トレイを起動し直す。接続は STARTTLS なので、ポートは 465 ではなく 587 などの送信用ポートを使う。ログには `dictation delivered: mail grokbot` か `dictation action grokbot failed: <理由>` が出る。本文はログに出さない。
 
 メニューは、一時停止（マイクを放す）、マイク、設定ファイルを開く、ログを開く、ログイン時に起動、終了。
 

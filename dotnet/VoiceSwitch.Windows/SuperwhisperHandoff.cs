@@ -26,6 +26,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
     private readonly string? superwhisperMode;
     private readonly string preferencesPath;
     private readonly string modesDir;
+    private readonly Func<SmtpSettings, string, string, string, CancellationToken, Task> sendMail;
     private static readonly SemaphoreSlim ModeOwner = new(1, 1);
     private string JournalPath => Path.Combine(root, "mode-restore.json");
 
@@ -39,9 +40,11 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         Func<string, Task<RouteResult>>? onTranscribed = null,
         string? superwhisperMode = null,
         string? preferencesPath = null,
-        string? modesDir = null)
+        string? modesDir = null,
+        Func<SmtpSettings, string, string, string, CancellationToken, Task>? sendMail = null)
     {
         this.root = root;
+        this.sendMail = sendMail ?? MailAction.SendAsync;
         this.recordingsDir = recordingsDir;
         this.startProcess = startProcess ?? Process.Start;
         this.dryRun = dryRun;
@@ -192,21 +195,30 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
             // Mac parity: an action's text goes only to its URL, never to a tmux pane or a paste.
             try
             {
-                if (GrokBotPrompt.IsPrompt(action.Url))
+                if (action.Smtp is { } smtp)
                 {
-                    var (_, truncated) = GrokBotPrompt.Fit(text);
-                    if (truncated)
-                    {
-                        Log.Info($"grokbot prompt text truncated to 1000 encoded chars for action {action.Name}");
-                    }
+                    var (to, subject) = MailAction.Parse(action.Url);
+                    await sendMail(smtp, to, subject, text, cancellation);
+                    Log.Info($"dictation delivered: mail {action.Name}");
                 }
+                else
+                {
+                    if (GrokBotPrompt.IsPrompt(action.Url))
+                    {
+                        var (_, truncated) = GrokBotPrompt.Fit(text);
+                        if (truncated)
+                        {
+                            Log.Info($"grokbot prompt text truncated to 1000 encoded chars for action {action.Name}");
+                        }
+                    }
 
-                LaunchUrl(action.InputUrl(text));
-                Log.Info($"dictation delivered: action {action.Name}");
+                    LaunchUrl(action.InputUrl(text));
+                    Log.Info($"dictation delivered: action {action.Name}");
+                }
             }
             catch (Exception ex)
             {
-                Log.Info($"dictation action {action.Name} failed to open: {ex.Message}");
+                Log.Info($"dictation action {action.Name} failed: {ex.Message}");
             }
 
             return new HandoffResult(HandoffStatus.Transcribed, audio.SessionId, null, "Superwhisper result found; WAV deleted");

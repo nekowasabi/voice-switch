@@ -79,7 +79,20 @@ Optional Grok Bot message: a wake phrase can fill a Grok Bot prompt composer ins
 }
 ```
 
-Replace `YOUR_BOT_ID` with the id at the end of the Bot menu's "Copy link"; keep your real id out of the repository. Saying `グロック` and then the message opens that Bot's composer with the message in it. It never sends: you press send, and a composer that already has text is left alone. The full example is [config.example.grokbot.json](config.example.grokbot.json), and the limits are in [docs/grokbot-message.md](docs/grokbot-message.md).
+Replace `YOUR_BOT_ID` with the id at the end of the Bot menu's "Copy link"; keep your real id out of the repository. Saying `グロック` and then the message opens that Bot's composer with the message in it. It never sends: you press send, and a composer that already has text is left alone. The full example is [config.example.grokbot.json](config.example.grokbot.json), and the limits are in [docs/grokbot-message.md](docs/grokbot-message.md). On one Windows PC (2026-10-29) the prompt link left the composer empty, with and without `id`; the cause is not known.
+
+To have the Bot act without pressing send, mail it instead (Windows only). Grok Bot takes instructions by mail at a bot address such as `you+default@mail.grokbot.com`; voice-switch only sends the mail, and what the Bot does with it is Grok Bot's. Give the action a `mailto:` url and an `smtp` account; the dictation is sent as the body:
+
+```json
+{
+  "name": "grokbot",
+  "wakeWords": ["グロック", "grok bot"],
+  "url": "mailto:YOU+default@mail.grokbot.com?subject=prompt",
+  "smtp": { "host": "smtp.gmail.com", "port": 587, "user": "you@gmail.com", "passwordEnv": "VOICE_SWITCH_SMTP_PASSWORD" }
+}
+```
+
+The recipient and subject come from the `mailto:` url. `from` defaults to `user`; send from the address your Grok Bot account knows. The password is read from the environment variable `passwordEnv` names (default `VOICE_SWITCH_SMTP_PASSWORD`; for Gmail, an app password), never from the config file: run `setx VOICE_SWITCH_SMTP_PASSWORD <password>` and restart the tray. The connection uses STARTTLS, so use a submission port such as 587, not 465. The log says `dictation delivered: mail grokbot`, or `dictation action grokbot failed: <reason>`; the body is never logged.
 
 The menu items are 一時停止 (releases the microphone), マイク, 設定ファイルを開く, ログを開く, ログイン時に起動, and 終了.
 
