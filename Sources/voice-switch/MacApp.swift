@@ -73,18 +73,22 @@ func agreedWordCount(_ samples: [Float], locale: Locale) async throws -> Int {
     return NoWakePolicy.agreedWithWhisper(apple: try await appleText, whisper: try await whisperText)
 }
 
-/// Samples to drop from the end of the dictation when `u` ends with a stop word, else 0.
+/// What a stop check found: no stop word, a stop word too recent to end the dictation on yet (shown on the HUD at once,
+/// so the user knows it was heard), or the samples to drop from the end of the dictation.
+enum StopVerdict: Equatable, Sendable { case none, heard, cut(Int) }
+
 /// `heard` is a transcript of `u` already taken this frame, so the utterance is not recognized twice.
 /// Runs beside the frame loop, so it may wait on the recognizer.
-func stopWordCut(_ u: [Float], heard: Transcript?, stopWords: [String], locale: Locale, quiet: Bool, kind: String, sessionID: UUID) async -> Int {
+func stopWordCut(_ u: [Float], heard: Transcript?, stopWords: [String], locale: Locale, quiet: Bool, kind: String, sessionID: UUID) async -> StopVerdict {
     let head = "stop check: kind=\(kind) utt=\(u.count * 1000 / Int(rate)) ms"
     let t: Transcript
     if let heard { t = heard } else {
-        guard let tr = try? await transcribe(u, locale: locale) else { log("\(head) recognizer=failed \(sidField(sessionID))"); return 0 }
+        guard let tr = try? await transcribe(u, locale: locale) else { log("\(head) recognizer=failed \(sidField(sessionID))"); return .none }
         t = tr
     }
     if !quiet { log("dictating: \(t.text)  [utt \(u.count * 1000 / Int(rate)) ms]") }
     var start = stopWordStart(t, stopWords: stopWords)
+    var recent = false
     if kind == "window", let s = start {
         // A window opens anywhere in the speech, and Apple Speech stretches its first run back over the unrecognized sound
         // before it (入@0.00-0.90), so a stop word that opens the window starts where its second character does, less that
@@ -94,12 +98,15 @@ func stopWordCut(_ u: [Float], heard: Transcript?, stopWords: [String], locale: 
         // Speech going on past a stop word would be heard within half a second, so only that much silence after it stops.
         // ponytail: fixed 0.5 s after the last recognized word; make it a knob if slow speakers pause longer mid-sentence.
         let heardUntil = t.runs.last.flatMap { $0.end ?? $0.start } ?? Double(u.count) / rate
-        start = heardUntil <= Double(u.count) / rate - 0.5 ? (s == 0 ? opening : s) : nil
+        recent = heardUntil > Double(u.count) / rate - 0.5
+        start = recent ? nil : s == 0 ? opening : s
     }
     let cut = start.map { u.count - min(u.count, Int($0 * rate)) }
-    // A window check runs every second of a long utterance; only its matches are worth a line.
-    if kind != "window" || cut != nil { log("\(head) recognizer=ok matched=\(cut == nil ? "no" : "yes") cut=\((cut ?? 0) * 1000 / Int(rate)) ms \(sidField(sessionID))") }
-    return cut ?? 0
+    // A window check runs several times a second; only its matches are worth a line.
+    if kind != "window" || cut != nil || recent {
+        log("\(head) recognizer=ok matched=\(recent ? "heard" : cut == nil ? "no" : "yes") cut=\((cut ?? 0) * 1000 / Int(rate)) ms \(sidField(sessionID))")
+    }
+    return recent ? .heard : cut.map { .cut($0) } ?? .none
 }
 
 /// Hard-stops SpeechAnalyzer on cancel (Windows KillProcess intent).
@@ -962,6 +969,8 @@ final class Listener {
         var checkedSamples = 0
         /// Length of `samples` when the last stop check over its newest seconds started.
         var stopCheckedSamples = 0
+        /// The newest stop check ended on a stop word too recent to stop on; the HUD shows the stop already.
+        var stopHeard = false
         init(samples: [Float], generation: Int, transcriptPolicy: AutomaticTranscriptPolicy, silentFrames: Int, heardSpeech: Bool, action: WakeAction? = nil,
              origin: WakeOrigin = WakeOrigin(rule: .strict, inputIdleSeconds: MacInputActivity.idleSeconds())) {
             self.samples = samples
@@ -976,7 +985,8 @@ final class Listener {
     }
 
     /// `hearing`: a voice is heard but the voice activity gate has not opened an automatic session yet.
-    enum Phase { case idle, waiting, hearing, recording, ended, followup }
+    /// `stopping`: a stop word was heard and the dictation is waiting the moment that confirms it.
+    enum Phase { case idle, waiting, hearing, recording, stopping, ended, followup }
 
     /// Called on the main thread whenever the dictation phase changes.
     var onPhase: ((Phase) -> Void)?
@@ -1017,7 +1027,7 @@ final class Listener {
         // (Superwhisper moving to processing, 2026-10-29 12:23 JST), the phrase must not open a session of its own.
         var phraseForOtherApp = false
         // Stop-word judgement runs beside the frame loop; `stopJob` says which dictation and generation it belongs to.
-        let stopCheck = LatestRecognition<Int>()
+        let stopCheck = LatestRecognition<StopVerdict>()
         let wordCheck = LatestRecognition<(session: UUID, agreed: Bool)>()
         var stopJob: (session: UUID, generation: Int)?
         var stopFrames = 0
@@ -1046,7 +1056,8 @@ final class Listener {
             // Derived from `dictation` after every frame (defer covers each `continue`) instead of at each place that sets it.
             defer {
                 // An automatic session awaiting its agreed words keeps the mic glyph, so the pill does not vanish between it and the red dot.
-                let phase: Phase = endedByUser ? .ended : dictation.map { !$0.heardSpeech ? .waiting : $0.confirmed ? .recording : .hearing }
+                let phase: Phase = endedByUser ? .ended
+                    : dictation.map { $0.stopHeard ? .stopping : !$0.heardSpeech ? .waiting : $0.confirmed ? .recording : .hearing }
                     ?? (clock < followupUntil && config.cfg.dictation?.noWakeWord?.followup == true ? .followup
                         // Under the gate only a phrase the detector heard is a voice; energy alone can be speaker playback (MS14).
                         : speechFrames > 0 && config.cfg.dictation?.noWakeWord?.enabled == true
@@ -1103,9 +1114,11 @@ final class Listener {
                 stopFrames += f.count
                 // The stop word is judged beside the frame loop, on the newest utterance only. Frames keep flowing meanwhile,
                 // so the result is taken on a later frame, and the cut also drops the frames that arrived since.
-                if let cut = stopCheck.take(), let job = stopJob {
+                if let verdict = stopCheck.take(), let job = stopJob {
                     stopJob = nil
-                    if cut > 0, job.session == d.sessionID, job.generation == generation {
+                    let current = job.session == d.sessionID && job.generation == generation
+                    if current { d.stopHeard = verdict == .heard }
+                    if case let .cut(cut) = verdict, cut > 0, current {
                         d.samples.removeLast(min(cut + stopFrames, d.samples.count))
                         dictation = nil; recent.removeAll(); speechFrames = 0; Hotkeys.end(); endedByUser = true
                         log("dictation finished by stop word \(sidField(d.sessionID))")
@@ -1113,14 +1126,18 @@ final class Listener {
                         if d.heardSpeech, !d.samples.isEmpty { submitAndArm(d, cfg: dc, reason: finishReasonToken("stop word")) }
                         continue
                     }
-                    if cut > 0 { log("stop check: result discarded job=\(sidField(job.session)) generation=\(job.generation) current=\(sidField(d.sessionID)) generation=\(generation)") }
+                    if case .cut = verdict, !current { log("stop check: result discarded job=\(sidField(job.session)) generation=\(job.generation) current=\(sidField(d.sessionID)) generation=\(generation)") }
                 }
                 let stopAudio: (u: [Float], heard: Transcript?, kind: String)? = switch event {
                 case let .utterance(u)?: (u, heardDuringAutomatic, "utterance")
                 case let .tail(u)?: (u, nil, "tail")
                 // Steady sound above the threshold (room noise on a raw mic) keeps the segmenter in one open utterance, so no
-                // utterance or tail comes until it stops. The newest seconds are checked every second meanwhile.
-                default: seg.isSkipping && !stopCheck.pending && d.samples.count - d.stopCheckedSamples >= Int(rate)
+                // utterance or tail comes until it stops; and even in a quiet room the utterance closes only after hangoverMs.
+                // So the newest seconds are also checked during a long utterance and from the first 60 ms gap, so a stop word
+                // reaches the HUD (.stopping) about as soon as the recognizer (~100 ms) has it.
+                // ponytail: at most every 250 ms while a dictation is open; widen it if the recognizer load shows up.
+                default: (seg.isSkipping || seg.tailSilentFrames >= 2) && !stopCheck.pending
+                    && d.samples.count - d.stopCheckedSamples >= Int(rate) / 4
                     ? (Array(d.samples.suffix(Int(rate) * 4)), nil, "window") : nil
                 }
                 if let stopAudio, let words = config.cfg.stopWords, !words.isEmpty {
@@ -1849,6 +1866,8 @@ final class HUD {
         shown += 1
         let view: (label: HUDLabel, expiry: Double?)? = if let notice { (notice, 1) } else { switch (phase, delivery) {
         case (.waiting, _): (.waiting, nil)
+        // The same glyph a confirmed stop shows, so the user sees the stop word land the moment it is recognized.
+        case (.stopping, _): (.processing, nil)
         case (.recording, _), (_, .recording?): (.recording, nil)
         case (_, .processing?): (.processing, nil)
         case (_, .failed?): (.failed, 3)
