@@ -41,6 +41,7 @@ Acceptance items on the real app (`mic-switch.md` style, needs the user's agreem
 Preconditions:
 
 - `$V build` was run on the tree being proved and the installed app updated from it.
+- The app's config.json has `"pauseDuringMeet": true` (absent or false turns the feature off; read at launch).
 - The user agreed to drive the installed app and join a Meet call (as for `mic-switch.md`).
 
 - **MP0.** Join a Meet call in Chrome, then in Edge, and quote the `meet: <bundle ID> holds the microphone, pausing` line for each. No line within 3 s means `AppDelegate.meetBrowsers` does not contain the ID the browser reports. No tool here lists every process holding input yet (`mic-holder` does not), so finding the right ID then needs one that reads `kAudioProcessPropertyBundleID` for each process with `kAudioProcessPropertyIsRunningInput`.

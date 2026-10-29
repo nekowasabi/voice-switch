@@ -34,6 +34,9 @@ struct Config: Decodable {
     var speakerThreshold: Double?
     /// Global key that toggles pause/resume, e.g. "Control+Shift+F7". Absent registers none. Read once at launch.
     var pauseShortcut: String?
+    /// macOS: pause while Chrome or Edge holds the microphone (a Google Meet call) and resume when it lets go.
+    /// Absent or false turns it off. Read once at launch.
+    var pauseDuringMeet: Bool?
 
     init(wakeWords: [String], locale: String? = nil, command: String,
          maxSeconds: Double? = nil, hangoverMs: Int? = nil, prerollMs: Int? = nil,

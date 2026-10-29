@@ -1928,7 +1928,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let recordings = Platform.expandPath(config.cfg.dictation?.recordingsDir ?? Platform.defaultRecordingsDir)
         // ponytail: 0.5 s CoreAudio poll; a kAudioProcessPropertyIsRunningInput listener if it shows up in CPU.
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.followDirectSuperwhisper(recordings: recordings) }
-        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.followMeet() }
+        meetEnabled = config.cfg.pauseDuringMeet == true
+        if meetEnabled { Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.followMeet() } }
         Task { @MainActor in
             do {
                 if let ownership = try? MacModeRestoreStore.acquire() {
@@ -2017,6 +2018,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Browsers whose microphone input means a Google Meet call (Chrome and Edge only).
     // ponytail: any mic use by these browsers counts, not only Meet; matching the Meet tab needs Screen Recording permission.
     static let meetBrowsers = ["com.google.Chrome", "com.google.Chrome.helper", "com.microsoft.edgemac", "com.microsoft.edgemac.helper"]
+    /// config `pauseDuringMeet`; off leaves followMeet and the toggle's call check inert.
+    private var meetEnabled = false
     private var meetInCall = false
     /// followMeet stopped the listener and owes it a restart when the call ends.
     private var meetHeld = false
@@ -2025,7 +2028,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Model: .claude/skills/verify-meet-pause (MeetPause.tla, action Poll).
     func followMeet() {
-        guard let listener else { return }
+        guard let listener, meetEnabled else { return }
         let browser = micInUse(by: Self.meetBrowsers)
         meetInCall = browser != nil
         if let browser {
@@ -2048,7 +2051,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc func togglePause() {
         if listener.wanted { listener.stop() } else {
-            meetInCall = micInUse(by: Self.meetBrowsers) != nil
+            meetInCall = meetEnabled && micInUse(by: Self.meetBrowsers) != nil
             meetHeld = false
             meetOverride = meetInCall
             do { try listener.start() } catch { fail("再開に失敗しました: \(error)") }

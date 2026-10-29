@@ -227,6 +227,7 @@ Automatically started recordings go to in-memory history only. When `dictation.s
 - Ctrl+Shift+F9 or a HUD click opens history
 - On Windows, Ctrl+Shift+F8 labels the latest missed recognition
 - `pauseShortcut` in config.json (e.g. `"Control+Shift+F7"`) toggles pause and resume; absent registers nothing. Modifiers: `Control`, `Shift`, `Alt` (Option on Mac), `Meta` (Command on Mac, Win on Windows). Keys: `KeyA`–`KeyZ`, `Digit0`–`Digit9`, `F1`–`F12` (`F24` on Windows), `Space`, `Escape`, `Enter`, `Tab`, `Backspace`. It is read at launch only, so restart the app after changing it
+- macOS: `"pauseDuringMeet": true` pauses listening while Chrome or Edge holds the microphone (a Google Meet call) and resumes when it lets go, unless you paused by hand. Any microphone use by those browsers counts. Absent or `false` turns it off. Read at launch only
 
 Wake-word and Ctrl+Shift+F10 recordings keep the active Superwhisper mode and leave pasting to Superwhisper. Their result is also kept in history, but the stop HUD says it was saved to history only for automatic recordings.
 
