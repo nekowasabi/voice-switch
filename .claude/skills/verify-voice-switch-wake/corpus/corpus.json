@@ -1,0 +1,908 @@
+{
+  "wakes": [
+    {
+      "text": "インプット",
+      "reading": "いんぷっと"
+    },
+    {
+      "text": "音声",
+      "reading": "おんせい"
+    },
+    {
+      "text": "音声入力",
+      "reading": "おんせいにゅうりょく"
+    },
+    {
+      "text": "音声入る",
+      "reading": "おんせいはいる"
+    },
+    {
+      "text": "おんせい",
+      "reading": "おんせい"
+    },
+    {
+      "text": "音声に入るよ",
+      "reading": "おんせいにはいるよ"
+    },
+    {
+      "text": "音声に入る",
+      "reading": "おんせいにはいる"
+    },
+    {
+      "text": "音声によって",
+      "reading": "おんせいによって"
+    }
+  ],
+  "rows": [
+    {
+      "id": "exact-split",
+      "expect": "wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "音声入力",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "音声",
+          "start": 0,
+          "end": 4000,
+          "reading": "おんせい"
+        },
+        {
+          "text": "入力",
+          "start": 4000,
+          "end": 10000,
+          "reading": "にゅうりょく"
+        }
+      ]
+    },
+    {
+      "id": "exact-body",
+      "expect": "wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "音声入力今日",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "音声入力",
+          "start": 0,
+          "end": 4000,
+          "reading": "おんせいにゅうりょく"
+        },
+        {
+          "text": "今日",
+          "start": 4100,
+          "end": 6000,
+          "reading": "きょう"
+        }
+      ]
+    },
+    {
+      "id": "paused-short",
+      "expect": "wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "音声明日",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "音声",
+          "start": 0,
+          "end": 2000
+        },
+        {
+          "text": "明日",
+          "start": 5200,
+          "end": 7000
+        }
+      ]
+    },
+    {
+      "id": "katakana-fold",
+      "expect": "wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "オンセイニュウリョク",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "オンセイニュウリョク",
+          "start": 0,
+          "end": 10000,
+          "reading": "オンセイニュウリョク"
+        }
+      ]
+    },
+    {
+      "id": "halfwidth-kana",
+      "expect": "wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "ｵﾝｾｲﾆｭｳﾘｮｸ",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "ｵﾝｾｲﾆｭｳﾘｮｸ",
+          "start": 0,
+          "end": 10000,
+          "reading": "ｵﾝｾｲﾆｭｳﾘｮｸ"
+        }
+      ]
+    },
+    {
+      "id": "hosei-d2",
+      "expect": "wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "縫製入力",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "縫製",
+          "start": 0,
+          "end": 4000,
+          "reading": "ほうせい"
+        },
+        {
+          "text": "入力",
+          "start": 4000,
+          "end": 10000,
+          "reading": "にゅうりょく"
+        }
+      ]
+    },
+    {
+      "id": "hosei-spaced",
+      "expect": "wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "縫製入力",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "縫製入力",
+          "start": 0,
+          "end": 10000,
+          "reading": "ほうせい にゅうりょく"
+        }
+      ]
+    },
+    {
+      "id": "hosei-short-reading",
+      "expect": "wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "補正入力",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "補正入力",
+          "start": 0,
+          "end": 10000,
+          "reading": "ほせいにゅうりょく"
+        }
+      ]
+    },
+    {
+      "id": "yoon-large",
+      "expect": "wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "誤読",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "誤読",
+          "start": 0,
+          "end": 10000,
+          "reading": "おんせいにゆうりよく"
+        }
+      ]
+    },
+    {
+      "id": "choon",
+      "expect": "wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "誤読",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "誤読",
+          "start": 0,
+          "end": 10000,
+          "reading": "おんせいにゅーりょく"
+        }
+      ]
+    },
+    {
+      "id": "desu-long",
+      "expect": "wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "音声入力です",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "音声入力です",
+          "start": 0,
+          "end": 12000,
+          "reading": "おんせいにゅうりょくです"
+        }
+      ]
+    },
+    {
+      "id": "onsen-whole",
+      "expect": "wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "温泉",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "温泉",
+          "start": 0,
+          "end": 4000,
+          "reading": "おんせん"
+        }
+      ]
+    },
+    {
+      "id": "onsen-ni-hairu",
+      "expect": "wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "温泉に入る",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "温泉",
+          "start": 0,
+          "end": 4000,
+          "reading": "おんせん"
+        },
+        {
+          "text": "に",
+          "start": 4000,
+          "end": 5000,
+          "reading": "に"
+        },
+        {
+          "text": "入",
+          "start": 5000,
+          "end": 7000,
+          "reading": "はい"
+        },
+        {
+          "text": "る",
+          "start": 7000,
+          "end": 8000,
+          "reading": "る"
+        }
+      ]
+    },
+    {
+      "id": "early-exact",
+      "expect": "wake",
+      "channel": "early",
+      "extent": "Probe",
+      "text": "音声入力",
+      "tailSilence": 960,
+      "lexemes": [
+        {
+          "text": "音声入力",
+          "start": 0,
+          "end": 4000,
+          "reading": "おんせいにゅうりょく"
+        }
+      ]
+    },
+    {
+      "id": "rejected-kanji",
+      "expect": "wake",
+      "channel": "rejected",
+      "extent": "ClosedUtterance",
+      "text": "",
+      "tailSilence": 0,
+      "lexemes": [],
+      "confidence": 0.35,
+      "rejectedText": "音声入力"
+    },
+    {
+      "id": "hosei-wa",
+      "expect": "wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "縫製入力は",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "縫製入力は",
+          "start": 0,
+          "end": 11000,
+          "reading": "ほうせいにゅうりょくは"
+        }
+      ]
+    },
+    {
+      "id": "hosei-ne",
+      "expect": "wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "縫製入力ね",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "縫製入力ね",
+          "start": 0,
+          "end": 11000,
+          "reading": "ほうせいにゅうりょくね"
+        }
+      ]
+    },
+    {
+      "id": "hosei-yo",
+      "expect": "wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "縫製入力よ",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "縫製入力よ",
+          "start": 0,
+          "end": 11000,
+          "reading": "ほうせいにゅうりょくよ"
+        }
+      ]
+    },
+    {
+      "id": "houzei",
+      "expect": "wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "法政入力",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "法政入力",
+          "start": 0,
+          "end": 10000,
+          "reading": "ほうぜいにゅうりょく"
+        }
+      ]
+    },
+    {
+      "id": "houzei-alt",
+      "expect": "wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "法政入力",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "法政入力",
+          "start": 0,
+          "end": 10000,
+          "reading": "ほうぜいにゅうりょく"
+        }
+      ],
+      "alternates": [
+        {
+          "text": "音声入力",
+          "reading": "おんせいにゅうりょく"
+        }
+      ]
+    },
+    {
+      "id": "rejected-kana",
+      "expect": "wake",
+      "channel": "rejected",
+      "extent": "ClosedUtterance",
+      "text": "",
+      "tailSilence": 0,
+      "lexemes": [],
+      "confidence": 0.35,
+      "rejectedText": "おんせいにゅうりょく"
+    },
+    {
+      "id": "onsei-desu",
+      "expect": "wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "音声です",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "音声です",
+          "reading": "おんせいです",
+          "start": 0,
+          "end": 6000
+        }
+      ]
+    },
+    {
+      "id": "onsei-masu",
+      "expect": "wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "音声ます",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "音声ます",
+          "reading": "おんせいます",
+          "start": 0,
+          "end": 6000
+        }
+      ]
+    },
+    {
+      "id": "ninshiki-fused",
+      "expect": "no-wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "音声認識",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "音声認識",
+          "start": 0,
+          "end": 6000
+        }
+      ]
+    },
+    {
+      "id": "ninshiki-split",
+      "expect": "no-wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "音声認識の精度を上げたい",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "音声",
+          "start": 0,
+          "end": 2000
+        },
+        {
+          "text": "認識",
+          "start": 2000,
+          "end": 4000
+        },
+        {
+          "text": "の",
+          "start": 4000,
+          "end": 4500
+        },
+        {
+          "text": "精度",
+          "start": 4500,
+          "end": 6000
+        },
+        {
+          "text": "を上げたい",
+          "start": 6000,
+          "end": 8000
+        }
+      ]
+    },
+    {
+      "id": "onsen-wa",
+      "expect": "no-wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "温泉は",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "温泉",
+          "start": 0,
+          "end": 4000,
+          "reading": "おんせん"
+        },
+        {
+          "text": "は",
+          "start": 4000,
+          "end": 5000,
+          "reading": "は"
+        }
+      ]
+    },
+    {
+      "id": "osen",
+      "expect": "no-wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "汚染",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "汚染",
+          "start": 0,
+          "end": 4000,
+          "reading": "おせん"
+        }
+      ]
+    },
+    {
+      "id": "hosei-alone",
+      "expect": "no-wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "縫製",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "縫製",
+          "start": 0,
+          "end": 4000,
+          "reading": "ほうせい"
+        }
+      ]
+    },
+    {
+      "id": "hosei-ashita",
+      "expect": "no-wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "縫製入力明日",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "縫製",
+          "start": 0,
+          "end": 4000,
+          "reading": "ほうせい"
+        },
+        {
+          "text": "入力",
+          "start": 4000,
+          "end": 10000,
+          "reading": "にゅうりょく"
+        },
+        {
+          "text": "明日",
+          "start": 13000,
+          "end": 16000,
+          "reading": "あした"
+        }
+      ]
+    },
+    {
+      "id": "hosei-honbun",
+      "expect": "no-wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "縫製入力の本文です",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "縫製",
+          "start": 0,
+          "end": 3000,
+          "reading": "ほうせい"
+        },
+        {
+          "text": "入力",
+          "start": 3000,
+          "end": 7000,
+          "reading": "にゅうりょく"
+        },
+        {
+          "text": "の",
+          "start": 7000,
+          "end": 8000,
+          "reading": "の"
+        },
+        {
+          "text": "本文",
+          "start": 8000,
+          "end": 12000,
+          "reading": "ほんぶん"
+        },
+        {
+          "text": "です",
+          "start": 12000,
+          "end": 14000,
+          "reading": "です"
+        }
+      ]
+    },
+    {
+      "id": "hosei-no",
+      "expect": "no-wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "縫製入力の",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "縫製入力の",
+          "start": 0,
+          "end": 11000,
+          "reading": "ほうせいにゅうりょくの"
+        }
+      ]
+    },
+    {
+      "id": "ninpu",
+      "expect": "no-wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "妊婦と",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "妊婦",
+          "start": 0,
+          "end": 3500,
+          "reading": "にんぷ"
+        },
+        {
+          "text": "と",
+          "start": 3500,
+          "end": 5000,
+          "reading": "と"
+        }
+      ]
+    },
+    {
+      "id": "inku",
+      "expect": "no-wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "インクと",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "インク",
+          "start": 0,
+          "end": 3500,
+          "reading": "いんく"
+        },
+        {
+          "text": "と",
+          "start": 3500,
+          "end": 5000,
+          "reading": "と"
+        }
+      ]
+    },
+    {
+      "id": "hosei-hairu",
+      "expect": "no-wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "縫製に入る",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "縫製に入る",
+          "start": 0,
+          "end": 8000,
+          "reading": "ほうせいにはいる"
+        }
+      ]
+    },
+    {
+      "id": "onsei-memo",
+      "expect": "no-wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "音声メモ",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "音声",
+          "start": 0,
+          "end": 4000,
+          "reading": "おんせい"
+        },
+        {
+          "text": "メモ",
+          "start": 4000,
+          "end": 7000,
+          "reading": "めも"
+        }
+      ]
+    },
+    {
+      "id": "onsen-desu",
+      "expect": "no-wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "温泉です",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "温泉です",
+          "start": 0,
+          "end": 6000,
+          "reading": "おんせんです"
+        }
+      ]
+    },
+    {
+      "id": "prefixhead-onsui",
+      "expect": "no-wake",
+      "channel": "leading",
+      "extent": "PrefixHead",
+      "text": "温水",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "温水",
+          "start": 0,
+          "end": 4000,
+          "reading": "おんすい"
+        }
+      ]
+    },
+    {
+      "id": "early-tail0",
+      "expect": "no-wake",
+      "channel": "early",
+      "extent": "Probe",
+      "text": "音声入力",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "音声入力",
+          "start": 0,
+          "end": 4000,
+          "reading": "おんせいにゅうりょく"
+        }
+      ]
+    },
+    {
+      "id": "early-fuzzy",
+      "expect": "no-wake",
+      "channel": "early",
+      "extent": "Probe",
+      "text": "温泉に入る",
+      "tailSilence": 2400,
+      "lexemes": [
+        {
+          "text": "温泉",
+          "start": 0,
+          "end": 2000,
+          "reading": "おんせん"
+        },
+        {
+          "text": "に",
+          "start": 2000,
+          "end": 3000,
+          "reading": "に"
+        },
+        {
+          "text": "入",
+          "start": 3000,
+          "end": 4000,
+          "reading": "はい"
+        },
+        {
+          "text": "る",
+          "start": 4000,
+          "end": 5000,
+          "reading": "る"
+        }
+      ]
+    },
+    {
+      "id": "rejected-low",
+      "expect": "no-wake",
+      "channel": "rejected",
+      "extent": "ClosedUtterance",
+      "text": "",
+      "tailSilence": 0,
+      "lexemes": [],
+      "confidence": 0.05,
+      "rejectedText": "音声入力"
+    },
+    {
+      "id": "rejected-longer",
+      "expect": "no-wake",
+      "channel": "rejected",
+      "extent": "ClosedUtterance",
+      "text": "",
+      "tailSilence": 0,
+      "lexemes": [],
+      "confidence": 0.35,
+      "rejectedText": "音声入力です"
+    },
+    {
+      "id": "rejected-prefix",
+      "expect": "no-wake",
+      "channel": "rejected",
+      "extent": "PrefixHead",
+      "text": "",
+      "tailSilence": 0,
+      "lexemes": [],
+      "confidence": 0.35,
+      "rejectedText": "音声入力"
+    },
+    {
+      "id": "rejected-kana-hosei",
+      "expect": "no-wake",
+      "channel": "rejected",
+      "extent": "ClosedUtterance",
+      "text": "",
+      "tailSilence": 0,
+      "lexemes": [],
+      "confidence": 0.35,
+      "rejectedText": "ほうせいにゅうりょく"
+    },
+    {
+      "id": "zatsudan",
+      "expect": "no-wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "雑談です",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "雑談です",
+          "start": 0,
+          "end": 8000,
+          "reading": "ざつだんです"
+        }
+      ]
+    },
+    {
+      "id": "zatsudan-alt",
+      "expect": "no-wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "雑談です",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "雑談です",
+          "start": 0,
+          "end": 8000,
+          "reading": "ざつだんです"
+        }
+      ],
+      "alternates": [
+        {
+          "text": "音声入力",
+          "reading": "おんせいにゅうりょく"
+        }
+      ]
+    },
+    {
+      "id": "anzen",
+      "expect": "no-wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "安全入力",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "安全入力",
+          "start": 0,
+          "end": 10000,
+          "reading": "あんぜんにゅうりょく"
+        }
+      ]
+    },
+    {
+      "id": "bouzei",
+      "expect": "no-wake",
+      "channel": "leading",
+      "extent": "ClosedUtterance",
+      "text": "防衛入力",
+      "tailSilence": 0,
+      "lexemes": [
+        {
+          "text": "防衛入力",
+          "start": 0,
+          "end": 10000,
+          "reading": "ぼうぜいにゅうりょく"
+        }
+      ]
+    }
+  ]
+}
