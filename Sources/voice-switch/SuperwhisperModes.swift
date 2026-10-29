@@ -91,22 +91,27 @@ func superwhisperAutoPasteDisabled(_ wanted: String?, modeJsons: [String]) -> Bo
 /// "" means the run finished without words; nil means no run finished within 30 s.
 /// waitForLLM: superwhisper writes `result` first and `llmResult` after its language model; it pastes per the mode active
 /// at that second write, so a temporary mode must stay until then (restoring at the first write pasted automatic recordings).
-func awaitResult(in dir: String, since: Int, excluding previousRuns: Set<String> = [], waitForLLM: Bool = false) async -> String? {
-    var early: String?
+/// onRun hears "started id=<run>" once per new run folder and "result id=<run> kind=<case>" when one is read, never the text.
+func awaitResult(in dir: String, since: Int, excluding previousRuns: Set<String> = [], waitForLLM: Bool = false,
+                 onRun: (String) -> Void = { _ in }) async -> String? {
+    var early: (id: String, text: String)?
+    var seen: Set<String> = []
     for _ in 0 ..< 300 {
-        for (_, run) in superwhisperRuns(in: dir, since: since, excluding: previousRuns) {
+        for (name, _, run) in superwhisperRuns(in: dir, since: since, excluding: previousRuns) {
+            if seen.insert(name).inserted { onRun("started id=\(name)") }
             switch run {
             case .unjudged: continue
-            case .heardNothing: return ""
-            case let .polished(text): return text
+            case .heardNothing: onRun("result id=\(name) kind=heardNothing"); return ""
+            case let .polished(text): onRun("result id=\(name) kind=polished"); return text
             case let .transcribed(text):
-                guard waitForLLM else { return text }
-                early = text
+                guard waitForLLM else { onRun("result id=\(name) kind=transcribed"); return text }
+                early = (name, text)
             }
         }
         try? await Task.sleep(for: .milliseconds(100))
     }
-    return early
+    if let early { onRun("result id=\(early.id) kind=transcribed (language model did not finish)") }
+    return early?.text
 }
 
 /// One superwhisper run as its meta.json shows it. Superwhisper first writes a placeholder with duration and
@@ -138,13 +143,13 @@ enum SuperwhisperRun: Equatable {
 }
 
 /// Newest first.
-func superwhisperRuns(in dir: String, since: Int, excluding previousRuns: Set<String> = []) -> [(meta: [String: Any], run: SuperwhisperRun)] {
+func superwhisperRuns(in dir: String, since: Int, excluding previousRuns: Set<String> = []) -> [(name: String, meta: [String: Any], run: SuperwhisperRun)] {
     let names = (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []
     return names.sorted().reversed().compactMap { name in
         guard !previousRuns.contains(name), let t = Int(name), t >= since,
               let data = FileManager.default.contents(atPath: "\(dir)/\(name)/meta.json"),
               let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        return (meta, SuperwhisperRun(meta: meta))
+        return (name, meta, SuperwhisperRun(meta: meta))
     }
 }
 

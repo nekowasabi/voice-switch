@@ -587,7 +587,7 @@ def check_swift_runtime_call_chain(result: Result, repo: SourceTree) -> None:
         body,
         [
             "var seg = Segmenter(cfg: config.cfg)",
-            "let event = seg.push(f)",
+            "let event = seg.push(f, voice: hal)",
             "transcript = try await transcribe",
             "let hit = !isHead && config.cfg.wakeWords.map(normalize).contains(t)",
             "Platform.runMacAction(config.cfg)",
