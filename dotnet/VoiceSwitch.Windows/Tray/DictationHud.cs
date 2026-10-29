@@ -6,7 +6,7 @@ using VoiceSwitch.Windows.Core;
 
 namespace VoiceSwitch.Windows.Tray;
 
-// The nine HUD states, mirrored by `HUDLabel` in MacApp.swift. They are vector glyphs now, not emoji, so the two
+// The HUD states, mirrored by `HUDLabel` in MacApp.swift. They are vector glyphs now, not emoji, so the two
 // platforms show the same artwork instead of whatever emoji font each OS ships.
 public enum HudGlyph
 {
@@ -107,6 +107,13 @@ public sealed class DictationHud : Form
         catch (InvalidOperationException)
         {
         }
+    }
+
+    // UI thread only. A non-null stem draws that png instead of the phase glyph.
+    public void ShowActionIcon(string? icon)
+    {
+        glyph.IconName = icon;
+        glyph.Invalidate();
     }
 
     // UI thread only.
@@ -261,6 +268,32 @@ public sealed class DictationHud : Form
             frames.Start();
         }
 
+        public string? IconName { get; set; }
+        private static readonly Dictionary<string, Bitmap?> Icons = new();
+
+        private static Bitmap? LoadIcon(string name)
+        {
+            if (Icons.TryGetValue(name, out var cached)) return cached;
+            using var stream = typeof(DictationHud).Assembly.GetManifestResourceStream(name + ".png");
+            Bitmap? image = null;
+            if (stream is not null)
+            {
+                using var raw = new Bitmap(stream);
+                image = new Bitmap(raw);
+            }
+            Icons[name] = image;
+            return image;
+        }
+
+        private void DrawIcon(Graphics graphics)
+        {
+            if (IconName is null || LoadIcon(IconName) is not { } image) return;
+            var side = Math.Min(Width, Height);
+            var box = (int)(side * 22 / 24f);
+            graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            graphics.DrawImage(image, (Width - box) / 2, (Height - box) / 2, box, box);
+        }
+
         private static bool Animated(HudGlyph value) => value is HudGlyph.Recording or HudGlyph.Processing;
 
         protected override void Dispose(bool disposing)
@@ -273,6 +306,11 @@ public sealed class DictationHud : Form
         {
             var graphics = e.Graphics;
             graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            if (IconName is not null && LoadIcon(IconName) is not null)
+            {
+                DrawIcon(graphics);
+                return;
+            }
             var side = Math.Min(Width, Height);
             if (side <= 0) return;
             // Y-up design space, matching HUDGlyphView in MacApp.swift: one glyph table, one meaning for "above".

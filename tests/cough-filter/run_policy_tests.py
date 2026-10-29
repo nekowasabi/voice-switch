@@ -39,6 +39,8 @@ def main() -> int:
             binary = Path(temp) / "policy-tests"
             subprocess.run([
                 "swiftc", "-module-cache-path", str(Path(temp) / "module-cache"),
+                str(ROOT / "Sources/voice-switch/SecretLog.swift"),
+                str(ROOT / "Sources/voice-switch/ActionIcons.swift"),
                 str(ROOT / "Sources/voice-switch/Config.swift"),
                 str(ROOT / "Sources/voice-switch/Platform.swift"),
                 str(ROOT / "Sources/voice-switch/DictationJournal.swift"),

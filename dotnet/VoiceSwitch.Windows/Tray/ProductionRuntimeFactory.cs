@@ -11,7 +11,8 @@ public sealed record TrayRuntimeHooks(
     Action<nint>? RestoreFocus = null,
     DictationHotkeys? Hotkeys = null,
     Func<string?>? MicDevice = null,
-    Action<DeliveryState>? OnDelivery = null);
+    Action<DeliveryState>? OnDelivery = null,
+    Action<string?>? OnActionIcon = null);
 
 public sealed class ProductionRuntimeFactory(string configPath, TrayRuntimeHooks? hooks = null) : ITrayRuntimeFactory
 {
@@ -130,6 +131,7 @@ public sealed class ProductionRuntimeFactory(string configPath, TrayRuntimeHooks
         private RecognitionProcessIdentity? liveChild;
 
         public void PhaseChanged(DictationPhase phase) => hooks.OnPhase?.Invoke(phase);
+        public void ActionIcon(string? icon) => hooks.OnActionIcon?.Invoke(icon);
         public void DeliveryChanged(DeliveryState state) => hooks.OnDelivery?.Invoke(state);
         public bool PlayStopSound() => hooks.PlayStopSound?.Invoke() ?? false;
 

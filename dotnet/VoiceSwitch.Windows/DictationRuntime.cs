@@ -45,6 +45,9 @@ public interface IDictationRuntimeObserver
 
     // Mac HUD DeliveryState: Processing when a handoff begins, then exactly one of the others when it ends.
     void DeliveryChanged(DeliveryState state) { }
+
+    // Resource stem to draw instead of the phase glyph, or null for the phase glyph.
+    void ActionIcon(string? icon) { }
 }
 
 public enum DeliveryState
@@ -108,6 +111,7 @@ public sealed class WindowsDictationRuntime
     private bool lastVadSpeech;
     private string? lastSilenceDiagnosticKey;
     private DictationPhase shownPhase;
+    private string? shownIcon;
     private bool endedByUser;
     // A probe ended in a stop word: the HUD shows the end before the closed utterance decides it.
     private bool provisionalStop;
@@ -971,11 +975,13 @@ public sealed class WindowsDictationRuntime
 
     private void PublishPhase(DictationSession session, long lastLiveSpeechEnd)
     {
-        PublishPhase(endedByUser ? DictationPhase.Ended
+        var phase = endedByUser ? DictationPhase.Ended
             : session.IsActive ? (Confirmed(session) ? (provisionalStop ? DictationPhase.Ended : DictationPhase.Recording) : DictationPhase.Idle)
             : session.IsAwaitingBody ? (HeardAfterWake(session, lastLiveSpeechEnd) ? DictationPhase.Recording : DictationPhase.Waiting)
             : config.Dictation?.NoWakeWord?.Followup == true && analysisStore.Next < followupUntil ? DictationPhase.Followup
-            : DictationPhase.Idle);
+            : DictationPhase.Idle;
+        var icon = phase is DictationPhase.Waiting or DictationPhase.Recording ? session.Action?.HudIcon : null;
+        PublishPhase(phase, icon);
     }
 
     private bool Confirmed(DictationSession session) =>
@@ -1023,8 +1029,14 @@ public sealed class WindowsDictationRuntime
         return Math.Max(Math.Max(speechOnsets[onset] - preroll, wakeEnd), originalStore.Start);
     }
 
-    private void PublishPhase(DictationPhase phase)
+    private void PublishPhase(DictationPhase phase, string? icon = null)
     {
+        if (icon != shownIcon)
+        {
+            shownIcon = icon;
+            observer?.ActionIcon(icon);
+        }
+
         endedByUser = false;
         // Ended hides itself after a moment; the Idle that follows it is not a change.
         if (phase == shownPhase || (shownPhase == DictationPhase.Ended && phase == DictationPhase.Idle))

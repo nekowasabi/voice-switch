@@ -1,7 +1,7 @@
 // Shared config types (macOS + Windows).
 import Foundation
 
-func log(_ s: String) { print("\(Date().formatted(.iso8601)) \(s)") }
+func log(_ s: String) { print("\(Date().formatted(.iso8601)) \(SecretLog.redact(s))") }
 
 struct Config: Decodable {
     var wakeWords: [String]
@@ -220,8 +220,12 @@ struct WakeAction: Decodable {
     let superwhisperMode: String?
     /// Query item carrying the dictation. JSON `inputParam`; defaults to `input` when omitted or null.
     let inputParam: String?
+    /// Resource stem of a HUD image, such as `grok-bot`. Absent uses the builtin table.
+    let icon: String?
 
-    private enum CodingKeys: String, CodingKey { case name, wakeWords, url, superwhisperMode, inputParam }
+    var hudIcon: String? { ActionIcons.resolve(name: name, url: url.rawValue, configured: icon) }
+
+    private enum CodingKeys: String, CodingKey { case name, wakeWords, url, superwhisperMode, inputParam, icon }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -230,6 +234,11 @@ struct WakeAction: Decodable {
         url = try c.decode(ActionURL.self, forKey: .url)
         superwhisperMode = try c.decodeIfPresent(String.self, forKey: .superwhisperMode)
         inputParam = try c.decodeIfPresent(String.self, forKey: .inputParam)
+        icon = try c.decodeIfPresent(String.self, forKey: .icon)
+        if let icon, !ActionIcons.isStem(icon) {
+            throw DecodingError.dataCorruptedError(forKey: .icon, in: c,
+                debugDescription: "Wake action icon must be a resource stem (letters, digits, . _ -).")
+        }
         if let p = inputParam, !GrokBotPrompt.isValidInputParam(p) {
             throw DecodingError.dataCorruptedError(forKey: .inputParam, in: c,
                 debugDescription: "Wake action inputParam must be a non-empty RFC 3986 unreserved query name.")

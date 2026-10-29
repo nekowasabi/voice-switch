@@ -120,12 +120,14 @@ public sealed record WakeWord(string Text, string Reading)
 public sealed record WindowsActions(WakeAction[]? Actions = null);
 
 /// <summary>A wake phrase whose dictation opens its own URL with the text as `input=` instead of being pasted or routed.</summary>
-public sealed record WakeAction(string Name, string[] WakeWords, string Url, string? SuperwhisperMode = null, string? InputParam = null, SmtpSettings? Smtp = null)
+public sealed record WakeAction(string Name, string[] WakeWords, string Url, string? SuperwhisperMode = null, string? InputParam = null, SmtpSettings? Smtp = null, string? Icon = null)
 {
     [JsonIgnore]
     public string?[]? WakeReadings { get; init; }
 
     public WakeWord[] Wakes() => WakeWord.All(WakeWords, WakeReadings);
+
+    public string? HudIcon => ActionIcons.Resolve(Name, Url, Icon);
 
     // Mac WakeAction.openArguments: every `input` item is replaced by one percent-encoded item; other items stay as written.
     public string InputUrl(string input)
@@ -256,6 +258,11 @@ public static class ConfigLoader
             if (action.InputParam is not null && !IsValidInputParam(action.InputParam))
             {
                 throw new InvalidDataException($"{field}.inputParam must be a non-empty RFC 3986 unreserved query name (A-Z a-z 0-9 - . _ ~).");
+            }
+
+            if (action.Icon is not null && !ActionIcons.IsStem(action.Icon))
+            {
+                throw new InvalidDataException($"{field}.icon must be a resource stem (letters, digits, . _ -).");
             }
 
             if (!IsActionUrl(action.Url))
