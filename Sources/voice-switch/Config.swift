@@ -287,8 +287,8 @@ enum GrokBotPrompt {
         for scalar in collapsed.unicodeScalars {
             var chunk = ""
             for b in String(scalar).utf8 {
-                if unreserved.contains(b), let scalarValue = UnicodeScalar(b) {
-                    chunk.append(Character(scalarValue))
+                if unreserved.contains(b) {
+                    chunk.append(Character(UnicodeScalar(b)))
                 } else {
                     chunk += String(format: "%%%02X", b)
                 }
