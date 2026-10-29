@@ -139,6 +139,7 @@ must_hit = {
         "exact-split", "exact-body", "paused-short", "katakana-fold", "halfwidth-kana",
         "hosei-d2", "hosei-spaced", "hosei-short-reading", "yoon-large", "choon",
         "desu-long", "onsen-whole", "onsen-ni-hairu", "early-exact", "rejected-kanji",
+        "hosei-wa", "hosei-ne", "hosei-yo",
     },
     "surface": {
         "exact-split", "exact-body", "paused-short", "desu-long", "onsen-whole",
