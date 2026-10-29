@@ -40,7 +40,7 @@ DOTNET_RESTORE_FLAGS ?= --ignore-failed-sources --disable-parallel
 # Why: Run from local disk, not \\wsl.localhost, as focusbm does; AV heuristics flag UNC-launched exes.
 RELEASE_DIR ?= /mnt/c/takeda/tools/voice-switch
 
-.PHONY: build app model install relaunch uninstall logs win win-restore win-build win-test parity-test win-publish win-verify help url-test
+.PHONY: build app model install relaunch uninstall logs win win-stop win-restore win-build win-test parity-test win-publish win-verify help url-test
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -114,10 +114,12 @@ url-test: ## Require Swift URL action regression tests (macOS or Linux with Swif
 parity-test: ## Run macOS/Windows parity contract checks
 	python3 tests/parity/run_parity.py
 
-win-publish: win-build ## Windows: publish voice-switch.exe to RELEASE_DIR
-	mkdir -p "$(RELEASE_DIR)"
+win-stop: ## Windows: quit the running voice-switch.exe
 	@# A running voice-switch.exe locks its DLLs and publish fails with Access denied, so wait until it has exited.
 	-powershell.exe -NoProfile -Command "Get-Process -Name voice-switch -ErrorAction SilentlyContinue | Stop-Process -Force -PassThru | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue"
+
+win-publish: win-stop win-build ## Windows: quit the running app, then publish and launch voice-switch.exe from RELEASE_DIR
+	mkdir -p "$(RELEASE_DIR)"
 	@# The tray used to ship as a second exe; drop its leftovers so release/ holds one app.
 	rm -f "$(RELEASE_DIR)"/voice-switch-tray.*
 	$(DOTNET) publish $(WIN_APP) -c $(WIN_CONFIG) -r $(WIN_RID) --self-contained false \
