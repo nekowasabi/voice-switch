@@ -67,6 +67,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation wake reading recovers near-homophones but never cuts a body from a fuzzy match", () => Check(DictationWakeReadingRecoversNearHomophones())),
     ("dictation long wake reading recovers distance-2 closed 縫製入力 as wake-only", () => Check(DictationLongWakeReadingRecoversDistance2ClosedHosei())),
     ("dictation long wake reading keeps a one-kana particle tail as wake-only", () => Check(DictationLongWakeReadingKeepsParticleTail())),
+    ("dictation short wake reading keeps an exact copula tail inside one lexeme", () => Check(DictationShortWakeReadingKeepsCopulaTail())),
     ("dictation kana wake word matches SAPI's kanji through the reading", () => Check(DictationKanaWakeMatchesKanjiThroughReading())),
     ("dictation session opens a wait on a fuzzy wake and starts the body on the next utterance", () => Check(DictationSessionOpensWaitOnFuzzyWake())),
     ("dictation runtime logs a reading-matched wake-only with its distance", () => Check(DictationRuntimeLogsReadingWakeOnly())),
@@ -1234,6 +1235,44 @@ static bool DictationLongWakeReadingKeepsParticleTail()
         && DictationBoundaries.LeadingWake(ninshikiFused, wakes) is null
         && DictationBoundaries.LeadingWake(ninshikiSplit, wakes) is null
         && DictationBoundaries.LeadingWake(waProbe, wakes) is null;
+}
+
+// s2: a short closed wake (reading len<=ShortWakeReading) at d==0 may keep exactly です or
+// ます when the wake plus the tail are one lexeme. Not d<=1. Not a one-kana tail. Mirrors
+// corpus rows onsei-desu/onsei-masu (wake) and onsen-desu/onsen-wa/onsei-memo plus
+// ninshiki-fused/split (no-wake). Split lexemes 音声 + です stay on the prefix-gap rule.
+static bool DictationShortWakeReadingKeepsCopulaTail()
+{
+    var shortWake = WakeWord.From("音声", "おんせい"); // len=4
+    var longWake = WakeWord.From("音声入力", "おんせいにゅうりょく"); // len=10
+    WakeWord[] wakes = [longWake, shortWake];
+    var desu = Recognized(1, RecognitionExtent.ClosedUtterance, 0, 6000, "音声です", false,
+        Run("音声です", 0, 6000, "おんせいです"));
+    var masu = Recognized(2, RecognitionExtent.ClosedUtterance, 0, 6000, "音声ます", false,
+        Run("音声ます", 0, 6000, "おんせいます"));
+    var onsenDesu = Recognized(3, RecognitionExtent.ClosedUtterance, 0, 6000, "温泉です", false,
+        Run("温泉です", 0, 6000, "おんせんです"));
+    var onsenWa = Recognized(4, RecognitionExtent.ClosedUtterance, 0, 5000, "温泉は", false,
+        Run("温泉", 0, 4000, "おんせん"), Run("は", 4000, 5000, "は"));
+    var memo = Recognized(5, RecognitionExtent.ClosedUtterance, 0, 7000, "音声メモ", false,
+        Run("音声", 0, 4000, "おんせい"), Run("メモ", 4000, 7000, "めも"));
+    var splitCopula = Recognized(6, RecognitionExtent.ClosedUtterance, 0, 6000, "音声です", false,
+        Run("音声", 0, 4000, "おんせい"), Run("です", 4000, 6000, "です"));
+    var ninshikiFused = Recognized(7, RecognitionExtent.ClosedUtterance, 0, 6000, "音声認識", false,
+        Run("音声認識", 0, 6000));
+    var ninshikiSplit = Recognized(8, RecognitionExtent.ClosedUtterance, 0, 8000, "音声認識の精度を上げたい", false,
+        Run("音声", 0, 2000), Run("認識", 2000, 4000), Run("の", 4000, 4500), Run("精度", 4500, 6000), Run("を上げたい", 6000, 8000));
+    // A probe without the prefix gap is not closed, so the copula tail stays rejected.
+    var desuProbe = desu with { Extent = RecognitionExtent.Probe, TailSilenceSamples = 0 };
+    return DictationBoundaries.LeadingWake(desu, wakes) is { Distance: 0, ByReading: not null }
+        && DictationBoundaries.LeadingWake(masu, wakes) is { Distance: 0, ByReading: not null }
+        && DictationBoundaries.LeadingWake(onsenDesu, wakes) is null
+        && DictationBoundaries.LeadingWake(onsenWa, wakes) is null
+        && DictationBoundaries.LeadingWake(memo, wakes) is null
+        && DictationBoundaries.LeadingWake(splitCopula, wakes) is null
+        && DictationBoundaries.LeadingWake(ninshikiFused, wakes) is null
+        && DictationBoundaries.LeadingWake(ninshikiSplit, wakes) is null
+        && DictationBoundaries.LeadingWake(desuProbe, wakes) is null;
 }
 
 static bool DictationKanaWakeMatchesKanjiThroughReading()
