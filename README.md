@@ -64,6 +64,8 @@ Optional `earlyWakeMs` (Mac + Windows dictation mode; try 300) recognizes the ut
 
 Optional `windows.actions` (Windows dictation mode; the Windows twin of Mac `macOS.actions`) gives a wake phrase its own URL. Each entry has `name`, `wakeWords`, `url`, and an optional `superwhisperMode` (else `dictation.superwhisperMode`). It is tried only when no default wake word matched, in config order. Its dictation is recorded like any other, and Superwhisper's result is opened as the URL's `input=` query item through `rundll32 url.dll,FileProtocolHandler`, with no pane route and no paste. URLs are checked at load like `macOS.wakeURL`; early wake probes use only the default wake words. See [config.example.windows-url.json](config.example.windows-url.json); a live hand test on Windows is still pending.
 
+Optional Grok Bot message: a wake phrase can fill a Grok Bot prompt composer instead of pasting. See [config.example.grokbot.json](config.example.grokbot.json) and [docs/grokbot-message.md](docs/grokbot-message.md).
+
 The menu items are 一時停止 (releases the microphone), マイク, 設定ファイルを開く, ログを開く, ログイン時に起動, and 終了.
 
 ## Pane routing (tmux and Jev)

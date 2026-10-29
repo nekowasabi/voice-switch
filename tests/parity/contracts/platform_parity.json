@@ -311,6 +311,28 @@
         "file": "dotnet/VoiceSwitch.Windows.Core/TranscribeDeadline.cs",
         "markers": ["TranscribeDeadline", "Math.Max(10, audioSeconds + 20)"]
       }
+    },
+    {
+      "id": "wake_action_input_param",
+      "macos": {
+        "file": "Sources/voice-switch/Config.swift",
+        "markers": ["inputParam"]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows.Core/VoiceSwitchConfig.cs",
+        "markers": ["InputParam"]
+      }
+    },
+    {
+      "id": "grokbot_prompt_text_limits",
+      "macos": {
+        "file": "Sources/voice-switch/Config.swift",
+        "markers": ["grokbot", "/v1/prompt", "1000"]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows.Core/GrokBotPrompt.cs",
+        "markers": ["grokbot", "/v1/prompt", "1000"]
+      }
     }
   ],
   "allowed_capability_gaps": [

@@ -120,7 +120,7 @@ public sealed record WakeWord(string Text, string Reading)
 public sealed record WindowsActions(WakeAction[]? Actions = null);
 
 /// <summary>A wake phrase whose dictation opens its own URL with the text as `input=` instead of being pasted or routed.</summary>
-public sealed record WakeAction(string Name, string[] WakeWords, string Url, string? SuperwhisperMode = null)
+public sealed record WakeAction(string Name, string[] WakeWords, string Url, string? SuperwhisperMode = null, string? InputParam = null)
 {
     [JsonIgnore]
     public string?[]? WakeReadings { get; init; }
@@ -130,14 +130,16 @@ public sealed record WakeAction(string Name, string[] WakeWords, string Url, str
     // Mac WakeAction.openArguments: every `input` item is replaced by one percent-encoded item; other items stay as written.
     public string InputUrl(string input)
     {
+        var param = InputParam ?? "input";
+        var text = GrokBotPrompt.IsPrompt(Url) ? GrokBotPrompt.Fit(input).Fitted : input;
         var hash = Url.IndexOf('#');
         var head = hash < 0 ? Url : Url[..hash];
         var fragment = hash < 0 ? "" : Url[hash..];
         var question = head.IndexOf('?');
         var query = question < 0 ? "" : head[(question + 1)..];
         var items = query.Split('&', StringSplitOptions.RemoveEmptyEntries)
-            .Where(item => item.Split('=', 2)[0] != "input")
-            .Append("input=" + EncodeUnreserved(input));
+            .Where(item => item.Split('=', 2)[0] != param)
+            .Append(param + "=" + EncodeUnreserved(text));
         return (question < 0 ? head : head[..question]) + "?" + string.Join('&', items) + fragment;
     }
 
@@ -251,6 +253,11 @@ public static class ConfigLoader
                 throw new InvalidDataException($"{field}.wakeWords must contain at least one word, each with a word character.");
             }
 
+            if (action.InputParam is not null && !IsValidInputParam(action.InputParam))
+            {
+                throw new InvalidDataException($"{field}.inputParam must be a non-empty RFC 3986 unreserved query name (A-Z a-z 0-9 - . _ ~).");
+            }
+
             if (!IsActionUrl(action.Url))
             {
                 throw new InvalidDataException($"{field}.url must be an absolute application URL (for example superwhisper://record); encode spaces as %20, use valid percent escapes, and do not use file/data/javascript URLs.");
@@ -278,6 +285,9 @@ public static class ConfigLoader
 
     // Mac ActionURL. The explicit RFC 3986 character set stands in for Swift URLComponents' strict parse, which .NET Uri
     // lacks; it also keeps the URL free of anything a command line would need to quote.
+    private static bool IsValidInputParam(string value) =>
+        value.Length > 0 && value.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '.' or '_' or '~');
+
     private static bool IsActionUrl(string? raw)
     {
         const string allowed = "-._~:/?#[]@!$&'()*+,;=%";

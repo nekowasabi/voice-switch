@@ -48,6 +48,8 @@ Windows では、本文のあとに続けた停止語を dictation が吸い込�
 
 `windows.actions`（任意。Windows の入力モード。Mac の `macOS.actions` に当たる）を設定すると、ウェイクワードごとに専用の URL を開ける。各項目は `name`・`wakeWords`・`url` と、任意の `superwhisperMode`（無ければ `dictation.superwhisperMode`）。既定のウェイクワードが一致しなかったときだけ、設定順に試す。録音は通常の入力と同じで、Superwhisper の結果を URL の `input=` に入れて `rundll32 url.dll,FileProtocolHandler` で開く。ペインへの送信と貼り付けはしない。URL は `macOS.wakeURL` と同じ規則で読み込み時に検査する。早期ウェイクの判定は既定のウェイクワードだけを使う。例は [config.example.windows-url.json](config.example.windows-url.json)。Windows 実機での確認は未実施。
 
+Grok Bot への送信（任意）: ウェイクワードで Grok Bot のプロンプト入力欄に文章を送れる。例は [config.example.grokbot.json](config.example.grokbot.json)、手順は [docs/grokbot-message.md](docs/grokbot-message.md)。
+
 メニューは、一時停止（マイクを放す）、マイク、設定ファイルを開く、ログを開く、ログイン時に起動、終了。
 
 ## ペインへの振り分け（tmux と Jev）

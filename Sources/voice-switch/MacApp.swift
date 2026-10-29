@@ -515,6 +515,12 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     guard DictationHistory.shared.add(id: sessionID, text: result, origin: origin, expectedGeneration: historyGeneration, policy: transcriptPolicy) else { return .delivered }
     if controlled { return .delivered }
     if let action {
+        if GrokBotPrompt.isPrompt(action.url.rawValue) {
+            let (_, truncated) = GrokBotPrompt.fit(result)
+            if truncated {
+                log("grokbot prompt text truncated to 1000 encoded chars for action \(action.name)")
+            }
+        }
         let p = Platform.urlProcess(action.url)
         p.arguments = action.openArguments(input: result)
         Platform.runURLProcess(p, wait: false)

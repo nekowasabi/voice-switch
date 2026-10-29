@@ -192,6 +192,15 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
             // Mac parity: an action's text goes only to its URL, never to a tmux pane or a paste.
             try
             {
+                if (GrokBotPrompt.IsPrompt(action.Url))
+                {
+                    var (_, truncated) = GrokBotPrompt.Fit(text);
+                    if (truncated)
+                    {
+                        Log.Info($"grokbot prompt text truncated to 1000 encoded chars for action {action.Name}");
+                    }
+                }
+
                 LaunchUrl(action.InputUrl(text));
                 Log.Info($"dictation delivered: action {action.Name}");
             }
