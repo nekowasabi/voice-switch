@@ -492,6 +492,46 @@ public static class DictationBoundaries
         return null;
     }
 
+    // Mac ce14722: speech going on past a stop word would be heard within half a second.
+    // ponytail: fixed 0.5 s after the last recognized word; make it a knob if slow speakers pause longer mid-sentence.
+    public const long WindowStopQuietSamples = 8000;
+
+    // Mac stopWordCut kind "window": steady room noise above the threshold keeps one utterance open past the cap, so no
+    // closed utterance or tail ever comes. A PrefixHead window of the newest seconds stops only when nothing was recognized
+    // in its last half second.
+    public static SampleRange? WindowStopRange(RecognizedUtterance recognition, IEnumerable<string> stopWords)
+    {
+        if (recognition.Extent != RecognitionExtent.PrefixHead)
+        {
+            return null;
+        }
+
+        var closed = recognition with { Extent = RecognitionExtent.ClosedUtterance };
+        if ((StandaloneStopRange(closed, stopWords) ?? TrailingStopRange(closed, stopWords)) is not { } stop)
+        {
+            return null;
+        }
+
+        var runs = recognition.Lexemes.Where(run => TextMatching.Normalize(run.Text).Length > 0).ToArray();
+        var heardUntil = runs.Length > 0 ? runs[^1].Range.End : recognition.Source.End;
+        if (heardUntil > recognition.Source.End - WindowStopQuietSamples)
+        {
+            return null;
+        }
+
+        // The window opens anywhere in the speech and its first word is stretched back over the sound before it, so a stop
+        // word opening the window starts where its second word does, less the first word's length at the second's pace.
+        if (stop.Start > recognition.Source.Start || runs.Length < 2)
+        {
+            return stop;
+        }
+
+        var first = TextMatching.Normalize(runs[0].Text).Length;
+        var second = runs[1];
+        var opening = second.Range.Start - second.Range.Length * first / TextMatching.Normalize(second.Text).Length;
+        return new SampleRange(Math.Max(stop.Start, opening), stop.End);
+    }
+
     // Dedicated recognizer (option C): wildcard + stop-word grammar on its own engine.
     // BodyText and BodyLexemes are the dictation hypothesis that ends before the stop.
     // A lexeme that runs into the stop (End > stop start) is the garbled tail and is dropped.
@@ -697,7 +737,8 @@ public sealed class DictationSession
         }
 
         if ((DictationBoundaries.StandaloneStopRange(recognition, config.StopWords ?? [])
-            ?? DictationBoundaries.TrailingStopRange(recognition, config.StopWords ?? [])) is { } stop)
+            ?? DictationBoundaries.TrailingStopRange(recognition, config.StopWords ?? [])
+            ?? DictationBoundaries.WindowStopRange(recognition, config.StopWords ?? [])) is { } stop)
         {
             return Finish(new SampleRange(bodyStart.Value, Math.Max(bodyStart.Value, stop.Start)), FinishReason.StandaloneStop, copyAudio);
         }

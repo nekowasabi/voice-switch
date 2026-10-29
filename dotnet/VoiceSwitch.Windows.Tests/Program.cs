@@ -74,6 +74,9 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation runtime one-breath tail stop keeps the foreground window", () => Check(DictationRuntimeOneBreathTailStopKeepsForegroundWindow())),
     ("dedicated stop script stays on its own engine", () => Check(DedicatedStopScriptStaysOnItsOwnEngine())),
     ("dictation prefix head stop is retained", () => Check(DictationPrefixHeadStopIsRetained())),
+    ("window stop ends the body while steady noise keeps the utterance open", () => Check(WindowStopEndsBodyUnderSteadyNoise())),
+    ("window stop at the window head keeps the end of the sentence before it", () => Check(WindowStopAtHeadKeepsPreviousSentence())),
+    ("window stop never fires on the stop negatives", () => Check(WindowStopIgnoresNegatives())),
     ("dictation embedded stop is retained", () => Check(DictationEmbeddedStopIsRetained())),
     ("dictation rejected stop is retained", () => Check(DictationRejectedStopIsRetained())),
     ("dictation finish and cancel semantics", () => Check(DictationFinishAndCancelSemantics())),
@@ -1551,6 +1554,49 @@ static bool DictationPrefixHeadStopIsRetained()
     var session = StartedSession(config, out var store);
     var audio = session.Apply(Recognized(2, RecognitionExtent.PrefixHead, 19000, 27000, "入力ストップ", false, Run("入力", 21000, 23000), Run("ストップ", 23000, 26000)), store.Copy);
     return audio is null && session.PendingBody == new SampleRange(10000, 27000);
+}
+
+// Mac ce14722: room noise above the threshold keeps one utterance open past the cap, so no closed utterance or tail arrives.
+// The newest seconds come as PrefixHead windows; a stop word followed by 0.5 s with no recognized word ends the body.
+static bool WindowStopEndsBodyUnderSteadyNoise()
+{
+    var config = DictationConfig();
+    LexicalRun[] runs = [Run("晴れです", 20000, 28000), Run("入力", 30000, 33000), Run("ストップ", 33000, 38000)];
+    var early = StartedSession(config, out var earlyStore);
+    var stillTalking = early.Apply(Recognized(2, RecognitionExtent.PrefixHead, 20000, 44000, "晴れです入力ストップ", false, runs), earlyStore.Copy);
+    var session = StartedSession(config, out var store);
+    var audio = session.Apply(Recognized(3, RecognitionExtent.PrefixHead, 20000, 48000, "晴れです入力ストップ", false, runs), store.Copy);
+    return stillTalking is null && early.IsActive
+        && audio is { Reason: FinishReason.StandaloneStop } && audio.Range == new SampleRange(10000, 30000);
+}
+
+// The recognizer stretches a window's first word back over the unrecognized sound before it. Cutting at the window start
+// would drop the end of the sentence said there, so the stop starts where its second word does, less one word's worth.
+static bool WindowStopAtHeadKeepsPreviousSentence()
+{
+    var session = StartedSession(DictationConfig(), out var store);
+    var audio = session.Apply(Recognized(2, RecognitionExtent.PrefixHead, 24000, 48000, "入力ストップ", false, Run("入力", 24000, 30000), Run("ストップ", 30000, 34000)), store.Copy);
+    return audio is { Reason: FinishReason.StandaloneStop } && audio.Range == new SampleRange(10000, 28000);
+}
+
+static bool WindowStopIgnoresNegatives()
+{
+    var config = DictationConfig();
+    var negatives = new[] { "スタッフ", "スタート", "ストップしないで", "ストック", "スポット", "すっぽり", "ちょっと", "ストレッチ", "スタンプ", "トップ", "入力した", "入力して", "はい", "うん", "ありがとう", "そうですね", "今日は晴れです", "ストーブ", "スリップ", "ステップ" };
+    var stopRuns = new[] { Run("入力", 30000, 33000), Run("ストップ", 33000, 38000) };
+    var windows = negatives.SelectMany(phrase => new[]
+        {
+            Recognized(2, RecognitionExtent.PrefixHead, 20000, 48000, phrase, false, Run(phrase, 20000, 36000)),
+            Recognized(2, RecognitionExtent.PrefixHead, 20000, 48000, "今日は" + phrase, false, Run("今日は", 20000, 26000), Run(phrase, 30000, 36000))
+        })
+        .Append(Recognized(2, RecognitionExtent.PrefixHead, 20000, 48000, "今日は入力ストップです", false, Run("今日は", 20000, 26000), Run("入力", 26000, 28000), Run("ストップ", 28000, 32000), Run("です", 32000, 36000)))
+        .Append(Recognized(2, RecognitionExtent.PrefixHead, 20000, 48000, "入力ストップ", true, stopRuns))
+        .Append(Recognized(2, RecognitionExtent.PrefixHead, 20000, 48000, "入力ストップ", false, stopRuns) with { FromStopGrammar = true, Confidence = 0.1 });
+    return windows.All(window =>
+    {
+        var session = StartedSession(config, out var store);
+        return session.Apply(window, store.Copy) is null && session.IsActive;
+    });
 }
 
 static bool DictationEmbeddedStopIsRetained()
