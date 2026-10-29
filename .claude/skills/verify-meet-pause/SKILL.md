@@ -28,7 +28,7 @@ Read every result, pass or fail, with the `/statechart` skill: a violation as it
 
 ## Coverage record
 
-Sync commit: `a2c5975` (the model was last confirmed to describe the code at this commit).
+Sync commit: `ce14722` (the model was last confirmed to describe the code at this commit).
 
 | Model action | Code (Sources/voice-switch/MacApp.swift) |
 |---|---|
@@ -48,7 +48,7 @@ Each action is one main-thread step in the code. If a change moves any of these 
 
 ## Does my change touch this?
 
-Run `git diff a2c5975 -- Sources/voice-switch/MacApp.swift Sources/voice-switch/Config.swift` from the repo root and look for any function in the coverage table, anything that writes `Listener.wanted`, or a new caller of `listener.start()` / `attemptStart()`. A new caller of `start()` is a new action: add it to the model before trusting a pass.
+Run `git diff ce14722 -- Sources/voice-switch/MacApp.swift Sources/voice-switch/Config.swift` from the repo root and look for any function in the coverage table, anything that writes `Listener.wanted`, or a new caller of `listener.start()` / `attemptStart()`. A new caller of `start()` is a new action: add it to the model before trusting a pass.
 
 ## When it fails
 
