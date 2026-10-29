@@ -3,7 +3,7 @@
 \* step under TrayRuntimeSupervisor.gate (SemaphoreSlim: async waiters assumed FIFO, as implemented, not documented).
 \* UI actions run on the WinForms thread in VoiceSwitchTrayContext and only enqueue a
 \* command (`_ = RunCommandAsync(...)`), so the command runs later against a newer state.
-\* "proposed" marks parts with no C# yet: the port of AppDelegate.followMeet.
+\* "port:" marks the parts added by the port of AppDelegate.followMeet (HoldForMeetAsync, ResumeAfterMeetAsync, FollowMeet).
 EXTENDS Sequences, Naturals, TLC
 
 States == {"Paused", "Listening", "Error", "Finished"}
@@ -17,9 +17,9 @@ VARIABLES
     ui,       \* VoiceSwitchTrayContext.snapshot: what the menu items and TogglePause read
     devDiff,  \* WinMmCapture.CurrentDevice != EffectiveDevice (a mic was plugged, pulled, or the default moved)
     q,        \* commands waiting on the gate
-    held,     \* proposed: supervisor meetHeld
-    override, \* proposed: supervisor meetOverride (the user resumed during this call)
-    userOn,   \* proposed: supervisor !userPaused (last user command was not 一時停止)
+    held,     \* port:supervisor meetHeld
+    override, \* port:supervisor meetOverride (the user resumed during this call)
+    userOn,   \* port:supervisor !userPaused (last user command was not 一時停止)
     honored,  \* ghost: a Hold has run during the current call
     drops,    \* ghost: commands dropped by RunCommandAsync's 20 s timeout
     touched   \* ghost: a user command has run since the hold last paused
@@ -79,7 +79,7 @@ UserPause == ui = "Listening" /\ Enq(C("Pause", "user"), 2)
 UserReload == Enq(C("Reload", "user"), 2)
               /\ UNCHANGED <<inCall, state, ui, devDiff, held, override, userOn, honored, drops, touched>>
 
-\* proposed: FollowMeet, a 2 s tick beside FollowDevice. Reads MicInUse and the supervisor's flags.
+\* port:FollowMeet, a 2 s tick beside FollowDevice. Reads MicInUse and the supervisor's flags.
 Poll ==
     /\ IF inCall
        THEN IF ~Pending("Hold") THEN Enq(C("Hold", "meet"), 3) ELSE UNCHANGED q
@@ -96,15 +96,15 @@ Exec(ok) ==
     /\ q # <<>> /\ q' = Tail(q)
     /\ LET c == Head(q) IN
        CASE c.k = "Start" /\ c.by = "user" ->
-              \* StartAsync from 開始 / hotkey / IPC. proposed: a user resume clears the hold and wins until the call ends.
+              \* StartAsync from 開始 / hotkey / IPC. port:a user resume clears the hold and wins until the call ends.
               /\ userOn' = TRUE /\ held' = FALSE /\ override' = inCall
               /\ StartRun(ok) /\ UNCHANGED honored
          [] c.k = "Start" /\ c.by # "user" ->
-              \* StartAsync from FollowDevice or launch. proposed: never over a hold or a user pause.
+              \* StartAsync from FollowDevice or launch. port:never over a hold or a user pause.
               /\ IF held \/ ~userOn THEN UNCHANGED <<state, devDiff>> ELSE StartRun(ok)
               /\ UNCHANGED <<held, override, userOn, honored>>
          [] c.k = "Pause" ->
-              \* PauseAsync (user only). proposed: records the user pause and drops the hold.
+              \* PauseAsync (user only). port:records the user pause and drops the hold.
               /\ state' = "Paused" /\ userOn' = FALSE /\ held' = FALSE
               /\ UNCHANGED <<devDiff, override, honored>>
          [] c.k = "Reload" ->
@@ -112,14 +112,14 @@ Exec(ok) ==
               /\ IF Mic THEN Open(ok) ELSE state' = "Paused" /\ UNCHANGED devDiff
               /\ UNCHANGED <<held, override, userOn, honored>>
          [] c.k = "Hold" ->
-              \* proposed: PauseAsync for the call, unless the user resumed during it or had paused.
+              \* port:PauseAsync for the call, unless the user resumed during it or had paused.
               /\ honored' = (honored \/ inCall)
               /\ IF ~override /\ userOn
                  THEN held' = TRUE /\ state' = "Paused"
                  ELSE UNCHANGED <<held, state>>
               /\ UNCHANGED <<devDiff, override, userOn>>
          [] c.k = "Resume" ->
-              \* proposed: the call ended; start again if the hold paused it. Reads MicInUse again under
+              \* port:the call ended; start again if the hold paused it. Reads MicInUse again under
               \* the gate: a Resume queued at the end of one call can run during the next one.
               /\ IF inCall
                  THEN UNCHANGED <<override, held, state, devDiff>>

@@ -5,9 +5,9 @@ description: Model-check (TLA+) the Windows port of the Meet pause — the tray 
 
 # Verify the Meet pause on Windows (TLA+)
 
-The macOS app pauses while Chrome or Edge holds the mic (commits `fc7144b`, `a2c5975`; model in `../verify-meet-pause/`). The Windows tray does not have this yet. Its ordering problem is different from the Mac one: every tray action is `_ = RunCommandAsync(...)`, so the command waits on `TrayRuntimeSupervisor.gate` and runs later against a newer state, and the menu reads a snapshot that can lag. `MeetPauseWindows.tla` checks a proposed design for the port against every interleaving of the existing tray code paths that are in the model. Acceptance items on the real tray are in `../verify-voice-switch/features/meet-pause.md`.
+The macOS app pauses while Chrome or Edge holds the mic (commits `fc7144b`, `a2c5975`; model in `../verify-meet-pause/`). The Windows tray has it since the `win-port` branch, behind `pauseDuringMeet`. Its ordering problem is different from the Mac one: every tray action is `_ = RunCommandAsync(...)`, so the command waits on `TrayRuntimeSupervisor.gate` and runs later against a newer state, and the menu reads a snapshot that can lag. `MeetPauseWindows.tla` checks the port's design against every interleaving of the existing tray code paths that are in the model. Acceptance items on the real tray are in `../verify-voice-switch/features/meet-pause.md`.
 
-This is a design-time check. The parts marked `proposed` in the model have no C# yet. Until the port lands, a pass means that the design is safe on top of the current tray code. It does not mean that Windows has the feature.
+A pass means the design is safe against the tray code paths in the coverage table. It does not cover the real tray: MPW0 (whether Meet's capture shows under `chrome` / `msedge`) and MPW1–MPW8 still need a live call.
 
 ## Properties
 
@@ -44,7 +44,7 @@ Read every result, pass or fail, with the `/statechart` skill. It shows a violat
 
 ## Coverage record
 
-Sync commit: `6c30bf3` for the rows that exist in the code (the model was last confirmed against them at this commit). The `proposed` rows have no code and no sync commit.
+Sync commit: `b7f0c58` for every row (the port merge on `win-port`; the model passed and a broken guard failed in both code and a model copy at this commit).
 
 | Model action | Code | Status |
 |---|---|---|
@@ -66,7 +66,7 @@ Sync commit: `6c30bf3` for the rows that exist in the code (the model was last c
 
 ## Does my change touch this?
 
-From the repo root, run `git diff 6c30bf3 -- dotnet/VoiceSwitch.Windows/Tray/ dotnet/VoiceSwitch.Windows/MicInUse.cs`. Look for any function in the coverage table, a new `RunCommandAsync` / `supervisor.*Async` caller, or anything that writes the hold flags. A new caller is a new action: add it to the model before you trust a pass.
+From the repo root, run `git diff b7f0c58 -- dotnet/VoiceSwitch.Windows/Tray/ dotnet/VoiceSwitch.Windows/MicInUse.cs`. Look for any function in the coverage table, a new `RunCommandAsync` / `supervisor.*Async` caller, or anything that writes the hold flags. A new caller is a new action: add it to the model before you trust a pass.
 
 ## After the port lands
 

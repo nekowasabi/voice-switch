@@ -39,3 +39,4 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [HUD glyphs](./hud-labels.md) covers the vector HUD glyphs. Source checks run from the Mac skill; rendering needs a Windows desktop.
 - [Stop sound](./stop-sound.md) tells apart one stop ring, the chime's two notes, and Superwhisper's own sound when a stop sounds doubled. It needs the live tray.
 - [Tray host and IPC](./tray-ipc.md) covers start, pause, reload, and quit of the tray app. It is not drivable on this machine yet.
+- [Pause during Google Meet](./meet-pause.md) is the port of the Mac Meet pause. It is not implemented yet, and its ordering is model-checked by `verify-meet-pause-windows`.
