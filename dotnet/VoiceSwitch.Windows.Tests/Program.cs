@@ -114,6 +114,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation runtime logs wake readings in the timing line", () => Check(DictationRuntimeLogsWakeReadings())),
     ("dictation runtime skips a wake while Superwhisper uses the microphone", () => Check(DictationRuntimeSkipsWakeWhileMicInUse())),
     ("dictation runtime skips a wake while an excluded app is in front", () => Check(DictationRuntimeSkipsWakeForExcludedApp())),
+    ("dictation runtime does not open an automatic session from a phrase begun while Superwhisper held the microphone", () => Check(DictationRuntimeSkipsAutomaticPhraseBegunWhileMicInUse())),
     ("resident skips the wake command while Superwhisper uses the microphone", () => Check(ResidentSkipsWakeWhileMicInUse())),
     ("mic-in-use sees this process's open capture on Windows", MicInUseSeesOwnCaptureOnWindows),
     ("dictation runtime does not reload while a dictation is open", () => Check(DictationRuntimeDoesNotReloadWhileDictating())),
@@ -2673,6 +2674,33 @@ static bool DictationRuntimeSkipsWakeForExcludedApp()
         && output.Contains("dictation skipped: keepass is excluded", StringComparison.Ordinal)
         && handoff.Submissions.Count == 1
         && handoff.Submissions[0].Target == 0x20;
+}
+
+static bool DictationRuntimeSkipsAutomaticPhraseBegunWhileMicInUse()
+{
+    var frames = new List<PcmFrame>();
+    void Add(int count, short value)
+    {
+        for (var i = 0; i < count; i++)
+            frames.Add(new(frames.Count * Segmenter.FrameLength,
+                Enumerable.Range(0, Segmenter.FrameLength).Select(j => (short)(j % 2 == 0 ? value : -value)).ToImmutableArray()));
+    }
+    Add(4, 0); Add(12, 9000); Add(22, 0); Add(12, 9000); Add(22, 0);
+    var config = new VoiceSwitchConfig(["wake"], "en-US", "unused", MaxSeconds: 2.5,
+        HangoverMs: 120, PrerollMs: 60, MinSpeechMs: 90, VadMinRMS: 0.005f, SkipWhileMicInUseBy: ["Superwhisper.exe"],
+        Dictation: new(EndSilenceMs: 240, NoWakeWord: new(AutoIdle: true, MinHandoffMs: 0)));
+    // Superwhisper holds the mic only for the first check: it releases it mid-phrase.
+    var calls = 0;
+    var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(frames, [22, 36, 56, 70]), Recognizing("body", "body", "body", "body"),
+        new RecordingDictationHandoff(), dryRun: true, inputIdleSeconds: () => 4, wakeReading: value => value,
+        micInUseBy: _ => calls++ == 0 ? "Superwhisper" : null, voicedWindows: _ => 1);
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(10), out var output);
+    var sessions = output.Split('\n').Where(line => line.Contains("dictation session: automatic ") && line.Contains(" range=")).ToArray();
+    // W2-1: the first phrase (frames 4..15) never opens; W2-2: the next phrase, past the bridge, does.
+    return code == 0
+        && output.Contains("automatic wake blocked: Superwhisper", StringComparison.Ordinal)
+        && sessions.Length == 1
+        && sessions[0].Contains(" range=17280..", StringComparison.Ordinal);
 }
 
 static bool ResidentSkipsWakeWhileMicInUse()

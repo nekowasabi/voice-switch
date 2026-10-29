@@ -102,6 +102,7 @@ public sealed class WindowsDictationRuntime
     // The phrase the user is speaking: voiced frames joined across gaps up to the hangover, which the VAD alone splits into short runs.
     private long phraseStart = -1;
     private long phraseVoiced;
+    private string? phraseMicBlock;
     private long followupUntil;
     private bool lastVadSpeech;
     private string? lastSilenceDiagnosticKey;
@@ -582,16 +583,16 @@ public sealed class WindowsDictationRuntime
         if (session.IsActive || session.IsAwaitingBody)
         {
             // Audio a session already owns never becomes the lookback of the next automatic one.
-            phraseStart = -1;
+            (phraseStart, phraseMicBlock) = (-1, null);
         }
         else if (segmenter.LastWasSpeech)
         {
-            if (phraseStart < 0 || frame.Start - lastLiveSpeechEnd > bridge) (phraseStart, phraseVoiced) = (frame.Start, 0);
+            if (phraseStart < 0 || frame.Start - lastLiveSpeechEnd > bridge) (phraseStart, phraseVoiced, phraseMicBlock) = (frame.Start, 0, null);
             phraseVoiced += frame.Analysis.Length;
         }
         else if (frame.Start - lastLiveSpeechEnd > bridge)
         {
-            phraseStart = -1;
+            (phraseStart, phraseMicBlock) = (-1, null);
         }
 
         if (segmenter.LastWasSpeech)
@@ -608,7 +609,8 @@ public sealed class WindowsDictationRuntime
             var window = origin is not null ? foregroundWindow() : 0;
             // The whole phrase with its preroll, even when it overlaps typing.
             var start = Math.Max(originalStore.Start, phraseStart - Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength);
-            var skip = origin is null ? null : AutomaticSkipReason(window);
+            // Latched for the phrase: once Superwhisper releases the mic, its user's words would otherwise open a session from the phrase head.
+            var skip = origin is null ? null : (phraseMicBlock ??= AutomaticMicBlock()) ?? AutomaticForegroundSkipReason(window);
             // Logged once per change: a blocked automatic wake was otherwise indistinguishable from silence in the log.
             if (skip != lastAutomaticSkip && skip is not null) Log.Info(skip);
             lastAutomaticSkip = skip;
@@ -867,9 +869,13 @@ public sealed class WindowsDictationRuntime
                 : null;
     }
 
-    private string? AutomaticSkipReason(nint window)
+    private string? AutomaticSkipReason(nint window) => AutomaticMicBlock() ?? AutomaticForegroundSkipReason(window);
+
+    private string? AutomaticMicBlock() =>
+        automaticMicInUseBy(config.SkipWhileMicInUseBy ?? []) is { } busy ? $"automatic wake blocked: {busy}" : null;
+
+    private string? AutomaticForegroundSkipReason(nint window)
     {
-        if (automaticMicInUseBy(config.SkipWhileMicInUseBy ?? []) is { } busy) return $"automatic wake blocked: {busy}";
         if (config.Dictation?.ExcludeProcessNames is not { Length: > 0 } excluded) return null;
         var app = windowProcess(window);
         if (window == 0 || app is null) return "automatic wake blocked: foreground process unavailable";
