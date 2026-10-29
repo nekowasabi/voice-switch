@@ -877,6 +877,7 @@ def check_swift_core_behavior(result: Result, require_swift: bool) -> None:
                 "-module-cache-path",
                 str(Path(tmp) / "module-cache"),
                 str(ROOT / "Sources/voice-switch/Config.swift"),
+                str(ROOT / "Sources/voice-switch/SecretLog.swift"),
                 str(ROOT / "Sources/voice-switch/DictationJournal.swift"),
                 str(ROOT / "Sources/voice-switch/WakeSafety.swift"),
                 str(ROOT / "Sources/voice-switch/Transcript.swift"),

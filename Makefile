@@ -106,6 +106,7 @@ win-build: win-restore win-test ## Windows: build .NET app and behavior tests
 
 win-test: win-restore ## Windows: run behavior tests
 	$(DOTNET) run --project $(WIN_TESTS) -c $(WIN_CONFIG) --no-restore
+	$(DOTNET) run --project dotnet/VoiceSwitch.SharedChecks/VoiceSwitch.SharedChecks.csproj -c $(WIN_CONFIG)
 	$(MAKE) parity-test
 
 url-test: ## Require Swift URL action regression tests (macOS or Linux with Swift)
