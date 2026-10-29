@@ -32,6 +32,7 @@ public sealed class DictationJournal
     private readonly Action<string> log;
     private readonly string fallbackDirectory;
     private JournalTarget target;
+    private bool reportedUnprotected;
 
     private DictationJournal(JournalTarget target, string fallbackDirectory, Action<string> log)
     {
@@ -169,19 +170,20 @@ public sealed class DictationJournal
             }
 
             string file;
+            var guarded = true;
             if (where.SingleFile)
             {
                 var parent = Path.GetDirectoryName(where.Path);
                 if (string.IsNullOrEmpty(parent)) parent = ".";
                 var createdParent = !Directory.Exists(parent);
                 Directory.CreateDirectory(parent);
-                if (createdParent) ProtectDirectory(parent);
+                if (createdParent) guarded &= ProtectDirectory(parent);
                 file = where.Path;
             }
             else
             {
                 Directory.CreateDirectory(where.Path);
-                ProtectDirectory(where.Path);
+                guarded &= ProtectDirectory(where.Path);
                 file = Path.Combine(where.Path, timestamp.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + ".jsonl");
             }
 
@@ -206,11 +208,18 @@ public sealed class DictationJournal
                 stream.Flush(true);
             }
 
-            ProtectFile(file);
+            guarded &= ProtectFile(file);
+            if (!guarded && !reportedUnprotected)
+            {
+                reportedUnprotected = true;
+                log($"dictation journal: {where.Path} does not take Windows permissions; keeping its own");
+            }
+
             error = "";
             return true;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        // InvalidOperationException too: a journal line that fails must never take the handoff down with it.
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or InvalidOperationException)
         {
             error = ex.Message;
             return false;
@@ -303,36 +312,49 @@ public sealed class DictationJournal
     }
 
     // The journal directory only. Parents created along the way keep the permissions they already had.
-    private static void ProtectDirectory(string path)
+    // False when the filesystem refuses Windows ACLs; the caller still writes.
+    private static bool ProtectDirectory(string path)
     {
-        if (OperatingSystem.IsWindows()) ProtectWindows(path);
-        else File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        if (OperatingSystem.IsWindows()) return ProtectWindows(path);
+        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        return true;
     }
 
-    private static void ProtectFile(string path)
+    private static bool ProtectFile(string path)
     {
-        if (OperatingSystem.IsWindows()) ProtectWindows(path);
-        else File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        if (OperatingSystem.IsWindows()) return ProtectWindows(path);
+        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        return true;
     }
 
     [SupportedOSPlatform("windows")]
-    private static void ProtectWindows(string path)
+    private static bool ProtectWindows(string path)
     {
         var user = WindowsIdentity.GetCurrent().User ?? throw new InvalidOperationException("current user SID is unavailable");
-        if (Directory.Exists(path))
+        // A \\wsl.localhost share answers SetSecurityInfo with an error .NET has no mapping for, which surfaces as
+        // InvalidOperationException; the Linux side guards the file with its own mode bits instead.
+        try
         {
-            var security = new DirectorySecurity();
-            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
-            security.AddAccessRule(new FileSystemAccessRule(user, FileSystemRights.FullControl,
-                InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
-            new DirectoryInfo(path).SetAccessControl(security);
-            return;
-        }
+            if (Directory.Exists(path))
+            {
+                var security = new DirectorySecurity();
+                security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+                security.AddAccessRule(new FileSystemAccessRule(user, FileSystemRights.FullControl,
+                    InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+                new DirectoryInfo(path).SetAccessControl(security);
+                return true;
+            }
 
-        var file = new FileSecurity();
-        file.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
-        file.AddAccessRule(new FileSystemAccessRule(user, FileSystemRights.FullControl, AccessControlType.Allow));
-        new FileInfo(path).SetAccessControl(file);
+            var file = new FileSecurity();
+            file.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+            file.AddAccessRule(new FileSystemAccessRule(user, FileSystemRights.FullControl, AccessControlType.Allow));
+            new FileInfo(path).SetAccessControl(file);
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
     }
 
     private readonly record struct JournalTarget(string Path, bool SingleFile)

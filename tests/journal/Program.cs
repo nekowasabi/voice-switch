@@ -263,6 +263,25 @@ Run("single-file", () =>
     Expect(Directory.Exists(folder) && Directory.GetFiles(folder, "*.jsonl").Length == 1, "a non-jsonl path was not a directory");
 });
 
+// 2026-10-29: journalDir on \\wsl.localhost made every handoff fail, because the share refuses Windows ACLs.
+var wslShare = Environment.GetEnvironmentVariable("VOICE_SWITCH_JOURNAL_WSL_DIR");
+if (OperatingSystem.IsWindows() && !string.IsNullOrEmpty(wslShare))
+    Run("wsl-share", () =>
+    {
+        var dir = Path.Combine(wslShare, "journal-" + Guid.NewGuid().ToString("N"));
+        var logs = new List<string>();
+        var history = History(DictationJournal.Open(dir, logs.Add, JournalPlatform.Windows, CaseDir("wsl-fallback")));
+        Add(history, "one");
+        Add(history, "two");
+        var files = Directory.GetFiles(dir, "*.jsonl");
+        Expect(files.Length == 1 && ReadText(files[0]).Split('\n', StringSplitOptions.RemoveEmptyEntries).Length == 2, "the share did not get both lines");
+        Expect(logs.Count(line => line.Contains("does not take Windows permissions", StringComparison.Ordinal)) == 1, "the missing ACL was not reported once: " + string.Join(" | ", logs));
+        Expect(!logs.Any(line => line.Contains("using default", StringComparison.Ordinal)), "fell back to the default: " + string.Join(" | ", logs));
+        Directory.Delete(dir, recursive: true);
+    });
+else
+    Skip("wsl-share");
+
 Run("fields", () =>
 {
     var dir = CaseDir("fields");
