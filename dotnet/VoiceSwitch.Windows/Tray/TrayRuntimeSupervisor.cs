@@ -2,6 +2,9 @@ using VoiceSwitch.Windows.Core;
 
 namespace VoiceSwitch.Windows.Tray;
 
+// User: 開始, the pause hotkey, IPC. Launch and DeviceRetry never override a hold or a user pause.
+public enum StartOrigin { User, Launch, DeviceRetry }
+
 public sealed class TrayRuntimeSupervisor : IAsyncDisposable
 {
     private readonly SemaphoreSlim gate = new(1, 1);
@@ -22,9 +25,7 @@ public sealed class TrayRuntimeSupervisor : IAsyncDisposable
     private static readonly string[] MeetBrowsers = ["chrome", "msedge"];
     private readonly Func<IReadOnlyCollection<string>, string?> micInUseBy;
     // Model: .claude/skills/verify-meet-pause-windows (MeetPauseWindows.tla). Written only under gate.
-    private volatile bool meetHeld;
-    private volatile bool meetOverride;
-    private bool userPaused;
+    private volatile TrayHold hold;
 
     public TrayRuntimeSupervisor(
         string configPath,
@@ -40,7 +41,7 @@ public sealed class TrayRuntimeSupervisor : IAsyncDisposable
         this.factory = factory;
         this.instanceKey = instanceKey;
         PauseDuringMeet = pauseDuringMeet;
-        this.userPaused = userPaused;
+        hold = userPaused ? TrayHold.User : TrayHold.None;
         this.micInUseBy = micInUseBy ?? MicInUse.By;
         snapshot = NewSnapshot(TrayState.Paused, null, null);
         published = new StatusView(snapshot, null);
@@ -49,7 +50,7 @@ public sealed class TrayRuntimeSupervisor : IAsyncDisposable
     public event Action<TraySnapshot>? SnapshotChanged;
     public bool PauseDuringMeet { get; }
     // FollowMeet's cue to queue a Resume once the call is gone; the Resume itself decides under the gate.
-    public bool MeetResumeOwed => meetHeld || meetOverride;
+    public bool MeetResumeOwed => hold is TrayHold.Meet or TrayHold.MeetOverride;
     public string? MeetBrowser() => micInUseBy(MeetBrowsers);
     public TraySnapshot Snapshot
     {
@@ -73,21 +74,30 @@ public sealed class TrayRuntimeSupervisor : IAsyncDisposable
         }
     }
 
-    // user: 開始, the pause hotkey, IPC. The launch start and the device retry are not, and never override a hold or a user pause.
-    public async Task StartAsync(CancellationToken cancellation, bool user = true)
+    public async Task StartAsync(CancellationToken cancellation, StartOrigin origin)
     {
         await gate.WaitAsync(cancellation).ConfigureAwait(false);
         try
         {
-            if (user)
+            if (origin == StartOrigin.User)
             {
-                userPaused = false;
-                meetHeld = false;
+                // Already listening: an override set here would turn the hold off for the rest of the call.
+                if (snapshot.State is TrayState.Starting or TrayState.Listening)
+                {
+                    return;
+                }
+
                 // A start during a call wins until the call ends.
-                meetOverride = PauseDuringMeet && MeetBrowser() is not null;
+                hold = PauseDuringMeet && MeetBrowser() is not null ? TrayHold.MeetOverride : TrayHold.None;
             }
-            else if (meetHeld || userPaused)
+            else if (hold is TrayHold.User or TrayHold.Meet)
             {
+                return;
+            }
+            else if (hold == TrayHold.None && !quitRequested && PauseDuringMeet && MeetBrowser() is { } browser)
+            {
+                // Mac followMeet right after start: otherwise the mic opens until the first FollowMeet tick, 2 s on.
+                await HoldRunAsync(browser, cancellation).ConfigureAwait(false);
                 return;
             }
 
@@ -151,8 +161,7 @@ public sealed class TrayRuntimeSupervisor : IAsyncDisposable
         await gate.WaitAsync(cancellation).ConfigureAwait(false);
         try
         {
-            userPaused = true;
-            meetHeld = false;
+            hold = TrayHold.User;
             await PauseRunAsync(cancellation).ConfigureAwait(false);
         }
         finally
@@ -162,29 +171,36 @@ public sealed class TrayRuntimeSupervisor : IAsyncDisposable
     }
 
     // FollowMeet sees a call. Holds from any state, Error and Finished too, or the device retry would listen through the call.
-    public async Task HoldForMeetAsync(string browser, CancellationToken cancellation)
+    // Read again here: a Hold queued during a call can run after it ended, and would stop and later restart for nothing.
+    public async Task HoldForMeetAsync(CancellationToken cancellation)
     {
         await gate.WaitAsync(cancellation).ConfigureAwait(false);
         try
         {
-            if (!PauseDuringMeet || meetOverride || userPaused || quitRequested)
+            if (!PauseDuringMeet || hold is TrayHold.User or TrayHold.MeetOverride || quitRequested || MeetBrowser() is not { } browser)
             {
                 return;
             }
 
-            if (!meetHeld)
-            {
-                Log.Info($"tray: meet hold ({browser})");
-            }
-
-            // Before the stop: a stop that times out still leaves the device retry refused.
-            meetHeld = true;
-            await PauseRunAsync(cancellation).ConfigureAwait(false);
+            await HoldRunAsync(browser, cancellation).ConfigureAwait(false);
         }
         finally
         {
             gate.Release();
         }
+    }
+
+    // Under gate.
+    private async Task HoldRunAsync(string browser, CancellationToken cancellation)
+    {
+        if (hold != TrayHold.Meet)
+        {
+            Log.Info($"tray: meet hold ({browser})");
+        }
+
+        // Before the stop: a stop that times out still leaves the device retry refused.
+        hold = TrayHold.Meet;
+        await PauseRunAsync(cancellation).ConfigureAwait(false);
     }
 
     // FollowMeet saw the call end. Read again here: a Resume queued at the end of one call can run during the next.
@@ -193,18 +209,18 @@ public sealed class TrayRuntimeSupervisor : IAsyncDisposable
         await gate.WaitAsync(cancellation).ConfigureAwait(false);
         try
         {
-            if (!PauseDuringMeet || quitRequested || MeetBrowser() is not null)
+            var held = hold;
+            if (held is not (TrayHold.Meet or TrayHold.MeetOverride) || quitRequested || MeetBrowser() is not null)
             {
                 return;
             }
 
-            meetOverride = false;
-            if (!meetHeld)
+            hold = TrayHold.None;
+            if (held == TrayHold.MeetOverride)
             {
                 return;
             }
 
-            meetHeld = false;
             Log.Info("tray: meet resume");
             await StartRunAsync(cancellation).ConfigureAwait(false);
         }
@@ -449,4 +465,8 @@ public sealed class TrayRuntimeSupervisor : IAsyncDisposable
         ex.Message.Length <= 1000 ? ex.Message : ex.Message[..1000];
 
     private sealed record StatusView(TraySnapshot State, ITrayRuntimeRun? Run);
+
+    // Model: None = userOn, User = ~userOn, Meet = held, MeetOverride = override. User drops the override bit the model keeps:
+    // after a user pause it only makes FollowMeet queue a Resume that clears it, and the next user Start sets it anew.
+    private enum TrayHold { None, User, Meet, MeetOverride }
 }

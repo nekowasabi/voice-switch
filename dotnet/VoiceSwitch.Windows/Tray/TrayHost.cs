@@ -71,7 +71,7 @@ public static class TrayHost
             {
                 if (!options.Paused)
                 {
-                    _ = supervisor.StartAsync(CancellationToken.None, user: false);
+                    _ = supervisor.StartAsync(CancellationToken.None, StartOrigin.Launch);
                 }
 
                 Application.Run(context);
