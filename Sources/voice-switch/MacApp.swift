@@ -1152,6 +1152,10 @@ final class Listener {
                 let reason = key == .finish ? "hotkey" : d.samples.count > Int((dc.maxSeconds ?? 60) * rate) ? "maxSeconds"
                     : "\(d.silentFrames * frameLen * 1000 / Int(rate)) ms silence"
                 d.samples.removeLast(d.silentFrames * frameLen)
+                // A whole maxSeconds with no word Apple Speech and Whisper agreed on was the room, not a voice. Lift the floor
+                // as an idle over-cap head with no wake does; otherwise the next frame reads the same noise as speech and
+                // reopens a session at once, and the mic HUD never leaves (model: .claude/skills/verify-hud-noise).
+                if reason == "maxSeconds", d.origin.isAutomatic, !d.confirmed { rebaseFloorAfterNoWake(&seg) }
                 dictation = nil; recent.removeAll(); speechFrames = 0; Hotkeys.end(); endedByUser = key == .finish
                 log("dictation ended by \(reason) after \(d.samples.count * 1000 / Int(rate)) ms of audio \(sidField(d.sessionID))")
                 if key == .finish { playStopSound() }
