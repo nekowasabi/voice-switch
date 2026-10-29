@@ -7,5 +7,8 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\VoiceSwitch.Windows.Core\VoiceSwitch.Windows.Core.csproj" />
+    <EmbeddedResource Include="..\..\Sources\voice-switch\Resources\*.png">
+      <LogicalName>%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 </Project>

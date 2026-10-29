@@ -23,7 +23,7 @@ let package = Package(
                 .product(name: "onnxruntime", package: "onnxruntime-swift-package-manager", condition: .when(platforms: [.macOS])),
                 .target(name: "whisper", condition: .when(platforms: [.macOS])),
             ],
-            resources: [.copy("Resources/silero_vad.onnx"), .copy("Resources/SILERO_LICENSE")],
+            resources: [.copy("Resources/silero_vad.onnx"), .copy("Resources/SILERO_LICENSE"), .copy("Resources/grok-bot.png")],
             linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks",
                                            "-Xlinker", "-rpath", "-Xlinker", "@executable_path"])]
         ),

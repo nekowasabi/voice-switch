@@ -115,7 +115,7 @@ cmd_hud() {
   rc=0
   "$BIN" --hud-labels "$out" || rc=1
   # Glyph names cover Windows, which this Mac cannot render. Both HUDs draw vector paths now, so a shared
-  # name contract is what keeps the two platforms showing the same nine states.
+  # name contract is what keeps the two platforms showing the same nine phase states. Action icons are pngs, not phases.
   awk '/^enum HUDLabel/ { inside = 1 } inside && /case / { gsub(/^[ \t]*case[ \t]+/, ""); gsub(/[ \t]*\{.*/, ""); n = split($0, names, /,[ \t]*/); for (i = 1; i <= n; i++) print names[i] } inside && /^}/ { inside = 0 }' \
     "$REPO/Sources/voice-switch/MacApp.swift" | tr 'A-Z' 'a-z' | LC_ALL=C sort > "$out/mac-glyphs.txt"
   awk '/^public enum HudGlyph/ { inside = 1; next } inside && /^}/ { inside = 0 } inside { print }' \

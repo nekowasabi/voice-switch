@@ -996,6 +996,8 @@ final class Listener {
 
     /// Called on the main thread whenever the dictation phase changes.
     var onPhase: ((Phase) -> Void)?
+    /// Resource stem of the action icon to draw, or nil for the phase glyph.
+    var onActionIcon: ((String?) -> Void)?
 
     /// Called on the main thread while superwhisper processes a handed-off recording; nil when it is done.
     var onDelivery: ((DeliveryState?) -> Void)?
@@ -1009,6 +1011,7 @@ final class Listener {
         var seg = Segmenter(cfg: config.cfg)
         var dictation: Dictation?
         var shown = Phase.idle
+        var iconShown: String?
         var clock = 0
         var followupUntil = 0
         var recent: [Float] = []
@@ -1070,6 +1073,12 @@ final class Listener {
                             && (phraseHAL > 0 || config.cfg.dictation?.echoCancellation == false || voiceActivity.withLock { $0.device == 0 })
                             && (lastAutomaticBlock == nil || lastAutomaticBlock == Listener.noVoiceActivity) ? .hearing : .idle)
                 // .ended hides itself after a moment; the idle that follows it is not a change.
+                let icon = (phase == .waiting || phase == .recording) ? dictation?.action?.hudIcon : nil
+                if icon != iconShown {
+                    iconShown = icon
+                    let value = icon
+                    DispatchQueue.main.async { self.onActionIcon?(value) }
+                }
                 if phase != shown, !(shown == .ended && phase == .idle) {
                     shown = phase
                     phaseCont.yield(phase)
@@ -1656,7 +1665,15 @@ final class HUDGlyphView: NSView {
 
     deinit { ticker?.invalidate() }
 
+    var iconName: String?
+
     override func draw(_: NSRect) {
+        if let iconName, let image = ActionIconImage.load(iconName) {
+            let side = min(bounds.width, bounds.height)
+            let box = side * 22 / 24
+            image.draw(in: NSRect(x: (bounds.width - box) / 2, y: (bounds.height - box) / 2, width: box, height: box))
+            return
+        }
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         let side = min(bounds.width, bounds.height)
         guard side > 0 else { return }
@@ -1770,6 +1787,20 @@ final class HUDGlyphView: NSView {
         }
     }
 
+    private enum ActionIconImage {
+        private static var cache: [String: NSImage] = [:]
+        static func load(_ name: String) -> NSImage? {
+            if let hit = cache[name] { return hit }
+            let nested = [Bundle.main.resourceURL, Bundle.main.bundleURL].lazy
+                .compactMap { $0.flatMap { Bundle(url: $0.appendingPathComponent("voice-switch_voice-switch.bundle")) } }.first
+            let path = nested?.path(forResource: name, ofType: "png")
+                ?? Bundle.main.path(forResource: name, ofType: "png")
+            guard let image = path.flatMap({ NSImage(contentsOfFile: $0) }) else { return nil }
+            cache[name] = image
+            return image
+        }
+    }
+
     private func mic(_ color: NSColor) {
         let capsule = NSBezierPath(roundedRect: NSRect(x: 9, y: 10, width: 6, height: 11), xRadius: 3, yRadius: 3)
         stroke(capsule, color, width: 1.6)
@@ -1840,6 +1871,11 @@ final class HUD {
     private var delivery: DeliveryState?
     private var notice: HUDLabel?
     private var loggedLabel: HUDLabel?
+    private var loggedIcon: String?
+    /// When set during waiting or recording, the pill draws this resource instead of the phase glyph.
+    var actionIcon: String? {
+        didSet { if oldValue != actionIcon { glyphView.iconName = actionIcon; render() } }
+    }
 
     /// The glyph currently on screen, or nil when the HUD is hidden. `--hud-labels` reads it.
     var visibleGlyph: HUDLabel? { panel.isVisible ? glyphView.glyph : nil }
@@ -1890,9 +1926,10 @@ final class HUD {
         case (.idle, nil): nil
         } }
         // A HUD the user reported missing leaves no other trace, so each visible change is logged.
-        if view?.label != loggedLabel {
+        if view?.label != loggedLabel || actionIcon != loggedIcon {
             loggedLabel = view?.label
-            log("hud: \(view.map { "\($0.label)" } ?? "hidden") phase=\(phase) delivery=\(delivery.map { "\($0)" } ?? "-")")
+            loggedIcon = actionIcon
+            log("hud: \(actionIcon ?? view.map { "\($0.label)" } ?? "hidden") phase=\(phase) delivery=\(delivery.map { "\($0)" } ?? "-")")
         }
         // Animation must stop with the pill: a hidden HUD that keeps a 30 fps timer burns CPU for nothing.
         // The next state often arrives a moment later (recording → processing), so the pill waits briefly before hiding
@@ -1972,6 +2009,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         DictationJournal.bind(config.cfg.dictation?.journalDir)
         listener = Listener(config: config)
         listener.onPhase = { [hud] in hud.show($0) }
+        listener.onActionIcon = { [hud] in hud.actionIcon = $0 }
         listener.onDelivery = { [hud] in hud.deliver($0) }
         DictationHistory.shared.onChange = { [hud] in DispatchQueue.main.async { hud.historyAvailable() } }
         listener.onRestart = { [weak self] in self?.refresh() }

@@ -5,5 +5,7 @@
   <ItemGroup>
     <Compile Include="..\VoiceSwitch.Windows.Core\SecretLog.cs" Link="SecretLog.cs" />
     <Compile Include="..\VoiceSwitch.Windows.Core\MailAction.cs" Link="MailAction.cs" />
+    <Compile Include="..\VoiceSwitch.Windows.Core\ActionIcons.cs" Link="ActionIcons.cs" />
+    <Compile Include="..\VoiceSwitch.Windows.Core\GrokBotPrompt.cs" Link="GrokBotPrompt.cs" />
   </ItemGroup>
 </Project>

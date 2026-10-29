@@ -12,6 +12,7 @@ A 64x40 HUD at the top center of the focused display shows the dictation from th
 - `followup` (loop arrow): continuous listening after a wake-word dictation.
 - `saved` (green check over a rule): an automatic recording went to history; click opens the history panel; hidden after 1.5 s.
 - `paused` (two bars) / `resumed` (play triangle): the `pauseShortcut` hotkey (or the menu item) toggled listening; shown 1 s over any other glyph, which then comes back.
+- Action icons sit on waiting and recording. They are pngs named by `ActionIcons`, not extra `HUDLabel` cases. `grok-bot` is the builtin for a Grok Bot name or prompt URL. Another product is a row in that table, or `"icon": "stem"` plus `stem.png`.
 
 Acceptance, checked by `$V hud`:
 

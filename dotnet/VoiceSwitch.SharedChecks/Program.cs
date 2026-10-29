@@ -53,6 +53,17 @@ catch (InvalidOperationException ex)
         ex.Message.Contains(name, StringComparison.Ordinal) && !ex.Message.Contains("s3cret-value", StringComparison.Ordinal));
 }
 
+Check("prompt url resolves to grok-bot", ActionIcons.Resolve("progress", "grokbot://app/v1/prompt?id=1") == "grok-bot");
+Check("grok bot name resolves to grok-bot", ActionIcons.Resolve("Grok Bot", "mailto:a@b.example") == "grok-bot");
+Check("other action has no builtin icon", ActionIcons.Resolve("progress", "alter://action/1") is null);
+Check("configured icon overrides the table", ActionIcons.Resolve("progress", "alter://action/1", "other-bot") == "other-bot");
+Check("unsafe icon stem is ignored", ActionIcons.Resolve("Grok Bot", "mailto:a@b.example", "../x") == "grok-bot");
+var macHud = File.ReadAllText(Path.Combine(root, "Sources/voice-switch/MacApp.swift"));
+var winHud = File.ReadAllText(Path.Combine(root, "dotnet/VoiceSwitch.Windows/Tray/DictationHud.cs"));
+Check("Mac HUD draws a named action icon", macHud.Contains("iconName", StringComparison.Ordinal) && macHud.Contains("hudIcon", StringComparison.Ordinal) && !macHud.Contains("case .grok", StringComparison.Ordinal));
+Check("Windows HUD draws a named action icon", winHud.Contains("IconName", StringComparison.Ordinal) && !winHud.Contains("HudGlyph.Grok", StringComparison.Ordinal) && File.ReadAllText(Path.Combine(root, "dotnet/VoiceSwitch.Windows/DictationRuntime.cs")).Contains("HudIcon", StringComparison.Ordinal));
+Check("icon file exists", new FileInfo(Path.Combine(root, "Sources/voice-switch/Resources/grok-bot.png")).Length > 32);
+
 return failed == 0 ? 0 : 1;
 
 static string RepoRoot()

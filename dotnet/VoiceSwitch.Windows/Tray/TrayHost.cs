@@ -54,7 +54,8 @@ public static class TrayHost
                     RestoreFocus: target => hud.Post(() => WindowFocus.RestoreIfSuperwhisperForeground(target)),
                     Hotkeys: hotkeys,
                     MicDevice: () => TraySettings.MicDevice,
-                    OnDelivery: state => hud.Post(() => hud.Deliver(state)))),
+                    OnDelivery: state => hud.Post(() => hud.Deliver(state)),
+                    OnActionIcon: icon => hud.Post(() => hud.ShowActionIcon(icon)))),
                 instance.Key,
                 pauseDuringMeet: PauseDuringMeet(options.ConfigPath),
                 // --paused is the user's pause: a call ending must not start the tray.

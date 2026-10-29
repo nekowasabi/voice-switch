@@ -193,6 +193,7 @@ if mode == "--enroll-speaker" {
     _ = NSApplication.shared
     let hud = HUD()
     listener.onPhase = { log("phase: \($0)"); hud.show($0) }
+    listener.onActionIcon = { hud.actionIcon = $0 }
     listener.onDelivery = { hud.deliver($0) }
     Task {
         do {

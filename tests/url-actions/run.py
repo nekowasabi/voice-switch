@@ -112,6 +112,7 @@ with tempfile.TemporaryDirectory(prefix="voice-switch-url-test-") as temp:
                     str(root / "Sources/voice-switch/DictationJournal.swift"),
                     str(root / "Sources/voice-switch/WakeSafety.swift"), str(root / "Sources/voice-switch/Transcript.swift"),
                     str(root / "Sources/voice-switch/SecretLog.swift"),
+                    str(root / "Sources/voice-switch/ActionIcons.swift"),
                     str(root / "Sources/voice-switch/Config.swift"),
                     str(root / "Sources/voice-switch/Platform.swift"),
                     str(root / "tests/url-actions/main.swift"), "-o", str(binary)], check=True)
