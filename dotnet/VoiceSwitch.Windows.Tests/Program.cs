@@ -66,6 +66,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation repeated wake prefix keeps body", () => Check(DictationRepeatedWakePrefixKeepsBody())),
     ("dictation wake reading recovers near-homophones but never cuts a body from a fuzzy match", () => Check(DictationWakeReadingRecoversNearHomophones())),
     ("dictation long wake reading recovers distance-2 closed 縫製入力 as wake-only", () => Check(DictationLongWakeReadingRecoversDistance2ClosedHosei())),
+    ("dictation long wake reading keeps a one-kana particle tail as wake-only", () => Check(DictationLongWakeReadingKeepsParticleTail())),
     ("dictation kana wake word matches SAPI's kanji through the reading", () => Check(DictationKanaWakeMatchesKanjiThroughReading())),
     ("dictation session opens a wait on a fuzzy wake and starts the body on the next utterance", () => Check(DictationSessionOpensWaitOnFuzzyWake())),
     ("dictation runtime logs a reading-matched wake-only with its distance", () => Check(DictationRuntimeLogsReadingWakeOnly())),
@@ -1190,6 +1191,49 @@ static bool DictationLongWakeReadingRecoversDistance2ClosedHosei()
         && DictationBoundaries.LeadingWake(inkutoFused, [inputWake]) is null
         && DictationBoundaries.LeadingWake(ninputo, wakes) is null
         && DictationBoundaries.LeadingWake(inkuto, wakes) is null;
+}
+
+// s1: a long closed wake (reading len>=MinReadingDistance2) at d<=2 may keep a one-kana tail that is
+// exactly は, よ, ね, な, or わ. Not の. Not a content word. Mirrors corpus rows hosei-wa/ne/yo (wake)
+// and hosei-no/ashita/honbun plus ninshiki-fused/split (no-wake).
+static bool DictationLongWakeReadingKeepsParticleTail()
+{
+    var longWake = WakeWord.From("音声入力", "おんせいにゅうりょく"); // len=10
+    WakeWord[] wakes = [longWake];
+    var wa = Recognized(1, RecognitionExtent.ClosedUtterance, 0, 11000, "縫製入力は", false,
+        Run("縫製入力は", 0, 11000, "ほうせいにゅうりょくは"));
+    var ne = Recognized(2, RecognitionExtent.ClosedUtterance, 0, 11000, "縫製入力ね", false,
+        Run("縫製入力ね", 0, 11000, "ほうせいにゅうりょくね"));
+    var yo = Recognized(3, RecognitionExtent.ClosedUtterance, 0, 11000, "縫製入力よ", false,
+        Run("縫製入力よ", 0, 11000, "ほうせいにゅうりょくよ"));
+    var na = Recognized(4, RecognitionExtent.ClosedUtterance, 0, 11000, "縫製入力な", false,
+        Run("縫製入力な", 0, 11000, "ほうせいにゅうりょくな"));
+    var waKana = Recognized(5, RecognitionExtent.ClosedUtterance, 0, 11000, "縫製入力わ", false,
+        Run("縫製入力わ", 0, 11000, "ほうせいにゅうりょくわ"));
+    var no = Recognized(6, RecognitionExtent.ClosedUtterance, 0, 11000, "縫製入力の", false,
+        Run("縫製入力の", 0, 11000, "ほうせいにゅうりょくの"));
+    var ashita = Recognized(7, RecognitionExtent.ClosedUtterance, 0, 16000, "縫製入力明日", false,
+        Run("縫製", 0, 4000, "ほうせい"), Run("入力", 4000, 10000, "にゅうりょく"), Run("明日", 13000, 16000, "あした"));
+    var honbun = Recognized(8, RecognitionExtent.ClosedUtterance, 0, 14000, "縫製入力の本文です", false,
+        Run("縫製", 0, 3000, "ほうせい"), Run("入力", 3000, 7000, "にゅうりょく"), Run("の", 7000, 8000, "の"),
+        Run("本文", 8000, 12000, "ほんぶん"), Run("です", 12000, 14000, "です"));
+    var ninshikiFused = Recognized(9, RecognitionExtent.ClosedUtterance, 0, 6000, "音声認識", false,
+        Run("音声認識", 0, 6000));
+    var ninshikiSplit = Recognized(10, RecognitionExtent.ClosedUtterance, 0, 8000, "音声認識の精度を上げたい", false,
+        Run("音声", 0, 2000), Run("認識", 2000, 4000), Run("の", 4000, 4500), Run("精度", 4500, 6000), Run("を上げたい", 6000, 8000));
+    // A probe without the prefix gap is not closed, so the d=2 tail stays rejected.
+    var waProbe = wa with { Extent = RecognitionExtent.Probe, TailSilenceSamples = 0 };
+    return DictationBoundaries.LeadingWake(wa, wakes) is { BodyStart: null, Distance: 2, ByReading: not null }
+        && DictationBoundaries.LeadingWake(ne, wakes) is { BodyStart: null, Distance: 2, ByReading: not null }
+        && DictationBoundaries.LeadingWake(yo, wakes) is { BodyStart: null, Distance: 2, ByReading: not null }
+        && DictationBoundaries.LeadingWake(na, wakes) is { BodyStart: null, Distance: 2, ByReading: not null }
+        && DictationBoundaries.LeadingWake(waKana, wakes) is { BodyStart: null, Distance: 2, ByReading: not null }
+        && DictationBoundaries.LeadingWake(no, wakes) is null
+        && DictationBoundaries.LeadingWake(ashita, wakes) is null
+        && DictationBoundaries.LeadingWake(honbun, wakes) is null
+        && DictationBoundaries.LeadingWake(ninshikiFused, wakes) is null
+        && DictationBoundaries.LeadingWake(ninshikiSplit, wakes) is null
+        && DictationBoundaries.LeadingWake(waProbe, wakes) is null;
 }
 
 static bool DictationKanaWakeMatchesKanjiThroughReading()
