@@ -538,7 +538,7 @@ public static class DictationBoundaries
     public static TailStopDecision? TryDedicatedTailStop(RecognizedUtterance recognition, IEnumerable<string> stopWords, bool enabled)
     {
         if (!enabled
-            || recognition.Extent != RecognitionExtent.ClosedUtterance
+            || recognition.Extent is not (RecognitionExtent.ClosedUtterance or RecognitionExtent.PrefixHead)
             || !recognition.TailStop
             || !(recognition.TailStopConfidence >= StopGrammarMinConfidence)
             || recognition.TailStopStart is not long start
@@ -554,6 +554,21 @@ public static class DictationBoundaries
         if (word.Length == 0 || !stopWords.Select(TextMatching.Normalize).Contains(word))
         {
             return null;
+        }
+
+        // Steady room noise keeps the utterance open, so only PrefixHead windows see the stop (Mac ce14722). A window cut
+        // inside the stop word can report a span inside the body (exe: 30080..47840 at 0.89 while the body ran to 34560),
+        // so what runs into the stop must run through it, and the window must be quiet for half a second after it.
+        if (recognition.Extent == RecognitionExtent.PrefixHead)
+        {
+            var runs = recognition.Lexemes.Where(run => TextMatching.Normalize(run.Text).Length > 0).ToArray();
+            var quietFrom = recognition.Source.End - WindowStopQuietSamples;
+            if (end > quietFrom
+                || (runs.Length > 0 && runs[^1].Range.End > quietFrom)
+                || (runs.LastOrDefault(run => run.Range.End > start) is { } into && into.Range.End < end - WindowStopQuietSamples))
+            {
+                return null;
+            }
         }
 
         var lexemes = recognition.Lexemes.Where(run => run.Range.End <= start).ToImmutableArray();

@@ -70,6 +70,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation standalone stop trims at absolute stop start", () => Check(DictationStandaloneStopTrimsAtAbsoluteStart())),
     ("dedicated tail stop trims the garbled tail and honors the confidence floor", () => Check(DedicatedTailStopTrimsGarbledTailAndHonorsTheFloor())),
     ("dedicated tail stop finishes the body only when the flag is on", () => Check(DedicatedTailStopFinishesTheBodyOnlyWhenEnabled())),
+    ("dedicated tail stop in a window needs the stop run through and quiet after", () => Check(DedicatedTailStopInWindowNeedsTheStopToRunThroughAndQuietAfter())),
     ("dictation runtime finishes on a dedicated tail stop and logs the range", () => Check(DictationRuntimeFinishesOnDedicatedTailStop())),
     ("dictation runtime one-breath tail stop keeps the foreground window", () => Check(DictationRuntimeOneBreathTailStopKeepsForegroundWindow())),
     ("dedicated stop script stays on its own engine", () => Check(DedicatedStopScriptStaysOnItsOwnEngine())),
@@ -1473,6 +1474,24 @@ static bool DedicatedTailStopTrimsGarbledTailAndHonorsTheFloor()
         && DictationBoundaries.TryDedicatedTailStop(garbled with { Extent = RecognitionExtent.Probe }, stops, true) is null
         && DictationBoundaries.TryDedicatedTailStop(garbled with { TailStopWord = "おしまい" }, stops, true) is null
         && DictationBoundaries.TryDedicatedTailStop(garbled with { TailStopEnd = sourceEnd + 1 }, stops, true) is null;
+}
+
+// Geometries from the exe over brown noise (w3-noise-stop-brown): stop audio 49919..67519, body heard to 34560.
+static bool DedicatedTailStopInWindowNeedsTheStopToRunThroughAndQuietAfter()
+{
+    var stops = new[] { "入力ストップ" };
+    var cutMidStop = WithTail(
+        Recognized(2, RecognitionExtent.PrefixHead, 960, 56640, "音声入力今日は", true, Run("音声入力", 4960, 19040), Run("今日は", 19040, 34560)),
+        true, 0.89, "入力ストップ", 30080, 47840);
+    var afterStop = WithTail(
+        Recognized(5, RecognitionExtent.PrefixHead, 41600, 105600, "スタッフ", false, Run("スタッフ", 56640, 66080)),
+        true, 0.63, "入力ストップ", 57280, 66080);
+    var accepted = DictationBoundaries.TryDedicatedTailStop(afterStop, stops, true);
+    return DictationBoundaries.TryDedicatedTailStop(cutMidStop, stops, true) is null
+        && accepted is { Range: var range, BodyText: "" }
+        && range == new SampleRange(57280, 66080)
+        && DictationBoundaries.TryDedicatedTailStop(afterStop with { Source = new SampleRange(41600, 72960) }, stops, true) is null
+        && DictationBoundaries.TryDedicatedTailStop(afterStop with { Lexemes = [Run("スタッフ", 56640, 66080), Run("です", 70000, 99000)] }, stops, true) is null;
 }
 
 static bool DedicatedTailStopFinishesTheBodyOnlyWhenEnabled()
