@@ -109,9 +109,10 @@ public sealed record VoiceSwitchConfig(
 
 public sealed record WakeWord(string Text, string Reading)
 {
-    // Without a computed reading the word itself stands in, so a kana wake word still compares with SAPI's lexical forms.
+    // Without a computed reading the built-in table fills in the example vocabulary, so a surface-only
+    // caller still compares readings. An explicit non-empty reading still wins, and unknown words stand in.
     public static WakeWord From(string word, string? reading = null) =>
-        new(TextMatching.Normalize(word), TextMatching.NormalizeReading(string.IsNullOrEmpty(reading) ? word : reading));
+        new(TextMatching.Normalize(word), TextMatching.NormalizeReading(string.IsNullOrEmpty(reading) ? WakeReadingFallback.For(TextMatching.Normalize(word)) ?? word : reading));
 
     public static WakeWord[] All(string[] words, string?[]? readings) =>
         words.Select((word, i) => From(word, readings is { } r && i < r.Length ? r[i] : null)).ToArray();
