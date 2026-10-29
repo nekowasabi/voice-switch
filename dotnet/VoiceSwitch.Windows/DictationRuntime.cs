@@ -84,6 +84,8 @@ public sealed class WindowsDictationRuntime
     // agreed on words in it, so a cough no longer flashes it. Checked beside the loop after every further second of body.
     private Guid confirmedSession;
     private long checkedSamples;
+    // End of the last stop window queued while an over-cap utterance stays open (Mac stopCheckedSamples).
+    private long lastStopWindowEnd;
     private (Guid Session, Task<bool> Agreed)? wordCheck;
     // Shadow log of playback vs microphone levels: mic dBFS per frame keyed by sample index, loopback dBFS per 10 ms keyed by ms.
     private readonly LevelTrace micLevels = new(4_000);
@@ -102,6 +104,7 @@ public sealed class WindowsDictationRuntime
     // The phrase the user is speaking: voiced frames joined across gaps up to the hangover, which the VAD alone splits into short runs.
     private long phraseStart = -1;
     private long phraseVoiced;
+    private string? phraseMicBlock;
     private long followupUntil;
     private bool lastVadSpeech;
     private string? lastSilenceDiagnosticKey;
@@ -323,7 +326,7 @@ public sealed class WindowsDictationRuntime
                                 || (session.IsActive || session.IsAwaitingBody) && observed.Extent != RecognitionExtent.ClosedUtterance
                                 ? $" textLen={TranscriptShape.Length(observed.Text)} filler={(TranscriptShape.IsFiller(observed.Text) ? 1 : 0)} conf={(observed.Confidence is double shapeConf ? shapeConf.ToString("0.00", CultureInfo.InvariantCulture) : "-")} rejectedLen={(observed.RejectedText is { } rejectedShape ? TranscriptShape.Length(rejectedShape) : 0)}"
                                 : $" text=\"{observed.Text}\" conf={(observed.Confidence is double conf ? conf.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) : "-")}{(observed.RejectedText is { } rejectedText ? $" rejectedText=\"{rejectedText}\"" : "")} grammar={(observed.FromStopGrammar ? "stop" : "dictation")} reading=\"{string.Join(' ', observed.Lexemes.Where(lexeme => lexeme.Reading is not null).Select(lexeme => lexeme.Reading))}\"{(observed.Alternates.IsDefaultOrEmpty ? "" : $" alts=\"{string.Join('|', observed.Alternates.Select(alternate => $"{alternate.Text}/{alternate.Reading}"))}\"")}";
-                            Log.Info($"dictation recognition: complete id={outcome.Work.Request.Id} extent={outcome.Work.Request.Extent} range={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End} rejected={observed.HadRejectedSpeech} leadingWake={leadingWake} standaloneStop={stopRange is not null} stopRange={(stopRange is null ? "-" : $"{stopRange.Value.Start}..{stopRange.Value.End}")} pendingBefore={pendingBefore}{heard}{TailStopLog(observed)} {origin.Fields} {Sid(session)}");
+                            Log.Info($"dictation recognition: complete id={outcome.Work.Request.Id} extent={outcome.Work.Request.Extent} range={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End} rejected={observed.HadRejectedSpeech} leadingWake={leadingWake} standaloneStop={stopRange is not null} stopRange={(stopRange is null ? "-" : $"{stopRange.Value.Start}..{stopRange.Value.End}")}{WindowStopLog(observed)} pendingBefore={pendingBefore}{heard}{TailStopLog(observed)} {origin.Fields} {Sid(session)}");
                         }
                         observer?.RecognitionCompleted(outcome.Work.Request, outcome.Recognition, outcome.Error);
 
@@ -385,7 +388,8 @@ public sealed class WindowsDictationRuntime
                         var stopBeforeApply = DictationBoundaries.StandaloneStopRange(outcome.Recognition!, config.StopWords ?? []);
                         var tailBeforeApply = DictationBoundaries.TryDedicatedTailStop(outcome.Recognition!, config.StopWords ?? [], config.Dictation?.DedicatedStopRecognizer == true);
                         var trailingBeforeApply = wasActive ? DictationBoundaries.TrailingStopRange(outcome.Recognition!, config.StopWords ?? []) : null;
-                        var effectiveStop = stopBeforeApply ?? trailingBeforeApply ?? tailBeforeApply?.Range;
+                        var windowBeforeApply = wasActive ? DictationBoundaries.WindowStopRange(outcome.Recognition!, config.StopWords ?? []) : null;
+                        var effectiveStop = stopBeforeApply ?? trailingBeforeApply ?? windowBeforeApply ?? tailBeforeApply?.Range;
                         var audio = session.Apply(outcome.Recognition!, originalStore.Copy, analysisStore.Next, wakeOrigin);
                         if (wasIdle && !session.IsActive && !session.IsAwaitingBody && outcome.Work.Request.Extent == RecognitionExtent.PrefixHead)
                         {
@@ -447,6 +451,7 @@ public sealed class WindowsDictationRuntime
                             {
                                 var tailNote = stopBeforeApply is not null ? ""
                                     : trailingBeforeApply is not null ? " trailing=True"
+                                    : windowBeforeApply is not null ? " window=True"
                                     : tailBeforeApply is { } tail
                                     ? $" tailStop=True tailConf={tail.Confidence.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)} tailRange={tail.Range.Start}..{tail.Range.End}"
                                     : "";
@@ -582,16 +587,16 @@ public sealed class WindowsDictationRuntime
         if (session.IsActive || session.IsAwaitingBody)
         {
             // Audio a session already owns never becomes the lookback of the next automatic one.
-            phraseStart = -1;
+            (phraseStart, phraseMicBlock) = (-1, null);
         }
         else if (segmenter.LastWasSpeech)
         {
-            if (phraseStart < 0 || frame.Start - lastLiveSpeechEnd > bridge) (phraseStart, phraseVoiced) = (frame.Start, 0);
+            if (phraseStart < 0 || frame.Start - lastLiveSpeechEnd > bridge) (phraseStart, phraseVoiced, phraseMicBlock) = (frame.Start, 0, null);
             phraseVoiced += frame.Analysis.Length;
         }
         else if (frame.Start - lastLiveSpeechEnd > bridge)
         {
-            phraseStart = -1;
+            (phraseStart, phraseMicBlock) = (-1, null);
         }
 
         if (segmenter.LastWasSpeech)
@@ -608,7 +613,8 @@ public sealed class WindowsDictationRuntime
             var window = origin is not null ? foregroundWindow() : 0;
             // The whole phrase with its preroll, even when it overlaps typing.
             var start = Math.Max(originalStore.Start, phraseStart - Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength);
-            var skip = origin is null ? null : AutomaticSkipReason(window);
+            // Latched for the phrase: once Superwhisper releases the mic, its user's words would otherwise open a session from the phrase head.
+            var skip = origin is null ? null : (phraseMicBlock ??= AutomaticMicBlock()) ?? AutomaticForegroundSkipReason(window);
             // Logged once per change: a blocked automatic wake was otherwise indistinguishable from silence in the log.
             if (skip != lastAutomaticSkip && skip is not null) Log.Info(skip);
             lastAutomaticSkip = skip;
@@ -633,6 +639,16 @@ public sealed class WindowsDictationRuntime
                 && segmenter.Probe() is { } probe)
             {
                 _ = QueueRecognition(RecognitionExtent.Probe, probe.Samples.Length, frame.Start + frame.Analysis.Length, requests, pending, probe.TailSilenceSamples);
+            }
+
+            // Mac ce14722: steady room noise above the threshold keeps the utterance open past the cap, so no closed utterance
+            // or tail ever brings the stop word. The newest 4 s are checked every second meanwhile, one window at a time.
+            var windowEnd = frame.Start + frame.Analysis.Length;
+            if (session.IsActive && segmenter.IsSkipping && windowEnd - lastStopWindowEnd >= (long)Segmenter.Rate
+                && !pending.Values.Any(work => work.Request.Extent == RecognitionExtent.PrefixHead))
+            {
+                lastStopWindowEnd = windowEnd;
+                _ = QueueRecognition(RecognitionExtent.PrefixHead, (int)Math.Min(4 * (long)Segmenter.Rate, windowEnd - analysisStore.Start), windowEnd, requests, pending, 0);
             }
 
             return true;
@@ -691,6 +707,17 @@ public sealed class WindowsDictationRuntime
         analysisStore.EnsureCapacity(RetainedSamples(next, 10));
         idleRetainSamples = RetainedSamples(next, 2);
         LogTiming();
+    }
+
+    // Window text stays private, so only its word timings show why a stop window did or did not end the body.
+    private string WindowStopLog(RecognizedUtterance observed)
+    {
+        if (observed.Extent != RecognitionExtent.PrefixHead) return "";
+        var runs = observed.Lexemes.Where(run => TextMatching.Normalize(run.Text).Length > 0).ToArray();
+        var stop = DictationBoundaries.WindowStopRange(observed, config.StopWords ?? []);
+        var closed = observed with { Extent = RecognitionExtent.ClosedUtterance };
+        var heard = DictationBoundaries.StandaloneStopRange(closed, config.StopWords ?? []) ?? DictationBoundaries.TrailingStopRange(closed, config.StopWords ?? []);
+        return $" windowStop={(stop is { } s ? $"{s.Start}..{s.End}" : "-")} stopHeard={(heard is { } h ? $"{h.Start}..{h.End}" : "-")} lexN={runs.Length} lexFirst={(runs.Length > 0 ? runs[0].Range.Start : -1)} lexLast={(runs.Length > 0 ? runs[^1].Range.End : -1)}";
     }
 
     // tailStop, confidence, and sample range only. The dictation text stays in the existing heard block.
@@ -867,9 +894,13 @@ public sealed class WindowsDictationRuntime
                 : null;
     }
 
-    private string? AutomaticSkipReason(nint window)
+    private string? AutomaticSkipReason(nint window) => AutomaticMicBlock() ?? AutomaticForegroundSkipReason(window);
+
+    private string? AutomaticMicBlock() =>
+        automaticMicInUseBy(config.SkipWhileMicInUseBy ?? []) is { } busy ? $"automatic wake blocked: {busy}" : null;
+
+    private string? AutomaticForegroundSkipReason(nint window)
     {
-        if (automaticMicInUseBy(config.SkipWhileMicInUseBy ?? []) is { } busy) return $"automatic wake blocked: {busy}";
         if (config.Dictation?.ExcludeProcessNames is not { Length: > 0 } excluded) return null;
         var app = windowProcess(window);
         if (window == 0 || app is null) return "automatic wake blocked: foreground process unavailable";
@@ -1090,6 +1121,14 @@ public sealed class WindowsDictationRuntime
     private void Submit(DictationAudio audio)
     {
         Log.Info($"dictation session: end reason={audio.Reason} {audio.Wake.Fields} range={audio.Range.Start}..{audio.Range.End} seconds={audio.Range.Length / Segmenter.Rate:0.00} sid={audio.SessionId} {LevelFields(audio.Range)}");
+        // Mac de4c434: a whole maxSeconds with no agreed words was the room, not a voice. Lift the floor here, on the loop and
+        // while the segmenter still holds the over-cap noise; the async discard comes too late, and the next frame reopens.
+        if (audio.Wake.IsAutomatic && audio.Reason == FinishReason.MaximumDuration && agreedCharacters is not null && confirmedSession != audio.SessionId)
+        {
+            var floorBefore = segmenter.Floor;
+            segmenter.RebaseFloor();
+            Log.Info($"dictation vad: floor rebased sid={audio.SessionId} floor={floorBefore:0.0000}->{segmenter.Floor:0.0000} threshold={segmenter.Threshold:0.0000}");
+        }
         var stopped = audio.Reason is FinishReason.StandaloneStop or FinishReason.FinishCommand;
         endedByUser |= stopped;
         // The user wants to know the recording is over, so ring before Superwhisper is launched, automatic sessions included.
