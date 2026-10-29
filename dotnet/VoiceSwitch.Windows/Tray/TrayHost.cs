@@ -63,7 +63,7 @@ public static class TrayHost
 
             using var context = new VoiceSwitchTrayContext(supervisor);
             using var wakeLabelHotkey = new WakeLabelHotkey(context.ShowHistory, hotkeys.RequestStart, PauseShortcut(options.ConfigPath),
-                () => { if (context.TogglePause() is { } paused) hud.Notify(paused); });
+                () => { if (context.TogglePause() is { } paused) hud.Notify(paused); }, ActionShortcuts(options.ConfigPath), hotkeys.RequestAction);
             hud.HistoryRequested += context.ShowHistory;
             void HistoryChanged() => hud.Post(hud.HistoryAvailable);
             DictationHistory.Shared.Changed += HistoryChanged;
@@ -104,6 +104,24 @@ public static class TrayHost
         var chord = DictationHotkeys.Parse(name);
         if (chord is null) Log.Info($"pause hotkey ignored: cannot parse \"{name}\"");
         return chord;
+    }
+
+    // Read once at launch, like the pause hotkey. A broken chord is skipped; the action's wake word still works.
+    private static IReadOnlyList<(KeyChord Chord, string Name)> ActionShortcuts(string configPath)
+    {
+        WakeAction[] actions;
+        try { actions = ConfigLoader.Load(configPath).Windows?.Actions ?? []; }
+        catch (Exception) { return []; }
+        var chords = new List<(KeyChord Chord, string Name)>();
+        foreach (var action in actions)
+        {
+            if (string.IsNullOrWhiteSpace(action.Shortcut)) continue;
+            var chord = DictationHotkeys.Parse(action.Shortcut);
+            if (chord is null) Log.Info($"action hotkey ignored: cannot parse \"{action.Shortcut}\"");
+            else chords.Add((chord.Value, action.Name));
+        }
+
+        return chords;
     }
 
     // Read once at launch, as on Mac; a broken config means off.
