@@ -17,9 +17,11 @@ VARIABLES
     ui,       \* VoiceSwitchTrayContext.snapshot: what the menu items and TogglePause read
     devDiff,  \* WinMmCapture.CurrentDevice != EffectiveDevice (a mic was plugged, pulled, or the default moved)
     q,        \* commands waiting on the gate
-    held,     \* port:supervisor meetHeld
-    override, \* port:supervisor meetOverride (the user resumed during this call)
-    userOn,   \* port:supervisor !userPaused (last user command was not 一時停止)
+    held,     \* port:supervisor hold = Meet
+    override, \* port:supervisor hold = MeetOverride (the user resumed during this call)
+    userOn,   \* port:supervisor hold # User (last user command was not 一時停止)
+    \* The three are one TrayHold enum in the code. Reachable combinations: held and override never
+    \* together, held only with userOn, and Pause clears override, so ~userOn is always the bare User value.
     honored,  \* ghost: a Hold has run during the current call
     drops,    \* ghost: commands dropped by RunCommandAsync's 20 s timeout
     touched   \* ghost: a user command has run since the hold last paused
@@ -37,7 +39,7 @@ TypeOK ==
     /\ state \in States /\ ui \in States /\ drops \in 0..1 /\ touched \in BOOLEAN
     /\ q \in Seq([k : Kinds, by : Bys]) /\ Len(q) <= 3
 
-\* TrayHost: `if (!options.Paused) _ = supervisor.StartAsync(...)`.
+\* TrayHost: `if (!options.Paused) _ = supervisor.StartAsync(..., StartOrigin.Launch)`.
 Init ==
     /\ inCall \in BOOLEAN
     /\ state = "Paused" /\ ui = "Paused" /\ devDiff = FALSE
@@ -96,25 +98,34 @@ Exec(ok) ==
     /\ q # <<>> /\ q' = Tail(q)
     /\ LET c == Head(q) IN
        CASE c.k = "Start" /\ c.by = "user" ->
-              \* StartAsync from 開始 / hotkey / IPC. port:a user resume clears the hold and wins until the call ends.
-              /\ userOn' = TRUE /\ held' = FALSE /\ override' = inCall
-              /\ StartRun(ok) /\ UNCHANGED honored
+              \* StartAsync(User) from 開始 / hotkey / IPC. port:a user resume clears the hold and wins until
+              \* the call ends. Already listening, it changes nothing: that is no resume during the call.
+              /\ IF Mic
+                 THEN UNCHANGED <<userOn, held, override, state, devDiff>>
+                 ELSE userOn' = TRUE /\ held' = FALSE /\ override' = inCall /\ Open(ok)
+              /\ UNCHANGED honored
          [] c.k = "Start" /\ c.by # "user" ->
-              \* StartAsync from FollowDevice or launch. port:never over a hold or a user pause.
-              /\ IF held \/ ~userOn THEN UNCHANGED <<state, devDiff>> ELSE StartRun(ok)
-              /\ UNCHANGED <<held, override, userOn, honored>>
+              \* StartAsync(DeviceRetry / Launch). port:never over a hold or a user pause. During a call it
+              \* holds instead (HoldRunAsync), as Mac followMeet runs right after its start.
+              /\ IF held \/ ~userOn
+                 THEN UNCHANGED <<state, devDiff, held, honored>>
+                 ELSE IF inCall /\ ~override
+                      THEN held' = TRUE /\ honored' = TRUE /\ state' = "Paused" /\ UNCHANGED devDiff
+                      ELSE StartRun(ok) /\ UNCHANGED <<held, honored>>
+              /\ UNCHANGED <<override, userOn>>
          [] c.k = "Pause" ->
-              \* PauseAsync (user only). port:records the user pause and drops the hold.
-              /\ state' = "Paused" /\ userOn' = FALSE /\ held' = FALSE
-              /\ UNCHANGED <<devDiff, override, honored>>
+              \* PauseAsync (user only). port:hold = User, which drops the hold and the override.
+              /\ state' = "Paused" /\ userOn' = FALSE /\ held' = FALSE /\ override' = FALSE
+              /\ UNCHANGED <<devDiff, honored>>
          [] c.k = "Reload" ->
               \* ReloadAsync: restarts only when it was running, otherwise ends Paused.
               /\ IF Mic THEN Open(ok) ELSE state' = "Paused" /\ UNCHANGED devDiff
               /\ UNCHANGED <<held, override, userOn, honored>>
          [] c.k = "Hold" ->
-              \* port:PauseAsync for the call, unless the user resumed during it or had paused.
+              \* port:PauseAsync for the call, unless the user resumed during it or had paused. Reads
+              \* MicInUse again under the gate: a Hold queued in a call can run after it ended.
               /\ honored' = (honored \/ inCall)
-              /\ IF ~override /\ userOn
+              /\ IF inCall /\ ~override /\ userOn
                  THEN held' = TRUE /\ state' = "Paused"
                  ELSE UNCHANGED <<held, state>>
               /\ UNCHANGED <<devDiff, override, userOn>>
@@ -147,6 +158,10 @@ Spec == Init /\ [][Next]_vars
 HeldMeansOff == held => ~Mic
 \* MP-F1: once a Hold has run in this call, nothing reopens the mic unless the user resumed during it.
 MicOffInCall == (inCall /\ honored /\ ~override) => ~Mic
+\* MP-F1: a launch start or a device retry never opens the mic during a call the user did not resume in.
+\* Only the head Start's own Exec can open a closed mic, so the step is that Exec.
+NoAutoStartInCall ==
+    [][(~Mic /\ q # <<>> /\ Head(q).k = "Start" /\ Head(q).by # "user" /\ inCall /\ ~override) => ~Mic']_vars
 \* MP-F2: after the user pauses, nothing (a retry, a reload, the call ending) reopens the mic.
 ManualPauseKept == ~userOn => ~Mic
 \* MP-F1, liveness: listening in a call without a user resume eventually stops.
