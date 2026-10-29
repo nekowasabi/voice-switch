@@ -575,6 +575,7 @@ enum Hotkeys {
         var active = false
         var shortcuts: [(Shortcut, Command)] = []
         var pending: Command?
+        var pendingAction: String?
         var swallowUp: Set<Int64> = [] // keyUps of swallowed presses, so superwhisper never sees half a press
         var loggedMissing: Set<String> = []
     }
@@ -594,7 +595,7 @@ enum Hotkeys {
         let shortcuts = read.compactMap { r in r.shortcut.map { ($0, r.command) } }
         let missing = read.filter { $0.shortcut == nil }.map(\.key)
         let newlyMissing = state.withLock { st in
-            st.shortcuts = shortcuts; st.pending = nil; st.active = true
+            st.shortcuts = shortcuts; st.pending = nil; st.pendingAction = nil; st.active = true
             defer { st.loggedMissing.formUnion(missing) }
             return missing.filter { !st.loggedMissing.contains($0) }
         }
@@ -602,11 +603,27 @@ enum Hotkeys {
         DispatchQueue.main.async(execute: installTap)
     }
 
-    static func end() { state.withLock { $0.active = false; $0.pending = nil } }
+    static func end() { state.withLock { $0.active = false; $0.pending = nil; $0.pendingAction = nil } }
 
-    static func requestStart() { state.withLock { $0.pending = .start } }
+    static func requestStart() { state.withLock { $0.pending = .start; $0.pendingAction = nil } }
 
-    static func take() -> Command? { state.withLock { st in defer { st.pending = nil }; return st.pending } }
+    static func requestAction(_ name: String) { state.withLock { $0.pending = .start; $0.pendingAction = name } }
+
+    static func take() -> Command? {
+        state.withLock { st in
+            let command = st.pending
+            st.pending = nil
+            if command != .start { st.pendingAction = nil }
+            return command
+        }
+    }
+
+    static func takeAction() -> String? {
+        state.withLock { st in
+            defer { st.pendingAction = nil }
+            return st.pendingAction
+        }
+    }
 
     /// {"carbonModifiers":2560,"carbonKeyCode":38}: Carbon key codes equal CGKeyCodes; modifiers need mapping.
     static func parseShortcut(_ json: String) -> Shortcut? {
@@ -1218,8 +1235,24 @@ final class Listener {
             // ponytail: capped at 10 s of audio; a longer phrase keeps only its tail.
             let keep = speechFrames > 0 ? Int(rate) * 10 : frames(ms: config.cfg.prerollMs ?? 300) * frameLen + frameLen
             if recent.count > keep { recent.removeFirst(recent.count - keep) }
-            if Hotkeys.take() == .start, config.cfg.dictation != nil {
-                if automaticWakeAllowed() {
+            if Hotkeys.take() == .start {
+                if let name = Hotkeys.takeAction() {
+                    if let action = config.cfg.action(named: name) {
+                        // Same gates as a spoken action: a handoff still in flight would drop this recording in submit, and a busy mic is speech the wake word would skip.
+                        if handoffBusy.withLock({ $0 }) {
+                            log("action skipped: previous dictation still in flight")
+                        } else if let busy = micInUse(by: config.cfg.skipWhileMicInUseBy ?? []) {
+                            log("skipped: \(busy) is using the microphone")
+                        } else {
+                            dictation = Dictation(samples: [], generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: false, action: action)
+                            Hotkeys.begin()
+                            DictationJournal.note(dictation!.sessionID, manual: true)
+                            log("dictation session: action-hotkey \(action.name) \(sidField(dictation?.sessionID))")
+                        }
+                    } else {
+                        log("action hotkey ignored: \(name) is not in the config")
+                    }
+                } else if config.cfg.dictation != nil, automaticWakeAllowed() {
                     dictation = Dictation(samples: [], generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: false)
                     Hotkeys.begin()
                     DictationJournal.note(dictation!.sessionID, manual: true)
@@ -2015,6 +2048,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         listener.onRestart = { [weak self] in self?.refresh() }
         listener.deviceUID = UserDefaults.standard.string(forKey: deviceKey)
         MacWakeShortcuts.registerPause(config.cfg.pauseShortcut)
+        MacWakeShortcuts.registerActions(config.cfg.macOS?.actions ?? [])
         let recordings = Platform.expandPath(config.cfg.dictation?.recordingsDir ?? Platform.defaultRecordingsDir)
         // ponytail: 0.5 s CoreAudio poll; a kAudioProcessPropertyIsRunningInput listener if it shows up in CPU.
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.followDirectSuperwhisper(recordings: recordings) }

@@ -838,6 +838,14 @@ public sealed class DictationSession
         return true;
     }
 
+    public bool StartAction(WakeAction action, long now, double? idleSeconds)
+    {
+        if (!StartManual(now, idleSeconds)) return false;
+        Action = action;
+        wakes = action.Wakes();
+        return true;
+    }
+
     public DictationAudio? AdvanceTo(long sampleEnd, Func<SampleRange, ImmutableArray<short>> copyAudio)
     {
         if (terminal)

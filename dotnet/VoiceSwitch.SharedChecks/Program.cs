@@ -64,6 +64,23 @@ Check("Mac HUD draws a named action icon", macHud.Contains("iconName", StringCom
 Check("Windows HUD draws a named action icon", winHud.Contains("IconName", StringComparison.Ordinal) && !winHud.Contains("HudGlyph.Grok", StringComparison.Ordinal) && File.ReadAllText(Path.Combine(root, "dotnet/VoiceSwitch.Windows/DictationRuntime.cs")).Contains("HudIcon", StringComparison.Ordinal));
 Check("icon file exists", new FileInfo(Path.Combine(root, "Sources/voice-switch/Resources/grok-bot.png")).Length > 32);
 
+var hotkeys = new DictationHotkeys();
+hotkeys.RequestAction("grokbot");
+Check("action hotkey is a start", hotkeys.Take() == DictationCommand.Start);
+Check("action hotkey keeps the action name", hotkeys.TakeAction() == "grokbot");
+hotkeys.RequestStart();
+Check("manual start has no action", hotkeys.Take() == DictationCommand.Start && hotkeys.TakeAction() is null);
+Check("shortcut chord parses", DictationHotkeys.Parse("Control+Shift+F6") == new KeyChord(0x75, KeyMods.Control | KeyMods.Shift));
+var macConfig = File.ReadAllText(Path.Combine(root, "Sources/voice-switch/Config.swift"));
+var winConfig = File.ReadAllText(Path.Combine(root, "dotnet/VoiceSwitch.Windows.Core/VoiceSwitchConfig.cs"));
+Check("Mac action shortcut field", macConfig.Contains("let shortcut: String?", StringComparison.Ordinal) && macConfig.Contains("registerActions", StringComparison.Ordinal) == false);
+Check("Mac registers action shortcuts", File.ReadAllText(Path.Combine(root, "Sources/voice-switch/MacWakeUI.swift")).Contains("registerActions", StringComparison.Ordinal)
+    && File.ReadAllText(Path.Combine(root, "Sources/voice-switch/MacApp.swift")).Contains("registerActions", StringComparison.Ordinal)
+    && File.ReadAllText(Path.Combine(root, "Sources/voice-switch/MacApp.swift")).Contains("action-hotkey", StringComparison.Ordinal));
+Check("Windows action shortcut field", winConfig.Contains("string? Shortcut", StringComparison.Ordinal)
+    && File.ReadAllText(Path.Combine(root, "dotnet/VoiceSwitch.Windows/DictationRuntime.cs")).Contains("action-hotkey", StringComparison.Ordinal)
+    && File.ReadAllText(Path.Combine(root, "dotnet/VoiceSwitch.Windows/Tray/WakeLabelHotkey.cs")).Contains("action hotkey:", StringComparison.Ordinal));
+
 return failed == 0 ? 0 : 1;
 
 static string RepoRoot()

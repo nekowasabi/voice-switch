@@ -120,7 +120,7 @@ public sealed record WakeWord(string Text, string Reading)
 public sealed record WindowsActions(WakeAction[]? Actions = null);
 
 /// <summary>A wake phrase whose dictation opens its own URL with the text as `input=` instead of being pasted or routed.</summary>
-public sealed record WakeAction(string Name, string[] WakeWords, string Url, string? SuperwhisperMode = null, string? InputParam = null, SmtpSettings? Smtp = null, string? Icon = null)
+public sealed record WakeAction(string Name, string[] WakeWords, string Url, string? SuperwhisperMode = null, string? InputParam = null, SmtpSettings? Smtp = null, string? Icon = null, string? Shortcut = null)
 {
     [JsonIgnore]
     public string?[]? WakeReadings { get; init; }

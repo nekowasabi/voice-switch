@@ -70,6 +70,10 @@ struct Config: Decodable {
         let key = l.replacingOccurrences(of: "_", with: "-").lowercased()
         stopWords = Self.defaultStopWords.first { $0.key.lowercased() == key }?.value
     }
+
+    func action(named name: String) -> WakeAction? {
+        macOS?.actions?.first { $0.name == name }
+    }
 }
 
 struct NoiseReductionOptions: Decodable {
@@ -222,10 +226,12 @@ struct WakeAction: Decodable {
     let inputParam: String?
     /// Resource stem of a HUD image, such as `grok-bot`. Absent uses the builtin table.
     let icon: String?
+    /// Global key that starts this action, same names as `pauseShortcut`. Absent registers none.
+    let shortcut: String?
 
     var hudIcon: String? { ActionIcons.resolve(name: name, url: url.rawValue, configured: icon) }
 
-    private enum CodingKeys: String, CodingKey { case name, wakeWords, url, superwhisperMode, inputParam, icon }
+    private enum CodingKeys: String, CodingKey { case name, wakeWords, url, superwhisperMode, inputParam, icon, shortcut }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -239,6 +245,7 @@ struct WakeAction: Decodable {
             throw DecodingError.dataCorruptedError(forKey: .icon, in: c,
                 debugDescription: "Wake action icon must be a resource stem (letters, digits, . _ -).")
         }
+        shortcut = try c.decodeIfPresent(String.self, forKey: .shortcut)
         if let p = inputParam, !GrokBotPrompt.isValidInputParam(p) {
             throw DecodingError.dataCorruptedError(forKey: .inputParam, in: c,
                 debugDescription: "Wake action inputParam must be a non-empty RFC 3986 unreserved query name.")

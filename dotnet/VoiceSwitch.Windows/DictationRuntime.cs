@@ -830,8 +830,37 @@ public sealed class WindowsDictationRuntime
         }
 
         var command = hotkeys.Take();
+        var actionName = command == DictationCommand.Start ? hotkeys.TakeAction() : null;
         if (command == DictationCommand.Start)
         {
+            if (actionName is not null)
+            {
+                var action = (config.Windows?.Actions ?? []).FirstOrDefault(item => item.Name == actionName);
+                if (action is null)
+                {
+                    Log.Info($"action hotkey ignored: {actionName} is not in the config");
+                    return false;
+                }
+
+                var actionWindow = foregroundWindow();
+                if (SkipReason(actionWindow, action) is { } skipped)
+                {
+                    Log.Info(skipped);
+                    return false;
+                }
+
+                if (session.StartAction(action, analysisStore.Next, inputIdleSeconds()))
+                {
+                    target = actionWindow;
+                    hotkeys?.Begin(DictationHotkeys.Load(readShortcuts()));
+                    JournalNotes.Note(session.SessionId, manual: true);
+                    Log.Info($"dictation session: action-hotkey {action.Name} {session.Origin.Fields} {Sid(session)}");
+                    return true;
+                }
+
+                return false;
+            }
+
             var window = foregroundWindow();
             if (SkipReason(window, null) is null && session.StartManual(analysisStore.Next, inputIdleSeconds()))
             {
