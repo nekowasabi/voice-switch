@@ -898,8 +898,21 @@ static bool ConfigWakeWordsCarryReadings()
 {
     var plain = new VoiceSwitchConfig(["音声入力", "おんせい"], "ja_JP", "wake");
     var read = plain with { WakeReadings = ["おんせいにゅうりょく", null] };
+    var table = new (string Text, string Reading)[]
+    {
+        ("音声入力", "おんせいにゅうりょく"),
+        ("音声", "おんせい"),
+        ("音声入る", "おんせいはいる"),
+        ("音声に入る", "おんせいにはいる"),
+        ("音声に入るよ", "おんせいにはいるよ"),
+        ("音声によって", "おんせいによって"),
+        ("インプット", "いんぷっと"),
+    };
     return read.Wakes().SequenceEqual([new WakeWord("音声入力", "おんせいにゅうりょく"), new WakeWord("おんせい", "おんせい")])
-        && plain.Wakes()[0] == new WakeWord("音声入力", "音声入力")
+        && plain.Wakes()[0] == new WakeWord("音声入力", "おんせいにゅうりょく")
+        && table.All(item => WakeWord.From(item.Text) == new WakeWord(item.Text, item.Reading))
+        && WakeWord.From("音声入力", "かすたむよみ") == new WakeWord("音声入力", "かすたむよみ")
+        && WakeWord.From("明日") == new WakeWord("明日", "明日")
         && plain.RecognitionKey() == read.RecognitionKey();
 }
 
@@ -1346,11 +1359,11 @@ static bool DictationRejectedWakeAcceptsReadingAtDistanceZero()
         && DictationBoundaries.RejectedWake(hosei, config.WakeWords, readings) is null
         && DictationBoundaries.RejectedWake(prefix, config.WakeWords, readings) is null;
 
-    // Without the reading the kana hypothesis stays a miss, on the direct call and
-    // on the product path: surface WakeWord.From("音声入力") reads as the kanji.
+    // With the built-in table the surface config also carries the reading, so the kana
+    // hypothesis now hits there too: surface WakeWord.From("音声入力") reads おんせいにゅうりょく.
     var surface = DictationConfig();
     var surfaceReadings = surface.Wakes().Select(wake => wake.Reading);
-    var surfaceMiss = DictationBoundaries.RejectedWake(kana, surface.WakeWords, surfaceReadings) is null;
+    var surfaceHit = DictationBoundaries.RejectedWake(kana, surface.WakeWords, surfaceReadings) is { BodyStart: null };
 
     var store = StoreWithRamp(0, 40000);
     var waited = new DictationSession(config);
@@ -1359,9 +1372,9 @@ static bool DictationRejectedWakeAcceptsReadingAtDistanceZero()
     surfaced.Apply(kana, store.Copy);
     var guarded = new DictationSession(config);
     guarded.Apply(hosei, store.Copy);
-    return direct && surfaceMiss
+    return direct && surfaceHit
         && waited.IsAwaitingBody && !waited.IsActive
-        && !surfaced.IsAwaitingBody && !surfaced.IsActive
+        && surfaced.IsAwaitingBody && !surfaced.IsActive
         && !guarded.IsAwaitingBody && !guarded.IsActive;
 }
 
