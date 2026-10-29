@@ -317,7 +317,7 @@ public static class DictationBoundaries
 
         if (!consumedAny)
         {
-            return null;
+            return MatchAlternate(recognition, wakes, lexemes);
         }
 
         var bodyStart = index < lexemes.Length ? lexemes[index].Range.Start : (long?)null;
@@ -347,6 +347,7 @@ public static class DictationBoundaries
     private enum WakeSite
     {
         Reading,
+        AlternateNear,
     }
 
     private enum WakeRemainder
@@ -375,6 +376,7 @@ public static class DictationBoundaries
         new(WakeSite.Reading, MinReadingDistance2, int.MaxValue, 2, 2, WakeRemainder.Empty, Closed: true),
         new(WakeSite.Reading, MinReadingDistance2, int.MaxValue, 2, 2, WakeRemainder.Listed, Closed: true, Tail: ["は", "よ", "ね", "な", "わ"]),
         new(WakeSite.Reading, 1, ShortWakeReading, 0, 0, WakeRemainder.Listed, Closed: true, ExactLength: true, OneLexeme: true, Tail: ["です", "ます"]),
+        new(WakeSite.AlternateNear, MinReadingDistance2, int.MaxValue, 0, 3),
     ];
 
     private static bool ReadingRuleAllows(int size, int length, int distance, bool closed, int lexemeCount, string all)
@@ -407,6 +409,41 @@ public static class DictationBoundaries
         }
 
         return false;
+    }
+
+    private static WakePrefix? MatchAlternate(RecognizedUtterance recognition, IReadOnlyList<WakeWord> wakes, LexicalRun[] lexemes)
+    {
+        if (recognition.Extent != RecognitionExtent.ClosedUtterance || recognition.Alternates.IsDefaultOrEmpty)
+        {
+            return null;
+        }
+
+        var all = string.Concat(lexemes.Select(run => TextMatching.NormalizeReading(string.IsNullOrEmpty(run.Reading) ? run.Text : run.Reading)));
+        foreach (var rule in WakeAllowances)
+        {
+            if (rule.Site != WakeSite.AlternateNear)
+            {
+                continue;
+            }
+
+            foreach (var wake in wakes.Where(wake => wake.Reading.Length >= rule.MinLength && wake.Reading.Length <= rule.MaxLength).DistinctBy(wake => wake.Reading).OrderByDescending(wake => wake.Reading.Length))
+            {
+                if (!recognition.Alternates.Any(alternate => TextMatching.NormalizeReading(alternate.Reading) == wake.Reading))
+                {
+                    continue;
+                }
+
+                var distance = TextMatching.EditDistance(all, wake.Reading);
+                if (distance < rule.MinDistance || distance > rule.MaxDistance)
+                {
+                    continue;
+                }
+
+                return new WakePrefix(lexemes[^1].Range.End, null, wake, distance);
+            }
+        }
+
+        return null;
     }
 
     // Next is the lexeme after the wake, or null when the wake ends inside a lexeme (End is then a proportional split).
