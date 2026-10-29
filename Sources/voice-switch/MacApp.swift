@@ -915,6 +915,9 @@ final class Listener {
 
     func stop() { wanted = false; halt(); watchVoiceActivity(on: nil) }
 
+    /// Resume after a Meet hold: unlike start(), a failure keeps `wanted` and retries every 10 s.
+    func startRetrying() { wanted = true; attemptStart() }
+
     private func halt() {
         let generation = localHistoryState.withLock { state in state.generation += 1; return state.generation }
         engine.inputNode.removeTap(onBus: 0)
@@ -1925,6 +1928,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let recordings = Platform.expandPath(config.cfg.dictation?.recordingsDir ?? Platform.defaultRecordingsDir)
         // ponytail: 0.5 s CoreAudio poll; a kAudioProcessPropertyIsRunningInput listener if it shows up in CPU.
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.followDirectSuperwhisper(recordings: recordings) }
+        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.followMeet() }
         Task { @MainActor in
             do {
                 if let ownership = try? MacModeRestoreStore.acquire() {
@@ -1946,6 +1950,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     return
                 }
                 try listener.start()
+                // Same main-actor step as start(), so a call already running never gets a 2 s window of listening.
+                followMeet()
             } catch {
                 fail("起動に失敗しました: \(error)")
             }
@@ -2008,8 +2014,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         a.runModal()
     }
 
+    /// Browsers whose microphone input means a Google Meet call (Chrome and Edge only).
+    // ponytail: any mic use by these browsers counts, not only Meet; matching the Meet tab needs Screen Recording permission.
+    static let meetBrowsers = ["com.google.Chrome", "com.google.Chrome.helper", "com.microsoft.edgemac", "com.microsoft.edgemac.helper"]
+    private var meetInCall = false
+    /// followMeet stopped the listener and owes it a restart when the call ends.
+    private var meetHeld = false
+    /// The user resumed during this call, so followMeet leaves the listener alone until the call ends.
+    private var meetOverride = false
+
+    /// Model: .claude/skills/verify-meet-pause (MeetPause.tla, action Poll).
+    func followMeet() {
+        guard let listener else { return }
+        let browser = micInUse(by: Self.meetBrowsers)
+        meetInCall = browser != nil
+        if let browser {
+            guard listener.wanted, !meetOverride else { return }
+            log("meet: \(browser) holds the microphone, pausing")
+            // stop(), not halt(): every restart path checks `wanted`, so none reopens the mic during the call.
+            listener.stop()
+            meetHeld = true
+            hud.notify(.paused)
+        } else {
+            meetOverride = false
+            guard meetHeld else { return }
+            meetHeld = false
+            log("meet: the browser released the microphone, resuming")
+            listener.startRetrying()
+            hud.notify(.resumed)
+        }
+        refresh()
+    }
+
     @objc func togglePause() {
         if listener.wanted { listener.stop() } else {
+            meetInCall = micInUse(by: Self.meetBrowsers) != nil
+            meetHeld = false
+            meetOverride = meetInCall
             do { try listener.start() } catch { fail("再開に失敗しました: \(error)") }
         }
         hud.notify(listener.wanted ? .resumed : .paused)
