@@ -7,6 +7,9 @@ let seconds = Double(CommandLine.arguments[2])!
 var engine: AVAudioEngine?
 var vadFires = 0
 var polledOn = 0
+// The app opens an automatic session only after one unbroken on-run of Listener.minVoiceSeconds, so the longest run matters, not the total.
+var onRun = 0
+var longestRun = 0
 if mode == "vpio" {
     let e = AVAudioEngine()
     try! e.inputNode.setVoiceProcessingEnabled(true)
@@ -38,9 +41,11 @@ if mode == "vpio" {
     print("holder vad has=\(has) set=\(st) enabled=\(readBack)")
     Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
         var v: UInt32 = 0; var s = UInt32(4)
-        if AudioObjectGetPropertyData(id, &state, 0, nil, &s, &v) == noErr, v != 0 { polledOn += 1 }
+        if AudioObjectGetPropertyData(id, &state, 0, nil, &s, &v) == noErr, v != 0 {
+            polledOn += 1; onRun += 1; longestRun = max(longestRun, onRun)
+        } else { onRun = 0 }
     }
 }
 RunLoop.main.run(until: Date().addingTimeInterval(seconds))
-if mode == "vad" { print("holder vad activity events=\(vadFires) polled-on=\(polledOn)/\(Int(seconds / 0.05))") }
+if mode == "vad" { print("holder vad activity events=\(vadFires) polled-on=\(polledOn)/\(Int(seconds / 0.05)) longest-on-ms=\(longestRun * 50)") }
 _ = engine
