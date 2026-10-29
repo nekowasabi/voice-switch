@@ -2796,12 +2796,7 @@ static bool DictationRuntimeSkipsWakeForExcludedApp()
 static bool DictationRuntimeSkipsAutomaticPhraseBegunWhileMicInUse()
 {
     var frames = new List<PcmFrame>();
-    void Add(int count, short value)
-    {
-        for (var i = 0; i < count; i++)
-            frames.Add(new(frames.Count * Segmenter.FrameLength,
-                Enumerable.Range(0, Segmenter.FrameLength).Select(j => (short)(j % 2 == 0 ? value : -value)).ToImmutableArray()));
-    }
+    void Add(int count, short value) => TestFrames.AddSquare(frames, count, value);
     Add(4, 0); Add(12, 9000); Add(22, 0); Add(12, 9000); Add(22, 0);
     var config = new VoiceSwitchConfig(["wake"], "en-US", "unused", MaxSeconds: 2.5,
         HangoverMs: 120, PrerollMs: 60, MinSpeechMs: 90, VadMinRMS: 0.005f, SkipWhileMicInUseBy: ["Superwhisper.exe"],
@@ -3427,12 +3422,7 @@ static bool DictationRuntimeHearsWakeAfterLongSteadyNoise()
 static (int Opened, int Handed, string Log) RunAutomaticOverRoomNoise(bool speechAfter)
 {
     var frames = new List<PcmFrame>();
-    void Add(int count, short value)
-    {
-        for (var i = 0; i < count; i++)
-            frames.Add(new(frames.Count * Segmenter.FrameLength,
-                Enumerable.Range(0, Segmenter.FrameLength).Select(j => (short)(j % 2 == 0 ? value : -value)).ToImmutableArray()));
-    }
+    void Add(int count, short value) => TestFrames.AddSquare(frames, count, value);
     Add(4, 0);
     // Six maxSeconds (3 s) of the same noise: one session, then none.
     Add(600, 400);
