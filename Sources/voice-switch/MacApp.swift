@@ -84,8 +84,21 @@ func stopWordCut(_ u: [Float], heard: Transcript?, stopWords: [String], locale: 
         t = tr
     }
     if !quiet { log("dictating: \(t.text)  [utt \(u.count * 1000 / Int(rate)) ms]") }
-    let cut = stopWordStart(t, stopWords: stopWords).map { u.count - min(u.count, Int($0 * rate)) }
-    log("\(head) recognizer=ok matched=\(cut == nil ? "no" : "yes") cut=\((cut ?? 0) * 1000 / Int(rate)) ms \(sidField(sessionID))")
+    var start = stopWordStart(t, stopWords: stopWords)
+    if kind == "window", let s = start {
+        // A window opens anywhere in the speech, and Apple Speech stretches its first run back over the unrecognized sound
+        // before it (入@0.00-0.90), so a stop word that opens the window starts where its second character does, less that
+        // character's length. Cutting at the window start dropped the end of the sentence said before it.
+        let second = t.runs.count > 1 ? t.runs[1] : nil
+        let opening = second.flatMap { r in r.start.map { max(0, $0 - ((r.end ?? $0) - $0)) } } ?? 0
+        // Speech going on past a stop word would be heard within half a second, so only that much silence after it stops.
+        // ponytail: fixed 0.5 s after the last recognized word; make it a knob if slow speakers pause longer mid-sentence.
+        let heardUntil = t.runs.last.flatMap { $0.end ?? $0.start } ?? Double(u.count) / rate
+        start = heardUntil <= Double(u.count) / rate - 0.5 ? (s == 0 ? opening : s) : nil
+    }
+    let cut = start.map { u.count - min(u.count, Int($0 * rate)) }
+    // A window check runs every second of a long utterance; only its matches are worth a line.
+    if kind != "window" || cut != nil { log("\(head) recognizer=ok matched=\(cut == nil ? "no" : "yes") cut=\((cut ?? 0) * 1000 / Int(rate)) ms \(sidField(sessionID))") }
     return cut ?? 0
 }
 
@@ -947,6 +960,8 @@ final class Listener {
         var confirmed: Bool
         /// Length of `samples` when the last agreement check started.
         var checkedSamples = 0
+        /// Length of `samples` when the last stop check over its newest seconds started.
+        var stopCheckedSamples = 0
         init(samples: [Float], generation: Int, transcriptPolicy: AutomaticTranscriptPolicy, silentFrames: Int, heardSpeech: Bool, action: WakeAction? = nil,
              origin: WakeOrigin = WakeOrigin(rule: .strict, inputIdleSeconds: MacInputActivity.idleSeconds())) {
             self.samples = samples
@@ -1103,13 +1118,17 @@ final class Listener {
                 let stopAudio: (u: [Float], heard: Transcript?, kind: String)? = switch event {
                 case let .utterance(u)?: (u, heardDuringAutomatic, "utterance")
                 case let .tail(u)?: (u, nil, "tail")
-                default: nil
+                // Steady sound above the threshold (room noise on a raw mic) keeps the segmenter in one open utterance, so no
+                // utterance or tail comes until it stops. The newest seconds are checked every second meanwhile.
+                default: seg.isSkipping && !stopCheck.pending && d.samples.count - d.stopCheckedSamples >= Int(rate)
+                    ? (Array(d.samples.suffix(Int(rate) * 4)), nil, "window") : nil
                 }
                 if let stopAudio, let words = config.cfg.stopWords, !words.isEmpty {
                     let locale = Locale(identifier: config.cfg.locale ?? "ja_JP")
                     let quiet = config.cfg.dictation?.noWakeWord?.enabled == true
                     let session = d.sessionID
                     stopCheck.submit { await stopWordCut(stopAudio.u, heard: stopAudio.heard, stopWords: words, locale: locale, quiet: quiet, kind: stopAudio.kind, sessionID: session) }
+                    d.stopCheckedSamples = d.samples.count
                     stopJob = (d.sessionID, generation)
                     stopFrames = 0
                 }
