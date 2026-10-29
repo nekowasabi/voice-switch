@@ -317,7 +317,7 @@ public static class DictationBoundaries
 
         if (!consumedAny)
         {
-            return null;
+            return MatchAlternate(recognition, wakes, lexemes);
         }
 
         var bodyStart = index < lexemes.Length ? lexemes[index].Range.Start : (long?)null;
@@ -344,6 +344,108 @@ public static class DictationBoundaries
     // おんせいにはいる=8, おんせいにはいるよ=9) d≤1 only.
     public const int MinReadingDistance2 = 10;
 
+    private enum WakeSite
+    {
+        Reading,
+        AlternateNear,
+    }
+
+    private enum WakeRemainder
+    {
+        Any,
+        Empty,
+        Listed,
+    }
+
+    private readonly record struct WakeAllowance(
+        WakeSite Site,
+        int MinLength,
+        int MaxLength,
+        int MinDistance,
+        int MaxDistance,
+        WakeRemainder Remainder = WakeRemainder.Any,
+        bool Closed = false,
+        bool ExactLength = false,
+        bool OneLexeme = false,
+        string[]? Tail = null);
+
+    private static readonly WakeAllowance[] WakeAllowances =
+    [
+        new(WakeSite.Reading, ShortWakeReading + 1, int.MaxValue, 0, 1),
+        new(WakeSite.Reading, 1, ShortWakeReading, 0, 1, WakeRemainder.Empty, Closed: true),
+        new(WakeSite.Reading, MinReadingDistance2, int.MaxValue, 2, 2, WakeRemainder.Empty, Closed: true),
+        new(WakeSite.Reading, MinReadingDistance2, int.MaxValue, 2, 2, WakeRemainder.Listed, Closed: true, Tail: ["は", "よ", "ね", "な", "わ"]),
+        new(WakeSite.Reading, 1, ShortWakeReading, 0, 0, WakeRemainder.Listed, Closed: true, ExactLength: true, OneLexeme: true, Tail: ["です", "ます"]),
+        new(WakeSite.AlternateNear, MinReadingDistance2, int.MaxValue, 0, 3),
+    ];
+
+    private static bool ReadingRuleAllows(int size, int length, int distance, bool closed, int lexemeCount, string all)
+    {
+        foreach (var rule in WakeAllowances)
+        {
+            if (rule.Site != WakeSite.Reading
+                || size < rule.MinLength
+                || size > rule.MaxLength
+                || distance < rule.MinDistance
+                || distance > rule.MaxDistance
+                || (rule.Closed && !closed)
+                || (rule.ExactLength && length != size)
+                || (rule.OneLexeme && lexemeCount != 1))
+            {
+                continue;
+            }
+
+            if (rule.Remainder == WakeRemainder.Empty && length != all.Length)
+            {
+                continue;
+            }
+
+            if (rule.Remainder == WakeRemainder.Listed && (rule.Tail is not { } tail || !tail.Contains(all[length..])))
+            {
+                continue;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private static WakePrefix? MatchAlternate(RecognizedUtterance recognition, IReadOnlyList<WakeWord> wakes, LexicalRun[] lexemes)
+    {
+        if (recognition.Extent != RecognitionExtent.ClosedUtterance || recognition.Alternates.IsDefaultOrEmpty)
+        {
+            return null;
+        }
+
+        var all = string.Concat(lexemes.Select(run => TextMatching.NormalizeReading(string.IsNullOrEmpty(run.Reading) ? run.Text : run.Reading)));
+        foreach (var rule in WakeAllowances)
+        {
+            if (rule.Site != WakeSite.AlternateNear)
+            {
+                continue;
+            }
+
+            foreach (var wake in wakes.Where(wake => wake.Reading.Length >= rule.MinLength && wake.Reading.Length <= rule.MaxLength).DistinctBy(wake => wake.Reading).OrderByDescending(wake => wake.Reading.Length))
+            {
+                if (!recognition.Alternates.Any(alternate => TextMatching.NormalizeReading(alternate.Reading) == wake.Reading))
+                {
+                    continue;
+                }
+
+                var distance = TextMatching.EditDistance(all, wake.Reading);
+                if (distance < rule.MinDistance || distance > rule.MaxDistance)
+                {
+                    continue;
+                }
+
+                return new WakePrefix(lexemes[^1].Range.End, null, wake, distance);
+            }
+        }
+
+        return null;
+    }
+
     // Next is the lexeme after the wake, or null when the wake ends inside a lexeme (End is then a proportional split).
     private readonly record struct ReadingHit(WakeWord Wake, int Distance, long End, int? Next);
 
@@ -361,8 +463,6 @@ public static class DictationBoundaries
         {
             var size = wake.Reading.Length;
             (int Distance, int Length)? best = null;
-            // d=2 only for long enough closed whole utterances (縫製入力 len≥10); len <10 and ShortWake stay ≤1.
-            var maxDistance = (size >= MinReadingDistance2 && closed) ? 2 : 1;
             foreach (var length in new[] { size, size - 1, size + 1 })
             {
                 if (length <= 0 || length > all.Length)
@@ -371,8 +471,7 @@ public static class DictationBoundaries
                 }
 
                 var distance = TextMatching.EditDistance(all[..length], wake.Reading);
-                // d=2 is long+closed+whole-utterance only; d≤1 may still be a size±1 prefix of a longer body.
-                if (distance > maxDistance || (distance >= 1 && !allowFuzzy) || (size <= ShortWakeReading && !(closed && length == all.Length)) || (distance == 2 && length != all.Length))
+                if ((distance >= 1 && !allowFuzzy) || !ReadingRuleAllows(size, length, distance, closed, readings.Length, all))
                 {
                     continue;
                 }
