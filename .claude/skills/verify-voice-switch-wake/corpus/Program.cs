@@ -112,7 +112,7 @@ static bool DecidesWake(CorpusRow row, WakeWord[] wakes, string[] wakeTexts)
     return row.Channel switch
     {
         "early" => DictationBoundaries.EarlyWake(utterance, wakes) is not null,
-        "rejected" => DictationBoundaries.RejectedWake(utterance, wakeTexts) is not null,
+        "rejected" => DictationBoundaries.RejectedWake(utterance, wakeTexts, wakes.Select(wake => wake.Reading)) is not null,
         "leading" => DictationBoundaries.LeadingWake(utterance, wakes) is not null,
         _ => throw new InvalidOperationException($"{row.Id} channel {row.Channel}"),
     };

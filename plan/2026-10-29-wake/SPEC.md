@@ -142,6 +142,7 @@ must_hit = {
         "hosei-wa", "hosei-ne", "hosei-yo",
         "onsei-desu", "onsei-masu",
         "houzei-alt",
+        "rejected-kana",
     },
     "surface": {
         "exact-split", "exact-body", "paused-short", "desu-long", "onsen-whole",
