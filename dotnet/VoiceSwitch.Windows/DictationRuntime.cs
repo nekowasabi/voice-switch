@@ -83,9 +83,10 @@ public sealed class WindowsDictationRuntime
     // Mac Dictation.confirmed: an automatic session records from its first sound but shows 録音中 only once the recognizers
     // agreed on words in it, so a cough no longer flashes it. Checked beside the loop after every further second of body.
     private Guid confirmedSession;
+    // How far the word agreement and the stop window have looked. checkedSamples counts body samples as on Mac;
+    // stopCheckedSamples is a capture position, the end of the last stop window, so no session resets it.
     private long checkedSamples;
-    // End of the last stop window queued while an over-cap utterance stays open (Mac stopCheckedSamples).
-    private long lastStopWindowEnd;
+    private long stopCheckedSamples;
     private (Guid Session, Task<bool> Agreed)? wordCheck;
     // Shadow log of playback vs microphone levels: mic dBFS per frame keyed by sample index, loopback dBFS per 10 ms keyed by ms.
     private readonly LevelTrace micLevels = new(4_000);
@@ -102,9 +103,7 @@ public sealed class WindowsDictationRuntime
     private Task? localInflight;
     private CancellationToken localCancellation;
     // The phrase the user is speaking: voiced frames joined across gaps up to the hangover, which the VAD alone splits into short runs.
-    private long phraseStart = -1;
-    private long phraseVoiced;
-    private string? phraseMicBlock;
+    private Phrase? phrase;
     private long followupUntil;
     private bool lastVadSpeech;
     private string? lastSilenceDiagnosticKey;
@@ -594,16 +593,16 @@ public sealed class WindowsDictationRuntime
         if (session.IsActive || session.IsAwaitingBody)
         {
             // Audio a session already owns never becomes the lookback of the next automatic one.
-            (phraseStart, phraseMicBlock) = (-1, null);
+            phrase = null;
         }
         else if (segmenter.LastWasSpeech)
         {
-            if (phraseStart < 0 || frame.Start - lastLiveSpeechEnd > bridge) (phraseStart, phraseVoiced, phraseMicBlock) = (frame.Start, 0, null);
-            phraseVoiced += frame.Analysis.Length;
+            if (phrase is null || frame.Start - lastLiveSpeechEnd > bridge) phrase = new Phrase(frame.Start);
+            phrase.Voiced += frame.Analysis.Length;
         }
         else if (frame.Start - lastLiveSpeechEnd > bridge)
         {
-            (phraseStart, phraseMicBlock) = (-1, null);
+            phrase = null;
         }
 
         if (segmenter.LastWasSpeech)
@@ -612,16 +611,15 @@ public sealed class WindowsDictationRuntime
         }
 
         // Starts even while the user types or moves the mouse; input idle no longer gates it.
-        if (config.Dictation?.NoWakeWord is { Enabled: true } && phraseStart >= 0 && segmenter.LastWasSpeech
-            && phraseVoiced >= Segmenter.Frames(config.MinSpeechMs ?? 300) * Segmenter.FrameLength)
+        if (config.Dictation?.NoWakeWord is { Enabled: true } && phrase is { } spoken && segmenter.LastWasSpeech
+            && spoken.Voiced >= Segmenter.Frames(config.MinSpeechMs ?? 300) * Segmenter.FrameLength)
         {
             var idle = inputIdleSeconds();
-            var origin = NoWakePolicy.OnSpeech(config.Dictation?.NoWakeWord, idle, phraseStart < followupUntil);
+            var origin = NoWakePolicy.OnSpeech(config.Dictation?.NoWakeWord, idle, spoken.Start < followupUntil);
             var window = origin is not null ? foregroundWindow() : 0;
             // The whole phrase with its preroll, even when it overlaps typing.
-            var start = Math.Max(originalStore.Start, phraseStart - Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength);
-            // Latched for the phrase: once Superwhisper releases the mic, its user's words would otherwise open a session from the phrase head.
-            var skip = origin is null ? null : (phraseMicBlock ??= AutomaticMicBlock()) ?? AutomaticForegroundSkipReason(window);
+            var start = Math.Max(originalStore.Start, spoken.Start - Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength);
+            var skip = origin is null ? null : spoken.LatchMicBlock(AutomaticMicBlock) ?? AutomaticForegroundSkipReason(window);
             // Logged once per change: a blocked automatic wake was otherwise indistinguishable from silence in the log.
             if (skip != lastAutomaticSkip && skip is not null) Log.Info(skip);
             lastAutomaticSkip = skip;
@@ -651,10 +649,10 @@ public sealed class WindowsDictationRuntime
             // Mac ce14722: steady room noise above the threshold keeps the utterance open past the cap, so no closed utterance
             // or tail ever brings the stop word. The newest 4 s are checked every second meanwhile, one window at a time.
             var windowEnd = frame.Start + frame.Analysis.Length;
-            if (session.IsActive && segmenter.IsSkipping && windowEnd - lastStopWindowEnd >= (long)Segmenter.Rate
+            if (session.IsActive && segmenter.IsSkipping && windowEnd - stopCheckedSamples >= (long)Segmenter.Rate
                 && !pending.Values.Any(work => work.Request.Extent == RecognitionExtent.PrefixHead))
             {
-                lastStopWindowEnd = windowEnd;
+                stopCheckedSamples = windowEnd;
                 _ = QueueRecognition(RecognitionExtent.PrefixHead, (int)Math.Min(4 * (long)Segmenter.Rate, windowEnd - analysisStore.Start), windowEnd, requests, pending, 0);
             }
 
@@ -918,8 +916,8 @@ public sealed class WindowsDictationRuntime
     // Keeps the live phrase so an automatic session that starts late can still record it from the beginning.
     // ponytail: capped at 10 s of audio; a longer phrase keeps only its tail.
     private long RetainStart(long keepFrom) =>
-        phraseStart < 0 || config.Dictation?.NoWakeWord is not { Enabled: true } ? keepFrom
-            : Math.Min(keepFrom, Math.Max(phraseStart - Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength,
+        phrase is not { } spoken || config.Dictation?.NoWakeWord is not { Enabled: true } ? keepFrom
+            : Math.Min(keepFrom, Math.Max(spoken.Start - Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength,
                 analysisStore.Next - (long)(Segmenter.Rate * 10)));
 
     private bool SpeaksWake(RecognizedUtterance recognition) =>
@@ -1330,6 +1328,18 @@ public sealed class WindowsDictationRuntime
         checked((long)Math.Round(ms * Segmenter.Rate / 1000.0, MidpointRounding.AwayFromZero));
 
     private sealed record RecognitionWork(RecognitionRequest Request, bool BodyTail = false);
+
+    // Reset as a unit by setting the runtime's phrase to null.
+    private sealed class Phrase(long start)
+    {
+        private string? micBlock;
+        public long Start { get; } = start;
+        public long Voiced { get; set; }
+
+        // Only a block latches: once Superwhisper releases the mic mid-phrase, its user's words would otherwise open a
+        // session from the phrase head. A clear check is not kept, so a recorder taking the mic mid-phrase still blocks.
+        public string? LatchMicBlock(Func<string?> check) => micBlock ??= check();
+    }
     private sealed record RecognitionOutcome(RecognitionWork Work, RecognizedUtterance? Recognition, Exception? Error);
 }
 
