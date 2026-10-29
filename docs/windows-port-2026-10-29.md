@@ -71,6 +71,14 @@
 | W4 | `3f46762` | W4-1（雑音 18 s、自動録音の開き直しが 6 回 → 1 回）と W4-2。基準値の上げ直しは破棄の箇所ではなく `Submit` で行う（破棄は別スレッドで、その時点では上げ直せない） | WAV での確認 |
 | W5 | `12e085e` | W5-1（プローブで Ended がハングオーバーより先）と W5-2（取り消すと Recording に戻り、渡す音声は同じ）。`earlyWakeMs` があるときだけ効く（`config.example.json` には無い） | 実機での ms 計測 |
 
+レビュー後の修正（`win-port-fix-tray` `win-port-fix-dictation`）で、通話中の起動でマイクが最初のポーリングまで開く穴（M1）を塞ぎ、モデルに `NoAutoStartInCall` を足した。停止語の判定は `DictationBoundaries.FindStop` の `StopVerdict` 1 か所にまとめた。`make` は exit 0、parity `fail=0`。
+
+残した指摘:
+
+- L2: `MicInUse` に揺り戻しの抑えがない。Chrome の取り込みが通話中に一瞬 Inactive になるかは実機で見ないと決められない。
+- L5: 録音中のプローブが、ストップを確定する閉じた発話を SAPI の列で待たせうる（`earlyWakeMs` があるときだけ）。W5-1 の実機計測で判断する。
+- L6: 語の一致の判定が出る前に maxSeconds で終わった本物の声でも、基準値を上げ直しうる。上げ直しは `Segmenter` が上限超えの間しか効かず、遅らせると何もしなくなるため、直すには一致したら基準値を戻す仕組みが要る。
+
 ## 現在のコードで見つかったこと（未再現）
 
 - **ユーザーの一時停止がデバイス再試行で取り消される。**（W1 の規則 4 で修正済み。テスト `tray meet user pause after Error survives the device retry`）Meet とは関係がない。実行中のランタイムがエラーで終わり、`Error` になったのに、メニューはまだ 待ち受け中 を表示している。ユーザーが 一時停止 を押しても、その Pause はゲート待ちになる。次の `FollowDevice` が再試行の Start を積み、Pause のあとに Start が走って待ち受けに戻る。モデルの壊した版 4（今の `StartAsync` と同じ動き）の反例で、窓は狭い。W1 の規則 4 で塞がる。
