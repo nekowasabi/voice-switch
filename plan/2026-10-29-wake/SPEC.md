@@ -141,6 +141,7 @@ must_hit = {
         "desu-long", "onsen-whole", "onsen-ni-hairu", "early-exact", "rejected-kanji",
         "hosei-wa", "hosei-ne", "hosei-yo",
         "onsei-desu", "onsei-masu",
+        "houzei-alt",
     },
     "surface": {
         "exact-split", "exact-body", "paused-short", "desu-long", "onsen-whole",

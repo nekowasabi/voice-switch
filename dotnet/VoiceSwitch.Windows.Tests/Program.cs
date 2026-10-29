@@ -68,6 +68,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation long wake reading recovers distance-2 closed 縫製入力 as wake-only", () => Check(DictationLongWakeReadingRecoversDistance2ClosedHosei())),
     ("dictation long wake reading keeps a one-kana particle tail as wake-only", () => Check(DictationLongWakeReadingKeepsParticleTail())),
     ("dictation short wake reading keeps an exact copula tail inside one lexeme", () => Check(DictationShortWakeReadingKeepsCopulaTail())),
+    ("dictation leading wake accepts an exact alternate inside a near miss", () => Check(DictationLeadingWakeAcceptsExactAlternateInsideNearMiss())),
     ("dictation kana wake word matches SAPI's kanji through the reading", () => Check(DictationKanaWakeMatchesKanjiThroughReading())),
     ("dictation session opens a wait on a fuzzy wake and starts the body on the next utterance", () => Check(DictationSessionOpensWaitOnFuzzyWake())),
     ("dictation runtime logs a reading-matched wake-only with its distance", () => Check(DictationRuntimeLogsReadingWakeOnly())),
@@ -1273,6 +1274,44 @@ static bool DictationShortWakeReadingKeepsCopulaTail()
         && DictationBoundaries.LeadingWake(ninshikiFused, wakes) is null
         && DictationBoundaries.LeadingWake(ninshikiSplit, wakes) is null
         && DictationBoundaries.LeadingWake(desuProbe, wakes) is null;
+}
+
+// s3: if LeadingWake would miss, one alternate whose reading exactly equals a long wake
+// reading (len>=10) plus a primary whole-utterance reading within raw distance 3 accepts
+// wake-only. Mirrors corpus rows houzei-alt (wake), houzei (miss, no alternate) and
+// zatsudan-alt (no-wake, far primary). Not on probes, even past the prefix gap. Not for
+// short wakes.
+static bool DictationLeadingWakeAcceptsExactAlternateInsideNearMiss()
+{
+    var longWake = WakeWord.From("音声入力", "おんせいにゅうりょく"); // len=10
+    WakeWord[] wakes = [longWake];
+    var houzeiAlt = Recognized(1, RecognitionExtent.ClosedUtterance, 0, 10000, "法政入力", false,
+        Run("法政入力", 0, 10000, "ほうぜいにゅうりょく")) with
+    {
+        Alternates = [new RecognitionAlternate("音声入力", "おんせいにゅうりょく")],
+    };
+    var houzei = Recognized(2, RecognitionExtent.ClosedUtterance, 0, 10000, "法政入力", false,
+        Run("法政入力", 0, 10000, "ほうぜいにゅうりょく"));
+    var zatsudanAlt = Recognized(3, RecognitionExtent.ClosedUtterance, 0, 8000, "雑談です", false,
+        Run("雑談です", 0, 8000, "ざつだんです")) with
+    {
+        Alternates = [new RecognitionAlternate("音声入力", "おんせいにゅうりょく")],
+    };
+    var shortWake = WakeWord.From("音声", "おんせい"); // len=4
+    var anzenAlt = Recognized(4, RecognitionExtent.ClosedUtterance, 0, 6000, "安全", false,
+        Run("安全", 0, 6000, "あんぜん")) with
+    {
+        Alternates = [new RecognitionAlternate("音声", "おんせい")],
+    };
+    // Probes never use the alternate rule, even past the prefix gap.
+    var houzeiAltProbe = houzeiAlt with { Extent = RecognitionExtent.Probe, TailSilenceSamples = 0 };
+    var houzeiAltGapProbe = houzeiAlt with { Extent = RecognitionExtent.Probe, TailSilenceSamples = DictationBoundaries.PrefixGapSamples };
+    return DictationBoundaries.LeadingWake(houzeiAlt, wakes) is { BodyStart: null, Distance: 3, ByReading: not null }
+        && DictationBoundaries.LeadingWake(houzei, wakes) is null
+        && DictationBoundaries.LeadingWake(zatsudanAlt, wakes) is null
+        && DictationBoundaries.LeadingWake(anzenAlt, [shortWake]) is null
+        && DictationBoundaries.LeadingWake(houzeiAltProbe, wakes) is null
+        && DictationBoundaries.LeadingWake(houzeiAltGapProbe, wakes) is null;
 }
 
 static bool DictationKanaWakeMatchesKanjiThroughReading()
