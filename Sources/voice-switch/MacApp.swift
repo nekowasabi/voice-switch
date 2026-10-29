@@ -888,6 +888,7 @@ final class Listener {
     // Make it a config value if short live phrases get dropped.
     static let minVoiceSeconds = 1.5
     static let noVoiceActivity = "no voice activity (speaker playback is not a voice)"
+    static func micHeldBy(_ busy: String) -> String { "\(busy) is using the microphone" }
 
     private func voiceBeingHeard() -> Bool {
         voiceActivity.withLock { $0.device != 0 && $0.onSince != nil }
@@ -994,6 +995,9 @@ final class Listener {
         // minVoiceSeconds of voice: a first sentence often ends before that, and the next sentence then opens the session.
         var phraseHeldByVoice = false
         var heldPhrase: (samples: [Float], until: Int)?
+        // A phrase spoken while another dictation app held the mic was meant for that app: when it lets go mid-phrase
+        // (Superwhisper moving to processing, 2026-10-29 12:23 JST), the phrase must not open a session of its own.
+        var phraseForOtherApp = false
         // Stop-word judgement runs beside the frame loop; `stopJob` says which dictation and generation it belongs to.
         let stopCheck = LatestRecognition<Int>()
         let wordCheck = LatestRecognition<(session: UUID, agreed: Bool)>()
@@ -1135,7 +1139,7 @@ final class Listener {
             // speechFrames counts the voiced frames of the phrase being spoken, joined across gaps up to the hangover,
             // which the VAD alone splits into short runs.
             if speaking {
-                if speechFrames == 0 { phraseEnergy = 0; phraseHAL = 0; phrasePeak = 0 }
+                if speechFrames == 0 { phraseEnergy = 0; phraseHAL = 0; phrasePeak = 0; phraseForOtherApp = false }
                 speechFrames += 1; gapFrames = 0
                 if energy { phraseEnergy += 1 }
                 if hal { phraseHAL += 1 }
@@ -1176,8 +1180,11 @@ final class Listener {
                     : idle == nil ? "input idle unavailable" : origin == nil ? "NoWakePolicy.onSpeech nil" : "allowed but no audio"
             }
             if let origin {
-                if !automaticWakeAllowed() {
+                if phraseForOtherApp {
+                    phraseOutcome = "automatic wake blocked: phrase began while another app held the microphone"
+                } else if !automaticWakeAllowed() {
                     if lastAutomaticBlock == Listener.noVoiceActivity { phraseHeldByVoice = true }
+                    if let block = lastAutomaticBlock, (config.cfg.skipWhileMicInUseBy ?? []).contains(where: { block == Listener.micHeldBy($0) }) { phraseForOtherApp = true }
                     phraseOutcome = "automatic wake blocked: \(lastAutomaticBlock ?? "-")"
                 } else {
                     // The whole phrase with its preroll, even when it overlaps typing, after a phrase the gate held back.
@@ -1368,7 +1375,7 @@ final class Listener {
     private func automaticWakeBlock() -> String? {
         if localHistoryState.withLock({ $0.busy }) { return "previous recording still transcribing" }
         if config.cfg.dictation?.echoCancellation != false && !voiceRecentlyActive() { return Listener.noVoiceActivity }
-        if let busy = micInUse(by: config.cfg.skipWhileMicInUseBy ?? [], failClosed: true) { return "\(busy) is using the microphone" }
+        if let busy = micInUse(by: config.cfg.skipWhileMicInUseBy ?? [], failClosed: true) { return Listener.micHeldBy(busy) }
         if let excluded = config.cfg.dictation?.excludeBundleIDs, !excluded.isEmpty {
             guard let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else { return "frontmost app unknown" }
             if excluded.contains(id) { return "\(id) is excluded" }
