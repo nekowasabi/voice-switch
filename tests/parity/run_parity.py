@@ -511,7 +511,7 @@ def check_mac_superwhisper_mode_handoff(result: Result, repo: SourceTree) -> Non
             "superwhisper://mode?key=",
             "superwhisper mode restored from recovery state",
             "let route = await routeDictation(result)",
-            "decideDictationDelivery(modeRequested: modeRequested, route: route.disposition)",
+            "decideDictationDelivery(modeRequested: false, route: route.disposition)",
             "dictation delivered: superwhisper",
             # B2: modeRequested only after post-switch activeMode == key (failed poll → no paste).
             "guard readSuperwhisperActiveMode() == key else",
@@ -587,7 +587,7 @@ def check_swift_runtime_call_chain(result: Result, repo: SourceTree) -> None:
         body,
         [
             "var seg = Segmenter(cfg: config.cfg)",
-            "let event = seg.push(f)",
+            "let event = seg.push(f, voice: hal)",
             "transcript = try await transcribe",
             "let hit = !isHead && config.cfg.wakeWords.map(normalize).contains(t)",
             "Platform.runMacAction(config.cfg)",

@@ -5,7 +5,7 @@ An automatic (no-wake-word) recording ended by silence goes to history only and 
 ## Sub-features
 
 - `PR1` silence end does not paste: voice-switch switches Superwhisper to `dictation.superwhisperMode` (autoPaste off) and restores the previous mode only after Superwhisper has judged the audio.
-- `PR2` stop-word end pastes: `automatic ended by stop word, pasting like a wake-word dictation`, then Superwhisper pastes in the active mode.
+- `PR2` stop-word end pastes: `automatic ended by StandaloneStop, pasting like a wake-word dictation`, then Superwhisper pastes in the active mode.
 - `PR3` the restore waits for a judged run. Superwhisper 3.0.1 writes `meta.json` three times: a placeholder (`duration` 0, `processingTime` 0, empty `result`), then `result`, then `llmResult` when the mode has a language model. A run that heard nothing ends with a filled `duration` and an empty `result`. Restoring at the placeholder pasted a silence-ended recording on 2026-10-16.
 - `PR4` no judged run within 30 s keeps the temporary mode (`superwhisper mode: kept ... until the run finishes`); the next handoff or launch restores it.
 

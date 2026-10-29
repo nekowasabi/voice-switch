@@ -73,18 +73,40 @@ func agreedWordCount(_ samples: [Float], locale: Locale) async throws -> Int {
     return NoWakePolicy.agreedWithWhisper(apple: try await appleText, whisper: try await whisperText)
 }
 
-/// Samples to drop from the end of the dictation when `u` ends with a stop word, else 0.
+/// What a stop check found: no stop word, a stop word too recent to end the dictation on yet (shown on the HUD at once,
+/// so the user knows it was heard), or the samples to drop from the end of the dictation.
+enum StopVerdict: Equatable, Sendable { case none, heard, cut(Int) }
+
 /// `heard` is a transcript of `u` already taken this frame, so the utterance is not recognized twice.
 /// Runs beside the frame loop, so it may wait on the recognizer.
-func stopWordCut(_ u: [Float], heard: Transcript?, stopWords: [String], locale: Locale, quiet: Bool) async -> Int {
+func stopWordCut(_ u: [Float], heard: Transcript?, stopWords: [String], locale: Locale, quiet: Bool, kind: String, sessionID: UUID) async -> StopVerdict {
+    let head = "stop check: kind=\(kind) utt=\(u.count * 1000 / Int(rate)) ms"
     let t: Transcript
     if let heard { t = heard } else {
-        guard let tr = try? await transcribe(u, locale: locale) else { return 0 }
+        guard let tr = try? await transcribe(u, locale: locale) else { log("\(head) recognizer=failed \(sidField(sessionID))"); return .none }
         t = tr
     }
     if !quiet { log("dictating: \(t.text)  [utt \(u.count * 1000 / Int(rate)) ms]") }
-    guard let start = stopWordStart(t, stopWords: stopWords) else { return 0 }
-    return u.count - min(u.count, Int(start * rate))
+    var start = stopWordStart(t, stopWords: stopWords)
+    var recent = false
+    if kind == "window", let s = start {
+        // A window opens anywhere in the speech, and Apple Speech stretches its first run back over the unrecognized sound
+        // before it (入@0.00-0.90), so a stop word that opens the window starts where its second character does, less that
+        // character's length. Cutting at the window start dropped the end of the sentence said before it.
+        let second = t.runs.count > 1 ? t.runs[1] : nil
+        let opening = second.flatMap { r in r.start.map { max(0, $0 - ((r.end ?? $0) - $0)) } } ?? 0
+        // Speech going on past a stop word would be heard within half a second, so only that much silence after it stops.
+        // ponytail: fixed 0.5 s after the last recognized word; make it a knob if slow speakers pause longer mid-sentence.
+        let heardUntil = t.runs.last.flatMap { $0.end ?? $0.start } ?? Double(u.count) / rate
+        recent = heardUntil > Double(u.count) / rate - 0.5
+        start = recent ? nil : s == 0 ? opening : s
+    }
+    let cut = start.map { u.count - min(u.count, Int($0 * rate)) }
+    // A window check runs several times a second; only its matches are worth a line.
+    if kind != "window" || cut != nil || recent {
+        log("\(head) recognizer=ok matched=\(recent ? "heard" : cut == nil ? "no" : "yes") cut=\((cut ?? 0) * 1000 / Int(rate)) ms \(sidField(sessionID))")
+    }
+    return recent ? .heard : cut.map { .cut($0) } ?? .none
 }
 
 /// Hard-stops SpeechAnalyzer on cancel (Windows KillProcess intent).
@@ -310,6 +332,18 @@ func recoverSuperwhisperMode(target: NSRunningApplication?) async -> Bool {
     }
 }
 
+/// At launch and before each wake-word handoff. The switch is sent even when the stored activeModeKey already names the
+/// mode: superwhisper ran a recording in `message` while storing `default` (2026-10-28 13:25:10), so the stored value is not trusted.
+func selectPasteMode(_ wanted: String) async {
+    guard let key = resolveSuperwhisperModeKey(wanted.trimmingCharacters(in: .whitespacesAndNewlines), modeJsons: readSuperwhisperModeJsons()) else {
+        log("superwhisper mode \"\(wanted)\" not found; pasteMode ignored")
+        return
+    }
+    let active = readSuperwhisperActiveMode()
+    if active != key { log("superwhisper mode: \(key) selected (was \(active ?? "unknown"))") }
+    _ = await switchSuperwhisperMode(key, target: nil)
+}
+
 /// Clipboard + Cmd+V into the wake-time app. Used when mode auto-paste is off and pane did not take it.
 func pasteDictation(_ text: String, target: NSRunningApplication?) -> Bool {
     guard AXIsProcessTrusted(), let target, let idle = MacInputActivity.idleSeconds(), idle >= 1 else { return false }
@@ -384,7 +418,8 @@ func macPasteSafety(target: NSRunningApplication, lastInput: TimeInterval) -> Pa
         clipboardRestorable: true, inputUnchanged: currentInput.map { abs($0 - lastInput) < 0.02 } ?? false)
 }
 
-/// superwhisper transcribes the file. Wake-word audio keeps the active mode and lets superwhisper paste.
+/// superwhisper transcribes the file. Wake-word audio switches to `dictation.pasteMode` when set (else keeps the active
+/// mode) and lets superwhisper paste.
 /// Automatic audio switches to `dictation.superwhisperMode`, which must have auto-paste off, and stays in history.
 /// An action's text goes only to its URL, so it switches to its own mode or, failing that, `dictation.superwhisperMode`.
 /// notDispatched means the caller should fall back to local history; noResult means superwhisper returned no words.
@@ -392,15 +427,20 @@ enum HandoffOutcome { case notDispatched, noResult, delivered }
 
 func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplication?, action: WakeAction?, origin: WakeOrigin = WakeOrigin(rule: .strict, inputIdleSeconds: nil), sessionID: UUID = UUID(), transcriptPolicy: AutomaticTranscriptPolicy = .disabled, stillCurrent: () -> Bool = { true }) async -> HandoffOutcome {
     if DictationHistory.shared.select(sessionID) != nil { return .delivered }
-    guard let ownership = await acquireModeOwnership() else { return .notDispatched }
+    guard let ownership = await acquireModeOwnership() else {
+        log("superwhisper handoff: not dispatched, mode lock not acquired within 45 s \(sidField(sessionID))"); return .notDispatched
+    }
     defer { withExtendedLifetime(ownership) {} }
     let historyGeneration = DictationHistory.shared.generation
     let recordings = Platform.expandPath(cfg.recordingsDir ?? Platform.defaultRecordingsDir)
     if (try? MacModeRestoreStore.read()) != nil, !(await awaitRunsSettled(in: recordings)) {
         log("superwhisper mode: an earlier run is still in flight; recording goes to local history \(sidField(sessionID))")
+        log("superwhisper handoff: not dispatched, an earlier run is still in flight \(sidField(sessionID))")
         return .notDispatched
     }
-    guard await recoverSuperwhisperMode(target: target) else { return .notDispatched }
+    guard await recoverSuperwhisperMode(target: target) else {
+        log("superwhisper handoff: not dispatched, earlier mode switch not recovered \(sidField(sessionID))"); return .notDispatched
+    }
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("voice-switch")
     let wav = dir.appendingPathComponent("\(UUID().uuidString).wav")
     defer { try? FileManager.default.removeItem(at: wav) }
@@ -408,10 +448,16 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     // Nobody asked for an automatic recording, so it may only enter a mode verified not to paste.
     let controlled = origin.isAutomatic
     let wantedMode = controlled ? cfg.superwhisperMode : action == nil ? nil : action?.superwhisperMode ?? cfg.superwhisperMode
-    if controlled { guard superwhisperAutoPasteDisabled(wantedMode, modeJsons: readSuperwhisperModeJsons()) else { return .notDispatched } }
+    if controlled {
+        guard superwhisperAutoPasteDisabled(wantedMode, modeJsons: readSuperwhisperModeJsons()) else {
+            log("superwhisper handoff: not dispatched, mode \(wantedMode ?? "-") missing or has auto-paste on \(sidField(sessionID))"); return .notDispatched
+        }
+    }
+    if !controlled, action == nil, let mode = cfg.pasteMode { await selectPasteMode(mode) }
     let (modeRequested, previousMode) = await enterSuperwhisperMode(wantedMode, target: target)
     if controlled {
         guard modeRequested, superwhisperAutoPasteDisabled(wantedMode, modeJsons: readSuperwhisperModeJsons()) else {
+            log("superwhisper handoff: not dispatched, mode \(wantedMode ?? "-") not entered (requested=\(modeRequested)) or has auto-paste on \(sidField(sessionID))")
             _ = await recoverSuperwhisperMode(target: target)
             return .notDispatched
         }
@@ -421,6 +467,7 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
         previousRuns = FileManager.default.fileExists(atPath: recordings)
             ? Set(try FileManager.default.contentsOfDirectory(atPath: recordings)) : []
     } catch {
+        log("superwhisper handoff: not dispatched, recordings folder unreadable \(sidField(sessionID))")
         _ = await recoverSuperwhisperMode(target: target)
         return .notDispatched
     }
@@ -433,6 +480,9 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         p.arguments = ["-g", "-a", "superwhisper", wav.path]
+        // Exit 0 means LaunchServices accepted the file, not that superwhisper ran; the run lines from awaitResult say that.
+        p.terminationHandler = { log("superwhisper handoff: open exited status=\($0.terminationStatus) \(sidField(sessionID))") }
+        log("superwhisper handoff: open audio=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), Double(trimmedForHandoff.count) / rate))s mode=\(wantedMode ?? "active") \(sidField(sessionID))")
         try p.run()
         launched = true
         // Opening a file brings superwhisper to the front despite -g, and it skips auto-paste when it is
@@ -442,7 +492,8 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
             await restoreFocusIfSuperwhisper(target)
         }
         let waitForLLM = previousMode != nil && superwhisperModeUsesLLM(wantedMode, modeJsons: readSuperwhisperModeJsons())
-        result = await awaitResult(in: recordings, since: Int(submitted.timeIntervalSince1970) - 2, excluding: previousRuns, waitForLLM: waitForLLM)
+        result = await awaitResult(in: recordings, since: Int(submitted.timeIntervalSince1970) - 2, excluding: previousRuns, waitForLLM: waitForLLM,
+                                   onRun: { log("superwhisper run: \($0) after \(Int(Date().timeIntervalSince(submitted) * 1000)) ms \(sidField(sessionID))") })
     } catch {
         log(cfg.noWakeWord?.enabled == true ? "dictation: handing off to superwhisper failed" : "dictation: handing off to superwhisper failed: \(error)")
     }
@@ -470,8 +521,8 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
         return .delivered
     }
     let route = await routeDictation(result)
-    // Wake-word audio never switches mode, so superwhisper has already pasted unless the pane took it.
-    if decideDictationDelivery(modeRequested: modeRequested, route: route.disposition) == .superwhisper {
+    // Wake-word audio runs in the active mode or pasteMode, both auto-paste, so superwhisper has already pasted unless the pane took it.
+    if decideDictationDelivery(modeRequested: false, route: route.disposition) == .superwhisper {
         log("dictation delivered: superwhisper")
     }
     return .delivered
@@ -528,9 +579,10 @@ enum Hotkeys {
     nonisolated(unsafe) static var triedTap = false
 
     /// Called when a dictation starts: re-read the shortcuts (the user may have changed them) and arm the tap.
-    static func begin() {
+    static func begin(finishOnly: Bool = false) {
         let defaults = UserDefaults(suiteName: "com.superduper.superwhisper")
-        let read = [("KeyboardShortcuts_toggleRecording", Command.finish), ("KeyboardShortcuts_cancelRecording", .cancel)].map {
+        let keys = [("KeyboardShortcuts_toggleRecording", Command.finish), ("KeyboardShortcuts_cancelRecording", .cancel)]
+        let read = keys.prefix(finishOnly ? 1 : 2).map {
             (key: $0.0, command: $0.1, shortcut: defaults?.string(forKey: $0.0).flatMap(parseShortcut))
         }
         let shortcuts = read.compactMap { r in r.shortcut.map { ($0, r.command) } }
@@ -614,6 +666,74 @@ func audioDeviceID(uid: String) -> AudioDeviceID? {
     return status == noErr && id != 0 ? id : nil
 }
 
+private func audioProperty<T>(_ id: AudioObjectID, _ selector: AudioObjectPropertySelector, _ initial: T,
+                              scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal) -> T? {
+    var addr = AudioObjectPropertyAddress(mSelector: selector, mScope: scope, mElement: kAudioObjectPropertyElementMain)
+    var value = initial
+    var size = UInt32(MemoryLayout<T>.size)
+    return AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &value) == noErr ? value : nil
+}
+
+private func audioObjectIDs(_ id: AudioObjectID, _ selector: AudioObjectPropertySelector,
+                            scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal) -> [AudioObjectID] {
+    var addr = AudioObjectPropertyAddress(mSelector: selector, mScope: scope, mElement: kAudioObjectPropertyElementMain)
+    var size: UInt32 = 0
+    guard AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) == noErr, size > 0 else { return [] }
+    var ids = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+    guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &ids) == noErr else { return [] }
+    return ids
+}
+
+/// Physical microphones only. While voice processing runs, every output device grows an echo-reference input
+/// stream (terminal type 'spkr' or 0) and an aggregate device appears; pinning one of those fails with -10851.
+func inputDeviceIDs() -> [AudioDeviceID] {
+    audioObjectIDs(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDevices).filter { id in
+        audioProperty(id, kAudioDevicePropertyTransportType, UInt32(0)) != kAudioDeviceTransportTypeAggregate
+            && audioObjectIDs(id, kAudioDevicePropertyStreams, scope: kAudioDevicePropertyScopeInput).contains { stream in
+                let terminal = audioProperty(stream, kAudioStreamPropertyTerminalType, UInt32(0)) ?? 0
+                return terminal != 0 && terminal != kAudioStreamTerminalTypeSpeaker
+            }
+    }
+}
+
+func defaultInputDeviceID() -> AudioDeviceID? {
+    audioProperty(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultInputDevice, AudioDeviceID(0)).flatMap { $0 == 0 ? nil : $0 }
+}
+
+func builtInInputDeviceID() -> AudioDeviceID? {
+    inputDeviceIDs().first { audioProperty($0, kAudioDevicePropertyTransportType, UInt32(0)) == kAudioDeviceTransportTypeBuiltIn }
+}
+
+func audioDeviceUID(_ id: AudioDeviceID) -> String? {
+    audioProperty(id, kAudioDevicePropertyDeviceUID, nil as Unmanaged<CFString>?).flatMap { $0?.takeRetainedValue() as String? }
+}
+
+func audioDeviceName(_ id: AudioDeviceID) -> String {
+    audioProperty(id, kAudioObjectPropertyName, nil as Unmanaged<CFString>?).flatMap { $0?.takeRetainedValue() as String? } ?? "device \(id)"
+}
+
+/// Where start() takes audio from. Both are raw input: voice processing changed the mic for every other app
+/// (superwhisper recorded silence, measured 2026-10-28), so echo cancellation comes from HAL voice activity detection instead.
+enum InputRoute: Equatable {
+    case systemDefault
+    case pinned(AudioDeviceID)
+
+    var deviceID: AudioDeviceID? {
+        switch self {
+        case .systemDefault: return defaultInputDeviceID()
+        case .pinned(let id): return id
+        }
+    }
+
+    /// A saved device that is unplugged falls back to the built-in mic; the saved choice itself is kept.
+    static func resolve(savedUID: String?) -> (route: InputRoute, missing: Bool) {
+        guard let uid = savedUID else { return (.systemDefault, false) }
+        let id = audioDeviceID(uid: uid).flatMap { inputDeviceIDs().contains($0) ? $0 : nil }
+        guard let target = id ?? builtInInputDeviceID() else { return (.systemDefault, true) }
+        return (.pinned(target), id == nil)
+    }
+}
+
 /// Owns the microphone. stop() releases it fully (menu-bar mic indicator goes off).
 final class Listener {
     let config: ConfigFile
@@ -630,6 +750,10 @@ final class Listener {
     var onRestart: (() -> Void)?
     private var restartError: String?
     private var retryScheduled = false
+    /// The device supplying HAL voice activity (0 = unavailable), when its current voice began,
+    /// and when the last voice long enough to count ended.
+    private let voiceActivity = OSAllocatedUnfairLock(initialState: (device: AudioDeviceID(0), onSince: Date?.none, lastVoiceEnd: Date.distantPast))
+    private var voiceActivityListened: Set<AudioDeviceID> = []
     /// When the tap last delivered audio. Display sleep can make coreaudiod drop the input without
     /// AVAudioEngineConfigurationChange (2026-10-13 log), and every end condition counts frames, so a dictation open then never ends.
     private let lastBuffer = OSAllocatedUnfairLock(initialState: Date())
@@ -640,10 +764,8 @@ final class Listener {
         nextRecognitionId.withLock { state in let id = state; state += 1; return id }
     }
     /// CoreAudio device UID; nil follows the system default input. Set only while stopped.
-    var deviceUID: String? {
-        // A pinned input unit never follows the system default again, so start over with a fresh engine.
-        didSet { engine = AVAudioEngine() }
-    }
+    var deviceUID: String?
+    private var activeRoute: InputRoute?
 
     init(config: ConfigFile) {
         self.config = config
@@ -658,6 +780,15 @@ final class Listener {
             guard let self, self.wanted, note.object as? AVAudioEngine === self.engine else { return }
             log("audio configuration changed, restarting input")
             self.restart()
+        }
+        // Unplugging the saved mic moves to the built-in one and plugging it back returns to it; neither always posts a configuration change.
+        for selector in [kAudioHardwarePropertyDevices, kAudioHardwarePropertyDefaultInputDevice] {
+            var addr = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+            AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &addr, .main) { [weak self] _, _ in
+                guard let self, self.wanted, InputRoute.resolve(savedUID: self.deviceUID).route != self.activeRoute else { return }
+                log("input devices changed, restarting input")
+                self.restart()
+            }
         }
         Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in self?.checkStall() }
         // Loading Whisper and compiling its Metal kernels takes seconds; pay it now, not in front of the first automatic recording.
@@ -677,28 +808,26 @@ final class Listener {
         guard silentFor >= 10 * pow(2, Double(min(stallRestarts, 5))) else { return }
         log("input stalled: no audio for \(Int(silentFor)) s, restarting")
         stallRestarts += 1
-        halt(); engine = AVAudioEngine(); attemptStart()
+        halt(); activeRoute = nil; attemptStart()
     }
 
     func start() throws {
-        var deviceName = "system default"
-        if let uid = deviceUID {
-            if var id = audioDeviceID(uid: uid), let au = engine.inputNode.audioUnit {
-                var current = AudioDeviceID(0)
-                var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-                AudioUnitGetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &current, &size)
-                // Setting it posts AVAudioEngineConfigurationChange; skipping a no-op set keeps restarts from looping.
-                if current != id {
-                    let status = AudioUnitSetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &id, size)
-                    if status != noErr { throw NSError(domain: NSOSStatusErrorDomain, code: Int(status)) }
-                }
-                deviceName = AVCaptureDevice(uniqueID: uid)?.localizedName ?? uid
-            } else {
-                log("input device \(uid) not found, using system default")
-                // The unit may still be pinned to the vanished device.
-                engine = AVAudioEngine()
+        let (route, missing) = InputRoute.resolve(savedUID: deviceUID)
+        // A pinned unit never follows the system default again, so a different route needs a fresh engine.
+        if route != activeRoute { engine = AVAudioEngine(); activeRoute = route }
+        if case .pinned(var id) = route {
+            guard let au = engine.inputNode.audioUnit else { throw NSError(domain: "pin", code: 1) }
+            var current = AudioDeviceID(0)
+            var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+            AudioUnitGetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &current, &size)
+            // Setting it posts AVAudioEngineConfigurationChange; skipping a no-op set keeps restarts from looping.
+            if current != id {
+                let status = AudioUnitSetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &id, size)
+                if status != noErr { throw NSError(domain: NSOSStatusErrorDomain, code: Int(status)) }
             }
         }
+        let deviceName = route.deviceID.map(audioDeviceName) ?? "system default"
+        if missing, let uid = deviceUID { log("input device \(uid) not found, falling back to \(deviceName)") }
         let node = engine.inputNode
         // outputFormat stays at the previous device's rate after CurrentDevice is switched
         // (48 kHz vs the webcam's 16 kHz), and a tap with that format gets no buffers at all.
@@ -723,7 +852,76 @@ final class Listener {
         try engine.start()
         running = true
         wanted = true
+        watchVoiceActivity(on: route.deviceID)
         log("listening on \(deviceName) at \(fmt.sampleRate) Hz for \(config.cfg.wakeWords)")
+        let detectorOn = voiceActivity.withLock { $0.device != 0 }
+        let gateOn = detectorOn && config.cfg.dictation?.echoCancellation != false
+        log("voice activity: HAL detector=\(detectorOn ? "on" : "off") gate=\(gateOn ? "on" : "off") minVoiceSeconds=\(Listener.minVoiceSeconds) on \(deviceName)")
+    }
+
+    /// Windows twin: MicCapture.Open. HAL voice activity detection runs on an echo-cancelled copy of the input,
+    /// so speaker playback never turns it on (0 of 240 polls, measured 2026-10-28), and other apps keep the raw mic.
+    private func watchVoiceActivity(on id: AudioDeviceID?) {
+        let previous = voiceActivity.withLock { state in
+            let old = state.device
+            state = (0, nil, .distantPast)
+            return old
+        }
+        if previous != 0, previous != id { setVoiceActivityDetection(previous, on: false) }
+        guard let id else { return }
+        guard setVoiceActivityDetection(id, on: true) else {
+            log("echo cancellation unavailable, raw input: no voice activity detection on \(audioDeviceName(id))")
+            return
+        }
+        voiceActivity.withLock { $0.device = id }
+        guard voiceActivityListened.insert(id).inserted else { return }
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVoiceActivityDetectionState,
+                                              mScope: kAudioDevicePropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
+        // The listener fires once per transition, so the state is kept here rather than polled.
+        AudioObjectAddPropertyListenerBlock(id, &addr, .main) { [weak self] _, _ in
+            guard let self, let on = audioProperty(id, kAudioDevicePropertyVoiceActivityDetectionState, UInt32(0),
+                                                    scope: kAudioDevicePropertyScopeInput) else { return }
+            self.voiceActivity.withLock { state in
+                guard state.device == id else { return }
+                let now = Date()
+                if on != 0 {
+                    if state.onSince == nil { state.onSince = now }
+                } else {
+                    if let since = state.onSince, now.timeIntervalSince(since) >= Listener.minVoiceSeconds { state.lastVoiceEnd = now }
+                    state.onSince = nil
+                }
+            }
+        }
+    }
+
+    @discardableResult
+    private func setVoiceActivityDetection(_ id: AudioDeviceID, on: Bool) -> Bool {
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVoiceActivityDetectionEnable,
+                                              mScope: kAudioDevicePropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
+        var value: UInt32 = on ? 1 : 0
+        return AudioObjectHasProperty(id, &addr)
+            && AudioObjectSetPropertyData(id, &addr, 0, nil, UInt32(MemoryLayout<UInt32>.size), &value) == noErr
+    }
+
+    // ponytail: fixed threshold. Speaker playback still blipped the detector for 725–1236 ms in 3 of 6 runs while a voice
+    // from another source held it for 8000 ms (2026-10-28); a late start keeps the phrase from its preroll.
+    // Make it a config value if short live phrases get dropped.
+    static let minVoiceSeconds = 1.5
+    static let noVoiceActivity = "no voice activity (speaker playback is not a voice)"
+    static func micHeldBy(_ busy: String) -> String { "\(busy) is using the microphone" }
+
+    private func voiceBeingHeard() -> Bool {
+        voiceActivity.withLock { $0.device != 0 && $0.onSince != nil }
+    }
+
+    /// True when no gate is set, or the detector has heard one voice for minVoiceSeconds now or within the last 1.5 s.
+    private func voiceRecentlyActive() -> Bool {
+        voiceActivity.withLock { state in
+            let now = Date()
+            if state.device == 0 { return true }
+            if let since = state.onSince, now.timeIntervalSince(since) >= Listener.minVoiceSeconds { return true }
+            return now.timeIntervalSince(state.lastVoiceEnd) < 1.5
+        }
     }
 
     /// realtime paces frames like the mic does, which matters when the consumer awaits mid-stream.
@@ -735,7 +933,10 @@ final class Listener {
         }
     }
 
-    func stop() { wanted = false; halt() }
+    func stop() { wanted = false; halt(); watchVoiceActivity(on: nil) }
+
+    /// Resume after a Meet hold: unlike start(), a failure keeps `wanted` and retries every 10 s.
+    func startRetrying() { wanted = true; attemptStart() }
 
     private func halt() {
         let generation = localHistoryState.withLock { state in state.generation += 1; return state.generation }
@@ -766,6 +967,10 @@ final class Listener {
         var confirmed: Bool
         /// Length of `samples` when the last agreement check started.
         var checkedSamples = 0
+        /// Length of `samples` when the last stop check over its newest seconds started.
+        var stopCheckedSamples = 0
+        /// The newest stop check ended on a stop word too recent to stop on; the HUD shows the stop already.
+        var stopHeard = false
         init(samples: [Float], generation: Int, transcriptPolicy: AutomaticTranscriptPolicy, silentFrames: Int, heardSpeech: Bool, action: WakeAction? = nil,
              origin: WakeOrigin = WakeOrigin(rule: .strict, inputIdleSeconds: MacInputActivity.idleSeconds())) {
             self.samples = samples
@@ -779,7 +984,9 @@ final class Listener {
         }
     }
 
-    enum Phase { case idle, waiting, recording, ended, followup }
+    /// `hearing`: a voice is heard but the voice activity gate has not opened an automatic session yet.
+    /// `stopping`: a stop word was heard and the dictation is waiting the moment that confirms it.
+    enum Phase { case idle, waiting, hearing, recording, stopping, ended, followup }
 
     /// Called on the main thread whenever the dictation phase changes.
     var onPhase: ((Phase) -> Void)?
@@ -801,8 +1008,26 @@ final class Listener {
         var recent: [Float] = []
         var speechFrames = 0
         var gapFrames = 0
+        // Which source counted each voiced frame of the open phrase, and why it has not opened a session; "" once logged.
+        var phraseEnergy = 0, phraseHAL = 0
+        // Loudest frame of the phrase against the energy threshold, so a mic too quiet for the segmenter shows as such.
+        var phrasePeak: Float = 0
+        var phraseOutcome = ""
+        func endPhrase(_ outcome: String) {
+            let ms = { (n: Int) in n * frameLen * 1000 / Int(rate) }
+            let level = String(format: "peakRms=%.4f threshold=%.4f", locale: Locale(identifier: "en_US_POSIX"), phrasePeak, seg.threshold)
+            log("voice: phrase voicedMs=\(ms(speechFrames)) energyMs=\(ms(phraseEnergy)) halMs=\(ms(phraseHAL)) \(level) -> \(outcome)")
+            phraseOutcome = ""
+        }
+        // A phrase that would have opened an automatic session but for voice activity detection, which needs
+        // minVoiceSeconds of voice: a first sentence often ends before that, and the next sentence then opens the session.
+        var phraseHeldByVoice = false
+        var heldPhrase: (samples: [Float], until: Int)?
+        // A phrase spoken while another dictation app held the mic was meant for that app: when it lets go mid-phrase
+        // (Superwhisper moving to processing, 2026-10-29 12:23 JST), the phrase must not open a session of its own.
+        var phraseForOtherApp = false
         // Stop-word judgement runs beside the frame loop; `stopJob` says which dictation and generation it belongs to.
-        let stopCheck = LatestRecognition<Int>()
+        let stopCheck = LatestRecognition<StopVerdict>()
         let wordCheck = LatestRecognition<(session: UUID, agreed: Bool)>()
         var stopJob: (session: UUID, generation: Int)?
         var stopFrames = 0
@@ -830,7 +1055,14 @@ final class Listener {
             var endedByUser = false
             // Derived from `dictation` after every frame (defer covers each `continue`) instead of at each place that sets it.
             defer {
-                let phase: Phase = endedByUser ? .ended : dictation.map { !$0.heardSpeech ? .waiting : $0.confirmed ? .recording : .idle } ?? (clock < followupUntil && config.cfg.dictation?.noWakeWord?.followup == true ? .followup : .idle)
+                // An automatic session awaiting its agreed words keeps the mic glyph, so the pill does not vanish between it and the red dot.
+                let phase: Phase = endedByUser ? .ended
+                    : dictation.map { $0.stopHeard ? .stopping : !$0.heardSpeech ? .waiting : $0.confirmed ? .recording : .hearing }
+                    ?? (clock < followupUntil && config.cfg.dictation?.noWakeWord?.followup == true ? .followup
+                        // Under the gate only a phrase the detector heard is a voice; energy alone can be speaker playback (MS14).
+                        : speechFrames > 0 && config.cfg.dictation?.noWakeWord?.enabled == true
+                            && (phraseHAL > 0 || config.cfg.dictation?.echoCancellation == false || voiceActivity.withLock { $0.device == 0 })
+                            && (lastAutomaticBlock == nil || lastAutomaticBlock == Listener.noVoiceActivity) ? .hearing : .idle)
                 // .ended hides itself after a moment; the idle that follows it is not a change.
                 if phase != shown, !(shown == .ended && phase == .idle) {
                     shown = phase
@@ -839,7 +1071,10 @@ final class Listener {
             }
             if f.isEmpty { seg = Segmenter(cfg: config.cfg); dictation = nil; followupUntil = 0; recent = []; speechFrames = 0; Hotkeys.end(); continue }
             seg.adaptFloor = dictation == nil
-            let event = seg.push(f)
+            let hal = voiceBeingHeard()
+            let event = seg.push(f, voice: hal)
+            let energy = seg.lastWasEnergy
+            let speaking = seg.lastWasSpeech
             // The automatic session opens on voice activity before any transcript, so a spoken wake word replaces it with the
             // dictation the user asked for. The idle path below transcribes the same utterance again and opens that dictation.
             var heardDuringAutomatic: Transcript?
@@ -847,13 +1082,14 @@ final class Listener {
                let heard = try? await transcribe(u, locale: Locale(identifier: config.cfg.locale ?? "ja_JP")) {
                 guard localHistoryState.withLock({ $0.generation == generation }) else { continue }
                 if speaksWake(heard) {
-                    dictation = nil; speechFrames = 0
+                    dictation = nil; speechFrames = 0; Hotkeys.end()
                     log("dictation session: automatic replaced by wake word")
                 } else {
                     heardDuringAutomatic = heard
                 }
             }
             if var d = dictation {
+                if speechFrames > 0, !phraseOutcome.isEmpty { endPhrase("dictation opened \(d.origin.fields) \(sidField(d.sessionID))") }
                 let dc = config.cfg.dictation ?? DictationConfig()
                 let key = Hotkeys.take()
                 if key == .cancel {
@@ -862,7 +1098,7 @@ final class Listener {
                     log("dictation cancelled \(sidField(d.sessionID))"); continue
                 }
                 d.samples += f
-                d.silentFrames = seg.lastWasSpeech ? 0 : d.silentFrames + 1
+                d.silentFrames = speaking ? 0 : d.silentFrames + 1
                 if !d.confirmed, let check = wordCheck.take(), check.session == d.sessionID, check.agreed {
                     d.confirmed = true
                     log("dictation session: automatic confirmed by agreed words \(sidField(d.sessionID))")
@@ -878,9 +1114,11 @@ final class Listener {
                 stopFrames += f.count
                 // The stop word is judged beside the frame loop, on the newest utterance only. Frames keep flowing meanwhile,
                 // so the result is taken on a later frame, and the cut also drops the frames that arrived since.
-                if let cut = stopCheck.take(), let job = stopJob {
+                if let verdict = stopCheck.take(), let job = stopJob {
                     stopJob = nil
-                    if cut > 0, job.session == d.sessionID, job.generation == generation {
+                    let current = job.session == d.sessionID && job.generation == generation
+                    if current { d.stopHeard = verdict == .heard }
+                    if case let .cut(cut) = verdict, cut > 0, current {
                         d.samples.removeLast(min(cut + stopFrames, d.samples.count))
                         dictation = nil; recent.removeAll(); speechFrames = 0; Hotkeys.end(); endedByUser = true
                         log("dictation finished by stop word \(sidField(d.sessionID))")
@@ -888,21 +1126,31 @@ final class Listener {
                         if d.heardSpeech, !d.samples.isEmpty { submitAndArm(d, cfg: dc, reason: finishReasonToken("stop word")) }
                         continue
                     }
+                    if case .cut = verdict, !current { log("stop check: result discarded job=\(sidField(job.session)) generation=\(job.generation) current=\(sidField(d.sessionID)) generation=\(generation)") }
                 }
-                let stopAudio: (u: [Float], heard: Transcript?)? = switch event {
-                case let .utterance(u)?: (u, heardDuringAutomatic)
-                case let .tail(u)?: (u, nil)
-                default: nil
+                let stopAudio: (u: [Float], heard: Transcript?, kind: String)? = switch event {
+                case let .utterance(u)?: (u, heardDuringAutomatic, "utterance")
+                case let .tail(u)?: (u, nil, "tail")
+                // Steady sound above the threshold (room noise on a raw mic) keeps the segmenter in one open utterance, so no
+                // utterance or tail comes until it stops; and even in a quiet room the utterance closes only after hangoverMs.
+                // So the newest seconds are also checked during a long utterance and from the first 60 ms gap, so a stop word
+                // reaches the HUD (.stopping) about as soon as the recognizer (~100 ms) has it.
+                // ponytail: at most every 250 ms while a dictation is open; widen it if the recognizer load shows up.
+                default: (seg.isSkipping || seg.tailSilentFrames >= 2) && !stopCheck.pending
+                    && d.samples.count - d.stopCheckedSamples >= Int(rate) / 4
+                    ? (Array(d.samples.suffix(Int(rate) * 4)), nil, "window") : nil
                 }
                 if let stopAudio, let words = config.cfg.stopWords, !words.isEmpty {
                     let locale = Locale(identifier: config.cfg.locale ?? "ja_JP")
                     let quiet = config.cfg.dictation?.noWakeWord?.enabled == true
-                    stopCheck.submit { await stopWordCut(stopAudio.u, heard: stopAudio.heard, stopWords: words, locale: locale, quiet: quiet) }
+                    let session = d.sessionID
+                    stopCheck.submit { await stopWordCut(stopAudio.u, heard: stopAudio.heard, stopWords: words, locale: locale, quiet: quiet, kind: stopAudio.kind, sessionID: session) }
+                    d.stopCheckedSamples = d.samples.count
                     stopJob = (d.sessionID, generation)
                     stopFrames = 0
                 }
                 guard localHistoryState.withLock({ $0.generation == generation }) else { continue }
-                if d.deafFrames > 0 { d.deafFrames -= 1 } else if !d.heardSpeech && seg.lastWasSpeech {
+                if d.deafFrames > 0 { d.deafFrames -= 1 } else if !d.heardSpeech && speaking {
                     // Drop the wait before the text, keeping a preroll so the first syllable is whole.
                     d.samples = Array(d.samples.suffix(frames(ms: config.cfg.prerollMs ?? 300) * frameLen + frameLen))
                     d.heardSpeech = true
@@ -921,6 +1169,10 @@ final class Listener {
                 let reason = key == .finish ? "hotkey" : d.samples.count > Int((dc.maxSeconds ?? 60) * rate) ? "maxSeconds"
                     : "\(d.silentFrames * frameLen * 1000 / Int(rate)) ms silence"
                 d.samples.removeLast(d.silentFrames * frameLen)
+                // A whole maxSeconds with no word Apple Speech and Whisper agreed on was the room, not a voice. Lift the floor
+                // as an idle over-cap head with no wake does; otherwise the next frame reads the same noise as speech and
+                // reopens a session at once, and the mic HUD never leaves (model: .claude/skills/verify-hud-noise).
+                if reason == "maxSeconds", d.origin.isAutomatic, !d.confirmed { rebaseFloorAfterNoWake(&seg) }
                 dictation = nil; recent.removeAll(); speechFrames = 0; Hotkeys.end(); endedByUser = key == .finish
                 log("dictation ended by \(reason) after \(d.samples.count * 1000 / Int(rate)) ms of audio \(sidField(d.sessionID))")
                 if key == .finish { playStopSound() }
@@ -929,8 +1181,23 @@ final class Listener {
             }
             // speechFrames counts the voiced frames of the phrase being spoken, joined across gaps up to the hangover,
             // which the VAD alone splits into short runs.
-            if seg.lastWasSpeech { speechFrames += 1; gapFrames = 0 }
-            else if speechFrames > 0 { gapFrames += 1; if gapFrames > frames(ms: config.cfg.hangoverMs ?? 300) { speechFrames = 0 } }
+            if speaking {
+                if speechFrames == 0 { phraseEnergy = 0; phraseHAL = 0; phrasePeak = 0; phraseForOtherApp = false }
+                speechFrames += 1; gapFrames = 0
+                if energy { phraseEnergy += 1 }
+                if hal { phraseHAL += 1 }
+                phrasePeak = max(phrasePeak, seg.lastRms)
+            }
+            else if speechFrames > 0 {
+                gapFrames += 1
+                phrasePeak = max(phrasePeak, seg.lastRms)
+                if gapFrames > frames(ms: config.cfg.hangoverMs ?? 300) {
+                    if !phraseOutcome.isEmpty { endPhrase(phraseOutcome) }
+                    // ponytail: one held phrase for 5 s; a third sentence before the gate opens drops the first.
+                    if phraseHeldByVoice { heldPhrase = (recent, clock + Int(rate) * 5) }
+                    speechFrames = 0; phraseHeldByVoice = false
+                }
+            }
             recent += f
             // A live phrase is kept so an automatic session that starts late still records it from the beginning.
             // ponytail: capped at 10 s of audio; a longer phrase keeps only its tail.
@@ -947,18 +1214,37 @@ final class Listener {
             }
             let options = config.cfg.dictation?.noWakeWord
             // Starts even while the user types or moves the mouse; input idle no longer gates it.
-            if seg.lastWasSpeech && speechFrames >= frames(ms: config.cfg.minSpeechMs ?? 300),
-               let mode = config.cfg.dictation?.superwhisperMode, !mode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-               let idle = MacInputActivity.idleSeconds(),
-               let origin = NoWakePolicy.onSpeech(options, idleSeconds: idle, inFollowupWindow: clock < followupUntil),
-               automaticWakeAllowed() {
-                // The whole phrase with its preroll, even when it overlaps typing.
-                let samples = recent
-                if !samples.isEmpty {
-                    // No hotkeys: the user is mid-task elsewhere and their Escape belongs to that app, so only silence or a stop word ends it.
-                    dictation = Dictation(samples: samples, generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: true, origin: origin)
-                    log("dictation session: automatic \(origin.fields) \(sidField(dictation?.sessionID))")
-                    continue
+            // Same short-circuit order as the single condition it replaces, so each clause can name itself in the phrase line.
+            let longEnough = speechFrames >= frames(ms: config.cfg.minSpeechMs ?? 300)
+            let modeSet = !(config.cfg.dictation?.superwhisperMode ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let idle = speaking && longEnough && modeSet ? MacInputActivity.idleSeconds() : nil
+            let origin = idle.flatMap { NoWakePolicy.onSpeech(options, idleSeconds: $0, inFollowupWindow: clock < followupUntil) }
+            if speaking {
+                phraseOutcome = !longEnough ? "shorter than minSpeechMs" : !modeSet ? "superwhisperMode unset"
+                    : idle == nil ? "input idle unavailable" : origin == nil ? "NoWakePolicy.onSpeech nil" : "allowed but no audio"
+            }
+            if let origin {
+                if phraseForOtherApp {
+                    phraseOutcome = "automatic wake blocked: phrase began while another app held the microphone"
+                } else if !automaticWakeAllowed() {
+                    if lastAutomaticBlock == Listener.noVoiceActivity { phraseHeldByVoice = true }
+                    if let block = lastAutomaticBlock, (config.cfg.skipWhileMicInUseBy ?? []).contains(where: { block == Listener.micHeldBy($0) }) { phraseForOtherApp = true }
+                    phraseOutcome = "automatic wake blocked: \(lastAutomaticBlock ?? "-")"
+                } else {
+                    // The whole phrase with its preroll, even when it overlaps typing, after a phrase the gate held back.
+                    let held = heldPhrase.flatMap { clock < $0.until ? $0.samples : nil } ?? []
+                    heldPhrase = nil; phraseHeldByVoice = false
+                    if !held.isEmpty { log("dictation session: automatic keeps \(held.count * 1000 / Int(rate)) ms held for voice activity") }
+                    let samples = held + recent
+                    if !samples.isEmpty {
+                        // Finish only: the user is mid-task elsewhere and their Escape belongs to that app. The finish key is the manual
+                        // stop for when the stop word is misheard.
+                        dictation = Dictation(samples: samples, generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: true, origin: origin)
+                        Hotkeys.begin(finishOnly: true)
+                        log("dictation session: automatic \(origin.fields) \(sidField(dictation?.sessionID))")
+                        endPhrase("session opened \(sidField(dictation?.sessionID))")
+                        continue
+                    }
                 }
             }
             // Experimental early wake (cfg.earlyWakeMs): STT on the open utterance before the hangover. A transcript that
@@ -1133,7 +1419,8 @@ final class Listener {
 
     private func automaticWakeBlock() -> String? {
         if localHistoryState.withLock({ $0.busy }) { return "previous recording still transcribing" }
-        if let busy = micInUse(by: config.cfg.skipWhileMicInUseBy ?? [], failClosed: true) { return "\(busy) is using the microphone" }
+        if config.cfg.dictation?.echoCancellation != false && !voiceRecentlyActive() { return Listener.noVoiceActivity }
+        if let busy = micInUse(by: config.cfg.skipWhileMicInUseBy ?? [], failClosed: true) { return Listener.micHeldBy(busy) }
         if let excluded = config.cfg.dictation?.excludeBundleIDs, !excluded.isEmpty {
             guard let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else { return "frontmost app unknown" }
             if excluded.contains(id) { return "\(id) is excluded" }
@@ -1147,8 +1434,8 @@ final class Listener {
         do { try start(); restartError = nil } catch {
             // One log line per distinct error, the retry repeats every 10 s while the device is away.
             if restartError != "\(error)" { restartError = "\(error)"; log("restart failed, retrying every 10 s: \(error)") }
-            // The one recovery seen in the field (2026-10-03 log) went through a fresh engine.
-            engine = AVAudioEngine()
+            // The one recovery seen in the field (2026-10-03 log) went through a fresh engine; start() builds one when the route is unset.
+            activeRoute = nil
             if !retryScheduled {
                 retryScheduled = true
                 DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
@@ -1236,10 +1523,10 @@ final class Listener {
                 var d = d
                 d.samples = SpeakerGate.withoutOtherSpeakers(d.samples, cfg: config.cfg)
                 // superwhisper takes focus when it opens the file; hand it back to wherever the user is now, not where the session began.
-                // Ending it with the stop word shows the user meant to dictate into the app in front, so it is handed off like a
-                // wake-word dictation and superwhisper pastes it. One that ended on silence or maxSeconds stays history-only.
-                let origin = token == "StandaloneStop" ? WakeOrigin(rule: .strict, inputIdleSeconds: d.origin.inputIdleSeconds) : d.origin
-                if origin != d.origin { log("dictation session: automatic ended by stop word, pasting like a wake-word dictation \(sidField(d.sessionID))") }
+                // Ending it with the stop word or the finish key shows the user meant to dictate into the app in front, so it is handed
+                // off like a wake-word dictation and superwhisper pastes it. One that ended on silence or maxSeconds stays history-only.
+                let origin = token == "StandaloneStop" || token == "FinishCommand" ? WakeOrigin(rule: .strict, inputIdleSeconds: d.origin.inputIdleSeconds) : d.origin
+                if origin != d.origin { log("dictation session: automatic ended by \(token), pasting like a wake-word dictation \(sidField(d.sessionID))") }
                 reportDelivery(.processing)
                 let outcome = await handoff(d.samples, cfg: cfg, target: NSWorkspace.shared.frontmostApplication,
                                             action: nil, origin: origin, sessionID: d.sessionID, transcriptPolicy: d.transcriptPolicy,
@@ -1529,6 +1816,7 @@ final class HUD {
         bg.wantsLayer = true
         bg.layer?.cornerRadius = 12
         glyphView.translatesAutoresizingMaskIntoConstraints = false
+        glyphView.wantsLayer = true
         bg.addGestureRecognizer(NSClickGestureRecognizer(target: HistoryPanel.shared, action: #selector(HistoryPanel.show)))
         bg.addSubview(glyphView)
         NSLayoutConstraint.activate([
@@ -1545,6 +1833,7 @@ final class HUD {
     private var phase = Listener.Phase.idle
     private var delivery: DeliveryState?
     private var notice: HUDLabel?
+    private var loggedLabel: HUDLabel?
 
     /// The glyph currently on screen, or nil when the HUD is hidden. `--hud-labels` reads it.
     var visibleGlyph: HUDLabel? { panel.isVisible ? glyphView.glyph : nil }
@@ -1575,10 +1864,13 @@ final class HUD {
         render()
     }
 
-    private func render() {
+    /// hideNow: an expiry ends the pill on time; only a state change waits for the next state before hiding.
+    private func render(hideNow: Bool = false) {
         shown += 1
         let view: (label: HUDLabel, expiry: Double?)? = if let notice { (notice, 1) } else { switch (phase, delivery) {
         case (.waiting, _): (.waiting, nil)
+        // The same glyph a confirmed stop shows, so the user sees the stop word land the moment it is recognized.
+        case (.stopping, _): (.processing, nil)
         case (.recording, _), (_, .recording?): (.recording, nil)
         case (_, .processing?): (.processing, nil)
         case (_, .failed?): (.failed, 3)
@@ -1587,10 +1879,34 @@ final class HUD {
         // A short recording dropped before its handoff never reports a delivery.
         case (.ended, nil): (.processing, 1.5)
         case (.followup, nil): (.followup, nil)
+        // Below every delivery, so superwhisper's own recording keeps its red dot while the user speaks into it.
+        case (.hearing, nil): (.waiting, nil)
         case (.idle, nil): nil
         } }
+        // A HUD the user reported missing leaves no other trace, so each visible change is logged.
+        if view?.label != loggedLabel {
+            loggedLabel = view?.label
+            log("hud: \(view.map { "\($0.label)" } ?? "hidden") phase=\(phase) delivery=\(delivery.map { "\($0)" } ?? "-")")
+        }
         // Animation must stop with the pill: a hidden HUD that keeps a 30 fps timer burns CPU for nothing.
-        guard let view else { glyphView.stop(); panel.orderOut(nil); return }
+        // The next state often arrives a moment later (recording → processing), so the pill waits briefly before hiding
+        // instead of vanishing and reappearing.
+        guard let view else {
+            if hideNow { glyphView.stop(); panel.orderOut(nil); return }
+            let mine = shown
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [self] in
+                guard shown == mine else { return }
+                glyphView.stop(); panel.orderOut(nil)
+            }
+            return
+        }
+        // A glyph change on the visible pill fades, so it reads as the same HUD changing its icon.
+        if panel.isVisible, glyphView.glyph != view.label, let layer = glyphView.layer {
+            let fade = CATransition()
+            fade.type = .fade
+            fade.duration = 0.15
+            layer.add(fade, forKey: "glyph")
+        }
         glyphView.show(view.label)
         if let expiry = view.expiry {
             let mine = shown
@@ -1599,7 +1915,7 @@ final class HUD {
                 notice = nil
                 if phase == .ended { phase = .idle }
                 if delivery == .failed || delivery == .saved || delivery == .done { delivery = nil }
-                render()
+                render(hideNow: true)
             }
         }
         // Follow the focused window even when the pointer remains on another display.
@@ -1658,6 +1974,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let recordings = Platform.expandPath(config.cfg.dictation?.recordingsDir ?? Platform.defaultRecordingsDir)
         // ponytail: 0.5 s CoreAudio poll; a kAudioProcessPropertyIsRunningInput listener if it shows up in CPU.
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.followDirectSuperwhisper(recordings: recordings) }
+        meetEnabled = config.cfg.pauseDuringMeet == true
+        if meetEnabled { Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.followMeet() } }
         Task { @MainActor in
             do {
                 if let ownership = try? MacModeRestoreStore.acquire() {
@@ -1665,6 +1983,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     let settled = pending ? await awaitRunsSettled(in: recordings) : true
                     if settled {
                         _ = await recoverSuperwhisperMode(target: nil)
+                        if let wanted = config.cfg.dictation?.pasteMode { await selectPasteMode(wanted) }
                     } else {
                         log("superwhisper mode: an earlier run is still in flight; the next handoff restores the mode")
                     }
@@ -1678,6 +1997,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     return
                 }
                 try listener.start()
+                // Same main-actor step as start(), so a call already running never gets a 2 s window of listening.
+                followMeet()
             } catch {
                 fail("起動に失敗しました: \(error)")
             }
@@ -1740,8 +2061,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         a.runModal()
     }
 
+    /// Browsers whose microphone input means a Google Meet call (Chrome and Edge only).
+    // ponytail: any mic use by these browsers counts, not only Meet; matching the Meet tab needs Screen Recording permission.
+    static let meetBrowsers = ["com.google.Chrome", "com.google.Chrome.helper", "com.microsoft.edgemac", "com.microsoft.edgemac.helper"]
+    /// config `pauseDuringMeet`; off leaves followMeet and the toggle's call check inert.
+    private var meetEnabled = false
+    private var meetInCall = false
+    /// followMeet stopped the listener and owes it a restart when the call ends.
+    private var meetHeld = false
+    /// The user resumed during this call, so followMeet leaves the listener alone until the call ends.
+    private var meetOverride = false
+
+    /// Model: .claude/skills/verify-meet-pause (MeetPause.tla, action Poll).
+    func followMeet() {
+        guard let listener, meetEnabled else { return }
+        let browser = micInUse(by: Self.meetBrowsers)
+        meetInCall = browser != nil
+        if let browser {
+            guard listener.wanted, !meetOverride else { return }
+            log("meet: \(browser) holds the microphone, pausing")
+            // stop(), not halt(): every restart path checks `wanted`, so none reopens the mic during the call.
+            listener.stop()
+            meetHeld = true
+            hud.notify(.paused)
+        } else {
+            meetOverride = false
+            guard meetHeld else { return }
+            meetHeld = false
+            log("meet: the browser released the microphone, resuming")
+            listener.startRetrying()
+            hud.notify(.resumed)
+        }
+        refresh()
+    }
+
     @objc func togglePause() {
         if listener.wanted { listener.stop() } else {
+            meetInCall = meetEnabled && micInUse(by: Self.meetBrowsers) != nil
+            meetHeld = false
+            meetOverride = meetInCall
             do { try listener.start() } catch { fail("再開に失敗しました: \(error)") }
         }
         hud.notify(listener.wanted ? .resumed : .paused)
@@ -1751,9 +2109,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Rebuilt on every open so plugged/unplugged devices show up.
     func menuNeedsUpdate(_ menu: NSMenu) {
         let selected = UserDefaults.standard.string(forKey: deviceKey)
-        let devices = AVCaptureDevice.DiscoverySession(deviceTypes: [.microphone, .external], mediaType: .audio, position: .unspecified).devices
+        let devices = inputDeviceIDs().compactMap { id in audioDeviceUID(id).map { (audioDeviceName(id), Optional($0)) } }
         menu.removeAllItems()
-        for (title, uid) in [("システムのデフォルト", nil)] + devices.map({ ($0.localizedName, Optional($0.uniqueID)) }) {
+        for (title, uid) in [("システムのデフォルト", nil)] + devices {
             let i = NSMenuItem(title: title, action: #selector(selectDevice), keyEquivalent: "")
             i.target = self
             i.representedObject = uid

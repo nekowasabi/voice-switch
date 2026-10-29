@@ -44,11 +44,12 @@ def check_wiring(repo):
     assert "var action: WakeAction? = nil" in mac
     submit = extract_braced_body(mac, r"private func submit[^\{]*\{")
     assert "action: d.action" in submit
-    handoff = extract_braced_body(mac, r"func handoff[^\{]*\{")
+    # Up to the return type: a default argument (`stillCurrent: () -> Bool = { true }`) has a brace of its own.
+    handoff = extract_braced_body(mac, r"func handoff\(.*?-> HandoffOutcome \{")
     assert "Macrowhisper.prepare" not in handoff
     assert "guard modeRequested, superwhisperAutoPasteDisabled" in handoff
-    mode_override = "if let mode = action?.superwhisperMode { cfg.superwhisperMode = mode }"
-    enter_mode = "enterSuperwhisperMode(cfg.superwhisperMode, target: target)"
+    mode_override = "action == nil ? nil : action?.superwhisperMode ?? cfg.superwhisperMode"
+    enter_mode = "enterSuperwhisperMode(wantedMode, target: target)"
     assert mode_override in handoff and enter_mode in handoff
     assert handoff.index(mode_override) < handoff.index(enter_mode)
     assert "Platform.urlProcess(action.url)" in handoff
@@ -82,7 +83,8 @@ mutations = [
     ("MacApp.swift", "var action: WakeAction? = nil"),
     ("MacApp.swift", "action: d.action"),
     ("MacApp.swift", "guard modeRequested, superwhisperAutoPasteDisabled"),
-    ("MacApp.swift", "if let mode = action?.superwhisperMode { cfg.superwhisperMode = mode }"),
+    ("MacApp.swift", "action == nil ? nil : action?.superwhisperMode ?? cfg.superwhisperMode"),
+    ("MacApp.swift", "enterSuperwhisperMode(wantedMode, target: target)"),
     ("MacApp.swift", "Platform.urlProcess(action.url)"),
     ("MacApp.swift", "Platform.runURLProcess(p, wait: false)"),
     ("MacApp.swift", "openArguments(input:"),

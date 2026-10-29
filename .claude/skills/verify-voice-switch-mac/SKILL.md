@@ -7,7 +7,7 @@ description: Drive the real macOS voice-switch binary with synthetic Japanese sp
 
 The primary surface is the menu bar app `VoiceSwitch.app` (`Sources/voice-switch`). It listens to the microphone, recognizes with Apple Speech, and either runs `command` or hands a recording to Superwhisper. The same binary has a `--simulate <audio>` mode. That mode feeds an audio file through the real `Listener` (segmenter, recognizer, wake/stop matching, dictation state machine) without opening the microphone, and logs to stdout. The config comes from `VOICE_SWITCH_CONFIG`.
 
-Out of scope here are the menu bar UI, the hotkeys (F9 to F11, Ctrl+Shift+F8), and the microphone device path. The Windows exe is covered by `verify-voice-switch`.
+Out of scope here are the menu bar UI and the hotkeys (F9 to F11, Ctrl+Shift+F8). The microphone device path is covered only by [features/mic-switch.md](features/mic-switch.md), which drives the installed app through `mic-switch.sh` in this folder (`VS_RUN_ID=<id> .claude/skills/verify-voice-switch-mac/mic-switch.sh [device title ...]`). The Windows exe is covered by `verify-voice-switch`.
 
 `verify.sh` in this folder wraps every step. Run it by absolute path.
 

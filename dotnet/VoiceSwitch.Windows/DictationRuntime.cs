@@ -83,7 +83,10 @@ public sealed class WindowsDictationRuntime
     // Mac Dictation.confirmed: an automatic session records from its first sound but shows 録音中 only once the recognizers
     // agreed on words in it, so a cough no longer flashes it. Checked beside the loop after every further second of body.
     private Guid confirmedSession;
+    // How far the word agreement and the stop window have looked. checkedSamples counts body samples as on Mac;
+    // stopCheckedSamples is a capture position, the end of the last stop window, so no session resets it.
     private long checkedSamples;
+    private long stopCheckedSamples;
     private (Guid Session, Task<bool> Agreed)? wordCheck;
     // Shadow log of playback vs microphone levels: mic dBFS per frame keyed by sample index, loopback dBFS per 10 ms keyed by ms.
     private readonly LevelTrace micLevels = new(4_000);
@@ -100,13 +103,14 @@ public sealed class WindowsDictationRuntime
     private Task? localInflight;
     private CancellationToken localCancellation;
     // The phrase the user is speaking: voiced frames joined across gaps up to the hangover, which the VAD alone splits into short runs.
-    private long phraseStart = -1;
-    private long phraseVoiced;
+    private Phrase? phrase;
     private long followupUntil;
     private bool lastVadSpeech;
     private string? lastSilenceDiagnosticKey;
     private DictationPhase shownPhase;
     private bool endedByUser;
+    // A probe ended in a stop word: the HUD shows the end before the closed utterance decides it.
+    private bool provisionalStop;
     private nint target;
     private string? lastAutomaticSkip;
     // Mac heardSpeech: once the voice after the wake word is heard it stays heard, so a repeated wake word keeps 録音中.
@@ -307,30 +311,35 @@ public sealed class WindowsDictationRuntime
                     {
                         var pendingBefore = pending.Count;
                         var wakeOrigin = outcome.Recognition is { } candidate ? RecognitionOrigin(session, candidate) : session.Origin;
+                        // Queued for audio a reset session owned: a stop window or probe from the dictation a hotkey just ended.
+                        var stale = !pending.ContainsKey(outcome.Work.Request.Id) || outcome.Work.Request.Range.Start < eligibleRecognitionStart;
                         if (outcome.Recognition is { } observed)
                         {
                             var origin = wakeOrigin;
-                            if (!session.IsActive && !session.IsAwaitingBody && observed.Extent == RecognitionExtent.ClosedUtterance
-                                && pending.ContainsKey(outcome.Work.Request.Id) && outcome.Work.Request.Range.Start >= eligibleRecognitionStart)
+                            if (!session.IsActive && !session.IsAwaitingBody && observed.Extent == RecognitionExtent.ClosedUtterance && !stale)
                                 WakeMissLabel.Observe(outcome.Work.Request.Id, origin);
                             var leadingWake = DictationBoundaries.LeadingWake(observed, config.Wakes()) is not null;
                             var stopRange = DictationBoundaries.StandaloneStopRange(observed, config.StopWords ?? []);
                             // Mac logs "heard:" for what it transcribes while idle and never transcribes the body. Here a body longer
                             // than the segmenter cap arrives as PrefixHead and stays private; a closed utterance inside a session is
                             // a stop-word candidate, so its text, grammar and confidence are logged to make stop misses tunable.
-                            var heard = config.Dictation?.NoWakeWord?.Enabled == true || (session.IsActive || session.IsAwaitingBody) && observed.Extent != RecognitionExtent.ClosedUtterance
+                            // The tail of an over-cap body is body text too and stays private like its head, and so does a
+                            // stale one: the session that owned its audio is gone by the time it completes.
+                            var heard = config.Dictation?.NoWakeWord?.Enabled == true || outcome.Work.BodyTail
+                                || (session.IsActive || session.IsAwaitingBody || stale) && observed.Extent != RecognitionExtent.ClosedUtterance
                                 ? $" textLen={TranscriptShape.Length(observed.Text)} filler={(TranscriptShape.IsFiller(observed.Text) ? 1 : 0)} conf={(observed.Confidence is double shapeConf ? shapeConf.ToString("0.00", CultureInfo.InvariantCulture) : "-")} rejectedLen={(observed.RejectedText is { } rejectedShape ? TranscriptShape.Length(rejectedShape) : 0)}"
                                 : $" text=\"{observed.Text}\" conf={(observed.Confidence is double conf ? conf.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) : "-")}{(observed.RejectedText is { } rejectedText ? $" rejectedText=\"{rejectedText}\"" : "")} grammar={(observed.FromStopGrammar ? "stop" : "dictation")} reading=\"{string.Join(' ', observed.Lexemes.Where(lexeme => lexeme.Reading is not null).Select(lexeme => lexeme.Reading))}\"{(observed.Alternates.IsDefaultOrEmpty ? "" : $" alts=\"{string.Join('|', observed.Alternates.Select(alternate => $"{alternate.Text}/{alternate.Reading}"))}\"")}";
-                            Log.Info($"dictation recognition: complete id={outcome.Work.Request.Id} extent={outcome.Work.Request.Extent} range={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End} rejected={observed.HadRejectedSpeech} leadingWake={leadingWake} standaloneStop={stopRange is not null} stopRange={(stopRange is null ? "-" : $"{stopRange.Value.Start}..{stopRange.Value.End}")} pendingBefore={pendingBefore}{heard}{TailStopLog(observed)} {origin.Fields} {Sid(session)}");
+                            Log.Info($"dictation recognition: complete id={outcome.Work.Request.Id} extent={outcome.Work.Request.Extent} range={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End} rejected={observed.HadRejectedSpeech} leadingWake={leadingWake} standaloneStop={stopRange is not null} stopRange={(stopRange is null ? "-" : $"{stopRange.Value.Start}..{stopRange.Value.End}")}{WindowStopLog(observed)} pendingBefore={pendingBefore}{heard}{TailStopLog(observed)} {origin.Fields} {Sid(session)}");
                         }
                         observer?.RecognitionCompleted(outcome.Work.Request, outcome.Recognition, outcome.Error);
 
-                        if (!pending.Remove(outcome.Work.Request.Id) || outcome.Work.Request.Range.Start < eligibleRecognitionStart)
+                        pending.Remove(outcome.Work.Request.Id);
+                        if (stale)
                         {
-                            if (outcome.Recognition is { } stale)
+                            if (outcome.Recognition is { } late)
                             {
-                                var staleStop = DictationBoundaries.StandaloneStopRange(stale, config.StopWords ?? []) is not null;
-                                Log.Info($"dictation recognition: stale id={outcome.Work.Request.Id} range={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End} standaloneStop={staleStop}{TailStopLog(stale)} eligibleStart={eligibleRecognitionStart}");
+                                var staleStop = DictationBoundaries.StandaloneStopRange(late, config.StopWords ?? []) is not null;
+                                Log.Info($"dictation recognition: stale id={outcome.Work.Request.Id} range={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End} standaloneStop={staleStop}{TailStopLog(late)} eligibleStart={eligibleRecognitionStart}");
                             }
 
                             continue;
@@ -380,15 +389,19 @@ public sealed class WindowsDictationRuntime
                         var wasActive = session.IsActive;
                         var wasAwaiting = session.IsAwaitingBody;
                         var wasIdle = !wasActive && !wasAwaiting;
-                        var stopBeforeApply = DictationBoundaries.StandaloneStopRange(outcome.Recognition!, config.StopWords ?? []);
-                        var tailBeforeApply = DictationBoundaries.TryDedicatedTailStop(outcome.Recognition!, config.StopWords ?? [], config.Dictation?.DedicatedStopRecognizer == true);
-                        var effectiveStop = stopBeforeApply ?? tailBeforeApply?.Range;
                         var audio = session.Apply(outcome.Recognition!, originalStore.Copy, analysisStore.Next, wakeOrigin);
+                        var verdict = session.LastStop;
+                        var effectiveStop = verdict is { Ends: true } ? verdict : null;
+                        // Mac StopVerdict.heard: a probe ending in a stop word only shows the end; the closed utterance still
+                        // decides it, and any later recognition that is not such a probe takes the provisional end back.
+                        if (wasActive && session.IsActive)
+                        {
+                            provisionalStop = verdict is { Kind: StopKind.Heard };
+                        }
+
                         if (wasIdle && !session.IsActive && !session.IsAwaitingBody && outcome.Work.Request.Extent == RecognitionExtent.PrefixHead)
                         {
-                            var floorBefore = segmenter.Floor;
-                            segmenter.RebaseFloor();
-                            Log.Info($"dictation vad: floor rebased id={outcome.Work.Request.Id} floor={floorBefore:0.0000}->{segmenter.Floor:0.0000} threshold={segmenter.Threshold:0.0000}");
+                            RebaseFloor($"id={outcome.Work.Request.Id}");
                         }
 
                         // A tail stop in the same utterance that opens the body finishes inside Apply, so the
@@ -397,7 +410,7 @@ public sealed class WindowsDictationRuntime
                         {
                             // Superwhisper pastes into whatever is frontmost, so remember where the user was when the wake word landed.
                             target = foregroundWindow();
-                            if ((session.Origin.IsAutomatic ? AutomaticSkipReason(target) : SkipReason(target, session.Action)) is { } skipped)
+                            if ((session.Origin.IsAutomatic ? AutomaticMicBlock() ?? AutomaticForegroundSkipReason(target) : SkipReason(target, session.Action)) is { } skipped)
                             {
                                 Log.Info(skipped);
                                 session = ResetSession(pending, outcome.Recognition!.Source.End);
@@ -428,7 +441,7 @@ public sealed class WindowsDictationRuntime
                         {
                             Log.Info($"dictation session: body-start id={outcome.Work.Request.Id} range={started.Start}..{started.End}{byReading} {Sid(session)}");
                         }
-                        else if (wasIdle && effectiveStop is { } ignored && audio is null && !session.IsActive && !session.IsAwaitingBody)
+                        else if (wasIdle && effectiveStop is { Range: var ignored } && audio is null && !session.IsActive && !session.IsAwaitingBody)
                         {
                             Log.Info($"dictation session: ignored-stop-no-active id={outcome.Work.Request.Id} stopRange={ignored.Start}..{ignored.End}");
                         }
@@ -442,10 +455,14 @@ public sealed class WindowsDictationRuntime
                         {
                             if (audio.Reason == FinishReason.StandaloneStop && effectiveStop is { } stop)
                             {
-                                var tailNote = stopBeforeApply is null && tailBeforeApply is { } tail
-                                    ? $" tailStop=True tailConf={tail.Confidence.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)} tailRange={tail.Range.Start}..{tail.Range.End}"
-                                    : "";
-                                Log.Info($"dictation session: standalone-stop id={outcome.Work.Request.Id} trimExcluded={audio.Range.End}..{stop.End}{tailNote} sid={audio.SessionId}");
+                                var kindNote = stop.Kind switch
+                                {
+                                    StopKind.Trailing => " trailing=True",
+                                    StopKind.Window => " window=True",
+                                    StopKind.Tail => $" tailStop=True tailConf={stop.TailConfidence!.Value.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)} tailRange={stop.Range.Start}..{stop.Range.End}",
+                                    _ => ""
+                                };
+                                Log.Info($"dictation session: standalone-stop id={outcome.Work.Request.Id} trimExcluded={audio.Range.End}..{stop.Range.End}{kindNote} sid={audio.SessionId}");
                             }
 
                             Submit(audio);
@@ -577,16 +594,16 @@ public sealed class WindowsDictationRuntime
         if (session.IsActive || session.IsAwaitingBody)
         {
             // Audio a session already owns never becomes the lookback of the next automatic one.
-            phraseStart = -1;
+            phrase = null;
         }
         else if (segmenter.LastWasSpeech)
         {
-            if (phraseStart < 0 || frame.Start - lastLiveSpeechEnd > bridge) (phraseStart, phraseVoiced) = (frame.Start, 0);
-            phraseVoiced += frame.Analysis.Length;
+            if (phrase is null || frame.Start - lastLiveSpeechEnd > bridge) phrase = new Phrase(frame.Start);
+            phrase.Voiced += frame.Analysis.Length;
         }
         else if (frame.Start - lastLiveSpeechEnd > bridge)
         {
-            phraseStart = -1;
+            phrase = null;
         }
 
         if (segmenter.LastWasSpeech)
@@ -595,15 +612,15 @@ public sealed class WindowsDictationRuntime
         }
 
         // Starts even while the user types or moves the mouse; input idle no longer gates it.
-        if (config.Dictation?.NoWakeWord is { Enabled: true } && phraseStart >= 0 && segmenter.LastWasSpeech
-            && phraseVoiced >= Segmenter.Frames(config.MinSpeechMs ?? 300) * Segmenter.FrameLength)
+        if (config.Dictation?.NoWakeWord is { Enabled: true } && phrase is { } spoken && segmenter.LastWasSpeech
+            && spoken.Voiced >= Segmenter.Frames(config.MinSpeechMs ?? 300) * Segmenter.FrameLength)
         {
             var idle = inputIdleSeconds();
-            var origin = NoWakePolicy.OnSpeech(config.Dictation?.NoWakeWord, idle, phraseStart < followupUntil);
+            var origin = NoWakePolicy.OnSpeech(config.Dictation?.NoWakeWord, idle, spoken.Start < followupUntil);
             var window = origin is not null ? foregroundWindow() : 0;
             // The whole phrase with its preroll, even when it overlaps typing.
-            var start = Math.Max(originalStore.Start, phraseStart - Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength);
-            var skip = origin is null ? null : AutomaticSkipReason(window);
+            var start = Math.Max(originalStore.Start, spoken.Start - Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength);
+            var skip = origin is null ? null : spoken.LatchMicBlock(AutomaticMicBlock) ?? AutomaticForegroundSkipReason(window);
             // Logged once per change: a blocked automatic wake was otherwise indistinguishable from silence in the log.
             if (skip != lastAutomaticSkip && skip is not null) Log.Info(skip);
             lastAutomaticSkip = skip;
@@ -620,14 +637,24 @@ public sealed class WindowsDictationRuntime
 
         if (ev is null)
         {
-            // Only while idle, and at most two probes in flight: the serial SAPI queue (8) exits the runtime when it overflows,
+            // Idle or recording, and at most two probes in flight: the serial SAPI queue (8) exits the runtime when it overflows,
             // yet the 150 ms probe must not be dropped while the 60 ms one is still decoding (prefix wakes fire only from it).
-            if (!session.IsActive
-                && !session.IsAwaitingBody
+            // Mac 6c30bf3: while recording, a probe lets the HUD show a stop word before the hangover closes the utterance.
+            if (!session.IsAwaitingBody
                 && pending.Values.Count(work => work.Request.Extent == RecognitionExtent.Probe) < MaxPendingProbes
                 && segmenter.Probe() is { } probe)
             {
                 _ = QueueRecognition(RecognitionExtent.Probe, probe.Samples.Length, frame.Start + frame.Analysis.Length, requests, pending, probe.TailSilenceSamples);
+            }
+
+            // Mac ce14722: steady room noise above the threshold keeps the utterance open past the cap, so no closed utterance
+            // or tail ever brings the stop word. The newest 4 s are checked every second meanwhile, one window at a time.
+            var windowEnd = frame.Start + frame.Analysis.Length;
+            if (session.IsActive && segmenter.IsSkipping && windowEnd - stopCheckedSamples >= (long)Segmenter.Rate
+                && !pending.Values.Any(work => work.Request.Extent == RecognitionExtent.PrefixHead))
+            {
+                stopCheckedSamples = windowEnd;
+                _ = QueueRecognition(RecognitionExtent.PrefixHead, (int)Math.Min(4 * (long)Segmenter.Rate, windowEnd - analysisStore.Start), windowEnd, requests, pending, 0);
             }
 
             return true;
@@ -636,6 +663,17 @@ public sealed class WindowsDictationRuntime
         if (ev.Kind == "head")
         {
             Log.Info($"dictation vad: cap reached at={frame.Start} samples={ev.Samples.Length} rms={segmenter.LastRms:0.0000} floor={segmenter.Floor:0.0000} threshold={segmenter.Threshold:0.0000}");
+        }
+
+        if (ev.Kind == "tail")
+        {
+            // Mac judges a tail only inside a dictation: alone it is a fragment of speech, never a wake word.
+            if (!session.IsActive && !session.IsAwaitingBody)
+            {
+                return true;
+            }
+
+            Log.Info($"dictation vad: tail at={frame.Start} samples={ev.Samples.Length}");
         }
 
         // Mac checks between utterances: only here, with nothing open, can wake words and timings change under no one.
@@ -653,7 +691,7 @@ public sealed class WindowsDictationRuntime
         long rangeEnd,
         ChannelWriter<RecognitionWork> requests,
         Dictionary<long, RecognitionWork> pending) =>
-        QueueRecognition(ev.Kind == "head" ? RecognitionExtent.PrefixHead : RecognitionExtent.ClosedUtterance, ev.Samples.Length, rangeEnd, requests, pending, 0);
+        QueueRecognition(ev.Kind == "head" ? RecognitionExtent.PrefixHead : RecognitionExtent.ClosedUtterance, ev.Samples.Length, rangeEnd, requests, pending, 0, ev.Kind == "tail");
 
     private void ApplyConfig(VoiceSwitchConfig next)
     {
@@ -676,6 +714,16 @@ public sealed class WindowsDictationRuntime
         analysisStore.EnsureCapacity(RetainedSamples(next, 10));
         idleRetainSamples = RetainedSamples(next, 2);
         LogTiming();
+    }
+
+    // Window text stays private, so only its word timings show why a stop window did or did not end the body.
+    private string WindowStopLog(RecognizedUtterance observed)
+    {
+        if (observed.Extent != RecognitionExtent.PrefixHead) return "";
+        var runs = observed.Lexemes.Where(run => TextMatching.Normalize(run.Text).Length > 0).ToArray();
+        var stop = DictationBoundaries.WindowStopRange(observed, config.StopWords ?? []);
+        var heard = DictationBoundaries.HeardStop(observed, config.StopWords ?? []);
+        return $" windowStop={(stop is { } s ? $"{s.Start}..{s.End}" : "-")} stopHeard={(heard is { } h ? $"{h.Start}..{h.End}" : "-")} lexN={runs.Length} lexFirst={(runs.Length > 0 ? runs[0].Range.Start : -1)} lexLast={(runs.Length > 0 ? runs[^1].Range.End : -1)}";
     }
 
     // tailStop, confidence, and sample range only. The dictation text stays in the existing heard block.
@@ -730,7 +778,8 @@ public sealed class WindowsDictationRuntime
         long rangeEnd,
         ChannelWriter<RecognitionWork> requests,
         Dictionary<long, RecognitionWork> pending,
-        long tailSilenceSamples)
+        long tailSilenceSamples,
+        bool bodyTail = false)
     {
         var range = new SampleRange(rangeEnd - length, rangeEnd);
         var request = new RecognitionRequest(
@@ -739,7 +788,7 @@ public sealed class WindowsDictationRuntime
             range,
             analysisStore.Copy(range),
             tailSilenceSamples);
-        var work = new RecognitionWork(request);
+        var work = new RecognitionWork(request, bodyTail);
         if (!requests.TryWrite(work))
         {
             return false;
@@ -762,6 +811,7 @@ public sealed class WindowsDictationRuntime
         lastSilenceDiagnosticKey = null;
         target = 0;
         heardAfterWake = false;
+        provisionalStop = false;
         checkedSamples = 0;
         hotkeys?.End();
         return new DictationSession(config);
@@ -852,9 +902,11 @@ public sealed class WindowsDictationRuntime
                 : null;
     }
 
-    private string? AutomaticSkipReason(nint window)
+    private string? AutomaticMicBlock() =>
+        automaticMicInUseBy(config.SkipWhileMicInUseBy ?? []) is { } busy ? $"automatic wake blocked: {busy}" : null;
+
+    private string? AutomaticForegroundSkipReason(nint window)
     {
-        if (automaticMicInUseBy(config.SkipWhileMicInUseBy ?? []) is { } busy) return $"automatic wake blocked: {busy}";
         if (config.Dictation?.ExcludeProcessNames is not { Length: > 0 } excluded) return null;
         var app = windowProcess(window);
         if (window == 0 || app is null) return "automatic wake blocked: foreground process unavailable";
@@ -865,8 +917,8 @@ public sealed class WindowsDictationRuntime
     // Keeps the live phrase so an automatic session that starts late can still record it from the beginning.
     // ponytail: capped at 10 s of audio; a longer phrase keeps only its tail.
     private long RetainStart(long keepFrom) =>
-        phraseStart < 0 || config.Dictation?.NoWakeWord is not { Enabled: true } ? keepFrom
-            : Math.Min(keepFrom, Math.Max(phraseStart - Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength,
+        phrase is not { } spoken || config.Dictation?.NoWakeWord is not { Enabled: true } ? keepFrom
+            : Math.Min(keepFrom, Math.Max(spoken.Start - Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength,
                 analysisStore.Next - (long)(Segmenter.Rate * 10)));
 
     private bool SpeaksWake(RecognizedUtterance recognition) =>
@@ -920,7 +972,7 @@ public sealed class WindowsDictationRuntime
     private void PublishPhase(DictationSession session, long lastLiveSpeechEnd)
     {
         PublishPhase(endedByUser ? DictationPhase.Ended
-            : session.IsActive ? (Confirmed(session) ? DictationPhase.Recording : DictationPhase.Idle)
+            : session.IsActive ? (Confirmed(session) ? (provisionalStop ? DictationPhase.Ended : DictationPhase.Recording) : DictationPhase.Idle)
             : session.IsAwaitingBody ? (HeardAfterWake(session, lastLiveSpeechEnd) ? DictationPhase.Recording : DictationPhase.Waiting)
             : config.Dictation?.NoWakeWord?.Followup == true && analysisStore.Next < followupUntil ? DictationPhase.Followup
             : DictationPhase.Idle);
@@ -1072,10 +1124,25 @@ public sealed class WindowsDictationRuntime
     private static string Sid(DictationSession session) =>
         $"sid={(session.SessionId == Guid.Empty ? "-" : session.SessionId.ToString())}";
 
+    // Mac de4c434: a whole maxSeconds with no agreed words was the room, not a voice.
+    private bool RanOverRoomNoise(DictationAudio audio) =>
+        audio.Wake.IsAutomatic && audio.Reason == FinishReason.MaximumDuration && agreedCharacters is not null && confirmedSession != audio.SessionId;
+
+    // The idle path's over-cap head with no wake and an unagreed automatic maxSeconds both say the steady sound is the room.
+    private void RebaseFloor(string why)
+    {
+        var floorBefore = segmenter.Floor;
+        segmenter.RebaseFloor();
+        Log.Info($"dictation vad: floor rebased {why} floor={floorBefore:0.0000}->{segmenter.Floor:0.0000} threshold={segmenter.Threshold:0.0000}");
+    }
+
     private void Submit(DictationAudio audio)
     {
         JournalNotes.Note(audio.SessionId, audio.Reason.ToString(), audio.Range.Length / Segmenter.Rate);
         Log.Info($"dictation session: end reason={audio.Reason} {audio.Wake.Fields} range={audio.Range.Start}..{audio.Range.End} seconds={audio.Range.Length / Segmenter.Rate:0.00} sid={audio.SessionId} {LevelFields(audio.Range)}");
+        // Lifted here, on the loop and while the segmenter still holds the over-cap noise; the async discard comes too late,
+        // and the next frame reopens.
+        if (RanOverRoomNoise(audio)) RebaseFloor($"sid={audio.SessionId}");
         var stopped = audio.Reason is FinishReason.StandaloneStop or FinishReason.FinishCommand;
         endedByUser |= stopped;
         // The user wants to know the recording is over, so ring before Superwhisper is launched, automatic sessions included.
@@ -1163,12 +1230,12 @@ public sealed class WindowsDictationRuntime
         // long enough that the next dictation was dropped as overlapping.
         if (config.SpeakerEnrollment is not null)
             audio = audio with { Samples = await Task.Run(() => SpeakerGate.WithoutOtherSpeakers(audio.Samples, config, Log.Info)) };
-        // Ending it with the stop word shows the user meant to dictate into the window in front, so it is handed off like a
-        // wake-word dictation and Superwhisper pastes it. One that ended on silence or maxSeconds stays history-only.
-        if (wake.IsAutomatic && audio.Reason == FinishReason.StandaloneStop)
+        // Ending it with the stop word or the finish key shows the user meant to dictate into the window in front, so it is handed
+        // off like a wake-word dictation and Superwhisper pastes it. One that ended on silence or maxSeconds stays history-only.
+        if (wake.IsAutomatic && audio.Reason is FinishReason.StandaloneStop or FinishReason.FinishCommand)
         {
             audio = audio with { Origin = new WakeOrigin(WakeRule.Strict, audio.Wake.InputIdleSeconds) };
-            Log.Info($"dictation session: automatic ended by stop word, pasting like a wake-word dictation sid={audio.SessionId}");
+            Log.Info($"dictation session: automatic ended by {audio.Reason}, pasting like a wake-word dictation sid={audio.SessionId}");
         }
         try
         {
@@ -1269,514 +1336,20 @@ public sealed class WindowsDictationRuntime
     private static long MsToSamples(int ms) =>
         checked((long)Math.Round(ms * Segmenter.Rate / 1000.0, MidpointRounding.AwayFromZero));
 
-    private sealed record RecognitionWork(RecognitionRequest Request);
+    private sealed record RecognitionWork(RecognitionRequest Request, bool BodyTail = false);
+
+    // Reset as a unit by setting the runtime's phrase to null.
+    private sealed class Phrase(long start)
+    {
+        private string? micBlock;
+        public long Start { get; } = start;
+        public long Voiced { get; set; }
+
+        // Only a block latches: once Superwhisper releases the mic mid-phrase, its user's words would otherwise open a
+        // session from the phrase head. A clear check is not kept, so a recorder taking the mic mid-phrase still blocks.
+        public string? LatchMicBlock(Func<string?> check) => micBlock ??= check();
+    }
     private sealed record RecognitionOutcome(RecognitionWork Work, RecognizedUtterance? Recognition, Exception? Error);
-}
-
-public sealed class WinMmCapture : IPcmCapture
-{
-    private const int WaveMapper = -1;
-    public const int WaveInputDataMessage = 0x3C0;
-    private const int CallbackFunction = 0x00030000;
-    private readonly BlockingCollection<PcmFrame> frames = new(boundedCapacity: 16);
-    private readonly BlockingCollection<IntPtr> completedHeaders = new(boundedCapacity: 16);
-    private readonly List<GCHandle> pins = new();
-    private readonly List<IntPtr> headers = new();
-    private readonly WaveCallback callback;
-    private readonly IWaveInNative native;
-    private IntPtr device;
-    private Task? requeueWorker;
-    private long nextSample;
-    private bool started;
-    private volatile bool shuttingDown;
-    private bool disposed;
-    private int deviceId = WaveMapper;
-
-    public WinMmCapture()
-        : this(new PInvokeWaveInNative())
-    {
-    }
-
-    internal WinMmCapture(IWaveInNative native)
-    {
-        this.native = native;
-        callback = OnWaveIn;
-    }
-
-    // The input device the open capture reads, by name; null while none is open. The tray compares it with
-    // EffectiveDevice to notice an unplug or a new default device, which WinMM never reports to an open handle.
-    public static string? CurrentDevice { get => Volatile.Read(ref currentDevice); private set => Volatile.Write(ref currentDevice, value); }
-    private static string? currentDevice;
-
-    // pinned: a device name chosen in the tray, or null for the system default. A pinned device that is not
-    // connected falls back to the default until it returns.
-    public static WinMmCapture Open(string? pinned = null)
-    {
-        var devices = InputDevices();
-        var capture = new WinMmCapture { deviceId = pinned is null ? WaveMapper : devices.ToList().IndexOf(pinned) };
-        var name = EffectiveDevice(pinned, devices, DefaultInputName(devices));
-        capture.Start();
-        CurrentDevice = name;
-        Log.Info($"dictation capture: {name ?? "-"}{(capture.deviceId < 0 ? " (system default)" : "")}{(pinned is not null && capture.deviceId < 0 ? $"; {pinned} is not connected" : "")}");
-        return capture;
-    }
-
-    public static string? EffectiveDevice(string? pinned, IReadOnlyList<string> devices, string? defaultName) =>
-        pinned is not null && devices.Contains(pinned) ? pinned : defaultName;
-
-    public static string? EffectiveDevice(string? pinned)
-    {
-        var devices = InputDevices();
-        return EffectiveDevice(pinned, devices, DefaultInputName(devices));
-    }
-
-    // WinMM names are cut at 31 characters; the cut name is what the tray persists and compares.
-    // ponytail: two devices with the same cut name are indistinguishable; the first one wins.
-    public static IReadOnlyList<string> InputDevices()
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            return [];
-        }
-
-        var names = new List<string>();
-        for (var i = 0; i < waveInGetNumDevs(); i++)
-        {
-            var caps = new WaveInCaps();
-            if (waveInGetDevCapsW(i, ref caps, Marshal.SizeOf<WaveInCaps>()) == 0)
-            {
-                names.Add(caps.Name);
-            }
-        }
-
-        return names;
-    }
-
-    // The device WAVE_MAPPER opens: Windows' default recording device.
-    private static string? DefaultInputName(IReadOnlyList<string> devices) =>
-        OperatingSystem.IsWindows() && waveInMessage(WaveMapper, DrvmMapperPreferredGet, out var id, out _) == 0 && id >= 0 && id < devices.Count
-            ? devices[id]
-            : null;
-
-    internal static WinMmCapture OpenForTest(IWaveInNative native)
-    {
-        var capture = new WinMmCapture(native);
-        capture.Start();
-        return capture;
-    }
-
-    public async IAsyncEnumerable<PcmFrame> ReadFramesAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellation)
-    {
-        while (!cancellation.IsCancellationRequested)
-        {
-            PcmFrame frame;
-            try
-            {
-                frame = frames.Take(cancellation);
-            }
-            catch (OperationCanceledException)
-            {
-                yield break;
-            }
-
-            yield return frame;
-            await Task.Yield();
-        }
-    }
-
-    public async ValueTask DisposeAsync()
-    {
-        if (disposed)
-        {
-            return;
-        }
-
-        disposed = true;
-        CurrentDevice = null;
-
-        if (device != IntPtr.Zero)
-        {
-            shuttingDown = true;
-            started = false;
-            completedHeaders.CompleteAdding();
-            if (requeueWorker is not null)
-            {
-                await requeueWorker.ConfigureAwait(false);
-            }
-
-            Check(native.Reset(device), "waveInReset");
-            foreach (var header in headers)
-            {
-                Check(native.UnprepareHeader(device, header, Marshal.SizeOf<WaveHdr>()), "waveInUnprepareHeader");
-                Marshal.FreeHGlobal(header);
-            }
-
-            Check(native.Close(device), "waveInClose");
-            device = IntPtr.Zero;
-        }
-
-        foreach (var pin in pins)
-        {
-            if (pin.IsAllocated)
-            {
-                pin.Free();
-            }
-        }
-
-        frames.Dispose();
-        completedHeaders.Dispose();
-    }
-
-    private void Start()
-    {
-        try
-        {
-            var format = new WaveFormat
-            {
-                FormatTag = 1,
-                Channels = 1,
-                SamplesPerSec = 16000,
-                AvgBytesPerSec = 32000,
-                BlockAlign = 2,
-                BitsPerSample = 16,
-                Size = 0
-            };
-            var result = native.Open(out device, deviceId, ref format, callback, IntPtr.Zero, CallbackFunction);
-            if (result != 0)
-            {
-                throw new InvalidOperationException($"WinMM could not open PCM16/16000 mono input {deviceId}. waveInOpen={result}");
-            }
-
-            for (var i = 0; i < 4; i++)
-            {
-                QueueBuffer(new byte[Segmenter.FrameLength * 2]);
-            }
-
-            requeueWorker = Task.Run(RequeueCompletedBuffers);
-            result = native.Start(device);
-            if (result != 0)
-            {
-                shuttingDown = true;
-                completedHeaders.CompleteAdding();
-                throw new InvalidOperationException($"WinMM could not start capture. waveInStart={result}");
-            }
-
-            started = true;
-        }
-        catch
-        {
-            shuttingDown = true;
-            completedHeaders.CompleteAdding();
-            DisposeAsync().AsTask().GetAwaiter().GetResult();
-            throw;
-        }
-    }
-
-    private void QueueBuffer(byte[] buffer)
-    {
-        var pin = GCHandle.Alloc(buffer, GCHandleType.Pinned);
-        pins.Add(pin);
-        var header = new WaveHdr
-        {
-            Data = pin.AddrOfPinnedObject(),
-            BufferLength = buffer.Length,
-            BytesRecorded = 0,
-            User = GCHandle.ToIntPtr(pin),
-            Flags = 0,
-            Loops = 0,
-            Next = IntPtr.Zero,
-            Reserved = IntPtr.Zero
-        };
-        var ptr = Marshal.AllocHGlobal(Marshal.SizeOf<WaveHdr>());
-        Marshal.StructureToPtr(header, ptr, false);
-        headers.Add(ptr);
-        Check(native.PrepareHeader(device, ptr, Marshal.SizeOf<WaveHdr>()), "waveInPrepareHeader");
-        Check(native.AddBuffer(device, ptr, Marshal.SizeOf<WaveHdr>()), "waveInAddBuffer");
-    }
-
-    private void OnWaveIn(IntPtr hwi, int message, IntPtr instance, IntPtr param1, IntPtr param2)
-    {
-        try
-        {
-            if (message != WaveInputDataMessage || !started || shuttingDown)
-            {
-                return;
-            }
-
-            if (!completedHeaders.TryAdd(param1))
-            {
-                frames.CompleteAdding();
-            }
-        }
-        catch
-        {
-        }
-    }
-
-    private void RequeueCompletedBuffers()
-    {
-        foreach (var headerPtr in completedHeaders.GetConsumingEnumerable())
-        {
-            if (shuttingDown)
-            {
-                return;
-            }
-
-            CopyRecordedBytes(headerPtr);
-            if (shuttingDown)
-            {
-                return;
-            }
-
-            Check(native.AddBuffer(device, headerPtr, Marshal.SizeOf<WaveHdr>()), "waveInAddBuffer");
-        }
-    }
-
-    private void CopyRecordedBytes(IntPtr headerPtr)
-    {
-        var header = Marshal.PtrToStructure<WaveHdr>(headerPtr);
-        if (header.BytesRecorded <= 0)
-        {
-            return;
-        }
-
-        if (header.BytesRecorded % 2 != 0)
-        {
-            frames.CompleteAdding();
-            return;
-        }
-
-        try
-        {
-            var bytes = new byte[header.BytesRecorded];
-            Marshal.Copy(header.Data, bytes, 0, bytes.Length);
-            var samples = new short[bytes.Length / 2];
-            Buffer.BlockCopy(bytes, 0, samples, 0, bytes.Length);
-            var start = Interlocked.Add(ref nextSample, samples.Length) - samples.Length;
-            if (!frames.TryAdd(new PcmFrame(start, samples.ToImmutableArray())))
-            {
-                frames.CompleteAdding();
-            }
-        }
-        catch
-        {
-            frames.CompleteAdding();
-        }
-    }
-
-    public static bool IsInputDataMessageForTest(int message) => message == WaveInputDataMessage;
-    public static int WaveFormatSizeForTest() => Marshal.SizeOf<WaveFormat>();
-    public static int WaveHeaderSizeForTest() => Marshal.SizeOf<WaveHdr>();
-
-    private static void Check(int result, string name)
-    {
-        if (result != 0)
-        {
-            throw new InvalidOperationException($"{name} failed: {result}");
-        }
-    }
-
-    internal delegate void WaveCallback(IntPtr hwi, int message, IntPtr instance, IntPtr param1, IntPtr param2);
-
-    private const int DrvmMapperPreferredGet = 0x2015;
-
-    [DllImport("winmm.dll")]
-    private static extern int waveInGetNumDevs();
-
-    [DllImport("winmm.dll", CharSet = CharSet.Unicode)]
-    private static extern int waveInGetDevCapsW(nint deviceId, ref WaveInCaps caps, int size);
-
-    [DllImport("winmm.dll")]
-    private static extern int waveInMessage(nint device, int message, out int param1, out int param2);
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    private struct WaveInCaps
-    {
-        public ushort Mid;
-        public ushort Pid;
-        public uint DriverVersion;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
-        public string Name;
-        public uint Formats;
-        public ushort Channels;
-        public ushort Reserved;
-    }
-
-    [StructLayout(LayoutKind.Sequential, Pack = 2)]
-    internal struct WaveFormat
-    {
-        public short FormatTag;
-        public short Channels;
-        public int SamplesPerSec;
-        public int AvgBytesPerSec;
-        public short BlockAlign;
-        public short BitsPerSample;
-        public short Size;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct WaveHdr
-    {
-        public IntPtr Data;
-        public int BufferLength;
-        public int BytesRecorded;
-        public IntPtr User;
-        public int Flags;
-        public int Loops;
-        public IntPtr Next;
-        public IntPtr Reserved;
-    }
-
-    internal interface IWaveInNative
-    {
-        int Open(out IntPtr device, int deviceId, ref WaveFormat format, WaveCallback callback, IntPtr instance, int flags);
-        int PrepareHeader(IntPtr device, IntPtr header, int size);
-        int AddBuffer(IntPtr device, IntPtr header, int size);
-        int Start(IntPtr device);
-        int Reset(IntPtr device);
-        int UnprepareHeader(IntPtr device, IntPtr header, int size);
-        int Close(IntPtr device);
-    }
-
-    private sealed class PInvokeWaveInNative : IWaveInNative
-    {
-        public int Open(out IntPtr device, int deviceId, ref WaveFormat format, WaveCallback callback, IntPtr instance, int flags) =>
-            waveInOpen(out device, deviceId, ref format, callback, instance, flags);
-
-        public int PrepareHeader(IntPtr device, IntPtr header, int size) =>
-            waveInPrepareHeader(device, header, size);
-
-        public int AddBuffer(IntPtr device, IntPtr header, int size) =>
-            waveInAddBuffer(device, header, size);
-
-        public int Start(IntPtr device) => waveInStart(device);
-        public int Reset(IntPtr device) => waveInReset(device);
-        public int UnprepareHeader(IntPtr device, IntPtr header, int size) => waveInUnprepareHeader(device, header, size);
-        public int Close(IntPtr device) => waveInClose(device);
-
-        [DllImport("winmm.dll")]
-        private static extern int waveInOpen(out IntPtr device, int deviceId, ref WaveFormat format, WaveCallback callback, IntPtr instance, int flags);
-        [DllImport("winmm.dll")]
-        private static extern int waveInPrepareHeader(IntPtr device, IntPtr header, int size);
-        [DllImport("winmm.dll")]
-        private static extern int waveInAddBuffer(IntPtr device, IntPtr header, int size);
-        [DllImport("winmm.dll")]
-        private static extern int waveInStart(IntPtr device);
-        [DllImport("winmm.dll")]
-        private static extern int waveInReset(IntPtr device);
-        [DllImport("winmm.dll")]
-        private static extern int waveInUnprepareHeader(IntPtr device, IntPtr header, int size);
-        [DllImport("winmm.dll")]
-        private static extern int waveInClose(IntPtr device);
-    }
-}
-
-// Scripts run from a file under %LOCALAPPDATA%\voice-switch: passed by -EncodedCommand, the dictation script alone put
-// 44,541 characters on the command line, past the Windows 32,767 limit, and Process.Start failed with Win32Exception.
-public static class PowerShellScript
-{
-    public static ProcessStartInfo StartInfo(string fileName, string script)
-    {
-        var dir = Path.Combine(Environment.GetEnvironmentVariable("LOCALAPPDATA") ?? Path.GetTempPath(), "voice-switch");
-        var path = Path.Combine(dir, fileName);
-        if (!File.Exists(path) || File.ReadAllText(path) != script)
-        {
-            Directory.CreateDirectory(dir);
-            // BOM: Windows PowerShell reads a BOM-less .ps1 in the ANSI code page.
-            File.WriteAllText(path, script, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
-        }
-
-        return new ProcessStartInfo("powershell.exe", $"-NoProfile -NonInteractive -OutputFormat Text -ExecutionPolicy Bypass -File \"{path}\"")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-    }
-}
-
-// Children started here die with voice-switch.exe, even when it crashes or is killed: we never close the job handle,
-// so the kernel closes it at our exit and JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE ends every process still in the job.
-public static class ChildProcessJob
-{
-    private const int JobObjectExtendedLimitInformation = 9;
-    private const uint JobObjectLimitKillOnJobClose = 0x2000;
-    private static readonly Lazy<nint> Job = new(Create);
-
-    public static Process Start(ProcessStartInfo psi)
-    {
-        var process = Process.Start(psi) ?? throw new InvalidOperationException($"failed to start {psi.FileName}");
-        // A failure only loses the cleanup guarantee, so the child keeps running rather than failing recognition.
-        if (OperatingSystem.IsWindows() && (Job.Value == 0 || !AssignProcessToJobObject(Job.Value, process.Handle)))
-        {
-            Log.Info($"child process job: pid={process.Id} not assigned (error {Marshal.GetLastWin32Error()}); it can outlive voice-switch");
-        }
-
-        return process;
-    }
-
-    private static nint Create()
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            return 0;
-        }
-
-        var job = CreateJobObject(0, null);
-        var info = new ExtendedLimitInformation { LimitFlags = JobObjectLimitKillOnJobClose };
-        if (job != 0 && SetInformationJobObject(job, JobObjectExtendedLimitInformation, ref info, Marshal.SizeOf<ExtendedLimitInformation>()))
-        {
-            return job;
-        }
-
-        Log.Info($"child process job: not created (error {Marshal.GetLastWin32Error()})");
-        if (job != 0)
-        {
-            CloseHandle(job);
-        }
-
-        return 0;
-    }
-
-    // JOBOBJECT_EXTENDED_LIMIT_INFORMATION with JOBOBJECT_BASIC_LIMIT_INFORMATION and IO_COUNTERS inlined (144 bytes on x64).
-    [StructLayout(LayoutKind.Sequential)]
-    private struct ExtendedLimitInformation
-    {
-        public long PerProcessUserTimeLimit;
-        public long PerJobUserTimeLimit;
-        public uint LimitFlags;
-        public nuint MinimumWorkingSetSize;
-        public nuint MaximumWorkingSetSize;
-        public uint ActiveProcessLimit;
-        public nuint Affinity;
-        public uint PriorityClass;
-        public uint SchedulingClass;
-        public ulong ReadOperationCount;
-        public ulong WriteOperationCount;
-        public ulong OtherOperationCount;
-        public ulong ReadTransferCount;
-        public ulong WriteTransferCount;
-        public ulong OtherTransferCount;
-        public nuint ProcessMemoryLimit;
-        public nuint JobMemoryLimit;
-        public nuint PeakProcessMemoryUsed;
-        public nuint PeakJobMemoryUsed;
-    }
-
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    private static extern nint CreateJobObject(nint attributes, string? name);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool SetInformationJobObject(nint job, int infoClass, ref ExtendedLimitInformation info, int length);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool AssignProcessToJobObject(nint job, nint process);
-
-    [DllImport("kernel32.dll")]
-    private static extern bool CloseHandle(nint handle);
 }
 
 // One long-lived powershell.exe hosts SAPI for the whole run. A fresh child per request cost ~650 ms of PowerShell start,
@@ -2130,9 +1703,9 @@ public sealed class SpeechPowerShellDictationRecognizer : IDictationRecognizer, 
     private sealed record LexemeDto(string? Text, long Start, long End, string? Reading = null);
     private sealed record AlternateDto(string? Text, string? Reading);
 
-// Protocol: each request is a 28-byte little-endian header (int64 id, int64 start, int64 end, int32 pcmLength) followed by
-// the PCM bytes; each answer is one JSON line. A "ready" line precedes the first answer; EOF on stdin ends the child.
-internal const string Script = """
+    // Protocol: each request is a 28-byte little-endian header (int64 id, int64 start, int64 end, int32 pcmLength) followed by
+    // the PCM bytes; each answer is one JSON line. A "ready" line precedes the first answer; EOF on stdin ends the child.
+    internal const string Script = """
 $ProgressPreference = 'SilentlyContinue'
 Add-Type -AssemblyName System.Speech
 $locale = $env:VOICE_SWITCH_LOCALE

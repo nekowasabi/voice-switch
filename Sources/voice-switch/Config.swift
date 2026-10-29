@@ -34,6 +34,9 @@ struct Config: Decodable {
     var speakerThreshold: Double?
     /// Global key that toggles pause/resume, e.g. "Control+Shift+F7". Absent registers none. Read once at launch.
     var pauseShortcut: String?
+    /// macOS: pause while Chrome or Edge holds the microphone (a Google Meet call) and resume when it lets go.
+    /// Absent or false turns it off. Read once at launch.
+    var pauseDuringMeet: Bool?
 
     init(wakeWords: [String], locale: String? = nil, command: String,
          maxSeconds: Double? = nil, hangoverMs: Int? = nil, prerollMs: Int? = nil,
@@ -109,10 +112,17 @@ struct DictationConfig: Decodable {
     /// Superwhisper mode key or display name for voice-switch dictations (Mac + Windows).
     /// Unset keeps auto-paste behavior; set switches mode around handoff and pastes when not routed.
     var superwhisperMode: String?
+    /// macOS: superwhisper mode key or display name that wake-word dictations paste in (auto-paste on). voice-switch
+    /// selects it at launch and before each wake-word handoff, since superwhisper was seen running the first recording
+    /// after a relaunch in another mode (2026-10-28). Unset keeps superwhisper's active mode.
+    var pasteMode: String?
     var noWakeWord: NoWakeWordConfig?
     /// Windows only. A second SAPI engine hears a stop word after body text.
     /// macOS decodes the key and does not use it. Apple Speech is not covered. Absent stays off.
     var dedicatedStopRecognizer: Bool? = nil
+    /// Keep speaker playback from starting an automatic recording (Mac + Windows). Windows cancels it before the VAD;
+    /// macOS keeps the raw mic and requires HAL voice activity detection. Absent means on; false turns it off.
+    var echoCancellation: Bool? = nil
     /// Folder of daily `yyyy-MM-dd.jsonl` files, or one file when the path ends in `.jsonl`.
     /// Absent uses the platform default. An unusable path is logged and the default is used.
     var journalDir: String? = nil

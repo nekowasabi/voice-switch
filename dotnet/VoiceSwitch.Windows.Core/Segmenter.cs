@@ -9,6 +9,7 @@ public sealed class Segmenter
     private float floor = 0.001f;
     private readonly Queue<float[]> ring = new();
     private readonly List<float[]> utterance = new();
+    private readonly List<float[]> tail = new();
     private int ringSamples;
     private int utteranceSamples;
     private int silentSamples;
@@ -48,6 +49,7 @@ public sealed class Segmenter
     {
         ring.Clear();
         utterance.Clear();
+        tail.Clear();
         ringSamples = 0;
         utteranceSamples = 0;
         silentSamples = 0;
@@ -124,6 +126,13 @@ public sealed class Segmenter
         {
             skipping = true;
             head = SegmenterEvent.Head(Flatten(utterance.Append(frame)));
+            // Mac tailFrames: seeded from the head so a stop word straddling the cap is whole in the tail.
+            tail.AddRange(utterance.Skip(1).Append(frame));
+        }
+        else
+        {
+            tail.Add(frame);
+            if (tail.Count > utterance.Count) tail.RemoveAt(0);
         }
 
         if (silentSamples < hangoverSamples)
@@ -131,10 +140,12 @@ public sealed class Segmenter
             return head;
         }
 
-        var done = !skipping && utteranceSamples - hangoverSamples >= minSamples
-            ? SegmenterEvent.Utterance(Flatten(utterance))
+        // An utterance past the cap was heard only up to the head; its last stretch is where a stop word ends it (Mac .tail).
+        var done = !skipping && utteranceSamples - hangoverSamples >= minSamples ? SegmenterEvent.Utterance(Flatten(utterance))
+            : skipping && tail.Count > 0 ? SegmenterEvent.Tail(Flatten(tail))
             : null;
         utterance.Clear();
+        tail.Clear();
         ring.Clear();
         ringSamples = 0;
         utteranceSamples = 0;
@@ -156,6 +167,7 @@ public sealed class Segmenter
             ? SegmenterEvent.Utterance(Flatten(utterance))
             : null;
         utterance.Clear();
+        tail.Clear();
         ring.Clear();
         ringSamples = 0;
         utteranceSamples = 0;
@@ -194,6 +206,7 @@ public sealed record SegmenterEvent(string Kind, float[] Samples)
 {
     public static SegmenterEvent Utterance(float[] samples) => new("utterance", samples);
     public static SegmenterEvent Head(float[] samples) => new("head", samples);
+    public static SegmenterEvent Tail(float[] samples) => new("tail", samples);
 }
 
 public sealed record SegmenterProbe(float[] Samples, long TailSilenceSamples);

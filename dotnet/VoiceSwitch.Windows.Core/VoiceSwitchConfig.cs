@@ -16,9 +16,13 @@ public sealed record DictationConfig(
     string[]? ExcludeProcessNames = null,
     // Superwhisper mode key or name used for voice-switch dictations; meant to be a mode with auto-paste off.
     string? SuperwhisperMode = null,
+    // macOS only. Superwhisper mode that wake-word dictations paste in; Windows decodes it and does not use it.
+    string? PasteMode = null,
     NoWakeWordConfig? NoWakeWord = null,
     // Windows only. Second SAPI engine for a stop word after body text. Default false until human voice is measured. macOS ignores it.
     bool DedicatedStopRecognizer = false,
+    // Cancel what the speakers play before the VAD so playback never starts a recording. Absent means on; false keeps the raw input.
+    bool? EchoCancellation = null,
     string? JournalDir = null);
 
 /// <summary>Load-time guardrails for timing fields that are easy to mistype 10x. No clamp — warn only.</summary>
@@ -64,6 +68,8 @@ public sealed record VoiceSwitchConfig(
     double? SpeakerThreshold = null,
     // Global key that toggles pause/resume, in DictationHotkeys.Parse names ("Control+Shift+F7"). Null registers none.
     string? PauseShortcut = null,
+    // Mac pauseDuringMeet: the tray stops listening while chrome / msedge holds the mic. Read once at launch; null is off.
+    bool? PauseDuringMeet = null,
     // Twin of Mac `macOS`: Windows-only settings.
     WindowsActions? Windows = null)
 {

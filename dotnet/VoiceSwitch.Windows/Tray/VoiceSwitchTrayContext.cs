@@ -26,6 +26,8 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
     private readonly LoginItem login = new();
     private int deviceTicks;
     private string? lastEffectiveDevice;
+    private bool holdPending;
+    private bool resumePending;
     private readonly int uiThreadId;
     private readonly System.Windows.Forms.Timer diagnosticsTimer;
     private TraySnapshot snapshot;
@@ -93,6 +95,7 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
                 if (++deviceTicks % 4 == 0)
                 {
                     FollowDevice();
+                    FollowMeet();
                 }
             }
         };
@@ -227,27 +230,23 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
         PublishDiagnosticsOnUi();
     }
 
-    private async Task RunCommandAsync(TrayCommand command, CancellationToken cancellation = default, bool quiet = false)
+    // A menu click or the hotkey: the user's own command, so a failure is shown.
+    private Task RunCommandAsync(TrayCommand command) =>
+        RunAsync(command.ToString(), command switch
+        {
+            TrayCommand.Start => c => supervisor.StartAsync(c, StartOrigin.User),
+            TrayCommand.Pause => supervisor.PauseAsync,
+            TrayCommand.Reload => supervisor.ReloadAsync,
+            _ => throw new ArgumentOutOfRangeException(nameof(command))
+        }, quiet: false);
+
+    // quiet: the timers' own commands log instead of popping a dialog every 2 s.
+    private static async Task RunAsync(string name, Func<CancellationToken, Task> command, bool quiet, Action? done = null)
     {
         try
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellation, timeout.Token);
-            switch (command)
-            {
-                case TrayCommand.Start:
-                    await supervisor.StartAsync(cts.Token);
-                    break;
-                case TrayCommand.Pause:
-                    await supervisor.PauseAsync(cts.Token);
-                    break;
-                case TrayCommand.Reload:
-                    await supervisor.ReloadAsync(cts.Token);
-                    break;
-                case TrayCommand.Quit:
-                    await supervisor.QuitAsync(cts.Token);
-                    break;
-            }
+            await command(timeout.Token);
         }
         catch (Exception ex) when (!quiet)
         {
@@ -255,7 +254,11 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
         }
         catch (Exception ex)
         {
-            Log.Info($"tray: {command} failed: {ex.Message}");
+            Log.Info($"tray: {name} failed: {ex.Message}");
+        }
+        finally
+        {
+            done?.Invoke();
         }
     }
 
@@ -318,7 +321,7 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
         if (snapshot.State == TrayState.Listening && WinMmCapture.CurrentDevice is { } current && current != effective)
         {
             Log.Info($"tray: microphone changed from {current} to {effective ?? "none"}; restarting");
-            _ = RunCommandAsync(TrayCommand.Reload, quiet: true);
+            _ = RunAsync("Reload", supervisor.ReloadAsync, quiet: true);
         }
         else if (TrayRuntimeSupervisor.ShouldRetryStart(snapshot.State, changed, effective, deviceTicks))
         {
@@ -327,7 +330,31 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
                 Log.Info($"tray: microphone {effective} is available; starting");
             }
 
-            _ = RunCommandAsync(TrayCommand.Start, quiet: true);
+            _ = RunAsync("Start", c => supervisor.StartAsync(c, StartOrigin.DeviceRetry), quiet: true);
+        }
+    }
+
+    // Mac followMeet. Only queues; the supervisor decides under its gate. Re-queued every tick so a command the
+    // 20 s timeout dropped is tried again, but never twice at once.
+    private void FollowMeet()
+    {
+        if (!supervisor.PauseDuringMeet)
+        {
+            return;
+        }
+
+        if (supervisor.MeetBrowser() is not null)
+        {
+            if (!holdPending)
+            {
+                holdPending = true;
+                _ = RunAsync("meet hold", supervisor.HoldForMeetAsync, quiet: true, () => holdPending = false);
+            }
+        }
+        else if (supervisor.MeetResumeOwed && !resumePending)
+        {
+            resumePending = true;
+            _ = RunAsync("meet resume", supervisor.ResumeAfterMeetAsync, quiet: true, () => resumePending = false);
         }
     }
 

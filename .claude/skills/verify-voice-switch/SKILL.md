@@ -51,6 +51,10 @@ The command prints the exit code, the number of handoff WAVs, the evidence folde
 
 `run-wav.ps1` is the Windows side of `wav`. It starts the exe with `--config --input-wav --output-dir`, writes its PID, waits up to 120 s, and kills only that PID on timeout.
 
+## Live microphone probe
+
+`$V aec <name> <seconds> [play.wav]` records the live microphone raw and through the OS echo canceller, plus the speaker loopback, and turns the three into fixtures for `$V wav`. It pauses the user's installed tray while it records and starts it again afterwards. Details in [features/playback-silence.md](features/playback-silence.md).
+
 ## Transcription recall KPI
 
 Capture is only half the path. `$V phrases` builds a synthetic multi-phrase corpus, and `$V recall [cases.json] [padMs,...]` sends each WAV through the real Superwhisper and counts expected phrases missing from `rawResult`. Exit 0 means zero missing. It drives the user's Superwhisper (mode switch and file intake), so say so before running it. On a Mac, run `superwhisper_recall_mac.py` in this folder instead (Python 3 standard library, `say`, `open`). Details in [features/transcription-recall.md](features/transcription-recall.md).

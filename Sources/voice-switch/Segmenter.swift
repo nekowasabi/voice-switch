@@ -15,9 +15,10 @@ struct Segmenter {
     private var silent = 0
     private var skipping = false
     private var tailFrames: [[Float]] = []
-    private var lastRms: Float = 0
+    private(set) var lastRms: Float = 0
     private var levelSum: Double = 0
     private var levelCount = 0
+    private(set) var lastWasEnergy = false
     private(set) var lastWasSpeech = false
     /// Off while dictating: quiet syllables classed as non-speech would otherwise pull the floor up toward
     /// the voice itself, so after ~2-3 s of talking the threshold passes the speech and it reads as silence.
@@ -46,10 +47,11 @@ struct Segmenter {
         }
     }
 
-    private mutating func isSpeech(_ f: [Float]) -> Bool {
+    private mutating func isSpeech(_ f: [Float], voice: Bool) -> Bool {
         let rms = (f.reduce(0) { $0 + $1 * $1 } / Float(f.count)).squareRoot()
         lastRms = rms
-        let speech = rms > threshold
+        lastWasEnergy = rms > threshold
+        let speech = lastWasEnergy || voice
         // Track the noise floor only while quiet, so speech does not raise it.
         if !speech && adaptFloor { floor = floor * 0.95 + rms * 0.05 }
         return speech
@@ -94,12 +96,12 @@ struct Segmenter {
         levelSum = 0; levelCount = 0
     }
 
-    mutating func push(_ f: [Float]) -> Event? {
+    mutating func push(_ f: [Float], voice: Bool = false) -> Event? {
         let preroll = frames(ms: cfg.prerollMs ?? 300)
         let hangover = frames(ms: cfg.hangoverMs ?? 300)
         let minFrames = frames(ms: cfg.minSpeechMs ?? 300)
         let maxFrames = Int((cfg.maxSeconds ?? 2.5) * rate) / frameLen
-        let speech = isSpeech(f)
+        let speech = isSpeech(f, voice: voice)
         lastWasSpeech = speech
         if utt.isEmpty {
             ring.append(f)

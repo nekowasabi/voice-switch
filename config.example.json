@@ -12,6 +12,7 @@
   "vadRatio": 3.0,
   "vadMinRMS": 0.005,
   "pauseShortcut": "Control+Shift+F7",
+  "pauseDuringMeet": true,
   "dictation": {
     "journalDir": "~/Documents/voice-switch/journal",
     "recordingsDir": "~/Documents/superwhisper/recordings",
@@ -19,6 +20,7 @@
     "maxSeconds": 60,
     "excludeBundleIDs": [],
     "superwhisperMode": "voice_switch",
+    "echoCancellation": true,
     "noWakeWord": {
       "followup": false,
       "autoIdle": false,

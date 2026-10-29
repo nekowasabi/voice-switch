@@ -117,12 +117,7 @@ internal static class NoWakeTests
         async Task<(int Entries, int Manual, int Code, bool Leaked, bool Preroll, bool Replaced)> Run(double? idle, string? busy = null, bool failLocal = false, bool failRecognition = false, bool spokenWake = false, bool fragmented = false, bool filterInterjections = false, float? loopbackDb = null, int minHandoffMs = 0, int voiced = 1)
         {
             var frames = new List<PcmFrame>();
-            void Add(int count, short value)
-            {
-                for (var i = 0; i < count; i++)
-                    frames.Add(new(frames.Count * Segmenter.FrameLength,
-                        Enumerable.Range(0, Segmenter.FrameLength).Select(j => (short)(j % 2 == 0 ? value : -value)).ToImmutableArray()));
-            }
+            void Add(int count, short value) => TestFrames.AddSquare(frames, count, value);
             Add(4, 0);
             if (fragmented) { for (var i = 0; i < 10; i++) { Add(2, 9000); Add(1, 0); } Add(30, 0); }
             else { Add(12, 9000); Add(22, 0); Add(12, 9000); Add(22, 0); }
@@ -216,12 +211,7 @@ internal static class NoWakeTests
         async Task<(int Handed, bool Recording, string Log, DictationAudio? Audio)> Run(Func<ImmutableArray<short>, Task<int>> agreed, bool stopWord = false)
         {
             var frames = new List<PcmFrame>();
-            void Add(int count, short value)
-            {
-                for (var i = 0; i < count; i++)
-                    frames.Add(new(frames.Count * Segmenter.FrameLength,
-                        Enumerable.Range(0, Segmenter.FrameLength).Select(j => (short)(j % 2 == 0 ? value : -value)).ToImmutableArray()));
-            }
+            void Add(int count, short value) => TestFrames.AddSquare(frames, count, value);
             Add(4, 0);
             if (stopWord) { Add(12, 9000); Add(10, 0); Add(12, 9000); Add(60, 0); }
             else { Add(70, 9000); Add(30, 0); }
@@ -261,7 +251,7 @@ internal static class NoWakeTests
                && cough.Log.Contains("dictation dropped: automatic audio had no agreed words")
             && broken is (1, true, _, _) && broken.Log.Contains("automatic confirmed by unavailable word agreement")
             && stopped.Handed == 1 && stopped.Audio is { Reason: FinishReason.StandaloneStop, Wake.IsAutomatic: false }
-               && stopped.Log.Contains("automatic ended by stop word, pasting like a wake-word dictation");
+               && stopped.Log.Contains("automatic ended by StandaloneStop, pasting like a wake-word dictation");
     }
 
     // A playback trace at one level from a minute ago to a minute ahead, so every mic frame of the test pairs with a bin.

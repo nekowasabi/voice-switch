@@ -32,6 +32,8 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("history copy hotkey copies only the newest retained entry", () => Check(HistoryHotkeyCopiesNewest())),
     ("automatic delivery tries Superwhisper first and keeps only history; wake delivery skips history", () => Check(NoWakeTests.AutomaticDelivery())),
     ("wake telemetry records idle contexts without transcript text", () => Check(NoWakeTests.Telemetry())),
+    ("stop verdict names standalone, trailing, window, tail and a probe's heard stop", () => Check(StopWindowTests.VerdictNamesTheStopKind())),
+    ("a body head that completes after Finish reset the session logs no text", () => Check(StopWindowTests.StaleBodyHeadStaysPrivate())),
     ("normalizes punctuation and spaces", () => Check(Normalizes())),
     ("reading normalization folds katakana and width", () => Check(ReadingNormalizationFoldsKatakanaAndWidth())),
     ("decides wake and stop commands", () => Check(DecidesCommands())),
@@ -56,6 +58,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation wake and stop boundaries are explicit", () => Check(DictationWakeAndStopBoundariesAreExplicit())),
     ("dictation stop grammar result needs the confidence floor", () => Check(DictationStopGrammarResultNeedsConfidenceFloor())),
     ("stop word judgement behaves the same for the default and another word", () => Check(StopWordJudgementIsWordIndependent())),
+    ("a stop word ending an utterance finishes the open body like Mac stopWordStart", () => Check(TrailingStopWordFinishesOpenBody())),
     ("config fills locale default stop words only when absent", () => Check(ConfigFillsLocaleDefaultStopWords())),
     ("dictation lone wake waits for body", () => Check(DictationLoneWakeWaitsForBody())),
     ("dictation rejected wake hypothesis opens a wait but never a body", () => Check(DictationRejectedWakeOpensWaitOnly())),
@@ -69,10 +72,14 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation standalone stop trims at absolute stop start", () => Check(DictationStandaloneStopTrimsAtAbsoluteStart())),
     ("dedicated tail stop trims the garbled tail and honors the confidence floor", () => Check(DedicatedTailStopTrimsGarbledTailAndHonorsTheFloor())),
     ("dedicated tail stop finishes the body only when the flag is on", () => Check(DedicatedTailStopFinishesTheBodyOnlyWhenEnabled())),
+    ("dedicated tail stop in a window needs the stop run through and quiet after", () => Check(DedicatedTailStopInWindowNeedsTheStopToRunThroughAndQuietAfter())),
     ("dictation runtime finishes on a dedicated tail stop and logs the range", () => Check(DictationRuntimeFinishesOnDedicatedTailStop())),
     ("dictation runtime one-breath tail stop keeps the foreground window", () => Check(DictationRuntimeOneBreathTailStopKeepsForegroundWindow())),
     ("dedicated stop script stays on its own engine", () => Check(DedicatedStopScriptStaysOnItsOwnEngine())),
     ("dictation prefix head stop is retained", () => Check(DictationPrefixHeadStopIsRetained())),
+    ("window stop ends the body while steady noise keeps the utterance open", () => Check(WindowStopEndsBodyUnderSteadyNoise())),
+    ("window stop at the window head keeps the end of the sentence before it", () => Check(WindowStopAtHeadKeepsPreviousSentence())),
+    ("window stop never fires on the stop negatives", () => Check(WindowStopIgnoresNegatives())),
     ("dictation embedded stop is retained", () => Check(DictationEmbeddedStopIsRetained())),
     ("dictation rejected stop is retained", () => Check(DictationRejectedStopIsRetained())),
     ("dictation finish and cancel semantics", () => Check(DictationFinishAndCancelSemantics())),
@@ -105,6 +112,8 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation phases follow one-breath dictation ended by silence", () => Check(DictationPhasesFollowOneBreathDictationEndedBySilence())),
     ("dictation phases follow lone wake ended by stop word", () => Check(DictationPhasesFollowLoneWakeEndedByStop())),
     ("dictation phase stays recording when the wake word is repeated while waiting", () => Check(DictationPhaseStaysRecordingOnRepeatedWake())),
+    ("dictation phase ends when a recording probe hears the stop word, before the hangover closes it", () => Check(DictationPhaseEndsWhenProbeHearsStop())),
+    ("dictation phase returns to recording when the closed utterance is not the stop the probe heard", () => Check(DictationPhaseReturnsToRecordingWhenHeardStopIsNotConfirmed())),
     ("dictation phases follow lone wake ended by start timeout", () => Check(DictationPhasesFollowLoneWakeStartTimeout())),
     ("dictation runtime end silence counts from when the body is applied", () => Check(DictationRuntimeEndSilenceCountsFromBodyApplied())),
     ("dictation runtime start timeout counts from when the wake is applied", () => Check(DictationRuntimeStartTimeoutCountsFromWakeApplied())),
@@ -113,6 +122,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation runtime logs wake readings in the timing line", () => Check(DictationRuntimeLogsWakeReadings())),
     ("dictation runtime skips a wake while Superwhisper uses the microphone", () => Check(DictationRuntimeSkipsWakeWhileMicInUse())),
     ("dictation runtime skips a wake while an excluded app is in front", () => Check(DictationRuntimeSkipsWakeForExcludedApp())),
+    ("dictation runtime does not open an automatic session from a phrase begun while Superwhisper held the microphone", () => Check(DictationRuntimeSkipsAutomaticPhraseBegunWhileMicInUse())),
     ("resident skips the wake command while Superwhisper uses the microphone", () => Check(ResidentSkipsWakeWhileMicInUse())),
     ("mic-in-use sees this process's open capture on Windows", MicInUseSeesOwnCaptureOnWindows),
     ("dictation runtime does not reload while a dictation is open", () => Check(DictationRuntimeDoesNotReloadWhileDictating())),
@@ -139,6 +149,9 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation segmenter uses partial EOF sample duration", () => Check(DictationSegmenterUsesPartialEofSampleDuration())),
     ("dictation segmenter rebases the floor after steady noise from the first frame", () => Check(DictationSegmenterRebasesFloorAfterSteadyNoiseFromFirstFrame())),
     ("dictation runtime hears the wake word after long steady noise above the threshold", () => Check(DictationRuntimeHearsWakeAfterLongSteadyNoise())),
+    ("automatic session that reaches maxSeconds on room noise without agreed words rebases the floor and does not reopen", () => Check(AutomaticNoiseAtMaxSecondsRebasesFloor())),
+    ("automatic session still opens on speech after room noise rebased the floor", () => Check(AutomaticSpeechOpensAfterNoiseRebase())),
+    ("dictation runtime stops on a stop word at the end of an utterance longer than the segmenter cap", () => Check(DictationRuntimeStopsOnStopWordAfterCap())),
     ("dictation runtime finalizes body at synthetic EOF", () => Check(DictationRuntimeFinalizesBodyAtSyntheticEof())),
     ("dictation runtime keeps partial EOF PCM range exact", () => Check(DictationRuntimeKeepsPartialEofPcmRangeExact())),
     ("dictation local recording handoff writes byte-exact bodies", () => Check(DictationLocalRecordingHandoffWritesByteExactBodies())),
@@ -163,6 +176,8 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("superwhisper mode decide does not paste after no-body skip", () => Check(SuperwhisperModeDecideDoesNotPasteAfterNoBodySkip())),
     ("config loads optional dictation.superwhisperMode", () => Check(ConfigLoadsOptionalSuperwhisperMode())),
     ("config loads dictation.dedicatedStopRecognizer and defaults it off", () => Check(ConfigLoadsDedicatedStopRecognizer())),
+    ("config loads dictation.echoCancellation and defaults it on", () => Check(ConfigLoadsEchoCancellation())),
+    ("echo-cancelled capture downsamples 48 kHz stereo and 44.1 kHz mono to 16 kHz mono at the same level", () => Check(EchoCancelledDownsamplerKeepsRateAndLevel())),
     ("config loads windows.actions and rejects invalid ones", () => Check(ConfigLoadsWindowsActions())),
     ("wake action URL carries the text as one input item", () => Check(WakeActionUrlCarriesInput())),
     ("dictation action wake selects its action after the default wakes", () => Check(DictationActionWakeSelectsAction())),
@@ -211,6 +226,14 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("tray supervisor disposes faulted completion and restarts", () => Check(TraySupervisorDisposesFaultedCompletionAndRestarts())),
     ("tray supervisor refreshes child identity without state change", () => Check(TraySupervisorRefreshesChildIdentityWithoutStateChange())),
     ("tray supervisor rejects stale run during snapshot race", () => Check(TraySupervisorRejectsStaleRunDuringSnapshotRace())),
+    ("tray meet W1-1 hold from Error blocks a later device retry", () => Check(TrayMeetTests.HoldFromErrorBlocksRetry())),
+    ("tray meet W1-2 user pause drops the hold and the call end does not reopen", () => Check(TrayMeetTests.UserPauseSurvivesCallEnd())),
+    ("tray meet W1-3 a resume from call A that runs during call B does not open", () => Check(TrayMeetTests.StaleResumeInNextCallStaysHeld())),
+    ("tray meet W1-4 pauseDuringMeet absent behaves as today", () => Check(TrayMeetTests.OffBehavesAsToday())),
+    ("tray meet user pause after Error survives the device retry", () => Check(TrayMeetTests.UserPauseAfterErrorSurvivesRetry())),
+    ("tray meet a launch or device retry start during a call holds without opening the mic", () => Check(TrayMeetTests.NonUserStartInCallHolds())),
+    ("tray meet a Hold queued during a call that runs after it ended leaves the run alone", () => Check(TrayMeetTests.StaleHoldAfterCallKeepsRun())),
+    ("tray meet a user start while already listening in a call keeps the hold on", () => Check(TrayMeetTests.UserStartWhileListeningKeepsHold())),
     ("tray command identity does not acquire lease", () => Check(TrayCommandIdentityDoesNotAcquireLease())),
     ("tray login item round-trips the per-user Run entry", TrayLoginItemRoundTripsRunEntry),
     ("tray IPC no-server error is actionable", TrayIpcNoServerErrorIsActionable),
@@ -1008,6 +1031,37 @@ static bool ConfigFillsLocaleDefaultStopWords()
         && Stop(""","locale":"fr-FR" """.Trim()) is null;
 }
 
+// Live failure 2026-10-26 18:12-18:15: sessions ran to maxSeconds while every closed utterance and tail was "standaloneStop=False".
+// Mac stops on a stop word that ends an utterance (Transcript.swift stopWordStart); Windows only on one said alone.
+static bool TrailingStopWordFinishesOpenBody()
+{
+    var words = new[] { "入力ストップ" };
+    var trailing = Recognized(3, RecognitionExtent.ClosedUtterance, 23000, 32000, "晴れです入力ストップ。", false,
+        Run("晴れです", 23000, 26000), Run("入力", 26500, 28000), Run("ストップ。", 28000, 30000));
+    var embedded = Recognized(4, RecognitionExtent.ClosedUtterance, 23000, 32000, "今日は入力ストップです", false,
+        Run("今日は", 23000, 25000), Run("入力", 25000, 26500), Run("ストップ", 26500, 28000), Run("です", 28000, 32000));
+    var partial = Recognized(5, RecognitionExtent.ClosedUtterance, 23000, 32000, "晴れですストップ", false,
+        Run("晴れです", 23000, 26000), Run("ストップ", 28000, 30000));
+    var head = trailing with { Id = 6, Extent = RecognitionExtent.PrefixHead };
+    var grammar = trailing with { Id = 7, FromStopGrammar = true, Confidence = 0.1 };
+
+    var session = new DictationSession(DictationConfig());
+    var store = StoreWithRamp(0, 40000);
+    session.Apply(Recognized(1, RecognitionExtent.ClosedUtterance, 0, 10000, "音声入力", false, Run("音声", 0, 4000), Run("入力", 4000, 10000)), store.Copy);
+    session.Apply(Recognized(2, RecognitionExtent.ClosedUtterance, 13000, 20000, "今日は", false, Run("今日は", 13000, 20000)), store.Copy);
+    var kept = session.Apply(embedded, store.Copy) is null && session.Apply(partial, store.Copy) is null && session.Apply(head, store.Copy) is null;
+    var audio = session.Apply(trailing, store.Copy);
+
+    return DictationBoundaries.TrailingStopRange(trailing, words) == new SampleRange(26500, 30000)
+        && DictationBoundaries.TrailingStopRange(embedded, words) is null
+        && DictationBoundaries.TrailingStopRange(partial, words) is null
+        && DictationBoundaries.TrailingStopRange(head, words) is null
+        && DictationBoundaries.TrailingStopRange(grammar, words) is null
+        && kept
+        && audio is { Reason: FinishReason.StandaloneStop }
+        && audio.Range == new SampleRange(13000, 26500);
+}
+
 static bool DictationLoneWakeWaitsForBody()
 {
     var config = DictationConfig();
@@ -1429,6 +1483,24 @@ static bool DedicatedTailStopTrimsGarbledTailAndHonorsTheFloor()
         && DictationBoundaries.TryDedicatedTailStop(garbled with { TailStopEnd = sourceEnd + 1 }, stops, true) is null;
 }
 
+// Geometries from the exe over brown noise (w3-noise-stop-brown): stop audio 49919..67519, body heard to 34560.
+static bool DedicatedTailStopInWindowNeedsTheStopToRunThroughAndQuietAfter()
+{
+    var stops = new[] { "入力ストップ" };
+    var cutMidStop = WithTail(
+        Recognized(2, RecognitionExtent.PrefixHead, 960, 56640, "音声入力今日は", true, Run("音声入力", 4960, 19040), Run("今日は", 19040, 34560)),
+        true, 0.89, "入力ストップ", 30080, 47840);
+    var afterStop = WithTail(
+        Recognized(5, RecognitionExtent.PrefixHead, 41600, 105600, "スタッフ", false, Run("スタッフ", 56640, 66080)),
+        true, 0.63, "入力ストップ", 57280, 66080);
+    var accepted = DictationBoundaries.TryDedicatedTailStop(afterStop, stops, true);
+    return DictationBoundaries.TryDedicatedTailStop(cutMidStop, stops, true) is null
+        && accepted is { Range: var range, BodyText: "" }
+        && range == new SampleRange(57280, 66080)
+        && DictationBoundaries.TryDedicatedTailStop(afterStop with { Source = new SampleRange(41600, 72960) }, stops, true) is null
+        && DictationBoundaries.TryDedicatedTailStop(afterStop with { Lexemes = [Run("スタッフ", 56640, 66080), Run("です", 70000, 99000)] }, stops, true) is null;
+}
+
 static bool DedicatedTailStopFinishesTheBodyOnlyWhenEnabled()
 {
     var enabled = DictationConfig() with { Dictation = DictationConfig().Dictation! with { DedicatedStopRecognizer = true } };
@@ -1516,6 +1588,49 @@ static bool DictationPrefixHeadStopIsRetained()
     var session = StartedSession(config, out var store);
     var audio = session.Apply(Recognized(2, RecognitionExtent.PrefixHead, 19000, 27000, "入力ストップ", false, Run("入力", 21000, 23000), Run("ストップ", 23000, 26000)), store.Copy);
     return audio is null && session.PendingBody == new SampleRange(10000, 27000);
+}
+
+// Mac ce14722: room noise above the threshold keeps one utterance open past the cap, so no closed utterance or tail arrives.
+// The newest seconds come as PrefixHead windows; a stop word followed by 0.5 s with no recognized word ends the body.
+static bool WindowStopEndsBodyUnderSteadyNoise()
+{
+    var config = DictationConfig();
+    LexicalRun[] runs = [Run("晴れです", 20000, 28000), Run("入力", 30000, 33000), Run("ストップ", 33000, 38000)];
+    var early = StartedSession(config, out var earlyStore);
+    var stillTalking = early.Apply(Recognized(2, RecognitionExtent.PrefixHead, 20000, 44000, "晴れです入力ストップ", false, runs), earlyStore.Copy);
+    var session = StartedSession(config, out var store);
+    var audio = session.Apply(Recognized(3, RecognitionExtent.PrefixHead, 20000, 48000, "晴れです入力ストップ", false, runs), store.Copy);
+    return stillTalking is null && early.IsActive
+        && audio is { Reason: FinishReason.StandaloneStop } && audio.Range == new SampleRange(10000, 30000);
+}
+
+// The recognizer stretches a window's first word back over the unrecognized sound before it. Cutting at the window start
+// would drop the end of the sentence said there, so the stop starts where its second word does, less one word's worth.
+static bool WindowStopAtHeadKeepsPreviousSentence()
+{
+    var session = StartedSession(DictationConfig(), out var store);
+    var audio = session.Apply(Recognized(2, RecognitionExtent.PrefixHead, 24000, 48000, "入力ストップ", false, Run("入力", 24000, 30000), Run("ストップ", 30000, 34000)), store.Copy);
+    return audio is { Reason: FinishReason.StandaloneStop } && audio.Range == new SampleRange(10000, 28000);
+}
+
+static bool WindowStopIgnoresNegatives()
+{
+    var config = DictationConfig();
+    var negatives = new[] { "スタッフ", "スタート", "ストップしないで", "ストック", "スポット", "すっぽり", "ちょっと", "ストレッチ", "スタンプ", "トップ", "入力した", "入力して", "はい", "うん", "ありがとう", "そうですね", "今日は晴れです", "ストーブ", "スリップ", "ステップ" };
+    var stopRuns = new[] { Run("入力", 30000, 33000), Run("ストップ", 33000, 38000) };
+    var windows = negatives.SelectMany(phrase => new[]
+        {
+            Recognized(2, RecognitionExtent.PrefixHead, 20000, 48000, phrase, false, Run(phrase, 20000, 36000)),
+            Recognized(2, RecognitionExtent.PrefixHead, 20000, 48000, "今日は" + phrase, false, Run("今日は", 20000, 26000), Run(phrase, 30000, 36000))
+        })
+        .Append(Recognized(2, RecognitionExtent.PrefixHead, 20000, 48000, "今日は入力ストップです", false, Run("今日は", 20000, 26000), Run("入力", 26000, 28000), Run("ストップ", 28000, 32000), Run("です", 32000, 36000)))
+        .Append(Recognized(2, RecognitionExtent.PrefixHead, 20000, 48000, "入力ストップ", true, stopRuns))
+        .Append(Recognized(2, RecognitionExtent.PrefixHead, 20000, 48000, "入力ストップ", false, stopRuns) with { FromStopGrammar = true, Confidence = 0.1 });
+    return windows.All(window =>
+    {
+        var session = StartedSession(config, out var store);
+        return session.Apply(window, store.Copy) is null && session.IsActive;
+    });
 }
 
 static bool DictationEmbeddedStopIsRetained()
@@ -2415,6 +2530,47 @@ static bool DictationPhaseStaysRecordingOnRepeatedWake()
         && observer.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Recording, DictationPhase.Ended]);
 }
 
+// TwoUtteranceFrames: "wakebody" opens the body, the second utterance (frames 27-38) is answered by closedKind. Probes of the
+// first utterance hear only body text; probes of the second hear the stop word. The pause after frame 40 lets the 60 ms gap probe land,
+// the one after frame 49 the closed utterance, before EOF skips the loop-bottom phase publish.
+static (int Code, string Output, IReadOnlyList<DictationPhase> Phases, IReadOnlyList<DictationAudio> Submissions) RunStopProbe(int? earlyWakeMs, string closedKind)
+{
+    var secondUtterance = 26L * Segmenter.FrameLength;
+    var recognizer = new ScriptedDictationRecognizer(request => Task.FromResult(Utterance(request,
+        request.Range.End <= secondUtterance ? (request.Extent == RecognitionExtent.Probe ? "body" : "wakebody")
+        : request.Extent == RecognitionExtent.Probe ? "stop" : closedKind)));
+    var observer = new PhaseRecorder();
+    var handoff = new RecordingDictationHandoff();
+    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 1200) with { EarlyWakeMs = earlyWakeMs },
+        new FixturePcmCapture(TwoUtteranceFrames(), [24, 40, 49]), recognizer, handoff, dryRun: true, observer);
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output);
+    return (code, output, observer.Phases.ToArray(), handoff.Submissions.ToArray());
+}
+
+static bool DictationPhaseEndsWhenProbeHearsStop()
+{
+    var early = RunStopProbe(10000, "stop");
+    var today = RunStopProbe(null, "stop");
+    var lines = early.Output.Split('\n');
+    var ended = Array.FindIndex(lines, line => line.Contains("dictation phase: Ended", StringComparison.Ordinal));
+    var closed = Array.FindLastIndex(lines, line => line.Contains("extent=ClosedUtterance", StringComparison.Ordinal) && line.Contains("enqueued", StringComparison.Ordinal));
+    return early.Code == 0 && today.Code == 0
+        && ended >= 0 && closed >= 0 && ended < closed
+        && early.Phases.SequenceEqual([DictationPhase.Recording, DictationPhase.Ended])
+        && early.Submissions.Select(audio => (audio.Reason, audio.Range)).SequenceEqual(today.Submissions.Select(audio => (audio.Reason, audio.Range)))
+        && early.Submissions.Single().Reason == FinishReason.StandaloneStop;
+}
+
+static bool DictationPhaseReturnsToRecordingWhenHeardStopIsNotConfirmed()
+{
+    var early = RunStopProbe(10000, "body");
+    var today = RunStopProbe(null, "body");
+    return early.Code == 0 && today.Code == 0
+        && early.Phases.SequenceEqual([DictationPhase.Recording, DictationPhase.Ended, DictationPhase.Recording, DictationPhase.Idle])
+        && early.Submissions.Select(audio => (audio.Reason, audio.Range)).SequenceEqual(today.Submissions.Select(audio => (audio.Reason, audio.Range)))
+        && early.Submissions.Single().Reason == FinishReason.Silence;
+}
+
 static bool DictationPhasesFollowLoneWakeStartTimeout()
 {
     var frames = new List<PcmFrame>();
@@ -2638,6 +2794,28 @@ static bool DictationRuntimeSkipsWakeForExcludedApp()
         && output.Contains("dictation skipped: keepass is excluded", StringComparison.Ordinal)
         && handoff.Submissions.Count == 1
         && handoff.Submissions[0].Target == 0x20;
+}
+
+static bool DictationRuntimeSkipsAutomaticPhraseBegunWhileMicInUse()
+{
+    var frames = new List<PcmFrame>();
+    void Add(int count, short value) => TestFrames.AddSquare(frames, count, value);
+    Add(4, 0); Add(12, 9000); Add(22, 0); Add(12, 9000); Add(22, 0);
+    var config = new VoiceSwitchConfig(["wake"], "en-US", "unused", MaxSeconds: 2.5,
+        HangoverMs: 120, PrerollMs: 60, MinSpeechMs: 90, VadMinRMS: 0.005f, SkipWhileMicInUseBy: ["Superwhisper.exe"],
+        Dictation: new(EndSilenceMs: 240, NoWakeWord: new(AutoIdle: true, MinHandoffMs: 0)));
+    // Superwhisper holds the mic only for the first check: it releases it mid-phrase.
+    var calls = 0;
+    var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(frames, [22, 36, 56, 70]), Recognizing("body", "body", "body", "body"),
+        new RecordingDictationHandoff(), dryRun: true, inputIdleSeconds: () => 4, wakeReading: value => value,
+        micInUseBy: _ => calls++ == 0 ? "Superwhisper" : null, voicedWindows: _ => 1);
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(10), out var output);
+    var sessions = output.Split('\n').Where(line => line.Contains("dictation session: automatic ") && line.Contains(" range=")).ToArray();
+    // W2-1: the first phrase (frames 4..15) never opens; W2-2: the next phrase, past the bridge, does.
+    return code == 0
+        && output.Contains("automatic wake blocked: Superwhisper", StringComparison.Ordinal)
+        && sessions.Length == 1
+        && sessions[0].Contains(" range=17280..", StringComparison.Ordinal);
 }
 
 static bool ResidentSkipsWakeWhileMicInUse()
@@ -3240,6 +3418,78 @@ static bool DictationRuntimeHearsWakeAfterLongSteadyNoise()
         && output.Contains("dictation vad: floor rebased", StringComparison.Ordinal)
         && handoff.Submissions.Count == 0
         && observer.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Idle]);
+}
+
+// Mac de4c434: steady room noise above a low floor opened an automatic session, ran it to maxSeconds without agreed words,
+// and reopened it on the next frame, forever.
+static (int Opened, int Handed, string Log) RunAutomaticOverRoomNoise(bool speechAfter)
+{
+    var frames = new List<PcmFrame>();
+    void Add(int count, short value) => TestFrames.AddSquare(frames, count, value);
+    Add(4, 0);
+    // Six maxSeconds (3 s) of the same noise: one session, then none.
+    Add(600, 400);
+    if (speechAfter) { Add(70, 9000); Add(30, 0); }
+    var config = new VoiceSwitchConfig(["wake"], "en-US", "unused", MaxSeconds: 2.5,
+        HangoverMs: 120, PrerollMs: 60, MinSpeechMs: 90, VadMinRMS: 0.005f, StopWords: ["stop"],
+        Dictation: new(EndSilenceMs: 240, MaxSeconds: 3, NoWakeWord: new(AutoIdle: true, MinHandoffMs: 0)));
+    var handoff = new RecordingDictationHandoff();
+    var recognizer = new ScriptedDictationRecognizer(request =>
+        Task.FromResult(new RecognizedUtterance(request.Id, request.Extent, request.Range, "body", [new LexicalRun("body", request.Range)])));
+    var delays = Enumerable.Range(0, frames.Count / 10).Select(i => i * 10).ToArray();
+    var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(frames, delays), recognizer, handoff, false, new PhaseRecorder(),
+        inputIdleSeconds: () => 4, wakeReading: value => value, micInUseBy: _ => null, voicedWindows: _ => 1,
+        agreedCharacters: samples => Task.FromResult(samples.Any(sample => Math.Abs((int)sample) > 4000) ? 5 : 0));
+    _ = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(30), out var output);
+    var opened = output.Split('\n').Count(line => line.Contains("dictation session: automatic ", StringComparison.Ordinal)
+        && line.Contains("range=", StringComparison.Ordinal) && !line.Contains("confirmed", StringComparison.Ordinal));
+    return (opened, handoff.Submissions.Count, output);
+}
+
+static bool AutomaticNoiseAtMaxSecondsRebasesFloor()
+{
+    var (opened, handed, log) = RunAutomaticOverRoomNoise(speechAfter: false);
+    return opened == 1 && handed == 0
+        && log.Contains("dictation session: end reason=MaximumDuration", StringComparison.Ordinal)
+        && log.Contains("dictation dropped: automatic audio had no agreed words", StringComparison.Ordinal)
+        && log.Contains("dictation vad: floor rebased", StringComparison.Ordinal);
+}
+
+static bool AutomaticSpeechOpensAfterNoiseRebase()
+{
+    var (opened, handed, log) = RunAutomaticOverRoomNoise(speechAfter: true);
+    return opened == 2 && handed == 1 && log.Contains("dictation vad: floor rebased", StringComparison.Ordinal);
+}
+
+// Live failure 2026-10-26 17:53-17:54: room noise kept every pause under the 300 ms hangover, so the utterance ran past the cap,
+// only its head was recognized, and the stop word at its end was never heard; the session ran to maxSeconds.
+static bool DictationRuntimeStopsOnStopWordAfterCap()
+{
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 12, loud: false);
+    AddFrames(frames, 120, loud: true);
+    AddFrames(frames, 15, loud: false);
+    AddFrames(frames, 60, loud: false);
+    var closed = 0;
+    var recognizer = new ScriptedDictationRecognizer(request => Task.FromResult(request.Extent == RecognitionExtent.PrefixHead
+        ? Utterance(request, "body")
+        : ++closed == 1
+            ? Utterance(request, "wake-body")
+            : new RecognizedUtterance(request.Id, request.Extent, request.Range, "入力ストップ",
+                [Run("入力ストップ", request.Range.End - Segmenter.FrameLength * 13, request.Range.End - Segmenter.FrameLength * 10)])));
+    var handoff = new RecordingDictationHandoff();
+    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(), new FixturePcmCapture(frames, [26, 161]), recognizer, handoff, dryRun: true);
+    var code = RunWithTimeout(runtime, TimeSpan.FromSeconds(5));
+    var audio = handoff.Submissions.SingleOrDefault();
+    var tail = recognizer.Requests.LastOrDefault(request => request.Extent == RecognitionExtent.ClosedUtterance);
+    return code == 0
+        && recognizer.Requests.Any(request => request.Extent == RecognitionExtent.PrefixHead)
+        && tail is not null
+        && tail.Range.End >= 147 * Segmenter.FrameLength
+        && audio is { Reason: FinishReason.StandaloneStop }
+        && audio.Range.End == tail.Range.End - Segmenter.FrameLength * 13;
 }
 
 static bool DictationRuntimeFinalizesBodyAtSyntheticEof()
@@ -4198,6 +4448,37 @@ static bool ConfigLoadsDedicatedStopRecognizer()
         && !off.Dictation!.DedicatedStopRecognizer
         && !absent.Dictation!.DedicatedStopRecognizer
         && new DictationConfig().DedicatedStopRecognizer == false;
+}
+
+static bool ConfigLoadsEchoCancellation()
+{
+    using var temp = RuntimeTemp();
+    VoiceSwitchConfig Load(string name, string dictation)
+    {
+        var path = Path.Combine(temp.Dir, name);
+        File.WriteAllText(path, $$"""{ "wakeWords": ["音声入力"], "command": "wake", "dictation": {{dictation}} }""");
+        return ConfigLoader.Load(path);
+    }
+
+    return Load("on.json", """{ "echoCancellation": true }""").Dictation!.EchoCancellation != false
+        && Load("off.json", """{ "echoCancellation": false }""").Dictation!.EchoCancellation == false
+        && Load("absent.json", """{ "recordingsDir": "rec" }""").Dictation!.EchoCancellation != false;
+}
+
+// 48 kHz stereo and 44.1 kHz mono both come out as 16 kHz mono at the same level, so 30 ms is one segmenter frame.
+static bool EchoCancelledDownsamplerKeepsRateAndLevel()
+{
+    bool Check(int rate, int channels)
+    {
+        var input = new float[rate * channels];
+        for (var i = 0; i < rate; i++)
+            for (var c = 0; c < channels; c++) input[i * channels + c] = 0.5f;
+        var output = new List<short>();
+        new EchoCancelledCapture.Downsampler(rate).Push(input, channels, output);
+        return Math.Abs(output.Count - Segmenter.Rate) <= 1 && output.All(s => Math.Abs(s - 16384) <= 1);
+    }
+
+    return Check(48000, 2) && Check(44100, 1);
 }
 
 static bool DedicatedStopScriptStaysOnItsOwnEngine()
@@ -5276,8 +5557,8 @@ static bool TraySupervisorStartsPausedAndStartIsIdempotent()
     var factory = new FakeTrayRuntimeFactory();
     var supervisor = new TrayRuntimeSupervisor(temp.ConfigPath, new TrayInputSource("in.wav", Path.Combine(temp.Dir, "out")), factory);
     var initialPaused = supervisor.Snapshot.State == TrayState.Paused;
-    supervisor.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
-    supervisor.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
+    supervisor.StartAsync(CancellationToken.None, StartOrigin.User).GetAwaiter().GetResult();
+    supervisor.StartAsync(CancellationToken.None, StartOrigin.User).GetAwaiter().GetResult();
     var running = supervisor.Snapshot.State == TrayState.Listening && factory.Started.Count == 1;
     supervisor.PauseAsync(CancellationToken.None).GetAwaiter().GetResult();
     return initialPaused
@@ -5292,7 +5573,7 @@ static bool TraySupervisorInvalidReloadKeepsRunningGeneration()
     WriteTrayDictationConfig(temp.ConfigPath, "音声入力");
     var factory = new FakeTrayRuntimeFactory();
     var supervisor = new TrayRuntimeSupervisor(temp.ConfigPath, new TrayInputSource("in.wav", Path.Combine(temp.Dir, "out")), factory);
-    supervisor.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
+    supervisor.StartAsync(CancellationToken.None, StartOrigin.User).GetAwaiter().GetResult();
     var generation = supervisor.Snapshot.Generation;
     File.WriteAllText(temp.ConfigPath, """{"wakeWords":["。"],"command":"wake","dictation":{}}""");
     supervisor.ReloadAsync(CancellationToken.None).GetAwaiter().GetResult();
@@ -5309,7 +5590,7 @@ static bool TraySupervisorReloadSwitchesToCommandMode()
     WriteTrayDictationConfig(temp.ConfigPath, "音声入力");
     var factory = new FakeTrayRuntimeFactory();
     var supervisor = new TrayRuntimeSupervisor(temp.ConfigPath, new TrayInputSource(null, null), factory);
-    supervisor.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
+    supervisor.StartAsync(CancellationToken.None, StartOrigin.User).GetAwaiter().GetResult();
     var generation = supervisor.Snapshot.Generation;
     File.WriteAllText(temp.ConfigPath, """{"wakeWords":["音声入力"],"command":"wake"}""");
     supervisor.ReloadAsync(CancellationToken.None).GetAwaiter().GetResult();
@@ -5326,7 +5607,7 @@ static bool TraySupervisorValidReloadStopsOldBeforeNew()
     WriteTrayDictationConfig(temp.ConfigPath, "音声入力");
     var factory = new FakeTrayRuntimeFactory();
     var supervisor = new TrayRuntimeSupervisor(temp.ConfigPath, new TrayInputSource("in.wav", Path.Combine(temp.Dir, "out")), factory);
-    supervisor.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
+    supervisor.StartAsync(CancellationToken.None, StartOrigin.User).GetAwaiter().GetResult();
     var first = factory.Started.Single();
     WriteTrayDictationConfig(temp.ConfigPath, "別の起動語");
     supervisor.ReloadAsync(CancellationToken.None).GetAwaiter().GetResult();
@@ -5343,9 +5624,9 @@ static bool TraySupervisorRetainsRunAfterStopFailure()
     WriteTrayDictationConfig(temp.ConfigPath, "音声入力");
     var factory = new FakeTrayRuntimeFactory { ThrowOnStop = true };
     var supervisor = new TrayRuntimeSupervisor(temp.ConfigPath, new TrayInputSource("in.wav", Path.Combine(temp.Dir, "out")), factory);
-    supervisor.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
+    supervisor.StartAsync(CancellationToken.None, StartOrigin.User).GetAwaiter().GetResult();
     supervisor.PauseAsync(CancellationToken.None).GetAwaiter().GetResult();
-    supervisor.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
+    supervisor.StartAsync(CancellationToken.None, StartOrigin.User).GetAwaiter().GetResult();
     return supervisor.Snapshot.State == TrayState.Error
         && supervisor.Snapshot.OwnedChildProcessId == 1234
         && factory.Started.Count == 1
@@ -5370,7 +5651,7 @@ static bool TraySupervisorRetriesQuitAfterStopFailure()
     WriteTrayDictationConfig(temp.ConfigPath, "音声入力");
     var factory = new FakeTrayRuntimeFactory { ThrowOnStop = true };
     var supervisor = new TrayRuntimeSupervisor(temp.ConfigPath, new TrayInputSource("in.wav", Path.Combine(temp.Dir, "out")), factory);
-    supervisor.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
+    supervisor.StartAsync(CancellationToken.None, StartOrigin.User).GetAwaiter().GetResult();
     Throws<TimeoutException>(() => supervisor.QuitAsync(CancellationToken.None).GetAwaiter().GetResult(), "runtime did not confirm termination");
     var run = factory.Started.Single();
     var retained = supervisor.Snapshot.State == TrayState.Error
@@ -5391,12 +5672,12 @@ static bool TraySupervisorDisposesFaultedCompletionAndRestarts()
     WriteTrayDictationConfig(temp.ConfigPath, "音声入力");
     var factory = new FakeTrayRuntimeFactory { FaultCompletionOnStart = true };
     var supervisor = new TrayRuntimeSupervisor(temp.ConfigPath, new TrayInputSource("in.wav", Path.Combine(temp.Dir, "out")), factory);
-    supervisor.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
+    supervisor.StartAsync(CancellationToken.None, StartOrigin.User).GetAwaiter().GetResult();
     var observed = SpinWait.SpinUntil(
         () => supervisor.Snapshot.State == TrayState.Error && supervisor.Snapshot.OwnedChildProcessId is null,
         TimeSpan.FromSeconds(2));
     factory.FaultCompletionOnStart = false;
-    supervisor.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
+    supervisor.StartAsync(CancellationToken.None, StartOrigin.User).GetAwaiter().GetResult();
     return observed
         && factory.Started.Count == 2
         && factory.Started[0].DisposeCount == 1
@@ -5410,7 +5691,7 @@ static bool TraySupervisorRefreshesChildIdentityWithoutStateChange()
     WriteTrayDictationConfig(temp.ConfigPath, "音声入力");
     var factory = new FakeTrayRuntimeFactory { InitialOwnedChild = null };
     var supervisor = new TrayRuntimeSupervisor(temp.ConfigPath, new TrayInputSource("in.wav", Path.Combine(temp.Dir, "out")), factory);
-    supervisor.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
+    supervisor.StartAsync(CancellationToken.None, StartOrigin.User).GetAwaiter().GetResult();
     var generation = supervisor.Snapshot.Generation;
     var run = factory.Started.Single();
     var readsBeforeIdentityChanges = run.OwnedChildReadCount;
@@ -5445,7 +5726,7 @@ static bool TraySupervisorRejectsStaleRunDuringSnapshotRace()
     var second = new RecognitionProcessIdentity(2002, DateTimeOffset.UtcNow.AddSeconds(-10));
     var factory = new FakeTrayRuntimeFactory { InitialOwnedChild = first };
     var supervisor = new TrayRuntimeSupervisor(temp.ConfigPath, new TrayInputSource("in.wav", Path.Combine(temp.Dir, "out")), factory);
-    supervisor.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
+    supervisor.StartAsync(CancellationToken.None, StartOrigin.User).GetAwaiter().GetResult();
     var oldRun = factory.Started.Single();
     using var blockOldIdentityRead = new ManualResetEventSlim(false);
     oldRun.BlockOwnedChildRead = blockOldIdentityRead;

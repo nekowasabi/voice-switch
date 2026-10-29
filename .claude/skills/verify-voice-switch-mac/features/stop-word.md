@@ -7,6 +7,7 @@ When the user says a configured stop word, voice-switch ends the current dictati
 - `stop-idle` logs a stop word heard while nothing is recording.
 - `stop-latin-case` matches a Latin stop word regardless of the case the recognizer returns.
 - `stop-dictation` ends a running dictation (needs `dictation`, see wake-dictation.md).
+- `stop-automatic-live` ends an automatic recording on the installed app with a live voice. It is `mic-switch.md` MS16, which fails on the built-in mic as of 2026-10-28. The synthetic `long-tail` in stop-word-long-utterance.md does not cover it: `--simulate` has no HAL voice detector, and `config.stop-auto.json` lists only `入力ストップ`, not the user's bare `ストップ`.
 
 ## How to get to it (user POV)
 

@@ -122,7 +122,7 @@ public sealed class TrayIpcServer : IAsyncDisposable
             switch (command)
             {
                 case TrayCommand.Start:
-                    await supervisor.StartAsync(cancellationToken).ConfigureAwait(false);
+                    await supervisor.StartAsync(cancellationToken, StartOrigin.User).ConfigureAwait(false);
                     break;
                 case TrayCommand.Pause:
                     await supervisor.PauseAsync(cancellationToken).ConfigureAwait(false);

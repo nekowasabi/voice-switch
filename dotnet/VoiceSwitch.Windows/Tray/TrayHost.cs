@@ -55,7 +55,10 @@ public static class TrayHost
                     Hotkeys: hotkeys,
                     MicDevice: () => TraySettings.MicDevice,
                     OnDelivery: state => hud.Post(() => hud.Deliver(state)))),
-                instance.Key);
+                instance.Key,
+                pauseDuringMeet: PauseDuringMeet(options.ConfigPath),
+                // --paused is the user's pause: a call ending must not start the tray.
+                userPaused: options.Paused);
 
             using var context = new VoiceSwitchTrayContext(supervisor);
             using var wakeLabelHotkey = new WakeLabelHotkey(context.ShowHistory, hotkeys.RequestStart, PauseShortcut(options.ConfigPath),
@@ -68,7 +71,7 @@ public static class TrayHost
             {
                 if (!options.Paused)
                 {
-                    _ = supervisor.StartAsync(CancellationToken.None);
+                    _ = supervisor.StartAsync(CancellationToken.None, StartOrigin.Launch);
                 }
 
                 Application.Run(context);
@@ -100,6 +103,13 @@ public static class TrayHost
         var chord = DictationHotkeys.Parse(name);
         if (chord is null) Log.Info($"pause hotkey ignored: cannot parse \"{name}\"");
         return chord;
+    }
+
+    // Read once at launch, as on Mac; a broken config means off.
+    private static bool PauseDuringMeet(string configPath)
+    {
+        try { return ConfigLoader.Load(configPath).PauseDuringMeet == true; }
+        catch (Exception) { return false; }
     }
 
     // Why: a WinExe gets no console, so CLI output from cmd/PowerShell would vanish. Only attach when
