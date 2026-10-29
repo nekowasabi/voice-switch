@@ -110,6 +110,7 @@ public sealed class WindowsDictationRuntime
     private string? lastSilenceDiagnosticKey;
     private DictationPhase shownPhase;
     private bool endedByUser;
+    private bool stopHeard;
     private nint target;
     private string? lastAutomaticSkip;
     // Mac heardSpeech: once the voice after the wake word is heard it stays heard, so a repeated wake word keeps 録音中.
@@ -391,6 +392,15 @@ public sealed class WindowsDictationRuntime
                         var windowBeforeApply = wasActive ? DictationBoundaries.WindowStopRange(outcome.Recognition!, config.StopWords ?? []) : null;
                         var effectiveStop = stopBeforeApply ?? trailingBeforeApply ?? windowBeforeApply ?? tailBeforeApply?.Range;
                         var audio = session.Apply(outcome.Recognition!, originalStore.Copy, analysisStore.Next, wakeOrigin);
+                        // Mac StopVerdict.heard: a probe ending in a stop word only shows the end; the closed utterance still
+                        // decides it, and any later recognition that is not such a probe takes the provisional end back.
+                        if (wasActive && session.IsActive)
+                        {
+                            var asClosed = outcome.Recognition! with { Extent = RecognitionExtent.ClosedUtterance };
+                            stopHeard = outcome.Work.Request.Extent == RecognitionExtent.Probe
+                                && (DictationBoundaries.StandaloneStopRange(asClosed, config.StopWords ?? []) ?? DictationBoundaries.TrailingStopRange(asClosed, config.StopWords ?? [])) is not null;
+                        }
+
                         if (wasIdle && !session.IsActive && !session.IsAwaitingBody && outcome.Work.Request.Extent == RecognitionExtent.PrefixHead)
                         {
                             var floorBefore = segmenter.Floor;
@@ -631,10 +641,10 @@ public sealed class WindowsDictationRuntime
 
         if (ev is null)
         {
-            // Only while idle, and at most two probes in flight: the serial SAPI queue (8) exits the runtime when it overflows,
+            // Idle or recording, and at most two probes in flight: the serial SAPI queue (8) exits the runtime when it overflows,
             // yet the 150 ms probe must not be dropped while the 60 ms one is still decoding (prefix wakes fire only from it).
-            if (!session.IsActive
-                && !session.IsAwaitingBody
+            // Mac 6c30bf3: while recording, a probe lets the HUD show a stop word before the hangover closes the utterance.
+            if (!session.IsAwaitingBody
                 && pending.Values.Count(work => work.Request.Extent == RecognitionExtent.Probe) < MaxPendingProbes
                 && segmenter.Probe() is { } probe)
             {
@@ -805,6 +815,7 @@ public sealed class WindowsDictationRuntime
         lastSilenceDiagnosticKey = null;
         target = 0;
         heardAfterWake = false;
+        stopHeard = false;
         checkedSamples = 0;
         hotkeys?.End();
         return new DictationSession(config);
@@ -966,7 +977,7 @@ public sealed class WindowsDictationRuntime
     private void PublishPhase(DictationSession session, long lastLiveSpeechEnd)
     {
         PublishPhase(endedByUser ? DictationPhase.Ended
-            : session.IsActive ? (Confirmed(session) ? DictationPhase.Recording : DictationPhase.Idle)
+            : session.IsActive ? (Confirmed(session) ? (stopHeard ? DictationPhase.Ended : DictationPhase.Recording) : DictationPhase.Idle)
             : session.IsAwaitingBody ? (HeardAfterWake(session, lastLiveSpeechEnd) ? DictationPhase.Recording : DictationPhase.Waiting)
             : config.Dictation?.NoWakeWord?.Followup == true && analysisStore.Next < followupUntil ? DictationPhase.Followup
             : DictationPhase.Idle);

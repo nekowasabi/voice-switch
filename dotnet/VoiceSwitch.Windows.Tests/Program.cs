@@ -110,6 +110,8 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation phases follow one-breath dictation ended by silence", () => Check(DictationPhasesFollowOneBreathDictationEndedBySilence())),
     ("dictation phases follow lone wake ended by stop word", () => Check(DictationPhasesFollowLoneWakeEndedByStop())),
     ("dictation phase stays recording when the wake word is repeated while waiting", () => Check(DictationPhaseStaysRecordingOnRepeatedWake())),
+    ("dictation phase ends when a recording probe hears the stop word, before the hangover closes it", () => Check(DictationPhaseEndsWhenProbeHearsStop())),
+    ("dictation phase returns to recording when the closed utterance is not the stop the probe heard", () => Check(DictationPhaseReturnsToRecordingWhenHeardStopIsNotConfirmed())),
     ("dictation phases follow lone wake ended by start timeout", () => Check(DictationPhasesFollowLoneWakeStartTimeout())),
     ("dictation runtime end silence counts from when the body is applied", () => Check(DictationRuntimeEndSilenceCountsFromBodyApplied())),
     ("dictation runtime start timeout counts from when the wake is applied", () => Check(DictationRuntimeStartTimeoutCountsFromWakeApplied())),
@@ -2521,6 +2523,47 @@ static bool DictationPhaseStaysRecordingOnRepeatedWake()
     return RunWithTimeout(runtime, TimeSpan.FromSeconds(5)) == 0
         && handoff.Submissions.Count == 0
         && observer.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Recording, DictationPhase.Ended]);
+}
+
+// TwoUtteranceFrames: "wakebody" opens the body, the second utterance (frames 27-38) is answered by closedKind. Probes of the
+// first utterance hear only body text; probes of the second hear the stop word. The pause after frame 40 lets the 60 ms gap probe land,
+// the one after frame 49 the closed utterance, before EOF skips the loop-bottom phase publish.
+static (int Code, string Output, IReadOnlyList<DictationPhase> Phases, IReadOnlyList<DictationAudio> Submissions) RunStopProbe(int? earlyWakeMs, string closedKind)
+{
+    var secondUtterance = 26L * Segmenter.FrameLength;
+    var recognizer = new ScriptedDictationRecognizer(request => Task.FromResult(Utterance(request,
+        request.Range.End <= secondUtterance ? (request.Extent == RecognitionExtent.Probe ? "body" : "wakebody")
+        : request.Extent == RecognitionExtent.Probe ? "stop" : closedKind)));
+    var observer = new PhaseRecorder();
+    var handoff = new RecordingDictationHandoff();
+    var runtime = new WindowsDictationRuntime(DictationRuntimeTestConfig(endSilenceMs: 1200) with { EarlyWakeMs = earlyWakeMs },
+        new FixturePcmCapture(TwoUtteranceFrames(), [24, 40, 49]), recognizer, handoff, dryRun: true, observer);
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output);
+    return (code, output, observer.Phases.ToArray(), handoff.Submissions.ToArray());
+}
+
+static bool DictationPhaseEndsWhenProbeHearsStop()
+{
+    var early = RunStopProbe(10000, "stop");
+    var today = RunStopProbe(null, "stop");
+    var lines = early.Output.Split('\n');
+    var ended = Array.FindIndex(lines, line => line.Contains("dictation phase: Ended", StringComparison.Ordinal));
+    var closed = Array.FindLastIndex(lines, line => line.Contains("extent=ClosedUtterance", StringComparison.Ordinal) && line.Contains("enqueued", StringComparison.Ordinal));
+    return early.Code == 0 && today.Code == 0
+        && ended >= 0 && closed >= 0 && ended < closed
+        && early.Phases.SequenceEqual([DictationPhase.Recording, DictationPhase.Ended])
+        && early.Submissions.Select(audio => (audio.Reason, audio.Range)).SequenceEqual(today.Submissions.Select(audio => (audio.Reason, audio.Range)))
+        && early.Submissions.Single().Reason == FinishReason.StandaloneStop;
+}
+
+static bool DictationPhaseReturnsToRecordingWhenHeardStopIsNotConfirmed()
+{
+    var early = RunStopProbe(10000, "body");
+    var today = RunStopProbe(null, "body");
+    return early.Code == 0 && today.Code == 0
+        && early.Phases.SequenceEqual([DictationPhase.Recording, DictationPhase.Ended, DictationPhase.Recording, DictationPhase.Idle])
+        && early.Submissions.Select(audio => (audio.Reason, audio.Range)).SequenceEqual(today.Submissions.Select(audio => (audio.Reason, audio.Range)))
+        && early.Submissions.Single().Reason == FinishReason.Silence;
 }
 
 static bool DictationPhasesFollowLoneWakeStartTimeout()
