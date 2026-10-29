@@ -26,7 +26,8 @@ public static class GrokBotPrompt
 
     public static (string Fitted, bool Truncated) Fit(string text)
     {
-        var collapsed = Regex.Replace(text, "[\r\n\t]+", " ").Trim();
+        // Line breaks are the user's: a multi-line message reaches the composer as lines (LF, %0A). Only tabs fold to a space.
+        var collapsed = Regex.Replace(Regex.Replace(text, "\r\n?", "\n"), "\t+", " ").Trim();
         var fitted = new StringBuilder();
         var encodedLength = 0;
         foreach (var rune in collapsed.EnumerateRunes())

@@ -261,7 +261,7 @@ struct WakeAction: Decodable {
 }
 
 /// Grok Bot prompt-link limits (documented, not live-tested; staff forum 2026-10-16).
-/// Mirrors Core GrokBotPrompt line for line: collapse CR/LF/tab runs, trim,
+/// Mirrors Core GrokBotPrompt line for line: CR LF and CR become LF, tab runs become one space, trim,
 /// cap the percent-encoded value at 1000 characters on a whole UTF-8 scalar.
 enum GrokBotPrompt {
     static func isPrompt(_ url: String) -> Bool {
@@ -278,7 +278,8 @@ enum GrokBotPrompt {
     }
 
     static func fit(_ text: String) -> (fitted: String, truncated: Bool) {
-        let collapsed = text.replacingOccurrences(of: "[\\r\\n\\t]+", with: " ", options: .regularExpression)
+        let collapsed = text.replacingOccurrences(of: "\\r\\n?", with: "\n", options: .regularExpression)
+            .replacingOccurrences(of: "\\t+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let unreserved = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~".utf8)
         var fitted = ""

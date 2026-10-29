@@ -151,10 +151,10 @@ def query_value(url, key):
     return None
 
 failures = []
-url = run("grokbot", "hello\r\n\tworld\n")
+url = run("grokbot", "hello\r\nworld\t\tnow\n")
 value = query_value(url, "text")
-if value != "hello%20world":
-    failures.append(f"newline collapse: {url}")
+if value != "hello%0Aworld%20now":
+    failures.append(f"line breaks: {url}")
 # 1000-char cap, no split of %E4%BB%8A (UTF-8 for 今) and no split of %XX.
 long_text = "今" * 400
 url = run("grokbot", long_text)

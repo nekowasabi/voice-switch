@@ -39,7 +39,7 @@ prompt links expect `text`. Other action URLs keep `input`.
 
 ## Limits
 
-Prompt links collapse each CR/LF/tab run to one space, trim the ends, and
+Prompt links keep line breaks (CR LF and CR become LF, sent as `%0A`), turn each tab run into one space, trim the ends, and
 cap the percent-encoded value at 1000 characters, cut only at a whole UTF-8
 character and never inside a `%XX` escape. Longer dictations are truncated
 and the handoff logs `grokbot prompt text truncated`. These limits apply

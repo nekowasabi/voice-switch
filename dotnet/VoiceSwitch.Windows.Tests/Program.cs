@@ -182,7 +182,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("wake action URL carries the text as one input item", () => Check(WakeActionUrlCarriesInput())),
     ("wake action URL with default inputParam stays byte-identical to input=", () => Check(WakeActionUrlDefaultInputParamStaysByteIdentical())),
     ("wake action inputParam=text puts the dictation in text=", () => Check(WakeActionInputParamTextPutsDictationInText())),
-    ("grokbot prompt collapses CR LF tab runs to one space and trims", () => Check(GrokbotPromptCollapsesWhitespace())),
+    ("grokbot prompt keeps line breaks as LF, folds tabs, and trims", () => Check(GrokbotPromptKeepsLineBreaks())),
     ("grokbot prompt caps percent-encoded text at 1000 without splitting %XX or UTF-8", () => Check(GrokbotPromptCapsEncodedText())),
     ("config rejects invalid inputParam at load", () => Check(ConfigRejectsInvalidInputParam())),
     ("automatic session never opens an action URL", () => Check(AutomaticSessionNeverOpensActionUrl())),
@@ -4660,11 +4660,12 @@ static bool WakeActionInputParamTextPutsDictationInText()
     return built == "grokbot://app/v1/prompt?id=YOUR_BOT_ID&text=hello%20world";
 }
 
-static bool GrokbotPromptCollapsesWhitespace()
+static bool GrokbotPromptKeepsLineBreaks()
 {
     const string url = "grokbot://app/v1/prompt?id=YOUR_BOT_ID";
-    var built = new WakeAction("grokbot", ["g"], url, InputParam: "text").InputUrl("hello\r\n\tworld\n");
-    return built == url + "&text=hello%20world";
+    var action = new WakeAction("grokbot", ["g"], url, InputParam: "text");
+    return action.InputUrl("\nhello\r\nworld\rbye\t\tnow\n") == url + "&text=hello%0Aworld%0Abye%20now"
+        && action.InputUrl("one\n\ntwo") == url + "&text=one%0A%0Atwo";
 }
 
 static bool GrokbotPromptCapsEncodedText()
