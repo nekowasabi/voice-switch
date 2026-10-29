@@ -311,32 +311,35 @@ public sealed class WindowsDictationRuntime
                     {
                         var pendingBefore = pending.Count;
                         var wakeOrigin = outcome.Recognition is { } candidate ? RecognitionOrigin(session, candidate) : session.Origin;
+                        // Queued for audio a reset session owned: a stop window or probe from the dictation a hotkey just ended.
+                        var stale = !pending.ContainsKey(outcome.Work.Request.Id) || outcome.Work.Request.Range.Start < eligibleRecognitionStart;
                         if (outcome.Recognition is { } observed)
                         {
                             var origin = wakeOrigin;
-                            if (!session.IsActive && !session.IsAwaitingBody && observed.Extent == RecognitionExtent.ClosedUtterance
-                                && pending.ContainsKey(outcome.Work.Request.Id) && outcome.Work.Request.Range.Start >= eligibleRecognitionStart)
+                            if (!session.IsActive && !session.IsAwaitingBody && observed.Extent == RecognitionExtent.ClosedUtterance && !stale)
                                 WakeMissLabel.Observe(outcome.Work.Request.Id, origin);
                             var leadingWake = DictationBoundaries.LeadingWake(observed, config.Wakes()) is not null;
                             var stopRange = DictationBoundaries.StandaloneStopRange(observed, config.StopWords ?? []);
                             // Mac logs "heard:" for what it transcribes while idle and never transcribes the body. Here a body longer
                             // than the segmenter cap arrives as PrefixHead and stays private; a closed utterance inside a session is
                             // a stop-word candidate, so its text, grammar and confidence are logged to make stop misses tunable.
-                            // The tail of an over-cap body is body text too and stays private like its head.
+                            // The tail of an over-cap body is body text too and stays private like its head, and so does a
+                            // stale one: the session that owned its audio is gone by the time it completes.
                             var heard = config.Dictation?.NoWakeWord?.Enabled == true || outcome.Work.BodyTail
-                                || (session.IsActive || session.IsAwaitingBody) && observed.Extent != RecognitionExtent.ClosedUtterance
+                                || (session.IsActive || session.IsAwaitingBody || stale) && observed.Extent != RecognitionExtent.ClosedUtterance
                                 ? $" textLen={TranscriptShape.Length(observed.Text)} filler={(TranscriptShape.IsFiller(observed.Text) ? 1 : 0)} conf={(observed.Confidence is double shapeConf ? shapeConf.ToString("0.00", CultureInfo.InvariantCulture) : "-")} rejectedLen={(observed.RejectedText is { } rejectedShape ? TranscriptShape.Length(rejectedShape) : 0)}"
                                 : $" text=\"{observed.Text}\" conf={(observed.Confidence is double conf ? conf.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) : "-")}{(observed.RejectedText is { } rejectedText ? $" rejectedText=\"{rejectedText}\"" : "")} grammar={(observed.FromStopGrammar ? "stop" : "dictation")} reading=\"{string.Join(' ', observed.Lexemes.Where(lexeme => lexeme.Reading is not null).Select(lexeme => lexeme.Reading))}\"{(observed.Alternates.IsDefaultOrEmpty ? "" : $" alts=\"{string.Join('|', observed.Alternates.Select(alternate => $"{alternate.Text}/{alternate.Reading}"))}\"")}";
                             Log.Info($"dictation recognition: complete id={outcome.Work.Request.Id} extent={outcome.Work.Request.Extent} range={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End} rejected={observed.HadRejectedSpeech} leadingWake={leadingWake} standaloneStop={stopRange is not null} stopRange={(stopRange is null ? "-" : $"{stopRange.Value.Start}..{stopRange.Value.End}")}{WindowStopLog(observed)} pendingBefore={pendingBefore}{heard}{TailStopLog(observed)} {origin.Fields} {Sid(session)}");
                         }
                         observer?.RecognitionCompleted(outcome.Work.Request, outcome.Recognition, outcome.Error);
 
-                        if (!pending.Remove(outcome.Work.Request.Id) || outcome.Work.Request.Range.Start < eligibleRecognitionStart)
+                        pending.Remove(outcome.Work.Request.Id);
+                        if (stale)
                         {
-                            if (outcome.Recognition is { } stale)
+                            if (outcome.Recognition is { } late)
                             {
-                                var staleStop = DictationBoundaries.StandaloneStopRange(stale, config.StopWords ?? []) is not null;
-                                Log.Info($"dictation recognition: stale id={outcome.Work.Request.Id} range={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End} standaloneStop={staleStop}{TailStopLog(stale)} eligibleStart={eligibleRecognitionStart}");
+                                var staleStop = DictationBoundaries.StandaloneStopRange(late, config.StopWords ?? []) is not null;
+                                Log.Info($"dictation recognition: stale id={outcome.Work.Request.Id} range={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End} standaloneStop={staleStop}{TailStopLog(late)} eligibleStart={eligibleRecognitionStart}");
                             }
 
                             continue;
