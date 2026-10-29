@@ -398,9 +398,7 @@ public sealed class WindowsDictationRuntime
 
                         if (wasIdle && !session.IsActive && !session.IsAwaitingBody && outcome.Work.Request.Extent == RecognitionExtent.PrefixHead)
                         {
-                            var floorBefore = segmenter.Floor;
-                            segmenter.RebaseFloor();
-                            Log.Info($"dictation vad: floor rebased id={outcome.Work.Request.Id} floor={floorBefore:0.0000}->{segmenter.Floor:0.0000} threshold={segmenter.Threshold:0.0000}");
+                            RebaseFloor($"id={outcome.Work.Request.Id}");
                         }
 
                         // A tail stop in the same utterance that opens the body finishes inside Apply, so the
@@ -1123,17 +1121,24 @@ public sealed class WindowsDictationRuntime
     private static string Sid(DictationSession session) =>
         $"sid={(session.SessionId == Guid.Empty ? "-" : session.SessionId.ToString())}";
 
+    // Mac de4c434: a whole maxSeconds with no agreed words was the room, not a voice.
+    private bool RanOverRoomNoise(DictationAudio audio) =>
+        audio.Wake.IsAutomatic && audio.Reason == FinishReason.MaximumDuration && agreedCharacters is not null && confirmedSession != audio.SessionId;
+
+    // The idle path's over-cap head with no wake and an unagreed automatic maxSeconds both say the steady sound is the room.
+    private void RebaseFloor(string why)
+    {
+        var floorBefore = segmenter.Floor;
+        segmenter.RebaseFloor();
+        Log.Info($"dictation vad: floor rebased {why} floor={floorBefore:0.0000}->{segmenter.Floor:0.0000} threshold={segmenter.Threshold:0.0000}");
+    }
+
     private void Submit(DictationAudio audio)
     {
         Log.Info($"dictation session: end reason={audio.Reason} {audio.Wake.Fields} range={audio.Range.Start}..{audio.Range.End} seconds={audio.Range.Length / Segmenter.Rate:0.00} sid={audio.SessionId} {LevelFields(audio.Range)}");
-        // Mac de4c434: a whole maxSeconds with no agreed words was the room, not a voice. Lift the floor here, on the loop and
-        // while the segmenter still holds the over-cap noise; the async discard comes too late, and the next frame reopens.
-        if (audio.Wake.IsAutomatic && audio.Reason == FinishReason.MaximumDuration && agreedCharacters is not null && confirmedSession != audio.SessionId)
-        {
-            var floorBefore = segmenter.Floor;
-            segmenter.RebaseFloor();
-            Log.Info($"dictation vad: floor rebased sid={audio.SessionId} floor={floorBefore:0.0000}->{segmenter.Floor:0.0000} threshold={segmenter.Threshold:0.0000}");
-        }
+        // Lifted here, on the loop and while the segmenter still holds the over-cap noise; the async discard comes too late,
+        // and the next frame reopens.
+        if (RanOverRoomNoise(audio)) RebaseFloor($"sid={audio.SessionId}");
         var stopped = audio.Reason is FinishReason.StandaloneStop or FinishReason.FinishCommand;
         endedByUser |= stopped;
         // The user wants to know the recording is over, so ring before Superwhisper is launched, automatic sessions included.
