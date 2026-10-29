@@ -125,6 +125,17 @@ sealed class FakeTrayRuntimeRun : ITrayRuntimeRun
     }
 }
 
+static class TestFrames
+{
+    // Alternating +value and -value: RMS equals value, unlike the constant fill of Program.cs AddFramesWithSample.
+    public static void AddSquare(List<PcmFrame> frames, int count, short value)
+    {
+        for (var i = 0; i < count; i++)
+            frames.Add(new(frames.Count * Segmenter.FrameLength,
+                Enumerable.Range(0, Segmenter.FrameLength).Select(j => (short)(j % 2 == 0 ? value : -value)).ToImmutableArray()));
+    }
+}
+
 sealed class FixturePcmCapture : IPcmCapture
 {
     private readonly IReadOnlyList<PcmFrame> frames;

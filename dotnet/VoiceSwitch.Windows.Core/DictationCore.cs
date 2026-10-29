@@ -25,6 +25,9 @@ public readonly record struct SampleRange
 
 public enum RecognitionExtent
 {
+    // The head of an utterance at the segmenter cap, and while recording the stop window: the newest seconds of an
+    // utterance that stays open past the cap (Mac stopWordCut "window"). One value, because the logs and WakeReplay read
+    // extent=PrefixHead for both.
     PrefixHead,
     ClosedUtterance,
     // Audio of a still-open utterance taken before the hangover closed it (earlyWakeMs).
@@ -434,9 +437,30 @@ public static class DictationBoundaries
     // The dedicated tail-stop recognizer (option C) uses this same floor.
     public const double StopGrammarMinConfidence = 0.25;
 
-    public static SampleRange? StandaloneStopRange(RecognizedUtterance recognition, IEnumerable<string> stopWords)
+    public static SampleRange? StandaloneStopRange(RecognizedUtterance recognition, IEnumerable<string> stopWords) =>
+        recognition.Extent == RecognitionExtent.ClosedUtterance ? StandaloneStopMatch(recognition, stopWords) : null;
+
+    // Mac stopWordCut: what a whole closed utterance would be read as, whatever the extent. Only the extent-gated callers
+    // decide; a probe or a stop window matching here has only heard the stop word.
+    public static SampleRange? HeardStop(RecognizedUtterance recognition, IEnumerable<string> stopWords) =>
+        StandaloneStopMatch(recognition, stopWords) ?? TrailingStopMatch(recognition, stopWords);
+
+    // Standalone, then trailing and window only while recording, then the dedicated tail; the order Apply finishes in.
+    // A probe while recording that ends in a stop word yields Heard, which shows the end but finishes nothing.
+    public static StopVerdict? FindStop(RecognizedUtterance recognition, IEnumerable<string> stopWords, bool dedicatedTail, bool recording)
     {
-        if (recognition.Extent != RecognitionExtent.ClosedUtterance || recognition.HadRejectedSpeech)
+        if (StandaloneStopRange(recognition, stopWords) is { } standalone) return new(StopKind.Standalone, standalone);
+        if (recording && TrailingStopRange(recognition, stopWords) is { } trailing) return new(StopKind.Trailing, trailing);
+        if (recording && WindowStopRange(recognition, stopWords) is { } window) return new(StopKind.Window, window);
+        if (TryDedicatedTailStop(recognition, stopWords, dedicatedTail) is { } tail) return new(StopKind.Tail, tail.Range, tail.Confidence);
+        return recording && recognition.Extent == RecognitionExtent.Probe && HeardStop(recognition, stopWords) is { } heard
+            ? new(StopKind.Heard, heard)
+            : null;
+    }
+
+    private static SampleRange? StandaloneStopMatch(RecognizedUtterance recognition, IEnumerable<string> stopWords)
+    {
+        if (recognition.HadRejectedSpeech)
         {
             return null;
         }
@@ -465,9 +489,12 @@ public static class DictationBoundaries
 
     // Mac stopWordStart: a stop word that ends the utterance on a word boundary, after other speech. Read from the end, so
     // "今日は入力ストップです" never matches. The stop grammar answers verbatim and stays with StandaloneStopRange's floor.
-    public static SampleRange? TrailingStopRange(RecognizedUtterance recognition, IEnumerable<string> stopWords)
+    public static SampleRange? TrailingStopRange(RecognizedUtterance recognition, IEnumerable<string> stopWords) =>
+        recognition.Extent == RecognitionExtent.ClosedUtterance ? TrailingStopMatch(recognition, stopWords) : null;
+
+    private static SampleRange? TrailingStopMatch(RecognizedUtterance recognition, IEnumerable<string> stopWords)
     {
-        if (recognition.Extent != RecognitionExtent.ClosedUtterance || recognition.HadRejectedSpeech || recognition.FromStopGrammar)
+        if (recognition.HadRejectedSpeech || recognition.FromStopGrammar)
         {
             return null;
         }
@@ -506,15 +533,14 @@ public static class DictationBoundaries
             return null;
         }
 
-        var closed = recognition with { Extent = RecognitionExtent.ClosedUtterance };
-        if ((StandaloneStopRange(closed, stopWords) ?? TrailingStopRange(closed, stopWords)) is not { } stop)
+        if (HeardStop(recognition, stopWords) is not { } stop)
         {
             return null;
         }
 
+        // A stop read from text without word timings cannot show where the speech ended, so it counts as heard until the end.
         var runs = recognition.Lexemes.Where(run => TextMatching.Normalize(run.Text).Length > 0).ToArray();
-        var heardUntil = runs.Length > 0 ? runs[^1].Range.End : recognition.Source.End;
-        if (heardUntil > recognition.Source.End - WindowStopQuietSamples)
+        if (!QuietTail(recognition, runs.Length > 0 ? runs[^1].Range.End : recognition.Source.End))
         {
             return null;
         }
@@ -559,12 +585,11 @@ public static class DictationBoundaries
         // Steady room noise keeps the utterance open, so only PrefixHead windows see the stop (Mac ce14722). A window cut
         // inside the stop word can report a span inside the body (exe: 30080..47840 at 0.89 while the body ran to 34560),
         // so what runs into the stop must run through it, and the window must be quiet for half a second after it.
+        // The stop engine timed the stop itself, so a window with no dictation words is quiet from the stop's end.
         if (recognition.Extent == RecognitionExtent.PrefixHead)
         {
             var runs = recognition.Lexemes.Where(run => TextMatching.Normalize(run.Text).Length > 0).ToArray();
-            var quietFrom = recognition.Source.End - WindowStopQuietSamples;
-            if (end > quietFrom
-                || (runs.Length > 0 && runs[^1].Range.End > quietFrom)
+            if (!QuietTail(recognition, runs.Length > 0 ? Math.Max(end, runs[^1].Range.End) : end)
                 || (runs.LastOrDefault(run => run.Range.End > start) is { } into && into.Range.End < end - WindowStopQuietSamples))
             {
                 return null;
@@ -574,6 +599,18 @@ public static class DictationBoundaries
         var lexemes = recognition.Lexemes.Where(run => run.Range.End <= start).ToImmutableArray();
         return new TailStopDecision(new SampleRange(start, end), recognition.TailStopWord ?? "", recognition.TailStopConfidence.Value, string.Concat(lexemes.Select(run => run.Text)), lexemes);
     }
+
+    // Mac ce14722: nothing was heard in the window's last WindowStopQuietSamples.
+    private static bool QuietTail(RecognizedUtterance window, long heardUntil) =>
+        heardUntil <= window.Source.End - WindowStopQuietSamples;
+}
+
+public enum StopKind { Standalone, Trailing, Window, Tail, Heard }
+
+// Range: the stop word's samples. TailConfidence: the dedicated recognizer's score, set only for Tail.
+public sealed record StopVerdict(StopKind Kind, SampleRange Range, double? TailConfidence = null)
+{
+    public bool Ends => Kind != StopKind.Heard;
 }
 
 // Accepted dedicated tail stop. BodyText is the dictation lexemes that end before Range.Start.
@@ -632,9 +669,13 @@ public sealed class DictationSession
 
     private bool DedicatedStopEnabled => config.Dictation?.DedicatedStopRecognizer == true;
 
+    // The stop the last Apply judged, whether or not it finished the session.
+    public StopVerdict? LastStop { get; private set; }
+
     // now: the capture clock (sample position) when this recognition is applied; it trails the audio by the recognizer's latency.
     public DictationAudio? Apply(RecognizedUtterance recognition, Func<SampleRange, ImmutableArray<short>> copyAudio, long now = 0, WakeOrigin? origin = null)
     {
+        LastStop = DictationBoundaries.FindStop(recognition, config.StopWords ?? [], DedicatedStopEnabled, recording: IsActive);
         if (terminal)
         {
             events.Add(DictationEvent.Error(FinishReason.StaleRecognition));
@@ -643,7 +684,7 @@ public sealed class DictationSession
 
         if (awaitingBody)
         {
-            if (DictationBoundaries.StandaloneStopRange(recognition, config.StopWords ?? []) is not null)
+            if (LastStop is { Kind: StopKind.Standalone })
             {
                 Cancel(FinishReason.Empty);
                 return null;
@@ -751,11 +792,10 @@ public sealed class DictationSession
             return Finish(new SampleRange(bodyStart.Value, Math.Min(lastSpeechEnd, maxEnd)), FinishReason.MaximumDuration, copyAudio);
         }
 
-        if ((DictationBoundaries.StandaloneStopRange(recognition, config.StopWords ?? [])
-            ?? DictationBoundaries.TrailingStopRange(recognition, config.StopWords ?? [])
-            ?? DictationBoundaries.WindowStopRange(recognition, config.StopWords ?? [])) is { } stop)
+        // The tail stop finishes below, where it is also checked against the body start.
+        if (LastStop is { Kind: StopKind.Standalone or StopKind.Trailing or StopKind.Window } stop)
         {
-            return Finish(new SampleRange(bodyStart.Value, Math.Max(bodyStart.Value, stop.Start)), FinishReason.StandaloneStop, copyAudio);
+            return Finish(new SampleRange(bodyStart.Value, Math.Max(bodyStart.Value, stop.Range.Start)), FinishReason.StandaloneStop, copyAudio);
         }
 
         var dedicatedTail = TryFinishDedicatedTail(recognition, bodyStart.Value, copyAudio, now);
