@@ -348,6 +348,7 @@ public static class DictationBoundaries
     {
         Reading,
         AlternateNear,
+        RejectedReading,
     }
 
     private enum WakeRemainder
@@ -377,6 +378,7 @@ public static class DictationBoundaries
         new(WakeSite.Reading, MinReadingDistance2, int.MaxValue, 2, 2, WakeRemainder.Listed, Closed: true, Tail: ["は", "よ", "ね", "な", "わ"]),
         new(WakeSite.Reading, 1, ShortWakeReading, 0, 0, WakeRemainder.Listed, Closed: true, ExactLength: true, OneLexeme: true, Tail: ["です", "ます"]),
         new(WakeSite.AlternateNear, MinReadingDistance2, int.MaxValue, 0, 3),
+        new(WakeSite.RejectedReading, 0, int.MaxValue, 0, 0),
     ];
 
     private static bool ReadingRuleAllows(int size, int length, int distance, bool closed, int lexemeCount, string all)
@@ -446,6 +448,35 @@ public static class DictationBoundaries
         return null;
     }
 
+    private static bool RejectedReadingMatches(string rejected, IEnumerable<string> wakeReadings)
+    {
+        var heard = TextMatching.NormalizeReading(rejected);
+        foreach (var rule in WakeAllowances)
+        {
+            if (rule.Site != WakeSite.RejectedReading)
+            {
+                continue;
+            }
+
+            foreach (var reading in wakeReadings)
+            {
+                var normalized = TextMatching.NormalizeReading(reading);
+                if (normalized.Length < rule.MinLength || normalized.Length > rule.MaxLength)
+                {
+                    continue;
+                }
+
+                var distance = TextMatching.EditDistance(normalized, heard);
+                if (distance >= rule.MinDistance && distance <= rule.MaxDistance)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     // Next is the lexeme after the wake, or null when the wake ends inside a lexeme (End is then a proportional split).
     private readonly record struct ReadingHit(WakeWord Wake, int Distance, long End, int? Next);
 
@@ -511,18 +542,30 @@ public static class DictationBoundaries
 
     // SAPI rejected the whole utterance, but its best guess is exactly a wake word. Wake-only by construction:
     // a rejected result has no word timings, so it can open the wait for the body but never cut one.
-    public static WakePrefix? RejectedWake(RecognizedUtterance recognition, IEnumerable<string> wakeWords)
+    public static WakePrefix? RejectedWake(RecognizedUtterance recognition, IEnumerable<string> wakeWords) =>
+        RejectedWake(recognition, wakeWords, null);
+
+    public static WakePrefix? RejectedWake(RecognizedUtterance recognition, IEnumerable<string> wakeWords, IEnumerable<string>? wakeReadings)
     {
         if (recognition.Extent != RecognitionExtent.ClosedUtterance
             || TextMatching.Normalize(recognition.Text).Length > 0
             || recognition.RejectedText is not { } rejected
-            || !(recognition.Confidence >= RejectedWakeMinConfidence)
-            || !wakeWords.Select(TextMatching.Normalize).Contains(TextMatching.Normalize(rejected)))
+            || !(recognition.Confidence >= RejectedWakeMinConfidence))
         {
             return null;
         }
 
-        return new WakePrefix(recognition.Source.End, null);
+        if (wakeWords.Select(TextMatching.Normalize).Contains(TextMatching.Normalize(rejected)))
+        {
+            return new WakePrefix(recognition.Source.End, null);
+        }
+
+        if (wakeReadings is not null && RejectedReadingMatches(rejected, wakeReadings))
+        {
+            return new WakePrefix(recognition.Source.End, null);
+        }
+
+        return null;
     }
 
     public static bool IsStandaloneStop(RecognizedUtterance recognition, IEnumerable<string> stopWords)
@@ -799,7 +842,7 @@ public sealed class DictationSession
                 return null;
             }
 
-            var wake = DictationBoundaries.LeadingWake(recognition, wakes) ?? DictationBoundaries.RejectedWake(recognition, config.WakeWords);
+            var wake = DictationBoundaries.LeadingWake(recognition, wakes) ?? DictationBoundaries.RejectedWake(recognition, config.WakeWords, wakes.Select(wake => wake.Reading));
             if (wake is { BodyStart: null })
             {
                 wakeEnd = Math.Max(wakeEnd, wake.WakeEnd);
@@ -830,7 +873,7 @@ public sealed class DictationSession
             // Probes and rejected hypotheses use the default wakes only, as on Mac.
             var wake = recognition.Extent == RecognitionExtent.Probe
                 ? DictationBoundaries.EarlyWake(recognition, wakes)
-                : DictationBoundaries.LeadingWake(recognition, wakes) ?? DictationBoundaries.RejectedWake(recognition, config.WakeWords);
+                : DictationBoundaries.LeadingWake(recognition, wakes) ?? DictationBoundaries.RejectedWake(recognition, config.WakeWords, wakes.Select(wake => wake.Reading));
             if (wake is null && recognition.Extent != RecognitionExtent.Probe)
             {
                 foreach (var (owner, set) in wakeSets.Skip(1))
