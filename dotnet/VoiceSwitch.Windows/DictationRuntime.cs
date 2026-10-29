@@ -1090,6 +1090,14 @@ public sealed class WindowsDictationRuntime
     private void Submit(DictationAudio audio)
     {
         Log.Info($"dictation session: end reason={audio.Reason} {audio.Wake.Fields} range={audio.Range.Start}..{audio.Range.End} seconds={audio.Range.Length / Segmenter.Rate:0.00} sid={audio.SessionId} {LevelFields(audio.Range)}");
+        // Mac de4c434: a whole maxSeconds with no agreed words was the room, not a voice. Lift the floor here, on the loop and
+        // while the segmenter still holds the over-cap noise; the async discard comes too late, and the next frame reopens.
+        if (audio.Wake.IsAutomatic && audio.Reason == FinishReason.MaximumDuration && agreedCharacters is not null && confirmedSession != audio.SessionId)
+        {
+            var floorBefore = segmenter.Floor;
+            segmenter.RebaseFloor();
+            Log.Info($"dictation vad: floor rebased sid={audio.SessionId} floor={floorBefore:0.0000}->{segmenter.Floor:0.0000} threshold={segmenter.Threshold:0.0000}");
+        }
         var stopped = audio.Reason is FinishReason.StandaloneStop or FinishReason.FinishCommand;
         endedByUser |= stopped;
         // The user wants to know the recording is over, so ring before Superwhisper is launched, automatic sessions included.

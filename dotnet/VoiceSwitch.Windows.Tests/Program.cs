@@ -140,6 +140,8 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation segmenter uses partial EOF sample duration", () => Check(DictationSegmenterUsesPartialEofSampleDuration())),
     ("dictation segmenter rebases the floor after steady noise from the first frame", () => Check(DictationSegmenterRebasesFloorAfterSteadyNoiseFromFirstFrame())),
     ("dictation runtime hears the wake word after long steady noise above the threshold", () => Check(DictationRuntimeHearsWakeAfterLongSteadyNoise())),
+    ("automatic session that reaches maxSeconds on room noise without agreed words rebases the floor and does not reopen", () => Check(AutomaticNoiseAtMaxSecondsRebasesFloor())),
+    ("automatic session still opens on speech after room noise rebased the floor", () => Check(AutomaticSpeechOpensAfterNoiseRebase())),
     ("dictation runtime stops on a stop word at the end of an utterance longer than the segmenter cap", () => Check(DictationRuntimeStopsOnStopWordAfterCap())),
     ("dictation runtime finalizes body at synthetic EOF", () => Check(DictationRuntimeFinalizesBodyAtSyntheticEof())),
     ("dictation runtime keeps partial EOF PCM range exact", () => Check(DictationRuntimeKeepsPartialEofPcmRangeExact())),
@@ -3275,6 +3277,52 @@ static bool DictationRuntimeHearsWakeAfterLongSteadyNoise()
         && output.Contains("dictation vad: floor rebased", StringComparison.Ordinal)
         && handoff.Submissions.Count == 0
         && observer.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Idle]);
+}
+
+// Mac de4c434: steady room noise above a low floor opened an automatic session, ran it to maxSeconds without agreed words,
+// and reopened it on the next frame, forever.
+static (int Opened, int Handed, string Log) RunAutomaticOverRoomNoise(bool speechAfter)
+{
+    var frames = new List<PcmFrame>();
+    void Add(int count, short value)
+    {
+        for (var i = 0; i < count; i++)
+            frames.Add(new(frames.Count * Segmenter.FrameLength,
+                Enumerable.Range(0, Segmenter.FrameLength).Select(j => (short)(j % 2 == 0 ? value : -value)).ToImmutableArray()));
+    }
+    Add(4, 0);
+    // Six maxSeconds (3 s) of the same noise: one session, then none.
+    Add(600, 400);
+    if (speechAfter) { Add(70, 9000); Add(30, 0); }
+    var config = new VoiceSwitchConfig(["wake"], "en-US", "unused", MaxSeconds: 2.5,
+        HangoverMs: 120, PrerollMs: 60, MinSpeechMs: 90, VadMinRMS: 0.005f, StopWords: ["stop"],
+        Dictation: new(EndSilenceMs: 240, MaxSeconds: 3, NoWakeWord: new(AutoIdle: true, MinHandoffMs: 0)));
+    var handoff = new RecordingDictationHandoff();
+    var recognizer = new ScriptedDictationRecognizer(request =>
+        Task.FromResult(new RecognizedUtterance(request.Id, request.Extent, request.Range, "body", [new LexicalRun("body", request.Range)])));
+    var delays = Enumerable.Range(0, frames.Count / 10).Select(i => i * 10).ToArray();
+    var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(frames, delays), recognizer, handoff, false, new PhaseRecorder(),
+        inputIdleSeconds: () => 4, wakeReading: value => value, micInUseBy: _ => null, voicedWindows: _ => 1,
+        agreedCharacters: samples => Task.FromResult(samples.Any(sample => Math.Abs((int)sample) > 4000) ? 5 : 0));
+    _ = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(30), out var output);
+    var opened = output.Split('\n').Count(line => line.Contains("dictation session: automatic ", StringComparison.Ordinal)
+        && line.Contains("range=", StringComparison.Ordinal) && !line.Contains("confirmed", StringComparison.Ordinal));
+    return (opened, handoff.Submissions.Count, output);
+}
+
+static bool AutomaticNoiseAtMaxSecondsRebasesFloor()
+{
+    var (opened, handed, log) = RunAutomaticOverRoomNoise(speechAfter: false);
+    return opened == 1 && handed == 0
+        && log.Contains("dictation session: end reason=MaximumDuration", StringComparison.Ordinal)
+        && log.Contains("dictation dropped: automatic audio had no agreed words", StringComparison.Ordinal)
+        && log.Contains("dictation vad: floor rebased", StringComparison.Ordinal);
+}
+
+static bool AutomaticSpeechOpensAfterNoiseRebase()
+{
+    var (opened, handed, log) = RunAutomaticOverRoomNoise(speechAfter: true);
+    return opened == 2 && handed == 1 && log.Contains("dictation vad: floor rebased", StringComparison.Ordinal);
 }
 
 // Live failure 2026-10-26 17:53-17:54: room noise kept every pause under the 300 ms hangover, so the utterance ran past the cap,
