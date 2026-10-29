@@ -13,6 +13,7 @@ public sealed class DictationHistory
     public long Generation { get { lock (sync) return generation; } }
     private readonly TimeSpan retention;
     public event Action? Changed;
+    public DictationJournal? Journal { get; set; }
 
     public DictationHistory(Func<DateTimeOffset>? now = null, int capacity = 50, TimeSpan? retention = null)
     {
@@ -23,17 +24,31 @@ public sealed class DictationHistory
         this.capacity = capacity;
     }
 
-    public bool Add(Guid id, string text, WakeOrigin origin, long? expectedGeneration = null, AutomaticTranscriptPolicy policy = default)
+    public bool Add(Guid id, string text, WakeOrigin origin, long? expectedGeneration = null, AutomaticTranscriptPolicy policy = default, string? endReason = null, double? recordingSeconds = null, bool manual = false)
     {
         if (string.IsNullOrWhiteSpace(text) || text.Length > 100_000 || policy.Rejects(text, origin)) return false;
+        DateTimeOffset created;
         lock (sync)
         {
             Prune();
             if (expectedGeneration is not null && expectedGeneration != generation) return false;
             if (entries.Any(entry => entry.Id == id)) return false;
-            entries.Add(new(id, text, origin, now()));
+            created = now();
+            entries.Add(new(id, text, origin, created));
             while (entries.Count > capacity) entries.RemoveAt(0);
         }
+
+        var noted = JournalNotes.Take(id);
+        var journal = Journal ?? (ReferenceEquals(this, Shared) ? DictationJournal.Active : null);
+        try
+        {
+            journal?.Append(new JournalEntry(id, created, text, DictationJournal.OriginLabel(origin, manual || noted.Manual), endReason ?? noted.EndReason, recordingSeconds ?? noted.RecordingSeconds));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The utterance is already in memory. A journal failure must not drop it.
+        }
+
         Changed?.Invoke();
         return true;
     }

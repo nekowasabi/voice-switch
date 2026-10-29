@@ -123,6 +123,9 @@ struct DictationConfig: Decodable {
     /// Keep speaker playback from starting an automatic recording (Mac + Windows). Windows cancels it before the VAD;
     /// macOS keeps the raw mic and requires HAL voice activity detection. Absent means on; false turns it off.
     var echoCancellation: Bool? = nil
+    /// Folder of daily `yyyy-MM-dd.jsonl` files, or one file when the path ends in `.jsonl`.
+    /// Absent uses the platform default. An unusable path is logged and the default is used.
+    var journalDir: String? = nil
 
     init(recordingsDir: String? = nil, endSilenceMs: Int? = nil, maxSeconds: Double? = nil,
          excludeBundleIDs: [String]? = nil, startTimeoutMs: Int? = nil) {

@@ -127,6 +127,7 @@ public static class Program
 
                     if (!effectiveDryRun && options.OutputDir is null) handoff = LocalHistoryHandoff.Wrap(handoff, config, Tray.WindowFocus.Paste);
                     if (config.Dictation?.NoWakeWord?.Enabled == true) _ = WordAgreement.Warm();
+                    DictationJournal.Bind(config, Log.Info);
                     return new WindowsDictationRuntime(
                             config,
                             capture,
@@ -537,32 +538,14 @@ public sealed class ResidentRuntime
 }
 
 // Mac ConfigFile: checked between utterances so wake words and timings can be edited without a restart.
-public sealed class ConfigFile(string path)
+public sealed class ConfigFile
 {
-    private DateTime lastWrite = File.GetLastWriteTimeUtc(path);
+    private readonly JournaledConfig inner;
+
+    public ConfigFile(string path) => inner = new JournaledConfig(path, Log.Info);
 
     // A new valid config, or null when the file is unchanged or invalid (the caller keeps what it has).
-    public VoiceSwitchConfig? ReloadIfChanged()
-    {
-        var write = File.GetLastWriteTimeUtc(path);
-        if (write == lastWrite)
-        {
-            return null;
-        }
-
-        lastWrite = write;
-        try
-        {
-            var next = ConfigLoader.Load(path);
-            Log.Info($"config reloaded: {string.Join(", ", next.WakeWords)}");
-            return next;
-        }
-        catch (Exception ex)
-        {
-            Log.Info($"config reload failed, keeping previous: {ex.Message}");
-            return null;
-        }
-    }
+    public VoiceSwitchConfig? ReloadIfChanged() => inner.ReloadIfChanged();
 }
 
 public enum ConfigReload

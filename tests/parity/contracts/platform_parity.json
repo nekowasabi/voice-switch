@@ -176,8 +176,8 @@
         "markers": ["reloadIfChanged", "config reload failed, keeping previous"]
       },
       "windows": {
-        "file": "dotnet/VoiceSwitch.Windows/Program.cs",
-        "markers": ["ReloadIfChanged", "config reload failed, keeping previous", "ConfigReload.Unchanged"]
+        "file": "dotnet/VoiceSwitch.Windows.Core/DictationJournal.cs",
+        "markers": ["ReloadIfChanged", "config reload failed, keeping previous"]
       }
     },
     {

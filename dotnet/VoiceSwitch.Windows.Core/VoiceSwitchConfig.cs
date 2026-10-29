@@ -22,7 +22,8 @@ public sealed record DictationConfig(
     // Windows only. Second SAPI engine for a stop word after body text. Default false until human voice is measured. macOS ignores it.
     bool DedicatedStopRecognizer = false,
     // Cancel what the speakers play before the VAD so playback never starts a recording. Absent means on; false keeps the raw input.
-    bool? EchoCancellation = null);
+    bool? EchoCancellation = null,
+    string? JournalDir = null);
 
 /// <summary>Load-time guardrails for timing fields that are easy to mistype 10x. No clamp — warn only.</summary>
 public static class DictationTimingGuard

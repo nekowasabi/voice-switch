@@ -13,6 +13,7 @@
   "pauseShortcut": "Control+Shift+F7",
   "pauseDuringMeet": true,
   "dictation": {
+    "journalDir": "%LOCALAPPDATA%\\voice-switch\\journal",
     "recordingsDir": "%LOCALAPPDATA%\\com.superwhisper.app\\recordings",
     "endSilenceMs": 2400, "startTimeoutMs": 3000,
     "maxSeconds": 60,
