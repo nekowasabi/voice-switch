@@ -26,6 +26,8 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
     private readonly LoginItem login = new();
     private int deviceTicks;
     private string? lastEffectiveDevice;
+    private bool holdPending;
+    private bool resumePending;
     private readonly int uiThreadId;
     private readonly System.Windows.Forms.Timer diagnosticsTimer;
     private TraySnapshot snapshot;
@@ -93,6 +95,7 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
                 if (++deviceTicks % 4 == 0)
                 {
                     FollowDevice();
+                    FollowMeet();
                 }
             }
         };
@@ -236,7 +239,8 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
             switch (command)
             {
                 case TrayCommand.Start:
-                    await supervisor.StartAsync(cts.Token);
+                    // quiet is only FollowDevice's retry; every other Start here is a user click or the hotkey.
+                    await supervisor.StartAsync(cts.Token, user: !quiet);
                     break;
                 case TrayCommand.Pause:
                     await supervisor.PauseAsync(cts.Token);
@@ -328,6 +332,47 @@ public sealed class VoiceSwitchTrayContext : ApplicationContext
             }
 
             _ = RunCommandAsync(TrayCommand.Start, quiet: true);
+        }
+    }
+
+    // Mac followMeet. Only queues; the supervisor decides under its gate. Re-queued every tick so a command the
+    // 20 s timeout dropped is tried again, but never twice at once.
+    private void FollowMeet()
+    {
+        if (!supervisor.PauseDuringMeet)
+        {
+            return;
+        }
+
+        if (supervisor.MeetBrowser() is { } browser)
+        {
+            if (!holdPending)
+            {
+                holdPending = true;
+                _ = RunMeetAsync(c => supervisor.HoldForMeetAsync(browser, c), () => holdPending = false);
+            }
+        }
+        else if (supervisor.MeetResumeOwed && !resumePending)
+        {
+            resumePending = true;
+            _ = RunMeetAsync(supervisor.ResumeAfterMeetAsync, () => resumePending = false);
+        }
+    }
+
+    private static async Task RunMeetAsync(Func<CancellationToken, Task> command, Action done)
+    {
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            await command(timeout.Token);
+        }
+        catch (Exception ex)
+        {
+            Log.Info($"tray: meet command failed: {ex.Message}");
+        }
+        finally
+        {
+            done();
         }
     }
 

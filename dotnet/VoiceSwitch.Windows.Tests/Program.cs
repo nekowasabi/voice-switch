@@ -215,6 +215,11 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("tray supervisor disposes faulted completion and restarts", () => Check(TraySupervisorDisposesFaultedCompletionAndRestarts())),
     ("tray supervisor refreshes child identity without state change", () => Check(TraySupervisorRefreshesChildIdentityWithoutStateChange())),
     ("tray supervisor rejects stale run during snapshot race", () => Check(TraySupervisorRejectsStaleRunDuringSnapshotRace())),
+    ("tray meet W1-1 hold from Error blocks a later device retry", () => Check(TrayMeetHoldFromErrorBlocksRetry())),
+    ("tray meet W1-2 user pause drops the hold and the call end does not reopen", () => Check(TrayMeetUserPauseSurvivesCallEnd())),
+    ("tray meet W1-3 a resume from call A that runs during call B does not open", () => Check(TrayMeetStaleResumeInNextCallStaysHeld())),
+    ("tray meet W1-4 pauseDuringMeet absent behaves as today", () => Check(TrayMeetOffBehavesAsToday())),
+    ("tray meet user pause after Error survives the device retry", () => Check(TrayUserPauseAfterErrorSurvivesRetry())),
     ("tray command identity does not acquire lease", () => Check(TrayCommandIdentityDoesNotAcquireLease())),
     ("tray login item round-trips the per-user Run entry", TrayLoginItemRoundTripsRunEntry),
     ("tray IPC no-server error is actionable", TrayIpcNoServerErrorIsActionable),
@@ -5364,6 +5369,120 @@ static bool ProductionTrayFactoryRejectsUnsafeSyntheticSource()
     return Throws<ArgumentException>(() => factory.StartAsync(config, new TrayInputSource("in.wav", null), CancellationToken.None).GetAwaiter().GetResult(), "--record-only")
         && Throws<ArgumentException>(() => factory.StartAsync(config, new TrayInputSource(null, Path.Combine(temp.Dir, "out")), CancellationToken.None).GetAwaiter().GetResult(), "--input-wav")
         && Throws<ArgumentException>(() => factory.StartAsync(config with { Dictation = null }, new TrayInputSource("in.wav", Path.Combine(temp.Dir, "out")), CancellationToken.None).GetAwaiter().GetResult(), "requires a config with dictation");
+}
+
+static bool TrayMeetHoldFromErrorBlocksRetry()
+{
+    using var temp = RuntimeTemp();
+    WriteTrayDictationConfig(temp.ConfigPath, "音声入力");
+    string? mic = "chrome";
+    var factory = new FakeTrayRuntimeFactory { ThrowOnStart = true };
+    var supervisor = new TrayRuntimeSupervisor(temp.ConfigPath, new TrayInputSource(null, null), factory, pauseDuringMeet: true, micInUseBy: _ => mic);
+    var none = CancellationToken.None;
+    supervisor.StartAsync(none, user: false).GetAwaiter().GetResult();
+    var error = supervisor.Snapshot.State == TrayState.Error;
+    supervisor.HoldForMeetAsync("chrome", none).GetAwaiter().GetResult();
+    var held = supervisor.Snapshot.State == TrayState.Paused && supervisor.MeetResumeOwed;
+    factory.ThrowOnStart = false;
+    supervisor.StartAsync(none, user: false).GetAwaiter().GetResult();
+    var refused = supervisor.Snapshot.State == TrayState.Paused && factory.Started.Count == 0;
+    mic = null;
+    supervisor.ResumeAfterMeetAsync(none).GetAwaiter().GetResult();
+    return error && held && refused
+        && supervisor.Snapshot.State == TrayState.Listening
+        && !supervisor.MeetResumeOwed;
+}
+
+static bool TrayMeetUserPauseSurvivesCallEnd()
+{
+    using var temp = RuntimeTemp();
+    WriteTrayDictationConfig(temp.ConfigPath, "音声入力");
+    string? mic = "chrome";
+    var factory = new FakeTrayRuntimeFactory();
+    var supervisor = new TrayRuntimeSupervisor(temp.ConfigPath, new TrayInputSource(null, null), factory, pauseDuringMeet: true, micInUseBy: _ => mic);
+    var none = CancellationToken.None;
+    supervisor.StartAsync(none, user: false).GetAwaiter().GetResult();
+    supervisor.HoldForMeetAsync("chrome", none).GetAwaiter().GetResult();
+    var held = supervisor.Snapshot.State == TrayState.Paused && supervisor.MeetResumeOwed;
+    supervisor.PauseAsync(none).GetAwaiter().GetResult();
+    var dropped = !supervisor.MeetResumeOwed;
+    mic = null;
+    supervisor.ResumeAfterMeetAsync(none).GetAwaiter().GetResult();
+    supervisor.StartAsync(none, user: false).GetAwaiter().GetResult();
+    return held && dropped
+        && supervisor.Snapshot.State == TrayState.Paused
+        && factory.Started.Count == 1;
+}
+
+static bool TrayMeetStaleResumeInNextCallStaysHeld()
+{
+    using var temp = RuntimeTemp();
+    WriteTrayDictationConfig(temp.ConfigPath, "音声入力");
+    string? mic = "chrome";
+    var factory = new FakeTrayRuntimeFactory();
+    var supervisor = new TrayRuntimeSupervisor(temp.ConfigPath, new TrayInputSource(null, null), factory, pauseDuringMeet: true, micInUseBy: _ => mic);
+    var none = CancellationToken.None;
+    supervisor.StartAsync(none, user: false).GetAwaiter().GetResult();
+    supervisor.HoldForMeetAsync("chrome", none).GetAwaiter().GetResult();
+    // Call A ends (the poll queues a Resume), and call B starts before that Resume gets the gate.
+    mic = null;
+    var owed = supervisor.MeetResumeOwed;
+    mic = "msedge";
+    supervisor.ResumeAfterMeetAsync(none).GetAwaiter().GetResult();
+    var stillHeld = supervisor.Snapshot.State == TrayState.Paused && supervisor.MeetResumeOwed && factory.Started.Count == 1;
+    mic = null;
+    supervisor.ResumeAfterMeetAsync(none).GetAwaiter().GetResult();
+    return owed && stillHeld
+        && supervisor.Snapshot.State == TrayState.Listening
+        && factory.Started.Count == 2;
+}
+
+static bool TrayMeetOffBehavesAsToday()
+{
+    using var temp = RuntimeTemp();
+    WriteTrayDictationConfig(temp.ConfigPath, "音声入力");
+    var queries = 0;
+    var factory = new FakeTrayRuntimeFactory();
+    var supervisor = new TrayRuntimeSupervisor(temp.ConfigPath, new TrayInputSource(null, null), factory, micInUseBy: _ => { queries++; return "chrome"; });
+    var none = CancellationToken.None;
+    supervisor.StartAsync(none, user: false).GetAwaiter().GetResult();
+    supervisor.StartAsync(none).GetAwaiter().GetResult();
+    supervisor.HoldForMeetAsync("chrome", none).GetAwaiter().GetResult();
+    var listening = supervisor.Snapshot.State == TrayState.Listening && !supervisor.MeetResumeOwed;
+    supervisor.PauseAsync(none).GetAwaiter().GetResult();
+    supervisor.ResumeAfterMeetAsync(none).GetAwaiter().GetResult();
+    var paused = supervisor.Snapshot.State == TrayState.Paused;
+    var path = Path.Combine(temp.Dir, "meet.json");
+    File.WriteAllText(path, """{"wakeWords":["音声入力"],"command":"x"}""");
+    var absent = ConfigLoader.Load(path).PauseDuringMeet;
+    File.WriteAllText(path, """{"wakeWords":["音声入力"],"command":"x","pauseDuringMeet":true}""");
+    var on = ConfigLoader.Load(path).PauseDuringMeet;
+    return listening && paused
+        && !supervisor.PauseDuringMeet
+        && factory.Started.Count == 1
+        && queries == 0
+        && absent is null
+        && on == true;
+}
+
+// The finding in verify-meet-pause-windows, with no Meet involved: the device retry undid a pause that landed in Error.
+static bool TrayUserPauseAfterErrorSurvivesRetry()
+{
+    using var temp = RuntimeTemp();
+    WriteTrayDictationConfig(temp.ConfigPath, "音声入力");
+    var factory = new FakeTrayRuntimeFactory { ThrowOnStart = true };
+    var supervisor = new TrayRuntimeSupervisor(temp.ConfigPath, new TrayInputSource(null, null), factory);
+    var none = CancellationToken.None;
+    supervisor.StartAsync(none, user: false).GetAwaiter().GetResult();
+    var error = supervisor.Snapshot.State == TrayState.Error;
+    supervisor.PauseAsync(none).GetAwaiter().GetResult();
+    factory.ThrowOnStart = false;
+    supervisor.StartAsync(none, user: false).GetAwaiter().GetResult();
+    var kept = supervisor.Snapshot.State == TrayState.Paused && factory.Started.Count == 0;
+    supervisor.StartAsync(none).GetAwaiter().GetResult();
+    return error && kept
+        && supervisor.Snapshot.State == TrayState.Listening
+        && factory.Started.Count == 1;
 }
 
 static bool TraySupervisorStartsPausedAndStartIsIdempotent()

@@ -45,11 +45,17 @@ sealed class FakeTrayRuntimeFactory : ITrayRuntimeFactory
     public List<FakeTrayRuntimeRun> Started { get; } = new();
     public bool ThrowOnStop { get; init; }
     public bool FaultCompletionOnStart { get; set; }
+    public bool ThrowOnStart { get; set; }
     public RecognitionProcessIdentity? InitialOwnedChild { get; set; } =
         new(1234, new DateTimeOffset(2026, 10, 3, 0, 0, 0, TimeSpan.Zero));
 
     public Task<ITrayRuntimeRun> StartAsync(VoiceSwitchConfig config, TrayInputSource source, CancellationToken cancellation)
     {
+        if (ThrowOnStart)
+        {
+            throw new InvalidOperationException("fixture start failure");
+        }
+
         var run = new FakeTrayRuntimeRun(Interlocked.Increment(ref order), () => Interlocked.Increment(ref order), ThrowOnStop);
         run.OwnedChild = InitialOwnedChild;
         if (FaultCompletionOnStart)

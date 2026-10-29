@@ -67,6 +67,8 @@ public sealed record VoiceSwitchConfig(
     double? SpeakerThreshold = null,
     // Global key that toggles pause/resume, in DictationHotkeys.Parse names ("Control+Shift+F7"). Null registers none.
     string? PauseShortcut = null,
+    // Mac pauseDuringMeet: the tray stops listening while chrome / msedge holds the mic. Read once at launch; null is off.
+    bool? PauseDuringMeet = null,
     // Twin of Mac `macOS`: Windows-only settings.
     WindowsActions? Windows = null)
 {
