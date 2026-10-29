@@ -407,7 +407,7 @@ public sealed class WindowsDictationRuntime
                         {
                             // Superwhisper pastes into whatever is frontmost, so remember where the user was when the wake word landed.
                             target = foregroundWindow();
-                            if ((session.Origin.IsAutomatic ? AutomaticSkipReason(target) : SkipReason(target, session.Action)) is { } skipped)
+                            if ((session.Origin.IsAutomatic ? AutomaticMicBlock() ?? AutomaticForegroundSkipReason(target) : SkipReason(target, session.Action)) is { } skipped)
                             {
                                 Log.Info(skipped);
                                 session = ResetSession(pending, outcome.Recognition!.Source.End);
@@ -896,8 +896,6 @@ public sealed class WindowsDictationRuntime
                 ? $"dictation skipped: {app} is excluded"
                 : null;
     }
-
-    private string? AutomaticSkipReason(nint window) => AutomaticMicBlock() ?? AutomaticForegroundSkipReason(window);
 
     private string? AutomaticMicBlock() =>
         automaticMicInUseBy(config.SkipWhileMicInUseBy ?? []) is { } busy ? $"automatic wake blocked: {busy}" : null;
