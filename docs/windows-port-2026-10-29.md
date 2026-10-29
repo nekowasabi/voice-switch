@@ -69,7 +69,7 @@
 | W2 | `3f376f0` | W2-1／W2-2 を 1 本のテストで。修正前は FAIL | W2-3（実機の Superwhisper） |
 | W3 | `2bfdf80` `90d49aa` | W3-2／W3-3 のテスト（`stop-negatives.json` は 20 件）。W3-1 は exe で、SAPI の口述は雑音の上のストップを「スタッフ」と聞き、止まらない。`dedicatedStopRecognizer: true` なら `end reason=StandaloneStop seconds=2.39` で止まり、雑音だけでは止まらない | 実声・実マイクでの確認。`dedicatedStopRecognizer` は既定オフのまま |
 | W4 | `3f46762` | W4-1（雑音 18 s、自動録音の開き直しが 6 回 → 1 回）と W4-2。基準値の上げ直しは破棄の箇所ではなく `Submit` で行う（破棄は別スレッドで、その時点では上げ直せない） | WAV での確認 |
-| W5 | `12e085e` | W5-1（プローブで Ended がハングオーバーより先）と W5-2（取り消すと Recording に戻り、渡す音声は同じ）。`earlyWakeMs` があるときだけ効く | 実機での ms 計測 |
+| W5 | `12e085e` | W5-1（プローブで Ended がハングオーバーより先）と W5-2（取り消すと Recording に戻り、渡す音声は同じ）。`earlyWakeMs` があるときだけ効く（`config.example.json` には無い） | 実機での ms 計測 |
 
 ## 現在のコードで見つかったこと（未再現）
 
