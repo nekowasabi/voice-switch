@@ -374,6 +374,7 @@ public static class DictationBoundaries
         new(WakeSite.Reading, 1, ShortWakeReading, 0, 1, WakeRemainder.Empty, Closed: true),
         new(WakeSite.Reading, MinReadingDistance2, int.MaxValue, 2, 2, WakeRemainder.Empty, Closed: true),
         new(WakeSite.Reading, MinReadingDistance2, int.MaxValue, 2, 2, WakeRemainder.Listed, Closed: true, Tail: ["は", "よ", "ね", "な", "わ"]),
+        new(WakeSite.Reading, 1, ShortWakeReading, 0, 0, WakeRemainder.Listed, Closed: true, ExactLength: true, OneLexeme: true, Tail: ["です", "ます"]),
     ];
 
     private static bool ReadingRuleAllows(int size, int length, int distance, bool closed, int lexemeCount, string all)
