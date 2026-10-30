@@ -6,6 +6,8 @@ dotnet/**/bin/
 dotnet/**/obj/
 .claude/skills/verify-voice-switch-wake/corpus/bin/
 .claude/skills/verify-voice-switch-wake/corpus/obj/
+.claude/skills/verify-wake-allowances/check/bin/
+.claude/skills/verify-wake-allowances/check/obj/
 tests/**/bin/
 tests/**/obj/
 .serena/
