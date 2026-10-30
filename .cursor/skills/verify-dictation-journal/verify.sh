@@ -131,8 +131,41 @@ drive() {
     cat "$evidence/stderr.txt" >&2
   fi
   printf 'evidence: %s\n' "$evidence"
-  if [[ "$code" -ne 0 ]]; then
-    exit "$code"
+  require_passes "$evidence" "$feature" "$code"
+}
+
+# Every requested id must print PASS. The two host skips are the only exception.
+require_passes() {
+  local evidence="$1"
+  local feature="$2"
+  local code="$3"
+  local id
+  local -a want=() missing=()
+  if [[ -n "$feature" ]]; then
+    while IFS= read -r id; do
+      [[ -n "$id" ]] || continue
+      want+=("$id")
+    done < <(feature_ids "$feature")
+  else
+    while IFS= read -r id; do
+      [[ -n "$id" ]] || continue
+      want+=("$id")
+    done < <(sed -n 's/^- id: \([a-z0-9-]*\)$/\1/p' "$SKILL_DIR/items.md")
+  fi
+  for id in "${want[@]}"; do
+    if grep -qx "PASS ${id}" "$evidence/stdout.txt"; then
+      continue
+    fi
+    if [[ "$id" == "swift-harness" || "$id" == "windows-acl" ]] && grep -qx "SKIP ${id}" "$evidence/stdout.txt"; then
+      continue
+    fi
+    missing+=("$id")
+  done
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    printf 'verify: fail: missing PASS for %s\n' "${missing[*]}" >&2
+  fi
+  if [[ "$code" -ne 0 || ${#missing[@]} -gt 0 ]]; then
+    exit 1
   fi
 }
 

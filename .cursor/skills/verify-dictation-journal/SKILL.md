@@ -1,6 +1,6 @@
 ---
 name: verify-dictation-journal
-description: "Drive voice-switch's persistent dictation journal (the on-disk JSONL written when DictationHistory accepts an utterance) through the journal unit-test harness. Use when a change to dictation.journalDir, daily or single-file JSONL, path fallback, 0700/0600 permissions, or day/entry deletion must be proved. There is no journal viewer."
+description: "Drive voice-switch's persistent dictation journal (the on-disk JSONL written when DictationHistory accepts an utterance) through the journal unit-test harness. Use when a change to dictation.journalDir, daily or single-file JSONL, path fallback, 0700/0600 permissions, day/entry deletion, focusApp, or dictation.journalTaskFile must be proved. There is no journal viewer."
 disable-model-invocation: true
 ---
 
@@ -51,7 +51,7 @@ $V drive
 $V drive append-on-add
 ```
 
-`drive` with no argument runs every id in [items.md](items.md). `drive <feature>` runs the ids listed in that feature file. The harness is:
+`drive` with no argument runs every id in [items.md](items.md). `drive <feature>` runs the ids listed in that feature file. After the harness exits, this script checks stdout. Every requested id needs a `PASS <id>` line. `SKIP swift-harness` and `SKIP windows-acl` are the only lines that satisfy an id without `PASS`. Any other missing id exits 1 even when the harness exit code is 0. The harness is:
 
 ```sh
 dotnet run --project tests/journal/JournalTests.csproj -c Release --no-restore -- <repo-root>
@@ -86,6 +86,7 @@ Proof standards:
 - A second append must leave the first line byte-identical.
 - Config path expansion must go through `WindowsPaths.ExpandPath` and the Swift `Platform.expandPath` rules, not a test-local string replace.
 - `SKIP` is not a pass. The summary names the host and what a Mac or Windows run still has to do.
+- `focusApp` is the app captured when the session target was chosen. A test that only reads the frontmost app at `Add` does not prove it. `taskchute` is the optional task file read inside `Add`. A test that writes the JSONL line itself does not prove either field.
 
 ## Cleanup
 

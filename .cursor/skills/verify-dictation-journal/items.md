@@ -4,10 +4,10 @@ Source: https://github.com/nekowasabi/voice-switch/issues/49
 
 Each id is one mechanical check. The harness prints `PASS <id>` or `FAIL <id>`. `SKIP swift-harness` and `SKIP windows-acl` are the only allowed skips on this Linux host.
 
-Normative record. One JSON object per line, UTF-8, no BOM, `\n` only. Keys always present, in this order:
+Normative record. One JSON object per line, UTF-8, no BOM, `\n` only. Keys always present, in this order. `focusApp` and `taskchute` are JSON `null` when unknown. They are never omitted on a line this version writes. Old lines stay as they were. Do not rewrite them.
 
 ```json
-{"id":"00000000-0000-0000-0000-000000000000","timestamp":"2026-10-24T14:24:00.0000000+09:00","text":"メモ","origin":"ウェイク","endReason":"Silence","recordingSeconds":1.25,"schemaVersion":1}
+{"id":"00000000-0000-0000-0000-000000000000","timestamp":"2026-10-24T14:24:00.0000000+09:00","text":"メモ","origin":"ウェイク","endReason":"Silence","recordingSeconds":1.25,"schemaVersion":1,"focusApp":{"name":"Ghostty","bundleId":"com.mitchellh.ghostty","exe":null,"pid":4242},"taskchute":{"name":"メール","id":"abc","startedAt":"2026-10-30T09:00:00+09:00","source":"file","readAt":"2026-10-24T14:24:00.0000000+09:00"}}
 ```
 
 - `id` is the history entry id, lowercase `8-4-4-4-12`.
@@ -15,7 +15,9 @@ Normative record. One JSON object per line, UTF-8, no BOM, `\n` only. Keys alway
 - `origin` is `自動`, `ウェイク`, or `手動`.
 - `endReason` is the key for 終了理由. The issue does not name this key. The value is the finish token the caller already has (`Silence`, `FinishCommand`, `StandaloneStop`, `MaximumDuration`, or the same strings the session log already uses), or JSON `null` when Add was not given one. Do not add a `FinishReason` case for the journal.
 - `recordingSeconds` is the key for 録音秒数. The issue does not name this key. The value is a JSON number of seconds, or JSON `null` when Add was not given one.
-- `schemaVersion` is the integer `1`.
+- `schemaVersion` stays the integer `1`. The two new keys are additive. A reader that looks up keys by name still accepts a line. Nothing in this repo branches on the integer. Old lines have no `focusApp` key. New lines always have the key. That presence is the marker. Do not bump the integer, and do not rewrite old lines to add nulls.
+- `focusApp` is JSON `null`, or an object with keys `name`, `bundleId`, `exe`, `pid` in that order. `name`, `bundleId`, and `exe` are strings or JSON `null`. `pid` is a positive JSON number or JSON `null`. `pid` of 0 or less is stored as JSON `null`. If all four values are null, store JSON `null` for `focusApp`, not an object of nulls. Mac fills `name` from `localizedName` and `bundleId` from `bundleIdentifier`, and leaves `exe` null. Windows fills `name` and `exe` from `Process.ProcessName` (no directory, and no `.exe` suffix added) and leaves `bundleId` null. There is no window title and no full executable path.
+- `taskchute` is JSON `null`, or an object with keys `name`, `id`, `startedAt`, `source`, `readAt` in that order. `source` is the string `file`. `readAt` is the same string as `timestamp` on that line. `name` and `id` are strings or JSON `null`. `startedAt` is the file's string copied unchanged, or JSON `null`. Write the object only when `name` or `id` is a non-empty string. A numeric JSON `id` is stored as its decimal string.
 
 The daily file name is the calendar date of that timestamp in its own offset (`2026-10-23T23:30:00+09:00` → `2026-10-23.jsonl`, `2026-10-23T16:00:00Z` → `2026-10-23.jsonl`).
 
@@ -50,8 +52,8 @@ The daily file name is the calendar date of that timestamp in its own offset (`2
   pass: A path ending in `.jsonl` (any case) appends to that file and creates no dated sibling. A path that does not end in `.jsonl` is a directory.
 
 - id: fields
-  spec: 項目は id、timestamp（ISO 8601、タイムゾーンつき）、text、origin、終了理由、録音秒数、schemaVersion。
-  pass: The line has exactly those seven keys, in the order above. timestamp matches an ISO 8601 instant with `Z` or a numeric offset. schemaVersion is 1. A text containing a quote and a newline round-trips as one physical line.
+  spec: 項目は id、timestamp（ISO 8601、タイムゾーンつき）、text、origin、終了理由、録音秒数、schemaVersion、focusApp、taskchute。
+  pass: The line has exactly those nine keys, in the order of the normative record. timestamp matches an ISO 8601 instant with `Z` or a numeric offset. schemaVersion is 1. focusApp and taskchute are present. Each is JSON null or the object defined above. A text containing a quote and a newline round-trips as one physical line.
 
 - id: origin-automatic
   spec: origin は自動／ウェイク／手動。
@@ -151,4 +153,60 @@ The daily file name is the calendar date of that timestamp in its own offset (`2
 
 - id: swift-harness
   spec: Mac 側の同じ規則を swiftc で実行する。
-  pass: When `swiftc` exists, the Swift harness prints the same PASS ids for path expansion, append, fallback, permissions, deletion, and `reload-keeps-config`. When `swiftc` is absent, the C# harness prints `SKIP swift-harness` and this is not a pass.
+  pass: When `swiftc` exists, the Swift harness prints the same PASS ids for path expansion, append, fallback, permissions, deletion, and `reload-keeps-config`. When `swiftc` is absent, the C# harness prints `SKIP swift-harness` and this is not a pass. The new context ids are proved by the C# harness. This host does not execute NSWorkspace or a Windows foreground window.
+
+- id: focus-app-shape
+  spec: 受け付けた行に、入力開始時のアプリ識別子を書く。ウィンドウタイトルは書かない。
+  pass: `DictationHistory.Add` with an explicit focus snapshot writes `focusApp` with keys `name`, `bundleId`, `exe`, `pid` in that order. A Mac snapshot (`Ghostty`, `com.mitchellh.ghostty`, exe null, pid 4242) and a Windows snapshot (`WindowsTerminal`, bundleId null, exe `WindowsTerminal`, pid 9001) both round-trip. The line has no property named `title`, `windowTitle`, or `path`. An `exe` value contains neither `/` nor `\`. `DictationJournal.swift` contains the same four key strings. `schemaVersion` on the line is 1.
+
+- id: focus-app-null
+  spec: アプリが取れなければ focusApp は null。キーは残す。
+  pass: Add with no focus argument and no noted focus writes the key `focusApp` with JSON null. Add still returns true. A snapshot whose name, bundleId, exe, and pid are all null is stored as JSON null, not an object of nulls. pid 0 is stored as null.
+
+- id: focus-app-at-start
+  spec: 追記時の前面アプリではなく、開始時に控えた識別子を書く。
+  pass: `JournalNotes.Note(id, focus: Ghostty)` then `JournalNotes.Note(id, endReason: "Silence")` without a focus, then Add with no focus argument, writes Ghostty and endReason Silence. The later note must not clear the focus. Add with an explicit Windows snapshot after a Ghostty note writes the Windows snapshot. The argument wins. `DictationHistory.Add` and `DictationJournal.Append` do not read the live foreground app.
+
+- id: focus-wired-at-start
+  spec: Mac は Dictation.target、Windows はセッション開始時の hwnd を控え、貼り付け先の取り直しは記録しない。
+  pass: In `MacApp.swift`, `submit` contains `DictationJournal.note` and `d.target`. `DictationJournal.swift` contains `localizedName` and `bundleIdentifier`, and does not contain `frontmostApplication`. The automatic `handoff` that passes `NSWorkspace.shared.frontmostApplication` is the paste target. It is not the value stored on the journal note. In `DictationRuntime.cs`, `JournalNotes.Note` records the process for `target = foregroundWindow()` (wake) and for both `target = window` assignments (automatic start and the manual hotkey) before any later `foregroundWindow()` call. `ResetSession`'s `target = 0` does not note an app. `Submit` may still assign `audio = audio with { Target = foregroundWindow() }` for an automatic session, and that call is not an argument to `JournalNotes.Note`. The noted process comes from `ProcessOfWindow` / `Process.ProcessName` and the pid. It does not read `MainModule` or a window title. `DictationHistory.cs` and `DictationJournal.cs` contain neither `GetForegroundWindow` nor `frontmostApplication`.
+
+- id: task-unset-null
+  spec: journalTaskFile が無ければ taskchute は null。tcc2 は呼ばない。
+  pass: Open without a task path, then Add, writes the key `taskchute` with JSON null. Add returns true. `DictationJournal.cs`, `DictationJournal.swift`, `DictationHistory.cs`, and `WakeSafety.swift` do not contain `tcc2`. `DictationJournal.swift` does contain `taskchute` and `journalTaskFile`. The test does not start a process.
+
+- id: task-json-file
+  spec: JSON の name、id、startedAt を読み、source と readAt を付ける。
+  pass: A file `{"id":12,"name":"メール","startedAt":"2026-10-30T09:00:00+09:00"}` writes `taskchute` with keys `name`, `id`, `startedAt`, `source`, `readAt` in that order. `name` is `メール`, `id` is the string `12`, `startedAt` is that timestamp copied unchanged, `source` is `file`, and `readAt` is equal to the line's `timestamp`. Extra JSON keys are ignored. A string id is kept as that string.
+
+- id: task-plain-file
+  spec: JSON でなければ、最初の非空行が name。
+  pass: A file whose first lines are blank and whose first non-empty line is `メール`, with another line after it, writes name `メール`, id null, startedAt null, source `file`, and readAt equal to `timestamp`. The second line is not in the object.
+
+- id: task-missing-file
+  spec: ファイルが無くても Add は成功し、taskchute は null。
+  pass: A configured path that does not exist writes `taskchute` null. Add returns true. The history snapshot contains the text. No exception leaves Add.
+
+- id: task-oversize
+  spec: 4096 バイトを超えたファイルは読まず null。
+  pass: A file of 4096 bytes whose text is a plain name is accepted and that name is stored. A file of 4097 bytes writes `taskchute` null. Add returns true. The cap is the constant 4096 on both platforms.
+
+- id: task-bad-json
+  spec: `{` で始まるが JSON として読めなければ null。その本文を name にしない。
+  pass: `{not json` and `{` and `{}` and `{"startedAt":"2026-10-30T09:00:00+09:00"}` each write `taskchute` null. None of those bodies appear as a name. A JSON object with a non-empty name and a non-string startedAt writes the name and startedAt null.
+
+- id: task-expand-path
+  spec: ~ と %LOCALAPPDATA% は journalDir と同じ展開。
+  pass: `~/task.txt` and `%LOCALAPPDATA%\task.txt` are expanded with `WindowsPaths.ExpandPath` and Swift `Platform.expandPath`. The name is read from the expanded path. `VoiceSwitchConfig.cs` declares `JournalTaskFile`. `Config.swift` declares `journalTaskFile`. A path that still contains `%UNSET%` after expansion, or that fails to expand, leaves the journal directory alone and writes `taskchute` null.
+
+- id: task-failure-isolated
+  spec: タスクファイルが読めなくても、短期履歴への追加は成功する。
+  pass: When the task path is a directory, Add returns true, the snapshot contains the text, the JSONL line exists, and `taskchute` is null. The journal directory is still the one `journalDir` selected.
+
+- id: task-reload
+  spec: 再読込でタスクファイルのパスは追従する。壊れた再読込は前のパスを残す。
+  pass: `JournaledConfig.LoadInitial` and `ReloadIfChanged` both pass `JournalTaskFile` into `DictationJournal.Open`. A valid reload that points `journalTaskFile` at a second file uses that file on the next Add. Invalid JSON keeps the previous task path, and the next Add still reads it. The journal directory does not change because the task path changed. Swift `bind` takes the same key.
+
+- id: examples-task-file
+  spec: 見本と README に journalTaskFile を書く。grokbot の見本には journalDir も足す。
+  pass: Every `config.example*.json` that contains a `dictation` object contains `journalTaskFile`. `config.example.macos-url.json` contains neither `dictation` nor `journalTaskFile`. `config.example.grokbot.json` contains `journalDir` (this was the pre-existing `examples-readme` failure). `README.md` and `README_ja.md` each contain `dictation.journalTaskFile`. The sample value is JSON null, not a machine-specific cache path.

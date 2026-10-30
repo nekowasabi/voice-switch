@@ -37,3 +37,4 @@ Each feature file starts with an H1 title and one paragraph. Then exactly four H
 - [Journal path](./journal-path.md) covers `dictation.journalDir`, expansion, daily versus single-file, and fallback.
 - [Durability and permissions](./durability-permissions.md) covers append-only bytes, symlink refusal, and 0700/0600.
 - [Delete a day or an entry](./delete-journal.md) covers day and entry deletion without rewriting surviving lines.
+- [Focused app and TaskChute context](./journal-context.md) covers `focusApp`, optional `dictation.journalTaskFile`, and `taskchute` on each new line.
