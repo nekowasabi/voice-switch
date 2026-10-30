@@ -7,7 +7,8 @@ public sealed record TrayOptions(
     string? InputWavPath,
     string? RecordOnlyDir,
     bool Paused,
-    TrayCommand? IpcCommand)
+    TrayCommand? IpcCommand,
+    bool Restart)
 {
     public TrayInputSource Source => new(InputWavPath, RecordOnlyDir);
 
@@ -18,6 +19,7 @@ public sealed record TrayOptions(
         string? recordOnly = null;
         var paused = false;
         TrayCommand? command = null;
+        var restart = false;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -51,12 +53,13 @@ public sealed record TrayOptions(
                     paused = true;
                     break;
                 case "--tray-command":
-                    if (i + 1 >= args.Length || !TryParseCommand(args[++i], out var parsedCommand))
+                    if (i + 1 >= args.Length || !TryParseCommand(args[++i], out var parsedCommand, out var parsedRestart))
                     {
-                        throw new ArgumentException("--tray-command must be one of: status, start, pause, reload, quit.");
+                        throw new ArgumentException("--tray-command must be one of: status, start, pause, reload, quit, stop, restart.");
                     }
 
                     command = parsedCommand;
+                    restart = parsedRestart;
                     break;
                 default:
                     throw new ArgumentException($"unknown argument: {args[i]}");
@@ -76,21 +79,28 @@ public sealed record TrayOptions(
         var resolvedConfig = Path.GetFullPath(configPath
             ?? Environment.GetEnvironmentVariable("VOICE_SWITCH_CONFIG")
             ?? WindowsPaths.DefaultConfigPath());
-        return new TrayOptions(resolvedConfig, inputWav is null ? null : Path.GetFullPath(inputWav), recordOnly is null ? null : Path.GetFullPath(recordOnly), paused, command);
+        return new TrayOptions(resolvedConfig, inputWav is null ? null : Path.GetFullPath(inputWav), recordOnly is null ? null : Path.GetFullPath(recordOnly), paused, command, restart);
     }
 
-    private static bool TryParseCommand(string value, out TrayCommand command)
+    private static bool TryParseCommand(string value, out TrayCommand? command, out bool restart)
     {
         var normalized = value.ToLowerInvariant();
+        restart = false;
+        if (normalized == "restart")
+        {
+            restart = true;
+            command = null;
+            return true;
+        }
         command = normalized switch
         {
             "status" or "showstatus" => TrayCommand.ShowStatus,
             "start" or "resume" => TrayCommand.Start,
             "pause" => TrayCommand.Pause,
             "reload" => TrayCommand.Reload,
-            "quit" => TrayCommand.Quit,
+            "quit" or "stop" => TrayCommand.Quit,
             _ => default
         };
-        return normalized is "status" or "showstatus" or "start" or "resume" or "pause" or "reload" or "quit";
+        return normalized is "status" or "showstatus" or "start" or "resume" or "pause" or "reload" or "quit" or "stop";
     }
 }

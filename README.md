@@ -1,5 +1,7 @@
 # voice-switch
 
+README_ja.md is the primary guide for daily use.
+
 On macOS, a menu-bar app. A wake word on its own runs a command through `/bin/sh`, or sends a configured macOS URL action without a shell. Speech after a wake word is recorded and opened in superwhisper only when `dictation` is set. Without it, that longer utterance is ignored. When dictation returns a string, one tmux pane receives it only if the pane catalog, optionally checked by Jev, points at exactly one pane. Otherwise nothing is sent.
 
 [日本語](README_ja.md)
@@ -18,6 +20,12 @@ The bundle identifier is `local.voice-switch`. `Info.plist` sets `LSMinimumSyste
 
 See [BUILD.md](./BUILD.md) for `$PC` details and verification.
 
+## Daily use
+
+Daily dictation assumes Superwhisper.
+
+On a Mac it is the menu-bar app. On Windows it is the tray app. Leave it running.
+
 ## Install (macOS)
 
 `make install` builds a release binary, wraps it as `VoiceSwitch.app`, ad-hoc signs it as `local.voice-switch`, copies the app to `~/Applications`, copies `config.example.json` to `~/.config/voice-switch/config.json` when that file is missing, and opens the app. The first install also downloads the Whisper model (about 550 MB) to `~/Library/Application Support/voice-switch/models/`; `make model` fetches it alone.
@@ -26,11 +34,19 @@ See [BUILD.md](./BUILD.md) for `$PC` details and verification.
 
 ## Permissions
 
-The app asks for the microphone and for on-device speech recognition. While a dictation is recording it also installs a keyboard tap for superwhisper's record and cancel shortcuts, which needs Accessibility. Until that is granted, the log says `hotkey: Accessibility not granted yet`.
+The app asks for the microphone and for on-device speech recognition. The `Info.plist` keys are `NSMicrophoneUsageDescription` and `NSSpeechRecognitionUsageDescription`. Denying the microphone logs `マイクへのアクセスが許可されていません`. While a dictation is recording it also installs a keyboard tap for superwhisper's record and cancel shortcuts, which needs Accessibility. Until that is granted, the log says `hotkey interception disabled: Accessibility is not granted`, and finishing says `hotkey finish unavailable: grant Accessibility`.
+
+The app does not request Automation permission for iTerm or System Events. The source sends neither osascript nor Apple Events.
+
+Windows uses the microphone privacy setting. This code shows no Accessibility or Automation consent dialog.
+
+Keys typed into an elevated window bypass the hook (UIPI).
 
 ## Config
 
 `$VOICE_SWITCH_CONFIG`, or `~/.config/voice-switch/config.json` when that variable is unset. The file is re-read between utterances when its modification time changes.
+
+On Windows, voice-switch.exe uses config.json beside the exe when that file exists. Otherwise it uses %USERPROFILE%\.config\voice-switch\config.json.
 
 `command` and `stopCommand` are run with `/bin/sh -c`. The sample file is `config.example.json`.
 
@@ -167,6 +183,36 @@ One-breath dictation: optional prepare → open WAV in Superwhisper (macrowhispe
 
 - `voice-switch --check a.wav` feeds files through the VAD and transcriber and prints a verdict per utterance. Windows has the same mode with SAPI; it reads PCM16 mono 16 kHz WAV only.
 - `voice-switch --simulate a.wav` feeds one file through the live path instead of the microphone.
+
+## Lifecycle
+
+`make stop` runs osascript `quit app id "local.voice-switch"`.
+
+`make start` opens the installed VoiceSwitch.app.
+
+`make restart` stops, waits until the process exits, then starts.
+
+`--tray-command start` and `pause` turn listening on and off. They do not start or stop the process.
+
+`--tray-command stop` is an alias of `quit`.
+
+`--tray-command restart` sends quit to the running tray, then launches the same exe after that process exits. reload re-reads config in the same process. It is not a process restart.
+
+`make win-stop` stops the running voice-switch.exe.
+
+`make win-start` launches voice-switch.exe from RELEASE_DIR. It does not pass `--tray-command start`.
+
+`make win-restart` runs win-stop, then win-start.
+
+## Hand tests
+
+A Mac hand test starts the app, speaks a wake word, and reads ~/Library/Logs/voice-switch.log with make logs.
+
+A Windows hand test starts the tray, speaks a wake word, and reads %LOCALAPPDATA%\voice-switch\voice-switch.log.
+
+Hand-test log lines are only strings from the sources: `tmux:`, `jev=`, `jev:`, `jev body:`, `heard:`, `dictation session:`, `phase:`, `dictation phase:`, `superwhisper handoff:`, `hotkey interception disabled: Accessibility is not granted`, `hotkey finish unavailable: grant Accessibility`, `fatal:`, `downloading speech model for`.
+
+The human installs the app and runs the Mac and Windows hand tests. The bot does not.
 
 ## Not on main
 

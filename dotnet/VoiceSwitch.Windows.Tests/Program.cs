@@ -226,6 +226,8 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation recognizer retains ownership until confirmed exit", () => Check(DictationRecognizerRetainsOwnershipUntilConfirmedExit())),
     ("PowerShell children die with voice-switch", PowerShellChildrenDieWithParent),
     ("tray options reject synthetic input without record-only", () => Check(TrayOptionsRejectSyntheticWithoutRecordOnly())),
+    ("tray stop aliases quit", () => Check(TrayStopAliasesQuit())),
+    ("tray restart is not reload", () => Check(TrayRestartIsNotReload())),
     ("tray options reject numeric command", () => Check(TrayOptionsRejectNumericCommand())),
     ("single exe routes bare and tray-only launches to the tray", () => Check(SingleExeRoutesTrayLaunches())),
     ("production tray factory rejects unsafe synthetic source", () => Check(ProductionTrayFactoryRejectsUnsafeSyntheticSource())),
@@ -5934,6 +5936,26 @@ static bool DictationRecognizerRetainsOwnershipUntilConfirmedExit()
         && owner.Wait(TimeSpan.FromSeconds(1))
         && Volatile.Read(ref disposed)
         && Volatile.Read(ref ended) == 1;
+}
+
+static bool TrayStopAliasesQuit()
+{
+    var stop = TrayOptions.Parse(["--config", "config.json", "--tray-command", "stop"]);
+    var quit = TrayOptions.Parse(["--config", "config.json", "--tray-command", "quit"]);
+    return stop.IpcCommand == TrayCommand.Quit
+        && quit.IpcCommand == TrayCommand.Quit
+        && !stop.Restart
+        && !quit.Restart;
+}
+
+static bool TrayRestartIsNotReload()
+{
+    var restart = TrayOptions.Parse(["--config", "config.json", "--tray-command", "restart"]);
+    var reload = TrayOptions.Parse(["--config", "config.json", "--tray-command", "reload"]);
+    return restart.Restart
+        && restart.IpcCommand is null
+        && reload.IpcCommand == TrayCommand.Reload
+        && !reload.Restart;
 }
 
 static bool TrayOptionsRejectSyntheticWithoutRecordOnly()

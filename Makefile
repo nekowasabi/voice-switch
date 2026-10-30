@@ -40,7 +40,7 @@ DOTNET_RESTORE_FLAGS ?= --ignore-failed-sources --disable-parallel
 # Why: Run from local disk, not \\wsl.localhost, as focusbm does; AV heuristics flag UNC-launched exes.
 RELEASE_DIR ?= /mnt/c/takeda/tools/voice-switch
 
-.PHONY: build app model install relaunch uninstall logs win win-stop win-restore win-build win-test parity-test win-publish win-verify help url-test
+.PHONY: build app model install relaunch uninstall logs win win-stop win-start win-restart win-restore win-build win-test parity-test win-publish win-verify help url-test start stop restart
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -95,6 +95,16 @@ uninstall: ## macOS: remove installed app
 logs: ## macOS: tail the log file
 	tail -f $(HOME)/Library/Logs/voice-switch.log
 
+start: ## macOS: open the installed app
+	open $(DEST)/$(APP)
+
+stop: ## macOS: quit the running app
+	-osascript -e 'quit app id "$(ID)"' 2>/dev/null
+
+restart: stop ## macOS: quit, wait for exit, then open the installed app
+	@for i in $$(seq 50); do pgrep -x voice-switch >/dev/null || break; sleep 0.1; done
+	open $(DEST)/$(APP)
+
 win: win-publish ## Windows: build, test, and publish voice-switch.exe (PC=wsl default)
 
 win-restore: ## Windows: restore .NET projects
@@ -117,6 +127,11 @@ parity-test: ## Run macOS/Windows parity contract checks
 win-stop: ## Windows: quit the running voice-switch.exe
 	@# A running voice-switch.exe locks its DLLs and publish fails with Access denied, so wait until it has exited.
 	-powershell.exe -NoProfile -Command "Get-Process -Name voice-switch -ErrorAction SilentlyContinue | Stop-Process -Force -PassThru | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue"
+
+win-start: ## Windows: launch voice-switch.exe from RELEASE_DIR
+	-explorer.exe "$$(wslpath -w "$(RELEASE_DIR)/voice-switch.exe")"
+
+win-restart: win-stop win-start ## Windows: stop then start voice-switch.exe
 
 win-publish: win-stop win-build ## Windows: quit the running app, then publish and launch voice-switch.exe from RELEASE_DIR
 	mkdir -p "$(RELEASE_DIR)"

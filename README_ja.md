@@ -1,10 +1,18 @@
 # voice-switch
 
+このファイルが日常の使い方の主である。
+
 メニューバーアプリ。ウェイクワードだけ言うと、コマンドを `/bin/sh` 経由で実行する。ウェイクワードに続く発話を録音して superwhisper で開くのは、`dictation` があるときだけ。無いときは、その長い発話は無視する。入力の本文が返ると、ペインのカタログ（必要なら Jev が確認する）がちょうど 1 つのペインを指すときだけ、その tmux ペインへ送る。それ以外は何も送らない。
 
 [English](README.md)
 
 バンドル ID は `local.voice-switch`。`Info.plist` の `LSMinimumSystemVersion` は 26.0。Mac でのビルド成功は書いていない。
+
+## 日常の使い方
+
+常用の文字起こしは Superwhisper を前提にする。
+
+Mac はメニューバー、Windows はトレイで、待ち受けたまま使う。
 
 ## インストール
 
@@ -14,11 +22,19 @@
 
 ## 許可
 
-マイクと、端末内の音声認識を求める。入力の録音中は、superwhisper の録音開始とキャンセルのショートカットを使うキーボードタップも入れる。これにはアクセシビリティが要る。許可されるまではログに `hotkey: Accessibility not granted yet` と出る。
+マイクと、端末内の音声認識を求める。`Info.plist` の `NSMicrophoneUsageDescription` と `NSSpeechRecognitionUsageDescription` がその許可である。マイクを拒否するとログに `マイクへのアクセスが許可されていません` と出る。入力の録音中は、superwhisper の録音開始とキャンセルのショートカットを使うキーボードタップも入れる。これにはアクセシビリティが要る。許可されるまではログに `hotkey interception disabled: Accessibility is not granted` と出て、終了操作では `hotkey finish unavailable: grant Accessibility` と出る。
+
+iTerm と System Events へのオートメーションは、ソースが osascript も Apple Event も送らないので、求めない。
+
+Windows はマイクのプライバシー設定を使う。このコードはアクセシビリティやオートメーションの許可ダイアログを出さない。
+
+昇格したウィンドウへのキーは UIPI でフックを通らない。
 
 ## 設定
 
 `$VOICE_SWITCH_CONFIG`。未設定なら `~/.config/voice-switch/config.json`。発話のあいだに更新時刻が変わっていれば読み直す。
+
+Windows は、exe と同じフォルダに config.json があるときはそれを使う。無いときは %USERPROFILE%\.config\voice-switch\config.json を使う。
 
 `command` と `stopCommand` は `/bin/sh -c` で実行する。見本は `config.example.json`。
 
@@ -115,6 +131,36 @@ Grok Bot 向けの例（既定のフィールドをそのまま書いたもの�
 
 - `voice-switch --check a.wav` は、ファイルを VAD と音声認識に通して、発話ごとの判定を出す。
 - `voice-switch --simulate a.wav` は、マイクの代わりに1つのファイルを本番の経路へ流す。
+
+## 起動と停止
+
+`make stop` は `osascript` で `quit app id "local.voice-switch"` する。
+
+`make start` はインストール済みの VoiceSwitch.app を open する。
+
+`make restart` は stop のあと、プロセスが終わるまで短く待って start する。
+
+`--tray-command start` と `pause` は待ち受けのオンとオフである。プロセスの起動と終了ではない。
+
+`--tray-command stop` は `quit` の別名である。
+
+`--tray-command restart` は動いているトレイに quit を送り、終わってから同じ exe を起動し直す。reload は同じプロセスで設定を読み直す。プロセスの再起動ではない。
+
+`make win-stop` は動いている voice-switch.exe を止める。
+
+`make win-start` は RELEASE_DIR の voice-switch.exe を起動する。`--tray-command start` ではない。
+
+`make win-restart` は win-stop のあと win-start する。
+
+## 手試験
+
+Mac の手試験は、アプリを起動してウェイクワードを話し、make logs で ~/Library/Logs/voice-switch.log を読む。
+
+Windows の手試験は、トレイを起動してウェイクワードを話し、%LOCALAPPDATA%\voice-switch\voice-switch.log を読む。
+
+手試験で読むログ行は `tmux:`、`jev=`、`jev:`、`jev body:`、`heard:`、`dictation session:`、`phase:`、`dictation phase:`、`superwhisper handoff:`、`hotkey interception disabled: Accessibility is not granted`、`hotkey finish unavailable: grant Accessibility`、`fatal:`、`downloading speech model for` である。
+
+インストールと、Mac および Windows の手試験は、人が行う。ボットは行わない。
 
 ## main には無い
 

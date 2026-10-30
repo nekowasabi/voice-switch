@@ -166,7 +166,11 @@ public static class Program
 
           voice-switch.exe                       start the tray app and listen for configured wake words
           voice-switch.exe --paused              start the tray app without opening the microphone
-          voice-switch.exe --tray-command CMD    send status, start, pause, reload, or quit to the running tray app
+          voice-switch.exe --tray-command CMD    send status, start, pause, reload, quit, stop, or restart to the running tray app
+          stop is an alias of quit
+          restart sends quit to the running tray, then launches this exe again
+          start and pause turn listening on and off
+          reload re-reads config in the same process
           voice-switch.exe --listen-seconds 5    bounded console listener run for diagnostics
           voice-switch.exe --dry-run             listen and report decisions without running commands
           voice-switch.exe --recognizers         list installed Windows speech recognizers

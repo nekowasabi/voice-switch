@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using VoiceSwitch.Windows.Core;
@@ -18,6 +19,12 @@ public static class TrayHost
         try
         {
             var options = TrayOptions.Parse(args);
+            if (options.Restart)
+            {
+                AttachParentConsole();
+                return RestartRunningTray(options.ConfigPath);
+            }
+
             if (options.IpcCommand is { } command)
             {
                 AttachParentConsole();
@@ -137,6 +144,41 @@ public static class TrayHost
             Console.Error.WriteLine(ex.Message);
             return 2;
         }
+    }
+
+    private static int RestartRunningTray(string configPath)
+    {
+        using var identity = TraySingleInstance.Identify(configPath);
+        try
+        {
+            var response = TrayIpcServer.SendAsync(identity.PipeName, TrayCommand.Quit, TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
+            Console.WriteLine(response);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(ex.Message);
+            return 2;
+        }
+
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (DateTime.UtcNow < deadline)
+        {
+            using var probe = TraySingleInstance.Acquire(configPath);
+            if (probe.IsOwner)
+            {
+                break;
+            }
+
+            Thread.Sleep(200);
+        }
+
+        var exe = Environment.ProcessPath ?? Application.ExecutablePath;
+        var psi = new ProcessStartInfo(exe, "--config \"" + configPath + "\"")
+        {
+            UseShellExecute = true,
+        };
+        Process.Start(psi);
+        return 0;
     }
 
     private const int AttachParentProcess = -1;
