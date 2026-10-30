@@ -24,8 +24,6 @@ var corpus = JsonSerializer.Deserialize<CorpusFile>(json, new JsonSerializerOpti
 
 var configured = corpus.Wakes.Select(wake => WakeWord.From(wake.Text, wake.Reading)).ToArray();
 var surface = corpus.Wakes.Select(wake => WakeWord.From(wake.Text)).ToArray();
-var configuredTexts = corpus.Wakes.Select(wake => wake.Text).ToArray();
-var surfaceTexts = configuredTexts;
 
 var sha = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(corpusPath))).ToLowerInvariant();
 Console.WriteLine($"corpus_sha256={sha}");
@@ -33,11 +31,11 @@ Console.WriteLine($"rows={corpus.Rows.Count}");
 Console.WriteLine("UNVERIFIED real-audio mac windows-hardware");
 
 var failed = corpus.Rows.Count != 47;
-failed |= Report("configured", configured, configuredTexts, static row => row.Expect, 15, 8);
-failed |= Report("surface", surface, surfaceTexts, static row => row.ExpectSurface ?? row.Expect, 7, 16);
+failed |= Report("configured", configured, static row => row.Expect, 15, 8);
+failed |= Report("surface", surface, static row => row.ExpectSurface ?? row.Expect, 7, 16);
 return failed ? 1 : 0;
 
-bool Report(string rule, WakeWord[] wakes, string[] wakeTexts, Func<CorpusRow, string> expectOf, int hitFloor, int missCeil)
+bool Report(string rule, WakeWord[] wakes, Func<CorpusRow, string> expectOf, int hitFloor, int missCeil)
 {
     var hits = 0;
     var misses = 0;
@@ -51,7 +49,7 @@ bool Report(string rule, WakeWord[] wakes, string[] wakeTexts, Func<CorpusRow, s
             throw new InvalidOperationException($"{row.Id} expect {expect}");
         }
 
-        var got = DecidesWake(row, wakes, wakeTexts) ? "wake" : "no-wake";
+        var got = DecidesWake(row, wakes) ? "wake" : "no-wake";
         var kind = (expect, got) switch
         {
             ("wake", "wake") => "hit",
@@ -90,7 +88,7 @@ bool Report(string rule, WakeWord[] wakes, string[] wakeTexts, Func<CorpusRow, s
     return false;
 }
 
-static bool DecidesWake(CorpusRow row, WakeWord[] wakes, string[] wakeTexts)
+static bool DecidesWake(CorpusRow row, WakeWord[] wakes)
 {
     var lexemes = (row.Lexemes ?? []).Select(item => new LexicalRun(
         item.Text,
@@ -112,7 +110,7 @@ static bool DecidesWake(CorpusRow row, WakeWord[] wakes, string[] wakeTexts)
     return row.Channel switch
     {
         "early" => DictationBoundaries.EarlyWake(utterance, wakes) is not null,
-        "rejected" => DictationBoundaries.RejectedWake(utterance, wakeTexts, wakes.Select(wake => wake.Reading)) is not null,
+        "rejected" => DictationBoundaries.RejectedWake(utterance, wakes) is not null,
         "leading" => DictationBoundaries.LeadingWake(utterance, wakes) is not null,
         _ => throw new InvalidOperationException($"{row.Id} channel {row.Channel}"),
     };
