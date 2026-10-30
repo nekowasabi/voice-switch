@@ -1,9 +1,8 @@
 # SPEC: wake recognition surrogates
 
-Environment for every command:
+Environment for every command, from the repo root:
 
 ```sh
-cd /workspace/voice-switch-wake-6h
 export PATH="$HOME/.dotnet:$HOME/.local/bin:$PATH"
 export DOTNET_ROOT="${DOTNET_ROOT:-$HOME/.dotnet}"
 export DOTNET_CLI_TELEMETRY_OPTOUT=1
@@ -151,6 +150,7 @@ must_hit = {
         "hosei-d2", "hosei-spaced", "hosei-short-reading", "yoon-large", "choon",
         "onsen-ni-hairu",
         "hosei-wa", "hosei-ne", "hosei-yo",
+        "onsei-desu", "onsei-masu",
         "houzei-alt",
         "rejected-kana",
     },

@@ -7,10 +7,10 @@ description: Drive VoiceSwitch wake-recognition surrogates on Linux (labeled rec
 
 The surface is the Linux wake surrogate, not the tray app. A speaker's wake word is recognized on Windows by SAPI and on Mac by Speech. This box has neither a microphone nor those recognizers. `verify.sh` drives the same Core wake APIs and the existing replay tools on frozen recognized text.
 
-`verify.sh` lives in this folder and finds the repo three directories above itself. Run it by absolute path:
+`verify.sh` lives in this folder and finds the repo three directories above itself. From the repo root:
 
 ```sh
-V=/workspace/voice-switch-wake-6h/.claude/skills/verify-voice-switch-wake/verify.sh
+V="$PWD/.claude/skills/verify-voice-switch-wake/verify.sh"
 ```
 
 Scratch root is `VS_WAKE_VERIFY_ROOT` (default `/tmp/voice-switch-wake-verify`). Evidence is `$VS_WAKE_VERIFY_ROOT/evidence`. Set `VS_RUN_ID` so each drive has its own folder. One `fixture-replay` at a time: its self-test rewrites `dotnet/VoiceSwitch.Windows.Core/DictationCore.cs` and restores it on exit.
