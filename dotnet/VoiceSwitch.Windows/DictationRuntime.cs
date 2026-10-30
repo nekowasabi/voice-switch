@@ -929,7 +929,7 @@ public sealed class WindowsDictationRuntime
     {
         if (session.IsActive || session.IsAwaitingBody) return session.Origin;
         var relaxed = config.Dictation?.NoWakeWord?.RelaxedReadingDistance2 == true
-            && DictationBoundaries.RejectedWake(recognition, config.WakeWords) is null
+            && DictationBoundaries.RejectedWake(recognition, config.Wakes()) is null
             && !SpeaksWake(recognition)
             && NoWakePolicy.RelaxedWake(recognition, config.Wakes()) is not null;
         return new(relaxed ? WakeRule.RelaxedD2 : WakeRule.Strict, inputIdleSeconds());

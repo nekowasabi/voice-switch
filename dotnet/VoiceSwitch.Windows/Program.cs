@@ -268,7 +268,7 @@ public static class CheckMode
     {
         var wakes = config.WakeWords.Select(TextMatching.Normalize).OrderByDescending(wake => wake.Length).ToArray();
         var text = TextMatching.Normalize(heard.Text);
-        if ((heard.Extent == RecognitionExtent.ClosedUtterance && wakes.Contains(text)) || DictationBoundaries.RejectedWake(heard, config.WakeWords) is not null)
+        if ((heard.Extent == RecognitionExtent.ClosedUtterance && wakes.Contains(text)) || DictationBoundaries.RejectedWake(heard, config.Wakes()) is not null)
         {
             return "wake";
         }

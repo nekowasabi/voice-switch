@@ -1332,16 +1332,15 @@ static bool DictationLeadingWakeAcceptsExactAlternateInsideNearMiss()
 // NormalizeReading) opens a wait but never a body. Mirrors corpus rows rejected-kana
 // (wake) and rejected-kanji (wake, surface equality), plus the no-wake guards
 // rejected-low, rejected-longer, rejected-prefix and rejected-kana-hosei (d != 0).
-// The product path carries the readings: DictationSession.Apply passes the wake
-// list's readings alongside config.WakeWords, so a kana rejected text wakes only
-// when the config carries that reading.
+// Every caller passes config.Wakes(), so a kana rejected text wakes only when the
+// config carries that reading.
 static bool DictationRejectedWakeAcceptsReadingAtDistanceZero()
 {
     static RecognizedUtterance RejectedReading(string rejectedText, double confidence, RecognitionExtent extent = RecognitionExtent.ClosedUtterance) =>
         new(1, extent, new SampleRange(0, 8000), "", [], HadRejectedSpeech: true, Confidence: confidence, RejectedText: rejectedText);
 
     var config = DictationConfig() with { WakeReadings = ["おんせいにゅうりょく"] };
-    var readings = config.Wakes().Select(wake => wake.Reading);
+    var wakes = config.Wakes();
     var kana = RejectedReading("おんせいにゅうりょく", 0.35);
     var katakana = RejectedReading("オンセイニュウリョク", 0.35);
     var kanji = RejectedReading("音声入力", 0.35);
@@ -1350,20 +1349,19 @@ static bool DictationRejectedWakeAcceptsReadingAtDistanceZero()
     var kanaLonger = RejectedReading("おんせいにゅうりょくです", 0.35);
     var hosei = RejectedReading("ほうせいにゅうりょく", 0.35);
     var prefix = RejectedReading("音声入力", 0.35, RecognitionExtent.PrefixHead);
-    var direct = DictationBoundaries.RejectedWake(kana, config.WakeWords, readings) is { BodyStart: null }
-        && DictationBoundaries.RejectedWake(katakana, config.WakeWords, readings) is { BodyStart: null }
-        && DictationBoundaries.RejectedWake(kanji, config.WakeWords, readings) is { BodyStart: null }
-        && DictationBoundaries.RejectedWake(low, config.WakeWords, readings) is null
-        && DictationBoundaries.RejectedWake(longer, config.WakeWords, readings) is null
-        && DictationBoundaries.RejectedWake(kanaLonger, config.WakeWords, readings) is null
-        && DictationBoundaries.RejectedWake(hosei, config.WakeWords, readings) is null
-        && DictationBoundaries.RejectedWake(prefix, config.WakeWords, readings) is null;
+    var direct = DictationBoundaries.RejectedWake(kana, wakes) is { BodyStart: null }
+        && DictationBoundaries.RejectedWake(katakana, wakes) is { BodyStart: null }
+        && DictationBoundaries.RejectedWake(kanji, wakes) is { BodyStart: null }
+        && DictationBoundaries.RejectedWake(low, wakes) is null
+        && DictationBoundaries.RejectedWake(longer, wakes) is null
+        && DictationBoundaries.RejectedWake(kanaLonger, wakes) is null
+        && DictationBoundaries.RejectedWake(hosei, wakes) is null
+        && DictationBoundaries.RejectedWake(prefix, wakes) is null;
 
     // With the built-in table the surface config also carries the reading, so the kana
     // hypothesis now hits there too: surface WakeWord.From("音声入力") reads おんせいにゅうりょく.
     var surface = DictationConfig();
-    var surfaceReadings = surface.Wakes().Select(wake => wake.Reading);
-    var surfaceHit = DictationBoundaries.RejectedWake(kana, surface.WakeWords, surfaceReadings) is { BodyStart: null };
+    var surfaceHit = DictationBoundaries.RejectedWake(kana, surface.Wakes()) is { BodyStart: null };
 
     var store = StoreWithRamp(0, 40000);
     var waited = new DictationSession(config);
