@@ -514,6 +514,15 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     guard stillCurrent() else { return .delivered }
     guard DictationHistory.shared.add(id: sessionID, text: result, origin: origin, expectedGeneration: historyGeneration, policy: transcriptPolicy) else { return .delivered }
     if controlled { return .delivered }
+    if let action, action.tokenEnv != nil {
+        do {
+            try await postAction(action, text: result)
+            log("dictation delivered: post \(action.name)")
+        } catch {
+            log("dictation action \(action.name) failed: \(error.localizedDescription)")
+        }
+        return .delivered
+    }
     if let action {
         if GrokBotPrompt.isPrompt(action.url.rawValue) {
             let (_, truncated) = GrokBotPrompt.fit(result)
@@ -532,6 +541,33 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
         log("dictation delivered: superwhisper")
     }
     return .delivered
+}
+
+/// POSTs `text` to the action's https url as one multipart field with the bearer token from `tokenEnv`; the token is never in the config.
+func postAction(_ action: WakeAction, text: String) async throws {
+    guard let env = action.tokenEnv, let token = ProcessInfo.processInfo.environment[env] else {
+        throw NSError(domain: "voice-switch", code: 1, userInfo: [NSLocalizedDescriptionKey: "environment variable \(action.tokenEnv ?? "") is not set"])
+    }
+    let boundary = "voice-switch-\(UUID().uuidString)"
+    // Same fields as the Pebble Index webhook in transcription-only mode, so a receiver built for it accepts this.
+    let fields = [(action.inputParam ?? "transcription", text),
+                  ("recordedAt", String(Int64(Date().timeIntervalSince1970 * 1000))),
+                  ("client", "ring")]
+    var body = Data()
+    for (name, value) in fields {
+        body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n".utf8))
+    }
+    body.append(Data("--\(boundary)--\r\n".utf8))
+    var request = URLRequest(url: URL(string: action.url.rawValue)!, timeoutInterval: 30)
+    request.httpMethod = "POST"
+    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+    let (data, response) = try await URLSession.shared.upload(for: request, from: body)
+    if let status = (response as? HTTPURLResponse)?.statusCode, !(200 ..< 300).contains(status) {
+        // The status alone cannot tell a bad field from a receiver fault; the head of the reply can.
+        let reply = String(decoding: data.prefix(300), as: UTF8.self)
+        throw NSError(domain: "voice-switch", code: status, userInfo: [NSLocalizedDescriptionKey: "HTTP \(status) \(reply)"])
+    }
 }
 
 /// The mode lock is per user and non-blocking, so wait for a handoff already in flight instead of dropping this one.

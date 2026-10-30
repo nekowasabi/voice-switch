@@ -192,8 +192,8 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("automatic session never opens an action URL", () => Check(AutomaticSessionNeverOpensActionUrl())),
     ("dictation action wake selects its action after the default wakes", () => Check(DictationActionWakeSelectsAction())),
     ("dictation handoff with an action opens its URL instead of routing or pasting", () => Check(DictationHandoffActionOpensUrl())),
-    ("config loads a mail action and rejects smtp without a mailto recipient or host", () => Check(ConfigLoadsMailAction())),
-    ("dictation handoff with an smtp action mails the text and opens no URL", () => Check(DictationHandoffMailActionSendsMail())),
+    ("config loads a post action and rejects tokenEnv without an https url or a name", () => Check(ConfigLoadsPostAction())),
+    ("dictation handoff with a tokenEnv action posts the text and opens no URL", () => Check(DictationHandoffPostActionPostsText())),
     ("dictation handoff switches mode only for automatic audio", () => Check(DictationHandoffSwitchesModeOnlyForAutomaticAudio())),
     ("automatic audio stays out of Superwhisper when the mode switch fails", () => Check(DictationHandoffKeepsAutomaticAudioOutOfSuperwhisperWhenModeSwitchFails())),
     ("dictation handoff keeps WAV when Superwhisper writes no result", () => Check(DictationHandoffKeepsWavWithoutResult())),
@@ -4824,23 +4824,21 @@ static bool DictationHandoffActionOpensUrl()
         && routes == 0;
 }
 
-static bool ConfigLoadsMailAction()
+static bool ConfigLoadsPostAction()
 {
     static string WithAction(string action) =>
         $$$"""{"wakeWords":["音声入力"],"command":"wake","windows":{"actions":[{{{action}}}]}}""";
     using var temp = RuntimeTemp();
-    var path = Path.Combine(temp.Dir, "mail.json");
-    File.WriteAllText(path, WithAction("""{"name":"grokbot","wakeWords":["gb"],"url":"mailto:takets+default@mail.grokbot.com?subject=prompt","smtp":{"host":"smtp.example.com","user":"me@example.com"}}"""));
+    var path = Path.Combine(temp.Dir, "post.json");
+    File.WriteAllText(path, WithAction("""{"name":"grokbot","wakeWords":["gb"],"url":"https://example.workers.dev/","tokenEnv":"VOICE_SWITCH_GROKBOT_TOKEN"}"""));
     var action = ConfigLoader.Load(path).Windows!.Actions!.Single();
-    return action.Smtp == new SmtpSettings("smtp.example.com", "me@example.com", 587, null, "VOICE_SWITCH_SMTP_PASSWORD")
-        && MailAction.Parse(action.Url) == ("takets+default@mail.grokbot.com", "prompt")
-        && MailAction.Parse("mailto:a%40b.example?Subject=%E4%BB%8A&body=x") == ("a@b.example", "今")
-        && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"grokbot://app/v1/prompt","smtp":{"host":"h","user":"u"}}"""), "windows.actions[0].smtp")
-        && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"mailto:?subject=prompt","smtp":{"host":"h","user":"u"}}"""), "windows.actions[0].smtp")
-        && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"mailto:a@b.example","smtp":{"host":"","user":"u"}}"""), "windows.actions[0].smtp");
+    return action.TokenEnv == "VOICE_SWITCH_GROKBOT_TOKEN"
+        && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"grokbot://app/v1/prompt","tokenEnv":"T"}"""), "windows.actions[0].tokenEnv")
+        && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"http://example.com/","tokenEnv":"T"}"""), "windows.actions[0].tokenEnv")
+        && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"https://example.com/","tokenEnv":" "}"""), "windows.actions[0].tokenEnv");
 }
 
-static bool DictationHandoffMailActionSendsMail()
+static bool DictationHandoffPostActionPostsText()
 {
     using var temp = RuntimeTemp();
     var recordings = Path.Combine(temp.Dir, "recordings");
@@ -4862,15 +4860,14 @@ static bool DictationHandoffMailActionSendsMail()
             opened.Add(string.Join(' ', psi.ArgumentList));
         return Process.GetCurrentProcess();
     };
-    var sent = new List<(SmtpSettings Smtp, string To, string Subject, string Body)>();
+    var sent = new List<(WakeAction Action, string Text)>();
     var handoff = new RegisteredSuperwhisperHandoff(Path.Combine(temp.Dir, "handoff"), recordings, start, delay: _ => Task.CompletedTask,
         superwhisperMode: "voice_switch", preferencesPath: preferences, modesDir: modes,
-        sendMail: (smtp, to, subject, body, _) => { sent.Add((smtp, to, subject, body)); return Task.CompletedTask; });
-    var smtp = new SmtpSettings("smtp.example.com", "me@example.com");
-    var action = new WakeAction("grokbot", ["gb"], "mailto:takets+default@mail.grokbot.com?subject=prompt", Smtp: smtp);
+        post: (action, text, _) => { sent.Add((action, text)); return Task.CompletedTask; });
+    var action = new WakeAction("grokbot", ["gb"], "https://example.workers.dev/", TokenEnv: "VOICE_SWITCH_GROKBOT_TOKEN");
     var result = SubmitHandoff(handoff, new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2), Target: 0x42, Action: action));
     return result.Status == HandoffStatus.Transcribed
-        && sent.SequenceEqual([(smtp, "takets+default@mail.grokbot.com", "prompt", "一行目\n二行目")])
+        && sent.SequenceEqual([(action, "一行目\n二行目")])
         && opened.Count == 0;
 }
 

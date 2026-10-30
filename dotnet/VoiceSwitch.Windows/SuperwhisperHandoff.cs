@@ -26,7 +26,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
     private readonly string? superwhisperMode;
     private readonly string preferencesPath;
     private readonly string modesDir;
-    private readonly Func<SmtpSettings, string, string, string, CancellationToken, Task> sendMail;
+    private readonly Func<WakeAction, string, CancellationToken, Task> post;
     private static readonly SemaphoreSlim ModeOwner = new(1, 1);
     private string JournalPath => Path.Combine(root, "mode-restore.json");
 
@@ -41,10 +41,10 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
         string? superwhisperMode = null,
         string? preferencesPath = null,
         string? modesDir = null,
-        Func<SmtpSettings, string, string, string, CancellationToken, Task>? sendMail = null)
+        Func<WakeAction, string, CancellationToken, Task>? post = null)
     {
         this.root = root;
-        this.sendMail = sendMail ?? MailAction.SendAsync;
+        this.post = post ?? PostAction.SendAsync;
         this.recordingsDir = recordingsDir;
         this.startProcess = startProcess ?? Process.Start;
         this.dryRun = dryRun;
@@ -195,11 +195,10 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
             // Mac parity: an action's text goes only to its URL, never to a tmux pane or a paste.
             try
             {
-                if (action.Smtp is { } smtp)
+                if (action.TokenEnv is not null)
                 {
-                    var (to, subject) = MailAction.Parse(action.Url);
-                    await sendMail(smtp, to, subject, text, cancellation);
-                    Log.Info($"dictation delivered: mail {action.Name}");
+                    await post(action, text, cancellation);
+                    Log.Info($"dictation delivered: post {action.Name}");
                 }
                 else
                 {

@@ -56,5 +56,7 @@ the text either.
 
 ## Webhooks
 
-Routine delivery through a server webhook with a bearer key is a future option
-only. It is out of scope for this slice.
+An action with `tokenEnv` and an `https://` url POSTs the dictation as
+multipart fields `transcription` (or `inputParam`), `recordedAt`, and
+`client` (the Pebble Index webhook shape) with a bearer token read from that
+environment variable, on Windows and Mac. See the README.

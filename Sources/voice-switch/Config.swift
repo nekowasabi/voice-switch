@@ -220,8 +220,11 @@ struct WakeAction: Decodable {
     let superwhisperMode: String?
     /// Query item carrying the dictation. JSON `inputParam`; defaults to `input` when omitted or null.
     let inputParam: String?
+    /// Environment variable holding a bearer token. When set, the dictation is POSTed to the https `url` as
+    /// multipart form field `inputParam` (default `transcription`) instead of being opened.
+    let tokenEnv: String?
 
-    private enum CodingKeys: String, CodingKey { case name, wakeWords, url, superwhisperMode, inputParam }
+    private enum CodingKeys: String, CodingKey { case name, wakeWords, url, superwhisperMode, inputParam, tokenEnv }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -233,6 +236,11 @@ struct WakeAction: Decodable {
         if let p = inputParam, !GrokBotPrompt.isValidInputParam(p) {
             throw DecodingError.dataCorruptedError(forKey: .inputParam, in: c,
                 debugDescription: "Wake action inputParam must be a non-empty RFC 3986 unreserved query name.")
+        }
+        tokenEnv = try c.decodeIfPresent(String.self, forKey: .tokenEnv)
+        if let t = tokenEnv, t.trimmingCharacters(in: .whitespaces).isEmpty || !url.rawValue.lowercased().hasPrefix("https://") {
+            throw DecodingError.dataCorruptedError(forKey: .tokenEnv, in: c,
+                debugDescription: "Wake action tokenEnv needs an https:// url and a non-empty environment variable name.")
         }
         guard !wakeWords.isEmpty else {
             throw DecodingError.dataCorruptedError(forKey: .wakeWords, in: c,
