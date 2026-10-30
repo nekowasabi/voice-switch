@@ -38,7 +38,7 @@ def main() -> int:
         with tempfile.TemporaryDirectory(prefix="voice-policy-") as temp:
             binary = Path(temp) / "policy-tests"
             subprocess.run([
-                "swiftc", "-module-cache-path", str(Path(temp) / "module-cache"),
+                "swiftc", "-module-name", "voice_switch", "-module-cache-path", str(Path(temp) / "module-cache"),
                 str(ROOT / "Sources/voice-switch/Config.swift"),
                 str(ROOT / "Sources/voice-switch/Platform.swift"),
                 str(ROOT / "Sources/voice-switch/DictationJournal.swift"),
