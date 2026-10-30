@@ -156,8 +156,8 @@ public static class TrayHost
         }
         catch (Exception ex)
         {
+            // No listener is a normal restart. Log it and still launch below.
             Console.Error.WriteLine(ex.Message);
-            return 2;
         }
 
         var deadline = DateTime.UtcNow.AddSeconds(10);
