@@ -138,7 +138,7 @@ final class DictationHistory {
 
     var journal: DictationJournal?
     @discardableResult
-    func add(id: UUID, text: String, origin: WakeOrigin, expectedGeneration: Int? = nil, policy: AutomaticTranscriptPolicy = .disabled, endReason: String? = nil, recordingSeconds: Double? = nil, manual: Bool = false) -> Bool {
+    func add(id: UUID, text: String, origin: WakeOrigin, expectedGeneration: Int? = nil, policy: AutomaticTranscriptPolicy = .disabled, endReason: String? = nil, recordingSeconds: Double? = nil, manual: Bool = false, focus: FocusApp? = nil) -> Bool {
         guard text.utf16.count <= 100_000, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !policy.rejects(text, origin: origin) else { return false }
         lock.lock()
@@ -151,7 +151,7 @@ final class DictationHistory {
         lock.unlock()
         let noted = DictationJournal.take(id)
         let sink = journal ?? (self === DictationHistory.shared ? DictationJournal.active : nil)
-        sink?.record(id: id, at: created, text: text, origin: origin, endReason: endReason ?? noted.endReason, recordingSeconds: recordingSeconds ?? noted.recordingSeconds, manual: manual || noted.manual)
+        sink?.record(id: id, at: created, text: text, origin: origin, endReason: endReason ?? noted.endReason, recordingSeconds: recordingSeconds ?? noted.recordingSeconds, manual: manual || noted.manual, focus: focus ?? noted.focus)
         onChange?()
         return true
     }

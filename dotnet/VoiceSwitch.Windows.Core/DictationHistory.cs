@@ -24,7 +24,7 @@ public sealed class DictationHistory
         this.capacity = capacity;
     }
 
-    public bool Add(Guid id, string text, WakeOrigin origin, long? expectedGeneration = null, AutomaticTranscriptPolicy policy = default, string? endReason = null, double? recordingSeconds = null, bool manual = false)
+    public bool Add(Guid id, string text, WakeOrigin origin, long? expectedGeneration = null, AutomaticTranscriptPolicy policy = default, string? endReason = null, double? recordingSeconds = null, bool manual = false, FocusApp? focus = null)
     {
         if (string.IsNullOrWhiteSpace(text) || text.Length > 100_000 || policy.Rejects(text, origin)) return false;
         DateTimeOffset created;
@@ -42,7 +42,7 @@ public sealed class DictationHistory
         var journal = Journal ?? (ReferenceEquals(this, Shared) ? DictationJournal.Active : null);
         try
         {
-            journal?.Append(new JournalEntry(id, created, text, DictationJournal.OriginLabel(origin, manual || noted.Manual), endReason ?? noted.EndReason, recordingSeconds ?? noted.RecordingSeconds));
+            journal?.Append(new JournalEntry(id, created, text, DictationJournal.OriginLabel(origin, manual || noted.Manual), endReason ?? noted.EndReason, recordingSeconds ?? noted.RecordingSeconds, focus ?? noted.Focus));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

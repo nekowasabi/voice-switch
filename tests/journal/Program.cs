@@ -61,10 +61,10 @@ DictationHistory History(DictationJournal journal, Func<DateTimeOffset>? now = n
     return history;
 }
 
-Guid Add(DictationHistory history, string text, WakeOrigin? origin = null, string? endReason = null, double? seconds = null, bool manual = false, Guid? id = null, long? generation = null, AutomaticTranscriptPolicy policy = default)
+Guid Add(DictationHistory history, string text, WakeOrigin? origin = null, string? endReason = null, double? seconds = null, bool manual = false, Guid? id = null, long? generation = null, AutomaticTranscriptPolicy policy = default, FocusApp? focus = null)
 {
     var key = id ?? Guid.NewGuid();
-    Expect(history.Add(key, text, origin ?? new WakeOrigin(WakeRule.Strict, null), generation, policy, endReason, seconds, manual), "Add returned false for " + text);
+    Expect(history.Add(key, text, origin ?? new WakeOrigin(WakeRule.Strict, null), generation, policy, endReason, seconds, manual, focus), "Add returned false for " + text);
     return key;
 }
 
@@ -296,7 +296,7 @@ Run("fields", () =>
     Expect(raw.Count(b => b == (byte)'\n') == 1, "quote or newline broke the physical line");
     var doc = Line(file);
     var names = doc.EnumerateObject().Select(property => property.Name).ToArray();
-    Expect(names.SequenceEqual(new[] { "id", "timestamp", "text", "origin", "endReason", "recordingSeconds", "schemaVersion" }), "keys " + string.Join(",", names));
+    Expect(names.SequenceEqual(new[] { "id", "timestamp", "text", "origin", "endReason", "recordingSeconds", "schemaVersion", "focusApp", "taskchute" }), "keys " + string.Join(",", names));
     Expect(doc.GetProperty("id").GetString() == id.ToString("D"), "id");
     var timestamp = doc.GetProperty("timestamp").GetString() ?? "";
     Expect(Regex.IsMatch(timestamp, @"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$"), "timestamp " + timestamp);
@@ -304,6 +304,8 @@ Run("fields", () =>
     Expect(doc.GetProperty("endReason").GetString() == "Silence", "endReason");
     Expect(doc.GetProperty("recordingSeconds").GetDouble() == 1.25, "recordingSeconds");
     Expect(doc.GetProperty("schemaVersion").ValueKind == JsonValueKind.Number && doc.GetProperty("schemaVersion").GetInt32() == 1, "schemaVersion");
+    Expect(doc.GetProperty("focusApp").ValueKind == JsonValueKind.Null, "focusApp not null without a focus");
+    Expect(doc.GetProperty("taskchute").ValueKind == JsonValueKind.Null, "taskchute not null without a task file");
     var bare = CaseDir("fields-null");
     Add(History(JournalAt(bare)), "bare");
     var nulls = Line(Directory.GetFiles(bare, "*.jsonl").Single());
@@ -746,6 +748,337 @@ Run("both-sources", () =>
     }
     Expect(Source("Sources/voice-switch/WakeSafety.swift").Contains("DictationJournal", StringComparison.Ordinal), "Swift add misses the journal");
     Expect(Source("dotnet/VoiceSwitch.Windows.Core/DictationHistory.cs").Contains("DictationJournal", StringComparison.Ordinal), "C# Add misses the journal");
+});
+
+Run("focus-app-shape", () =>
+{
+    var dir = CaseDir("focus-shape");
+    var history = History(JournalAt(dir));
+    Add(history, "mac-focus", focus: new FocusApp("Ghostty", "com.mitchellh.ghostty", null, 4242));
+    Add(history, "win-focus", focus: new FocusApp("WindowsTerminal", null, "WindowsTerminal", 9001));
+    var lines = ReadText(Directory.GetFiles(dir, "*.jsonl").Single()).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+    Expect(lines.Length == 2, "expected two lines");
+    var mac = JsonDocument.Parse(lines[0]).RootElement.GetProperty("focusApp");
+    Expect(mac.EnumerateObject().Select(property => property.Name).SequenceEqual(new[] { "name", "bundleId", "exe", "pid" }), "focus keys");
+    Expect(mac.GetProperty("name").GetString() == "Ghostty", "mac name");
+    Expect(mac.GetProperty("bundleId").GetString() == "com.mitchellh.ghostty", "mac bundle");
+    Expect(mac.GetProperty("exe").ValueKind == JsonValueKind.Null, "mac exe");
+    Expect(mac.GetProperty("pid").GetInt32() == 4242, "mac pid");
+    var win = JsonDocument.Parse(lines[1]).RootElement.GetProperty("focusApp");
+    Expect(win.GetProperty("name").GetString() == "WindowsTerminal", "win name");
+    Expect(win.GetProperty("bundleId").ValueKind == JsonValueKind.Null, "win bundle");
+    var exe = win.GetProperty("exe").GetString() ?? "";
+    Expect(exe == "WindowsTerminal", "win exe");
+    Expect(!exe.Contains('/') && !exe.Contains('\\'), "exe has a separator");
+    Expect(win.GetProperty("pid").GetInt32() == 9001, "win pid");
+    foreach (var line in lines)
+    {
+        Expect(!line.Contains("title", StringComparison.OrdinalIgnoreCase), "window title leaked");
+        Expect(!line.Contains("\"path\"", StringComparison.Ordinal), "path leaked");
+        Expect(JsonDocument.Parse(line).RootElement.GetProperty("schemaVersion").GetInt32() == 1, "schemaVersion");
+    }
+    var swift = Source("Sources/voice-switch/DictationJournal.swift");
+    foreach (var key in new[] { "name", "bundleId", "exe", "pid" })
+        Expect(swift.Contains(key, StringComparison.Ordinal), "swift missing " + key);
+});
+
+Run("focus-app-null", () =>
+{
+    var dir = CaseDir("focus-null");
+    var history = History(JournalAt(dir));
+    Add(history, "no-focus");
+    Add(history, "empty-focus", focus: new FocusApp(null, null, null, null));
+    var lines = ReadText(Directory.GetFiles(dir, "*.jsonl").Single()).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+    Expect(lines.Length == 2, "expected two lines");
+    foreach (var line in lines)
+        Expect(JsonDocument.Parse(line).RootElement.GetProperty("focusApp").ValueKind == JsonValueKind.Null, "focusApp not null: " + line);
+    var zeroDir = CaseDir("focus-zero-pid");
+    Add(History(JournalAt(zeroDir)), "zero-pid", focus: new FocusApp("Ghostty", "com.mitchellh.ghostty", null, 0));
+    var zero = Line(Directory.GetFiles(zeroDir, "*.jsonl").Single()).GetProperty("focusApp");
+    Expect(zero.ValueKind == JsonValueKind.Object, "zero pid dropped the object");
+    Expect(zero.GetProperty("name").GetString() == "Ghostty", "zero pid dropped the name");
+    Expect(zero.GetProperty("pid").ValueKind == JsonValueKind.Null, "pid 0 not stored as null");
+});
+
+Run("focus-app-at-start", () =>
+{
+    var dir = CaseDir("focus-start");
+    var history = History(JournalAt(dir));
+    var id = Guid.NewGuid();
+    JournalNotes.Note(id, focus: new FocusApp("Ghostty", "com.mitchellh.ghostty", null, 4242));
+    JournalNotes.Note(id, endReason: "Silence");
+    Expect(history.Add(id, "noted", new WakeOrigin(WakeRule.Strict, null)), "noted add failed");
+    var kept = Line(Directory.GetFiles(dir, "*.jsonl").Single());
+    Expect(kept.GetProperty("focusApp").GetProperty("name").GetString() == "Ghostty", "later note cleared the focus");
+    Expect(kept.GetProperty("endReason").GetString() == "Silence", "end reason missing");
+    var other = Guid.NewGuid();
+    JournalNotes.Note(other, focus: new FocusApp("Ghostty", "com.mitchellh.ghostty", null, 4242));
+    Expect(history.Add(other, "arg-wins", new WakeOrigin(WakeRule.Strict, null), focus: new FocusApp("WindowsTerminal", null, "WindowsTerminal", 9001)), "arg add failed");
+    var lines = ReadText(Directory.GetFiles(dir, "*.jsonl").Single()).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+    Expect(JsonDocument.Parse(lines[1]).RootElement.GetProperty("focusApp").GetProperty("name").GetString() == "WindowsTerminal", "argument did not win");
+    foreach (var relative in new[] { "dotnet/VoiceSwitch.Windows.Core/DictationHistory.cs", "dotnet/VoiceSwitch.Windows.Core/DictationJournal.cs" })
+    {
+        var text = Source(relative);
+        Expect(!text.Contains("GetForegroundWindow", StringComparison.Ordinal), relative + " reads the live foreground app");
+        Expect(!text.Contains("frontmostApplication", StringComparison.Ordinal), relative + " reads the live frontmost app");
+    }
+});
+
+Run("focus-wired-at-start", () =>
+{
+    var mac = Source("Sources/voice-switch/MacApp.swift");
+    var submitAt = mac.IndexOf("private func submit(", StringComparison.Ordinal);
+    Expect(submitAt >= 0, "submit missing");
+    var submitEnd = mac.IndexOf("private func ", submitAt + 1, StringComparison.Ordinal);
+    var submit = submitEnd < 0 ? mac[submitAt..] : mac[submitAt..submitEnd];
+    Expect(submit.Contains("DictationJournal.note", StringComparison.Ordinal), "submit does not note the journal");
+    Expect(submit.Contains("d.target", StringComparison.Ordinal), "submit does not note d.target");
+    var journal = Source("Sources/voice-switch/DictationJournal.swift");
+    Expect(journal.Contains("localizedName", StringComparison.Ordinal), "swift focus misses localizedName");
+    Expect(journal.Contains("bundleIdentifier", StringComparison.Ordinal), "swift focus misses bundleIdentifier");
+    Expect(!journal.Contains("frontmostApplication", StringComparison.Ordinal), "swift journal reads the paste target");
+    var runtime = Source("dotnet/VoiceSwitch.Windows/DictationRuntime.cs");
+    var wakeStatement = "target = foregroundWindow();";
+    var wakeAssign = runtime.IndexOf(wakeStatement, StringComparison.Ordinal);
+    Expect(wakeAssign >= 0, "wake target assignment missing");
+    var afterWake = runtime[(wakeAssign + wakeStatement.Length)..];
+    var wakeNote = afterWake.IndexOf("JournalNotes.Note(session.SessionId, focus:", StringComparison.Ordinal);
+    var wakeNextForeground = afterWake.IndexOf("foregroundWindow()", StringComparison.Ordinal);
+    Expect(wakeNote >= 0 && wakeNote < 300 && (wakeNextForeground < 0 || wakeNote < wakeNextForeground), "wake does not note the process");
+    var autoCount = 0;
+    var cursor = 0;
+    while (true)
+    {
+        var at = runtime.IndexOf("target = window;", cursor, StringComparison.Ordinal);
+        if (at < 0) break;
+        autoCount++;
+        var after = runtime[(at + 1)..];
+        var noteAt = after.IndexOf("JournalNotes.Note(", StringComparison.Ordinal);
+        var nextForeground = after.IndexOf("foregroundWindow()", StringComparison.Ordinal);
+        Expect(noteAt >= 0 && (nextForeground < 0 || noteAt < nextForeground), "target = window does not note before the next foregroundWindow()");
+        var noted = after[noteAt..Math.Min(noteAt + 200, after.Length)];
+        Expect(noted.Contains("focus:", StringComparison.Ordinal), "note misses the focus");
+        cursor = at + 1;
+    }
+    Expect(autoCount == 2, "expected two target = window assignments, saw " + autoCount);
+    var resetAt = runtime.IndexOf("private DictationSession ResetSession(", StringComparison.Ordinal);
+    Expect(resetAt >= 0, "ResetSession missing");
+    var resetEnd = runtime.IndexOf("private bool ApplyHotkey(", resetAt, StringComparison.Ordinal);
+    var reset = runtime[resetAt..(resetEnd < 0 ? runtime.Length : resetEnd)];
+    Expect(reset.Contains("target = 0;", StringComparison.Ordinal), "ResetSession does not clear the target");
+    Expect(!reset.Contains("JournalNotes.Note", StringComparison.Ordinal), "ResetSession notes an app");
+    Expect(runtime.Contains("ProcessOfWindow", StringComparison.Ordinal) && runtime.Contains("ProcessName", StringComparison.Ordinal), "noted process misses ProcessOfWindow");
+    Expect(!runtime.Contains("MainModule", StringComparison.Ordinal), "noted process reads MainModule");
+    Expect(runtime.ToLowerInvariant().Contains("window title") == false, "noted process reads a window title");
+    Expect(runtime.Contains("audio = audio with { Target = foregroundWindow() }", StringComparison.Ordinal), "paste retarget missing");
+});
+
+Run("task-unset-null", () =>
+{
+    var dir = CaseDir("task-unset");
+    var history = History(JournalAt(dir));
+    Add(history, "plain");
+    var doc = Line(Directory.GetFiles(dir, "*.jsonl").Single());
+    Expect(doc.GetProperty("taskchute").ValueKind == JsonValueKind.Null, "taskchute not null without a task path");
+    foreach (var relative in new[] { "dotnet/VoiceSwitch.Windows.Core/DictationJournal.cs", "dotnet/VoiceSwitch.Windows.Core/DictationHistory.cs", "Sources/voice-switch/DictationJournal.swift", "Sources/voice-switch/WakeSafety.swift" })
+        Expect(!Source(relative).Contains("tcc2", StringComparison.Ordinal), relative + " calls tcc2");
+    var swift = Source("Sources/voice-switch/DictationJournal.swift");
+    Expect(swift.Contains("taskchute", StringComparison.Ordinal), "swift journal misses taskchute");
+    Expect(swift.Contains("journalTaskFile", StringComparison.Ordinal), "swift journal misses journalTaskFile");
+});
+
+Run("task-json-file", () =>
+{
+    var dir = CaseDir("task-json");
+    var task = Path.Combine(dir, "task.txt");
+    File.WriteAllText(task, "{\"id\":12,\"name\":\"メール\",\"startedAt\":\"2026-10-30T09:00:00+09:00\",\"extra\":true}");
+    var history = History(DictationJournal.Open(dir, static _ => { }, JournalPlatform.Windows, dir + "-fallback", task));
+    Add(history, "json-task");
+    var doc = Line(Directory.GetFiles(dir, "*.jsonl").Single());
+    var parsed = doc.GetProperty("taskchute");
+    Expect(parsed.ValueKind == JsonValueKind.Object, "taskchute not an object");
+    Expect(parsed.EnumerateObject().Select(property => property.Name).SequenceEqual(new[] { "name", "id", "startedAt", "source", "readAt" }), "task keys");
+    Expect(parsed.GetProperty("name").GetString() == "メール", "task name");
+    Expect(parsed.GetProperty("id").GetString() == "12", "numeric id not a decimal string");
+    Expect(parsed.GetProperty("startedAt").GetString() == "2026-10-30T09:00:00+09:00", "startedAt not copied");
+    Expect(parsed.GetProperty("source").GetString() == "file", "source");
+    Expect(parsed.GetProperty("readAt").GetString() == doc.GetProperty("timestamp").GetString(), "readAt differs from timestamp");
+    var second = CaseDir("task-json-string");
+    var stringTask = Path.Combine(second, "task.txt");
+    File.WriteAllText(stringTask, "{\"id\":\"abc\",\"name\":\"メール\"}");
+    Add(History(DictationJournal.Open(second, static _ => { }, JournalPlatform.Windows, second + "-fallback", stringTask)), "string-id");
+    Expect(Line(Directory.GetFiles(second, "*.jsonl").Single()).GetProperty("taskchute").GetProperty("id").GetString() == "abc", "string id not kept");
+});
+
+Run("task-plain-file", () =>
+{
+    var dir = CaseDir("task-plain");
+    var task = Path.Combine(dir, "task.txt");
+    File.WriteAllText(task, "\n   \nメール\nsecond line\n");
+    Add(History(DictationJournal.Open(dir, static _ => { }, JournalPlatform.Windows, dir + "-fallback", task)), "plain-task");
+    var doc = Line(Directory.GetFiles(dir, "*.jsonl").Single());
+    var parsed = doc.GetProperty("taskchute");
+    Expect(parsed.ValueKind == JsonValueKind.Object, "taskchute not an object");
+    Expect(parsed.EnumerateObject().Select(property => property.Name).SequenceEqual(new[] { "name", "id", "startedAt", "source", "readAt" }), "task keys");
+    Expect(parsed.GetProperty("name").GetString() == "メール", "first non-empty line not the name");
+    Expect(parsed.GetProperty("id").ValueKind == JsonValueKind.Null, "plain id not null");
+    Expect(parsed.GetProperty("startedAt").ValueKind == JsonValueKind.Null, "plain startedAt not null");
+    Expect(parsed.GetProperty("source").GetString() == "file", "source");
+    Expect(parsed.GetProperty("readAt").GetString() == doc.GetProperty("timestamp").GetString(), "readAt differs from timestamp");
+});
+
+Run("task-missing-file", () =>
+{
+    var dir = CaseDir("task-missing");
+    var missing = Path.Combine(dir, "no-such-task.txt");
+    var history = History(DictationJournal.Open(dir, static _ => { }, JournalPlatform.Windows, dir + "-fallback", missing));
+    var id = Guid.NewGuid();
+    Expect(history.Add(id, "still here", new WakeOrigin(WakeRule.Strict, null)), "Add failed with a missing task file");
+    Expect(history.Snapshot().Any(entry => entry.Id == id && entry.Text == "still here"), "snapshot missed the text");
+    Expect(Line(Directory.GetFiles(dir, "*.jsonl").Single()).GetProperty("taskchute").ValueKind == JsonValueKind.Null, "missing file not null");
+});
+
+Run("task-oversize", () =>
+{
+    var dir = CaseDir("task-over");
+    var okTask = Path.Combine(dir, "ok.txt");
+    File.WriteAllText(okTask, new string('x', 4096));
+    Add(History(DictationJournal.Open(dir, static _ => { }, JournalPlatform.Windows, dir + "-fallback", okTask)), "ok-size");
+    Expect(Line(Directory.GetFiles(dir, "*.jsonl").Single()).GetProperty("taskchute").GetProperty("name").GetString() == new string('x', 4096), "4096 bytes not accepted");
+    var bigDir = CaseDir("task-big");
+    var bigTask = Path.Combine(bigDir, "big.txt");
+    File.WriteAllText(bigTask, new string('y', 4097));
+    var history = History(DictationJournal.Open(bigDir, static _ => { }, JournalPlatform.Windows, bigDir + "-fallback", bigTask));
+    var id = Guid.NewGuid();
+    Expect(history.Add(id, "big-task", new WakeOrigin(WakeRule.Strict, null)), "Add failed with an oversized task file");
+    Expect(Line(Directory.GetFiles(bigDir, "*.jsonl").Single()).GetProperty("taskchute").ValueKind == JsonValueKind.Null, "4097 bytes not ignored");
+    Expect(Source("dotnet/VoiceSwitch.Windows.Core/DictationJournal.cs").Contains("4096", StringComparison.Ordinal), "csharp cap is not 4096");
+    Expect(Source("Sources/voice-switch/DictationJournal.swift").Contains("4096", StringComparison.Ordinal), "swift cap is not 4096");
+});
+
+Run("task-bad-json", () =>
+{
+    var dir = CaseDir("task-bad");
+    var bodies = new[] { "{not json", "{", "{}", "{\"startedAt\":\"2026-10-30T09:00:00+09:00\"}" };
+    var index = 0;
+    foreach (var body in bodies)
+    {
+        var task = Path.Combine(dir, "bad-" + index + ".txt");
+        File.WriteAllText(task, body);
+        var history = History(DictationJournal.Open(dir, static _ => { }, JournalPlatform.Windows, dir + "-fallback", task));
+        Add(history, "bad-" + index);
+        index++;
+    }
+    var lines = ReadText(Directory.GetFiles(dir, "*.jsonl").Single()).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+    Expect(lines.Length == bodies.Length, "expected one line per bad body");
+    foreach (var line in lines)
+        Expect(JsonDocument.Parse(line).RootElement.GetProperty("taskchute").ValueKind == JsonValueKind.Null, "bad JSON not null: " + line);
+    Expect(!ReadText(Directory.GetFiles(dir, "*.jsonl").Single()).Contains("not json", StringComparison.Ordinal), "bad body used as a name");
+    var typedDir = CaseDir("task-typed");
+    var typedTask = Path.Combine(typedDir, "typed.txt");
+    File.WriteAllText(typedTask, "{\"name\":\"メール\",\"startedAt\":12}");
+    Add(History(DictationJournal.Open(typedDir, static _ => { }, JournalPlatform.Windows, typedDir + "-fallback", typedTask)), "typed");
+    var typed = Line(Directory.GetFiles(typedDir, "*.jsonl").Single()).GetProperty("taskchute");
+    Expect(typed.GetProperty("name").GetString() == "メール", "name missing");
+    Expect(typed.GetProperty("startedAt").ValueKind == JsonValueKind.Null, "non-string startedAt not null");
+});
+
+Run("task-expand-path", () =>
+{
+    var home = CaseDir("task-home");
+    var local = CaseDir("task-local");
+    try
+    {
+        SetEnv("USERPROFILE", home);
+        SetEnv("LOCALAPPDATA", local);
+        File.WriteAllText(Path.Combine(home, "task.txt"), "ホーム");
+        var envTask = WindowsPaths.ExpandPath(@"%LOCALAPPDATA%\task.txt");
+        File.WriteAllText(envTask, "ローカル");
+        var tildeDir = CaseDir("task-tilde");
+        Add(History(DictationJournal.Open(tildeDir, static _ => { }, JournalPlatform.Windows, Path.Combine(scratch, "task-tilde-fb"), "~/task.txt")), "tilde");
+        Expect(Line(Directory.GetFiles(tildeDir, "*.jsonl").Single()).GetProperty("taskchute").GetProperty("name").GetString() == "ホーム", "tilde name not read");
+        var envDir = CaseDir("task-env");
+        Add(History(DictationJournal.Open(envDir, static _ => { }, JournalPlatform.Windows, Path.Combine(scratch, "task-env-fb"), @"%LOCALAPPDATA%\task.txt")), "env");
+        Expect(Line(Directory.GetFiles(envDir, "*.jsonl").Single()).GetProperty("taskchute").GetProperty("name").GetString() == "ローカル", "env name not read");
+        var badDir = CaseDir("task-unexpanded");
+        var badJournal = DictationJournal.Open(badDir, static _ => { }, JournalPlatform.Windows, Path.Combine(scratch, "task-unexpanded-fb"), @"%UNSET%\task.txt");
+        Add(History(badJournal), "unexpanded");
+        var badFile = Path.Combine(badDir, DateTimeOffset.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + ".jsonl");
+        Expect(File.Exists(badFile), "journal directory moved for a bad task path");
+        Expect(Line(badFile).GetProperty("taskchute").ValueKind == JsonValueKind.Null, "unexpanded variable not null");
+        Expect(Source("dotnet/VoiceSwitch.Windows.Core/VoiceSwitchConfig.cs").Contains("JournalTaskFile", StringComparison.Ordinal), "csharp config misses JournalTaskFile");
+        Expect(Source("Sources/voice-switch/Config.swift").Contains("journalTaskFile", StringComparison.Ordinal), "swift config misses journalTaskFile");
+    }
+    finally { RestoreEnv(); }
+});
+
+Run("task-failure-isolated", () =>
+{
+    var dir = CaseDir("task-isolated");
+    var fallback = Path.Combine(dir, "fallback");
+    var taskDir = Path.Combine(dir, "taskdir");
+    Directory.CreateDirectory(taskDir);
+    var history = History(DictationJournal.Open(dir, static _ => { }, JournalPlatform.Windows, fallback, taskDir));
+    var id = Guid.NewGuid();
+    Expect(history.Add(id, "kept", new WakeOrigin(WakeRule.Strict, null)), "Add failed when the task path is a directory");
+    Expect(history.Snapshot().Any(entry => entry.Id == id && entry.Text == "kept"), "snapshot missed the text");
+    var file = Directory.GetFiles(dir, "*.jsonl").Single();
+    Expect(File.Exists(file), "journal line missing");
+    Expect(Line(file).GetProperty("taskchute").ValueKind == JsonValueKind.Null, "directory task not null");
+});
+
+Run("task-reload", () =>
+{
+    var root = CaseDir("task-reload");
+    var custom = Path.Combine(root, "custom");
+    var first = Path.Combine(root, "one.txt");
+    var second = Path.Combine(root, "two.txt");
+    File.WriteAllText(first, "一つ目");
+    File.WriteAllText(second, "二つ目");
+    var configPath = Path.Combine(root, "config.json");
+    WriteConfig(configPath, "{\"wakeWords\":[\"音声入力\"],\"command\":\"true\",\"dictation\":{\"journalDir\":" + JsonSerializer.Serialize(custom) + ",\"journalTaskFile\":" + JsonSerializer.Serialize(first) + "}}");
+    var logs = new List<string>();
+    var file = new JournaledConfig(configPath, logs.Add, JournalPlatform.Windows, Path.Combine(root, "fallback"));
+    file.LoadInitial();
+    file.Journal!.Append(new JournalEntry(Guid.NewGuid(), new DateTimeOffset(2026, 10, 24, 6, 0, 0, TimeSpan.FromHours(9)), "first", "ウェイク", "Silence", 1));
+    WriteConfig(configPath, "{\"wakeWords\":[\"音声入力\"],\"command\":\"true\",\"dictation\":{\"journalDir\":" + JsonSerializer.Serialize(custom) + ",\"journalTaskFile\":" + JsonSerializer.Serialize(second) + "}}");
+    File.SetLastWriteTimeUtc(configPath, DateTime.UtcNow.AddMinutes(10));
+    Expect(file.ReloadIfChanged() is not null, "valid reload ignored");
+    file.Journal!.Append(new JournalEntry(Guid.NewGuid(), new DateTimeOffset(2026, 10, 24, 6, 1, 0, TimeSpan.FromHours(9)), "second", "ウェイク", "Silence", 1));
+    File.WriteAllText(configPath, "{");
+    File.SetLastWriteTimeUtc(configPath, DateTime.UtcNow.AddMinutes(20));
+    Expect(file.ReloadIfChanged() is null, "invalid reload returned a config");
+    file.Journal!.Append(new JournalEntry(Guid.NewGuid(), new DateTimeOffset(2026, 10, 24, 6, 2, 0, TimeSpan.FromHours(9)), "third", "ウェイク", "Silence", 1));
+    var lines = ReadText(Path.Combine(custom, "2026-10-24.jsonl")).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+    Expect(lines.Length == 3, "expected three lines in the same journal directory");
+    Expect(JsonDocument.Parse(lines[0]).RootElement.GetProperty("taskchute").GetProperty("name").GetString() == "一つ目", "first task wrong");
+    Expect(JsonDocument.Parse(lines[1]).RootElement.GetProperty("taskchute").GetProperty("name").GetString() == "二つ目", "reload did not follow the task path");
+    Expect(JsonDocument.Parse(lines[2]).RootElement.GetProperty("taskchute").GetProperty("name").GetString() == "二つ目", "broken reload did not keep the task path");
+    var cs = Source("dotnet/VoiceSwitch.Windows.Core/DictationJournal.cs");
+    Expect(cs.Contains("JournalTaskFile", StringComparison.Ordinal), "csharp journal misses JournalTaskFile");
+    Expect(Source("Sources/voice-switch/MacApp.swift").Contains("journalTaskFile", StringComparison.Ordinal), "swift bind misses journalTaskFile");
+});
+
+Run("examples-task-file", () =>
+{
+    foreach (var path in Directory.GetFiles(repo, "config.example*.json"))
+    {
+        var name = Path.GetFileName(path);
+        var text = File.ReadAllText(path);
+        if (name == "config.example.macos-url.json")
+        {
+            Expect(!text.Contains("\"dictation\"", StringComparison.Ordinal) && !text.Contains("journalTaskFile", StringComparison.Ordinal), name + " gained a dictation block");
+            continue;
+        }
+        if (text.Contains("\"dictation\"", StringComparison.Ordinal))
+        {
+            Expect(text.Contains("\"journalTaskFile\": null", StringComparison.Ordinal), name + " dictation has no journalTaskFile null");
+            Expect(!text.Contains("taskchute.txt", StringComparison.Ordinal), name + " uses a machine-specific cache path");
+        }
+    }
+    Expect(File.ReadAllText(Path.Combine(repo, "config.example.grokbot.json")).Contains("journalDir", StringComparison.Ordinal), "grokbot missing journalDir");
+    foreach (var name in new[] { "README.md", "README_ja.md" })
+        Expect(Source(name).Contains("dictation.journalTaskFile", StringComparison.Ordinal), name + " missing dictation.journalTaskFile");
 });
 
 if (Which("swiftc") is null)

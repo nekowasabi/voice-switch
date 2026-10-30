@@ -23,7 +23,8 @@ public sealed record DictationConfig(
     bool DedicatedStopRecognizer = false,
     // Cancel what the speakers play before the VAD so playback never starts a recording. Absent means on; false keeps the raw input.
     bool? EchoCancellation = null,
-    string? JournalDir = null);
+    string? JournalDir = null,
+    string? JournalTaskFile = null);
 
 /// <summary>Load-time guardrails for timing fields that are easy to mistype 10x. No clamp — warn only.</summary>
 public static class DictationTimingGuard

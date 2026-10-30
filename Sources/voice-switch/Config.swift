@@ -126,6 +126,8 @@ struct DictationConfig: Decodable {
     /// Folder of daily `yyyy-MM-dd.jsonl` files, or one file when the path ends in `.jsonl`.
     /// Absent uses the platform default. An unusable path is logged and the default is used.
     var journalDir: String? = nil
+    /// Optional task file an external updater refreshes; the task read at append time, or null.
+    var journalTaskFile: String? = nil
 
     init(recordingsDir: String? = nil, endSilenceMs: Int? = nil, maxSeconds: Double? = nil,
          excludeBundleIDs: [String]? = nil, startTimeoutMs: Int? = nil) {

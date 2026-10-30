@@ -32,7 +32,7 @@
 - ウェイクワードで始まり、続きがある発話は、およそ `endSilenceMs` の無音（見本は 1200）、停止語、superwhisper の録音ショートカット、または `dictation.maxSeconds`（見本は 60）まで録音する。ウェイクワード部分の音声は切る。
 - wav は superwhisper で開く。`dictation.recordingsDir`（見本は `~/Documents/superwhisper/recordings`）の新しい `meta.json` から `llmResult`、無ければ `result` を読み、長さだけログする。その文字列は下のペイン振り分けに渡す。superwhisper が前面にいるあいだ、ウェイクワードを聞いたときの前面アプリを activate する。これは superwhisper がペーストを飛ばさないようにするため。
 
-`dictation.journalDir` は、履歴に入った発話のテキストを端末に残す。既定のディレクトリは macOS が `~/Library/Application Support/voice-switch/journal`、Windows が `%LOCALAPPDATA%\voice-switch\journal`。ディレクトリなら日ごとの `yyyy-MM-dd.jsonl`、パスが `.jsonl` で終われば単一ファイル。`~` と `%LOCALAPPDATA%` は `recordingsDir` と同じ展開。不正または書けないパスはログに `dictation journal:` と `using default` を残して既定のディレクトリへフォールバックする。ディレクトリは `0700`、ファイルは `0600`。削除は day（日）単位と entry（件）単位。閲覧 UI はない（no viewer）。音声は残さない。
+`dictation.journalDir` は、履歴に入った発話のテキストを端末に残す。既定のディレクトリは macOS が `~/Library/Application Support/voice-switch/journal`、Windows が `%LOCALAPPDATA%\voice-switch\journal`。ディレクトリなら日ごとの `yyyy-MM-dd.jsonl`、パスが `.jsonl` で終われば単一ファイル。`~` と `%LOCALAPPDATA%` は `recordingsDir` と同じ展開。不正または書けないパスはログに `dictation journal:` と `using default` を残して既定のディレクトリへフォールバックする。ディレクトリは `0700`、ファイルは `0600`。削除は day（日）単位と entry（件）単位。閲覧 UI はない（no viewer）。音声は残さない。`dictation.journalTaskFile` は、外部の更新ツールが書き換える小さなタスクファイルへの任意のパスで、追記時に読んだタスクを `taskchute` に記録する。未設定や読めないとき、その行の `taskchute` は null になる。
 
 `stopWords` を単体で言うと、進行中の入力を終える。代わりに `skipWhileMicInUseBy` のアプリがマイクを使っているときは、同じ語で `stopCommand` を実行する。見本の語は `入力ストップ`。`stopWords` を書かないときは locale ごとの既定が入る。`ja-JP`（`locale` 省略時も）は `入力ストップ`、`en-US` は `stop dictation`、それ以外の locale は既定なし。自分で書いた値は `[]` も含めて上書きしない。停止ワードは、その locale の言葉で、本文に出にくい言葉を選ぶ。（macOS の既定は Mac 未検証。）見本の `stopCommand` は同じ superwhisper の録音 URL で、録音はトグルする。
 

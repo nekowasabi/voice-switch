@@ -17,7 +17,18 @@ public sealed record JournalEntry(
     string Text,
     string Origin,
     string? EndReason,
-    double? RecordingSeconds);
+    double? RecordingSeconds,
+    FocusApp? Focus = null);
+
+/// <summary>
+/// The app in front when the dictation session target was chosen, not the app in front at append time.
+/// Mac fills <c>Name</c> from <c>localizedName</c> and <c>BundleId</c> from <c>bundleIdentifier</c>.
+/// Windows fills <c>Name</c> and <c>Exe</c> from <c>Process.ProcessName</c> and leaves <c>BundleId</c> null.
+/// </summary>
+public sealed record FocusApp(string? Name, string? BundleId, string? Exe, int? Pid);
+
+/// <summary>One task read from <c>dictation.journalTaskFile</c> at append time. Null means no usable task.</summary>
+public sealed record TaskSnapshot(string? Name, string? Id, string? StartedAt);
 
 /// <summary>
 /// Append-only JSONL of utterances <see cref="DictationHistory"/> accepted.
@@ -26,19 +37,22 @@ public sealed record JournalEntry(
 public sealed class DictationJournal
 {
     public const int SchemaVersion = 1;
+    internal const int TaskFileCap = 4096;
     private static readonly Regex Unexpanded = new(@"%[A-Za-z0-9_]+%", RegexOptions.CultureInvariant);
     private static readonly JsonWriterOptions JsonOptions = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
     private readonly object gate = new();
     private readonly Action<string> log;
     private readonly string fallbackDirectory;
+    private readonly string? taskFile;
     private JournalTarget target;
     private bool reportedUnprotected;
 
-    private DictationJournal(JournalTarget target, string fallbackDirectory, Action<string> log)
+    private DictationJournal(JournalTarget target, string fallbackDirectory, Action<string> log, string? taskFile)
     {
         this.target = target;
         this.fallbackDirectory = fallbackDirectory;
         this.log = log;
+        this.taskFile = taskFile;
     }
 
     public static bool Enabled { get; private set; }
@@ -47,7 +61,7 @@ public sealed class DictationJournal
     public static void Bind(VoiceSwitchConfig config, Action<string> log)
     {
         Enabled = true;
-        Active = Open(config.Dictation?.JournalDir, log, JournalPlatform.Windows);
+        Active = Open(config.Dictation?.JournalDir, log, JournalPlatform.Windows, taskFile: config.Dictation?.JournalTaskFile);
     }
 
     public static string DefaultDirectory(JournalPlatform platform) =>
@@ -58,16 +72,16 @@ public sealed class DictationJournal
     public static string OriginLabel(WakeOrigin origin, bool manual) =>
         manual ? "手動" : origin.IsAutomatic ? "自動" : "ウェイク";
 
-    public static DictationJournal Open(string? configured, Action<string> log, JournalPlatform platform, string? defaultDirectory = null)
+    public static DictationJournal Open(string? configured, Action<string> log, JournalPlatform platform, string? defaultDirectory = null, string? taskFile = null)
     {
         log ??= static _ => { };
         var fallback = string.IsNullOrWhiteSpace(defaultDirectory) ? DefaultDirectory(platform) : defaultDirectory;
         if (configured is null)
-            return new DictationJournal(JournalTarget.Directory(fallback), fallback, log);
+            return new DictationJournal(JournalTarget.Directory(fallback), fallback, log, taskFile);
         if (string.IsNullOrWhiteSpace(configured))
         {
             log($"dictation journal: path unusable (empty); using default {fallback}");
-            return new DictationJournal(JournalTarget.Directory(fallback), fallback, log);
+            return new DictationJournal(JournalTarget.Directory(fallback), fallback, log, taskFile);
         }
 
         string expanded;
@@ -75,17 +89,17 @@ public sealed class DictationJournal
         catch (Exception ex)
         {
             log($"dictation journal: path unusable ({ex.Message}); using default {fallback}");
-            return new DictationJournal(JournalTarget.Directory(fallback), fallback, log);
+            return new DictationJournal(JournalTarget.Directory(fallback), fallback, log, taskFile);
         }
 
         if (Problem(expanded) is { } problem)
         {
             log($"dictation journal: path unusable ({problem}); using default {fallback}");
-            return new DictationJournal(JournalTarget.Directory(fallback), fallback, log);
+            return new DictationJournal(JournalTarget.Directory(fallback), fallback, log, taskFile);
         }
 
         var single = expanded.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase);
-        return new DictationJournal(single ? JournalTarget.File(expanded) : JournalTarget.Directory(expanded), fallback, log);
+        return new DictationJournal(single ? JournalTarget.File(expanded) : JournalTarget.Directory(expanded), fallback, log, taskFile);
     }
 
     public void Append(JournalEntry entry)
@@ -138,14 +152,15 @@ public sealed class DictationJournal
         }
     }
 
-    private static string Line(JournalEntry entry)
+    private string Line(JournalEntry entry)
     {
         using var stream = new MemoryStream();
         using (var writer = new Utf8JsonWriter(stream, JsonOptions))
         {
             writer.WriteStartObject();
             writer.WriteString("id", entry.Id.ToString("D"));
-            writer.WriteString("timestamp", entry.Timestamp.ToString("O", CultureInfo.InvariantCulture));
+            var timestamp = entry.Timestamp.ToString("O", CultureInfo.InvariantCulture);
+            writer.WriteString("timestamp", timestamp);
             writer.WriteString("text", entry.Text);
             writer.WriteString("origin", entry.Origin);
             if (entry.EndReason is null) writer.WriteNull("endReason");
@@ -153,10 +168,120 @@ public sealed class DictationJournal
             if (entry.RecordingSeconds is null) writer.WriteNull("recordingSeconds");
             else writer.WriteNumber("recordingSeconds", entry.RecordingSeconds.Value);
             writer.WriteNumber("schemaVersion", SchemaVersion);
+            WriteFocus(writer, entry.Focus);
+            WriteTask(writer, timestamp);
             writer.WriteEndObject();
         }
 
         return Encoding.UTF8.GetString(stream.ToArray());
+    }
+
+    private static void WriteFocus(Utf8JsonWriter writer, FocusApp? focus)
+    {
+        writer.WritePropertyName("focusApp");
+        if (focus is null || (focus.Name is null && focus.BundleId is null && focus.Exe is null && (focus.Pid is null || focus.Pid <= 0)))
+        {
+            writer.WriteNullValue();
+            return;
+        }
+
+        writer.WriteStartObject();
+        if (focus.Name is null) writer.WriteNull("name");
+        else writer.WriteString("name", focus.Name);
+        if (focus.BundleId is null) writer.WriteNull("bundleId");
+        else writer.WriteString("bundleId", focus.BundleId);
+        if (focus.Exe is null) writer.WriteNull("exe");
+        else writer.WriteString("exe", focus.Exe);
+        if (focus.Pid is null || focus.Pid <= 0) writer.WriteNull("pid");
+        else writer.WriteNumber("pid", focus.Pid.Value);
+        writer.WriteEndObject();
+    }
+
+    private void WriteTask(Utf8JsonWriter writer, string timestamp)
+    {
+        writer.WritePropertyName("taskchute");
+        var task = ReadTask();
+        if (task is null)
+        {
+            writer.WriteNullValue();
+            return;
+        }
+
+        writer.WriteStartObject();
+        if (task.Name is null) writer.WriteNull("name");
+        else writer.WriteString("name", task.Name);
+        if (task.Id is null) writer.WriteNull("id");
+        else writer.WriteString("id", task.Id);
+        if (task.StartedAt is null) writer.WriteNull("startedAt");
+        else writer.WriteString("startedAt", task.StartedAt);
+        writer.WriteString("source", "file");
+        writer.WriteString("readAt", timestamp);
+        writer.WriteEndObject();
+    }
+
+    // The task file is an external updater's snapshot, read at append time. Anything unusable is null, never thrown.
+    private TaskSnapshot? ReadTask()
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(taskFile)) return null;
+            string expanded;
+            try { expanded = WindowsPaths.ExpandPath(taskFile.Trim()); }
+            catch { return null; }
+            if (Unexpanded.IsMatch(expanded)) return null;
+            byte[] bytes;
+            try { bytes = File.ReadAllBytes(expanded); }
+            catch { return null; }
+            if (bytes.Length > TaskFileCap) return null;
+            var start = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF ? 3 : 0;
+            var text = Encoding.UTF8.GetString(bytes, start, bytes.Length - start);
+            var first = -1;
+            for (var i = 0; i < text.Length; i++)
+            {
+                if (!char.IsWhiteSpace(text[i])) { first = i; break; }
+            }
+
+            if (first < 0) return null;
+            if (text[first] == '{') return ParseTaskJson(text);
+            foreach (var rawLine in text.Split('\n'))
+            {
+                var name = rawLine.Trim();
+                if (name.Length > 0) return new TaskSnapshot(name, null, null);
+            }
+
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static TaskSnapshot? ParseTaskJson(string text)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(text);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return null;
+            var root = doc.RootElement;
+            string? name = null, id = null, startedAt = null;
+            if (root.TryGetProperty("name", out var nameProp) && nameProp.ValueKind == JsonValueKind.String)
+                name = nameProp.GetString();
+            if (root.TryGetProperty("id", out var idProp))
+            {
+                if (idProp.ValueKind == JsonValueKind.String) id = idProp.GetString();
+                else if (idProp.ValueKind == JsonValueKind.Number) id = idProp.GetRawText();
+            }
+
+            if (root.TryGetProperty("startedAt", out var startedProp) && startedProp.ValueKind == JsonValueKind.String)
+                startedAt = startedProp.GetString();
+            if (string.IsNullOrEmpty(name) && string.IsNullOrEmpty(id)) return null;
+            return new TaskSnapshot(name, id, startedAt);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private bool TryAppend(JournalTarget where, string line, DateTimeOffset timestamp, out string error)
@@ -364,19 +489,19 @@ public sealed class DictationJournal
     }
 }
 
-public readonly record struct JournalNote(string? EndReason, double? RecordingSeconds, bool Manual);
+public readonly record struct JournalNote(string? EndReason, double? RecordingSeconds, bool Manual, FocusApp? Focus = null);
 
 public static class JournalNotes
 {
     private static readonly object Gate = new();
     private static readonly Dictionary<Guid, JournalNote> Pending = new();
 
-    public static void Note(Guid id, string? endReason = null, double? recordingSeconds = null, bool? manual = null)
+    public static void Note(Guid id, string? endReason = null, double? recordingSeconds = null, bool? manual = null, FocusApp? focus = null)
     {
         lock (Gate)
         {
             Pending.TryGetValue(id, out var existing);
-            Pending[id] = new JournalNote(endReason ?? existing.EndReason, recordingSeconds ?? existing.RecordingSeconds, manual ?? existing.Manual);
+            Pending[id] = new JournalNote(endReason ?? existing.EndReason, recordingSeconds ?? existing.RecordingSeconds, manual ?? existing.Manual, focus ?? existing.Focus);
         }
     }
 
@@ -415,7 +540,7 @@ public sealed class JournaledConfig
     {
         var loaded = ConfigLoader.Load(path);
         Config = loaded;
-        Journal = DictationJournal.Open(loaded.Dictation?.JournalDir, log, platform, defaultDirectory);
+        Journal = DictationJournal.Open(loaded.Dictation?.JournalDir, log, platform, defaultDirectory, loaded.Dictation?.JournalTaskFile);
         lastWriteUtc = File.GetLastWriteTimeUtc(path);
         return loaded;
     }
@@ -430,7 +555,7 @@ public sealed class JournaledConfig
             var next = ConfigLoader.Load(path);
             log($"config reloaded: {string.Join(", ", next.WakeWords)}");
             Config = next;
-            Journal = DictationJournal.Open(next.Dictation?.JournalDir, log, platform, defaultDirectory);
+            Journal = DictationJournal.Open(next.Dictation?.JournalDir, log, platform, defaultDirectory, next.Dictation?.JournalTaskFile);
             return next;
         }
         catch (Exception ex)

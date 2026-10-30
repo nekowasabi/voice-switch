@@ -410,6 +410,7 @@ public sealed class WindowsDictationRuntime
                         {
                             // Superwhisper pastes into whatever is frontmost, so remember where the user was when the wake word landed.
                             target = foregroundWindow();
+                            JournalNotes.Note(session.SessionId, focus: FocusOfWindow(target));
                             if ((session.Origin.IsAutomatic ? AutomaticMicBlock() ?? AutomaticForegroundSkipReason(target) : SkipReason(target, session.Action)) is { } skipped)
                             {
                                 Log.Info(skipped);
@@ -630,6 +631,7 @@ public sealed class WindowsDictationRuntime
                 {
                     // No hotkeys: the user is mid-task elsewhere and their Escape belongs to that app, so only silence or a stop word ends it.
                     target = window;
+                    JournalNotes.Note(session.SessionId, focus: FocusOfWindow(window));
                     Log.Info($"dictation session: automatic {origin.Fields} range={start}..{lastLiveSpeechEnd} {Sid(session)} {LevelFields(new SampleRange(start, lastLiveSpeechEnd))}");
                 }
             }
@@ -833,7 +835,7 @@ public sealed class WindowsDictationRuntime
             {
                 target = window;
                 hotkeys?.Begin(DictationHotkeys.Load(readShortcuts()));
-                JournalNotes.Note(session.SessionId, manual: true);
+                JournalNotes.Note(session.SessionId, manual: true, focus: FocusOfWindow(window));
                 Log.Info($"dictation session: manual-hotkey {session.Origin.Fields} {Sid(session)}");
                 return true;
             }
@@ -948,6 +950,26 @@ public sealed class WindowsDictationRuntime
             return process.ProcessName;
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    // The session-start app for the journal: the name from the existing window helper plus the pid.
+    // Null when no window was stored. Never throws; a focus failure must not drop the utterance.
+    private FocusApp? FocusOfWindow(nint window)
+    {
+        if (window == 0) return null;
+        try
+        {
+            var name = windowProcess(window);
+            int? pid = null;
+            if (OperatingSystem.IsWindows() && GetWindowThreadProcessId(window, out var id) != 0)
+                pid = unchecked((int)id);
+            if (name is null && pid is null) return null;
+            return new FocusApp(name, null, name, pid);
+        }
+        catch
         {
             return null;
         }
