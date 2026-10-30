@@ -37,11 +37,14 @@ public interface IDictationRuntimeObserver
     void NoiseProcessorCompleted(NoiseProcessorStatus status);
     // Called on the runtime thread after a frame or recognition batch changes the phase; Ended -> Idle is not reported.
     void PhaseChanged(DictationPhase phase) { }
+    // Called just before PhaseChanged(Waiting) with the action the wake word chose, null for a plain wake word.
+    void WaitingFor(WakeAction? action) { }
     // A stop word or finish key just ended the recording, before the handoff starts. Return true when a sound was played so the runtime ignores the microphone briefly.
     bool PlayStopSound() => false;
 
     // Lone wake word only. Return true when a sound was played so the runtime ignores the microphone briefly.
-    bool PlayWakeSound() => false;
+    // action: the wake word chose an action, which rings its own chime so the mode is known by ear.
+    bool PlayWakeSound(bool action) => false;
 
     // Mac HUD DeliveryState: Processing when a handoff begins, then exactly one of the others when it ends.
     void DeliveryChanged(DeliveryState state) { }
@@ -975,7 +978,7 @@ public sealed class WindowsDictationRuntime
             : session.IsActive ? (Confirmed(session) ? (provisionalStop ? DictationPhase.Ended : DictationPhase.Recording) : DictationPhase.Idle)
             : session.IsAwaitingBody ? (HeardAfterWake(session, lastLiveSpeechEnd) ? DictationPhase.Recording : DictationPhase.Waiting)
             : config.Dictation?.NoWakeWord?.Followup == true && analysisStore.Next < followupUntil ? DictationPhase.Followup
-            : DictationPhase.Idle);
+            : DictationPhase.Idle, session.Action);
     }
 
     private bool Confirmed(DictationSession session) =>
@@ -1023,7 +1026,7 @@ public sealed class WindowsDictationRuntime
         return Math.Max(Math.Max(speechOnsets[onset] - preroll, wakeEnd), originalStore.Start);
     }
 
-    private void PublishPhase(DictationPhase phase)
+    private void PublishPhase(DictationPhase phase, WakeAction? action = null)
     {
         endedByUser = false;
         // Ended hides itself after a moment; the Idle that follows it is not a change.
@@ -1033,13 +1036,14 @@ public sealed class WindowsDictationRuntime
         }
 
         // Only a lone wake word: in a one-breath dictation the user is already talking and the sound would be recorded.
-        if (phase == DictationPhase.Waiting && observer?.PlayWakeSound() == true)
+        if (phase == DictationPhase.Waiting && observer?.PlayWakeSound(action is not null) == true)
         {
             deafUntil = analysisStore.Next + MsToSamples(600);
         }
 
         shownPhase = phase;
         Log.Info($"dictation phase: {phase}");
+        if (phase == DictationPhase.Waiting) observer?.WaitingFor(action);
         observer?.PhaseChanged(phase);
     }
 

@@ -23,6 +23,17 @@
     "stopURL": "superwhisper://record/stop",
     "actions": [
       {
+        "name": "grokbot-webhook",
+        "wakeWords": ["ボットに送信"],
+        "url": "https://YOUR-WORKER.workers.dev/",
+        "tokenEnv": "VOICE_SWITCH_GROKBOT_TOKEN",
+        "fields": {
+          "transcription": "{text}",
+          "recordedAt": "{recordedAtMs}",
+          "client": "ring"
+        }
+      },
+      {
         "name": "grokbot",
         "wakeWords": ["グロック", "grok bot"],
         "url": "grokbot://app/v1/prompt?id=YOUR_BOT_ID",
@@ -32,6 +43,17 @@
   },
   "windows": {
     "actions": [
+      {
+        "name": "grokbot-webhook",
+        "wakeWords": ["ボットに送信"],
+        "url": "https://YOUR-WORKER.workers.dev/",
+        "tokenEnv": "VOICE_SWITCH_GROKBOT_TOKEN",
+        "fields": {
+          "transcription": "{text}",
+          "recordedAt": "{recordedAtMs}",
+          "client": "ring"
+        }
+      },
       {
         "name": "grokbot",
         "wakeWords": ["グロック", "grok bot"],

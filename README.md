@@ -81,18 +81,33 @@ Optional Grok Bot message: a wake phrase can fill a Grok Bot prompt composer ins
 
 Replace `YOUR_BOT_ID` with the id at the end of the Bot menu's "Copy link"; keep your real id out of the repository. Saying `グロック` and then the message opens that Bot's composer with the message in it. It never sends: you press send, and a composer that already has text is left alone. The full example is [config.example.grokbot.json](config.example.grokbot.json), and the limits are in [docs/grokbot-message.md](docs/grokbot-message.md). On one Windows PC (2026-10-29) the prompt link left the composer empty, with and without `id`; the cause is not known.
 
-To have the Bot act without pressing send, POST it to an endpoint (Windows and Mac). Give the action an `https://` url and `tokenEnv`; the dictation is sent with `Authorization: Bearer <token>` as `multipart/form-data` in the Pebble Index webhook's transcription-only shape: `transcription` (or `inputParam`), `recordedAt` (Unix ms), and `client` (`ring`):
+### Webhook delivery (Windows and Mac)
+
+Instead of opening a URL, an action can POST the dictation to a webhook. Any receiver works if it is `https://` and accepts a bearer token and `multipart/form-data`. Telling Grok Bot what to do without pressing send is one use, reached through a Cloudflare Worker (example below). An action becomes a POST when it has these keys:
+
+- `url`: the receiver, which must be `https://`.
+- `tokenEnv`: the name of the environment variable that holds the token. It is sent as `Authorization: Bearer <token>`. The token is never read from the config file. Windows: `setx <name> <token>`, then restart the tray. Mac: the variable must be in the app's environment, for example `launchctl setenv <name> <token>`, then restart the app.
+- `fields` (optional): multipart field name to value. In a value, `{text}` becomes the dictation and `{recordedAtMs}` the current Unix time in milliseconds; anything else is sent as written. Without `fields`, the Pebble Index webhook's transcription-only shape is sent: `{"transcription": "{text}", "recordedAt": "{recordedAtMs}", "client": "ring"}`. A POST action does not take `inputParam`; rename the field in `fields` instead.
+
+A Grok Bot example, with the default fields written out:
 
 ```json
 {
-  "name": "grokbot",
-  "wakeWords": ["グロック", "grok bot"],
+  "name": "grokbot-webhook",
+  "wakeWords": ["ボットに送信"],
   "url": "https://YOUR-WORKER.workers.dev/",
-  "tokenEnv": "VOICE_SWITCH_GROKBOT_TOKEN"
+  "tokenEnv": "VOICE_SWITCH_GROKBOT_TOKEN",
+  "fields": {
+    "transcription": "{text}",
+    "recordedAt": "{recordedAtMs}",
+    "client": "ring"
+  }
 }
 ```
 
-The token is read from the environment variable `tokenEnv` names, never from the config file. Windows: `setx VOICE_SWITCH_GROKBOT_TOKEN <token>` and restart the tray. Mac: the variable must be in the app's environment (for example `launchctl setenv VOICE_SWITCH_GROKBOT_TOKEN <token>`, then restart). A non-2xx response counts as a failure. The log says `dictation delivered: post grokbot`, or `dictation action grokbot failed: <reason>`; the body is never logged.
+For another receiver, one that wants `message` and a fixed source would use `"fields": {"message": "voice: {text}", "source": "pc"}`. Only `fields` is sent: no JSON body, no other headers, no audio. A 2xx response is success; anything else is a failure and the log shows the head of the reply. There is no retry, and the request times out after 30 s. The log says `dictation delivered: post <name>`, or `dictation action <name> failed: <reason>`; the body is never logged.
+
+Any action, webhook or not, tells you it is listening by sound and HUD. With the confirmation sound on, it rings a rising two-note chime instead of dictation's single note. With `icon` on an action, the HUD shows that icon instead of the mic while it waits for text. On Windows an `.exe` gives the app's icon (for example `"%LOCALAPPDATA%\\Programs\\Grok Bot\\Grok Bot.exe"`); on Mac an `.app` does (for example `"/Applications/Grok Bot.app"`). Any other path is read as an image. A file that cannot be loaded keeps the mic.
 
 The menu items are 一時停止 (releases the microphone), マイク, 設定ファイルを開く, ログを開く, ログイン時に起動, and 終了.
 

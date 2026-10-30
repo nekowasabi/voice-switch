@@ -324,6 +324,28 @@
       }
     },
     {
+      "id": "post_action_fields",
+      "macos": {
+        "file": "Sources/voice-switch/Config.swift",
+        "markers": ["defaultPostFields", "\"{recordedAtMs}\"", "func postFields"]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows.Core/PostAction.cs",
+        "markers": ["DefaultFields", "\"{recordedAtMs}\"", "Fields(WakeAction action"]
+      }
+    },
+    {
+      "id": "wake_action_hud_icon",
+      "macos": {
+        "file": "Sources/voice-switch/MacApp.swift",
+        "markers": ["waitingImage", "action?.icon"]
+      },
+      "windows": {
+        "file": "dotnet/VoiceSwitch.Windows/Tray/DictationHud.cs",
+        "markers": ["WaitingImage", "ExtractAssociatedIcon"]
+      }
+    },
+    {
       "id": "grokbot_prompt_text_limits",
       "macos": {
         "file": "Sources/voice-switch/Config.swift",

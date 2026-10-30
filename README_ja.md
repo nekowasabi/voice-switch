@@ -65,18 +65,33 @@ Grok Bot への送信（任意）: ウェイクワードで Grok Bot のプロ�
 
 `YOUR_BOT_ID` は、Bot のメニューの「Copy link」で得たリンクの末尾の ID に置き換える。実際の ID はリポジトリに入れない。「グロック」と言ってから本文を話すと、その Bot の入力欄に本文が入った状態で開く。自動では送信しないので、送信ボタンは自分で押す。入力欄にすでに文字があるときは書き込まない。全体の例は [config.example.grokbot.json](config.example.grokbot.json)、文字数などの制限は [docs/grokbot-message.md](docs/grokbot-message.md)。Windows の PC 1 台（2026-10-29）では、`id` の有無にかかわらず、プロンプトリンクを開いても入力欄は空のままだった。原因は分かっていない。
 
-送信ボタンを押さずに Bot に指示したいときは、エンドポイントへ POST する（Windows・Mac とも）。アクションの `url` を `https://` にし、`tokenEnv` を書く。`Authorization: Bearer <トークン>` を付け、Pebble Index の Webhook（文字起こしのみ）と同じ形の `multipart/form-data` で送る。フィールドは `transcription`（音声入力の内容。`inputParam` を書けばその名前）、`recordedAt`（Unix ミリ秒）、`client`（`ring`）。
+### Webhook への送信（Windows・Mac）
+
+アクションは URL を開く代わりに、音声入力の内容を Webhook へ POST することもできる。受け手は何でもよく、`https://` で、Bearer トークンと `multipart/form-data` を受け付ければ足りる。Grok Bot に送信ボタンを押さずに指示する使い方はその一例で、Cloudflare Worker を経由して送る（下の例）。アクションに次のキーを書くと POST になる。
+
+- `url`: 送り先。`https://` で始める。
+- `tokenEnv`: トークンを入れた環境変数の名前。`Authorization: Bearer <トークン>` として送る。トークンは config に書かない。Windows は `setx <変数名> <トークン>` を実行してから、トレイを起動し直す。Mac はアプリの環境に変数が必要で、たとえば `launchctl setenv <変数名> <トークン>` の後にアプリを起動し直す。
+- `fields`（任意）: multipart のフィールド名と値の組。値の中の `{text}` は音声入力の内容に、`{recordedAtMs}` は現在の Unix 時刻（ミリ秒）に置き換わる。それ以外の文字はそのまま送る。`fields` を書かなければ、Pebble Index の Webhook（文字起こしのみ）と同じ `{"transcription": "{text}", "recordedAt": "{recordedAtMs}", "client": "ring"}` を送る。POST のアクションには `inputParam` を書けない。フィールド名を変えたいときは `fields` で書く。
+
+Grok Bot 向けの例（既定のフィールドをそのまま書いたもの）:
 
 ```json
 {
-  "name": "grokbot",
-  "wakeWords": ["グロック", "grok bot"],
+  "name": "grokbot-webhook",
+  "wakeWords": ["ボットに送信"],
   "url": "https://YOUR-WORKER.workers.dev/",
-  "tokenEnv": "VOICE_SWITCH_GROKBOT_TOKEN"
+  "tokenEnv": "VOICE_SWITCH_GROKBOT_TOKEN",
+  "fields": {
+    "transcription": "{text}",
+    "recordedAt": "{recordedAtMs}",
+    "client": "ring"
+  }
 }
 ```
 
-トークンは config に書かず、`tokenEnv` が指す環境変数から読む。Windows は `setx VOICE_SWITCH_GROKBOT_TOKEN <トークン>` を実行してから、トレイを起動し直す。Mac はアプリの環境に変数が必要（例: `launchctl setenv VOICE_SWITCH_GROKBOT_TOKEN <トークン>` の後に起動し直す）。2xx 以外の応答は失敗として扱う。ログには `dictation delivered: post grokbot` か `dictation action grokbot failed: <理由>` が出る。本文はログに出さない。
+ほかの受け手の例として、`message` と固定の送信元を求めるなら `"fields": {"message": "voice: {text}", "source": "pc"}` と書く。送るのは `fields` の中身だけで、JSON の本文も、ほかのヘッダーも、音声も付けない。2xx を成功とし、それ以外は失敗として応答の先頭をログに出す。再送はせず、30 秒でタイムアウトする。ログには `dictation delivered: post <name>` か `dictation action <name> failed: <理由>` が出る。本文はログに出さない。
+
+アクションで待機に入ったことは、音と HUD で分かる（どのアクションでも共通。Webhook に限らない）。効果音がオンなら、音声入力の 1 音ではなく上がる 2 音が鳴る。アクションに `icon` を書くと、HUD のマイクの代わりにそのアイコンを出す。Windows は `.exe` を指せばアプリのアイコンを読む（例: `"%LOCALAPPDATA%\\Programs\\Grok Bot\\Grok Bot.exe"`）。Mac は `.app` を指せばアプリのアイコンを読む（例: `"/Applications/Grok Bot.app"`）。それ以外のパスは画像ファイルとして読む。読めないときはマイクのまま。
 
 メニューは、一時停止（マイクを放す）、マイク、設定ファイルを開く、ログを開く、ログイン時に起動、終了。
 

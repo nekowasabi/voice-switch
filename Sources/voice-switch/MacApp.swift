@@ -543,18 +543,14 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     return .delivered
 }
 
-/// POSTs `text` to the action's https url as one multipart field with the bearer token from `tokenEnv`; the token is never in the config.
+/// POSTs `text` to the action's https url as the multipart fields from `postFields` with the bearer token from `tokenEnv`; the token is never in the config.
 func postAction(_ action: WakeAction, text: String) async throws {
     guard let env = action.tokenEnv, let token = ProcessInfo.processInfo.environment[env] else {
         throw NSError(domain: "voice-switch", code: 1, userInfo: [NSLocalizedDescriptionKey: "environment variable \(action.tokenEnv ?? "") is not set"])
     }
     let boundary = "voice-switch-\(UUID().uuidString)"
-    // Same fields as the Pebble Index webhook in transcription-only mode, so a receiver built for it accepts this.
-    let fields = [(action.inputParam ?? "transcription", text),
-                  ("recordedAt", String(Int64(Date().timeIntervalSince1970 * 1000))),
-                  ("client", "ring")]
     var body = Data()
-    for (name, value) in fields {
+    for (name, value) in action.postFields(text: text, recordedAtMs: Int64(Date().timeIntervalSince1970 * 1000)) {
         body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n".utf8))
     }
     body.append(Data("--\(boundary)--\r\n".utf8))
@@ -783,7 +779,8 @@ final class Listener {
     private let localHistoryState = OSAllocatedUnfairLock(initialState: (busy: false, generation: 0))
     private typealias CaptureFrame = (samples: [Float], generation: Int)
     private let cont: AsyncStream<CaptureFrame>.Continuation
-    private let phaseCont: AsyncStream<Phase>.Continuation
+    /// The icon rides with .waiting only: the action the wake word chose, so the HUD shows which mode opened.
+    private let phaseCont: AsyncStream<(phase: Phase, icon: String?)>.Continuation
     private var pending: [Float] = []
     private(set) var running = false
     /// The user wants input on; stays true while a failed restart is being retried, unlike `running`.
@@ -813,10 +810,10 @@ final class Listener {
         self.config = config
         let (stream, cont) = AsyncStream<CaptureFrame>.makeStream()
         self.cont = cont
-        let (phases, phaseCont) = AsyncStream<Phase>.makeStream()
+        let (phases, phaseCont) = AsyncStream<(phase: Phase, icon: String?)>.makeStream()
         self.phaseCont = phaseCont
         Task { await self.consume(stream) }
-        Task { @MainActor [weak self] in for await phase in phases { self?.onPhase?(phase) } }
+        Task { @MainActor [weak self] in for await next in phases { self?.onPhase?(next.phase, next.icon) } }
         // Input device switches stop the tap silently; restart on the engine's own signal.
         NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: .main) { [weak self] note in
             guard let self, self.wanted, note.object as? AVAudioEngine === self.engine else { return }
@@ -1031,7 +1028,7 @@ final class Listener {
     enum Phase { case idle, waiting, hearing, recording, stopping, ended, followup }
 
     /// Called on the main thread whenever the dictation phase changes.
-    var onPhase: ((Phase) -> Void)?
+    var onPhase: ((Phase, String?) -> Void)?
 
     /// Called on the main thread while superwhisper processes a handed-off recording; nil when it is done.
     var onDelivery: ((DeliveryState?) -> Void)?
@@ -1087,7 +1084,7 @@ final class Listener {
                 seg = Segmenter(cfg: config.cfg); dictation = nil; followupUntil = 0
                 recent = []; speechFrames = 0; Hotkeys.end()
                 activeGeneration = currentGeneration
-                phaseCont.yield(.idle)
+                phaseCont.yield((.idle, nil))
             }
             guard frame.generation == currentGeneration else { continue }
             let f = frame.samples
@@ -1108,7 +1105,7 @@ final class Listener {
                 // .ended hides itself after a moment; the idle that follows it is not a change.
                 if phase != shown, !(shown == .ended && phase == .idle) {
                     shown = phase
-                    phaseCont.yield(phase)
+                    phaseCont.yield((phase, phase == .waiting ? dictation?.action?.icon : nil))
                 }
             }
             if f.isEmpty { seg = Segmenter(cfg: config.cfg); dictation = nil; followupUntil = 0; recent = []; speechFrames = 0; Hotkeys.end(); continue }
@@ -1388,7 +1385,7 @@ final class Listener {
                 } else {
                     dictation = Dictation(samples: [], generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: false, action: selectedAction.action)
                     if UserDefaults.standard.bool(forKey: soundKey) {
-                        NSSound(named: "Tink")?.play()
+                        actionWakeChime?.play()
                         dictation?.deafFrames = frames(ms: 600)
                     }
                     log("dictation started (waiting for text) -> action \(selectedAction.action.name)")
@@ -1638,19 +1635,24 @@ func micInUse(by bundleIDs: [String], failClosed: Bool = false) -> String? {
 let deviceKey = "inputDeviceUID"
 let soundKey = "confirmationSound"
 
-/// A5 -> E5 soft pops, the notes Windows plays on stop (TraySettings.Synthesize), so stop reads differently from the wake Tink.
-private let stopChime: NSSound? = {
-    let notes = [880.0, 659.25], noteSamples = Int(rate) * 120 / 1000
+/// Soft pops on the notes Windows plays (TraySettings.Synthesize), so each chime reads the same on both platforms.
+private func chime(_ name: String, _ notes: [Double]) -> NSSound? {
+    let noteSamples = Int(rate) * 120 / 1000
     let samples = (0 ..< noteSamples * notes.count).map { i -> Float in
         let t = Double(i % noteSamples)
         let env = min(1, t / 80) * pow(1 - t / Double(noteSamples), 3)
         return Float(sin(2 * .pi * notes[i / noteSamples] * Double(i) / rate) * env * 9000 / 32768)
     }
-    let url = FileManager.default.temporaryDirectory.appendingPathComponent("voice-switch-stop-chime.wav")
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("voice-switch-\(name)-chime.wav")
     guard (try? writeWAV(samples, to: url)) != nil else { return nil }
     defer { try? FileManager.default.removeItem(at: url) }
     return NSSound(contentsOf: url, byReference: false)
-}()
+}
+
+/// Stop falls A5 -> E5, so it reads differently from the wake Tink.
+private let stopChime = chime("stop", [880.0, 659.25])
+/// An action's wake rises A5 -> E6, so a wireless mic away from the screen still tells it from dictation by ear.
+private let actionWakeChime = chime("action-wake", [880.0, 1318.51])
 
 func playStopSound() {
     if UserDefaults.standard.bool(forKey: soundKey) { stopChime?.play() }
@@ -1666,6 +1668,8 @@ enum HUDLabel: String, CaseIterable {
 /// every other glyph is static, so a hidden HUD costs nothing.
 final class HUDGlyphView: NSView {
     private(set) var glyph: HUDLabel = .waiting
+    /// Drawn instead of the mic while .waiting; nil draws the mic.
+    var waitingImage: NSImage? { didSet { needsDisplay = true } }
     private var ticker: Timer?
     private var began = Date()
 
@@ -1696,6 +1700,10 @@ final class HUDGlyphView: NSView {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         let side = min(bounds.width, bounds.height)
         guard side > 0 else { return }
+        if glyph == .waiting, let waitingImage {
+            waitingImage.draw(in: bounds)
+            return
+        }
         ctx.saveGState()
         ctx.translateBy(x: (bounds.width - side) / 2, y: (bounds.height - side) / 2)
         ctx.scaleBy(x: side / 24, y: side / 24)
@@ -1893,9 +1901,24 @@ final class HUD {
         deliver(.saved)
     }
 
-    func show(_ phase: Listener.Phase) {
+    /// icon: the waking action's `icon`, drawn in place of the mic while .waiting; nil keeps the mic.
+    func show(_ phase: Listener.Phase, icon: String? = nil) {
         self.phase = phase
+        if phase == .waiting { glyphView.waitingImage = icon.flatMap(Self.image) }
         render()
+    }
+
+    private static var images: [String: NSImage?] = [:]
+
+    /// An .app gives its own icon; anything else is read as an image. A file that fails to load keeps the mic.
+    private static func image(_ path: String) -> NSImage? {
+        let full = (path as NSString).expandingTildeInPath
+        if let cached = images[full] { return cached }
+        let image = full.hasSuffix(".app") ? (FileManager.default.fileExists(atPath: full) ? NSWorkspace.shared.icon(forFile: full) : nil)
+            : NSImage(contentsOfFile: full)
+        if image == nil { log("hud: action icon \(full) could not be loaded") }
+        images[full] = image
+        return image
     }
 
     /// .done leaves the saved glyph up, since the automatic path saves to history before its handoff returns.
@@ -2007,7 +2030,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         DictationJournal.bind(config.cfg.dictation?.journalDir)
         listener = Listener(config: config)
-        listener.onPhase = { [hud] in hud.show($0) }
+        listener.onPhase = { [hud] in hud.show($0, icon: $1) }
         listener.onDelivery = { [hud] in hud.deliver($0) }
         DictationHistory.shared.onChange = { [hud] in DispatchQueue.main.async { hud.historyAvailable() } }
         listener.onRestart = { [weak self] in self?.refresh() }

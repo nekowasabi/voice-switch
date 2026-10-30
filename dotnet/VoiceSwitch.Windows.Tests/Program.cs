@@ -193,6 +193,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation action wake selects its action after the default wakes", () => Check(DictationActionWakeSelectsAction())),
     ("dictation handoff with an action opens its URL instead of routing or pasting", () => Check(DictationHandoffActionOpensUrl())),
     ("config loads a post action and rejects tokenEnv without an https url or a name", () => Check(ConfigLoadsPostAction())),
+    ("post action renders the default Pebble fields or the configured templates", () => Check(PostActionRendersFields())),
     ("dictation handoff with a tokenEnv action posts the text and opens no URL", () => Check(DictationHandoffPostActionPostsText())),
     ("dictation handoff switches mode only for automatic audio", () => Check(DictationHandoffSwitchesModeOnlyForAutomaticAudio())),
     ("automatic audio stays out of Superwhisper when the mode switch fails", () => Check(DictationHandoffKeepsAutomaticAudioOutOfSuperwhisperWhenModeSwitchFails())),
@@ -4830,12 +4831,27 @@ static bool ConfigLoadsPostAction()
         $$$"""{"wakeWords":["音声入力"],"command":"wake","windows":{"actions":[{{{action}}}]}}""";
     using var temp = RuntimeTemp();
     var path = Path.Combine(temp.Dir, "post.json");
-    File.WriteAllText(path, WithAction("""{"name":"grokbot","wakeWords":["gb"],"url":"https://example.workers.dev/","tokenEnv":"VOICE_SWITCH_GROKBOT_TOKEN"}"""));
+    File.WriteAllText(path, WithAction("""{"name":"grokbot","wakeWords":["gb"],"url":"https://example.workers.dev/","tokenEnv":"VOICE_SWITCH_GROKBOT_TOKEN","fields":{"message":"voice: {text}"}}"""));
     var action = ConfigLoader.Load(path).Windows!.Actions!.Single();
     return action.TokenEnv == "VOICE_SWITCH_GROKBOT_TOKEN"
+        && action.Fields is { Count: 1 } fields && fields["message"] == "voice: {text}"
+        && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"https://example.com/","tokenEnv":"T","inputParam":"text"}"""), "windows.actions[0].inputParam")
+        && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"https://example.com/","fields":{"message":"{text}"}}"""), "windows.actions[0].fields")
+        && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"https://example.com/","tokenEnv":"T","fields":{"":"{text}"}}"""), "windows.actions[0].fields")
+        && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"https://example.com/","tokenEnv":"T","fields":{"a\"b":"{text}"}}"""), "windows.actions[0].fields")
         && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"grokbot://app/v1/prompt","tokenEnv":"T"}"""), "windows.actions[0].tokenEnv")
         && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"http://example.com/","tokenEnv":"T"}"""), "windows.actions[0].tokenEnv")
         && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"https://example.com/","tokenEnv":" "}"""), "windows.actions[0].tokenEnv");
+}
+
+static bool PostActionRendersFields()
+{
+    var url = "https://example.workers.dev/";
+    var defaults = PostAction.Fields(new WakeAction("grokbot", ["gb"], url, TokenEnv: "T"), "今日 {recordedAtMs}", 1761800000123);
+    var custom = PostAction.Fields(new WakeAction("grokbot", ["gb"], url, TokenEnv: "T",
+        Fields: new Dictionary<string, string> { ["message"] = "voice: {text}", ["source"] = "pc" }), "今日", 1);
+    return defaults.SequenceEqual([("client", "ring"), ("recordedAt", "1761800000123"), ("transcription", "今日 {recordedAtMs}")])
+        && custom.SequenceEqual([("message", "voice: 今日"), ("source", "pc")]);
 }
 
 static bool DictationHandoffPostActionPostsText()

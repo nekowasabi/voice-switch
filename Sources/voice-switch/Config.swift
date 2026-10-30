@@ -221,10 +221,19 @@ struct WakeAction: Decodable {
     /// Query item carrying the dictation. JSON `inputParam`; defaults to `input` when omitted or null.
     let inputParam: String?
     /// Environment variable holding a bearer token. When set, the dictation is POSTed to the https `url` as
-    /// multipart form field `inputParam` (default `transcription`) instead of being opened.
+    /// multipart form fields rendered by `postFields` instead of being opened.
     let tokenEnv: String?
+    /// Multipart field name to value template for a tokenEnv action; `{text}` and `{recordedAtMs}` are replaced.
+    /// Absent sends `defaultPostFields`.
+    let fields: [String: String]?
+    /// Shown in the HUD instead of the mic while this action waits for text: an .app gives its own icon,
+    /// anything else is read as an image. Windows reads an .exe's icon the same way.
+    let icon: String?
 
-    private enum CodingKeys: String, CodingKey { case name, wakeWords, url, superwhisperMode, inputParam, tokenEnv }
+    private enum CodingKeys: String, CodingKey { case name, wakeWords, url, superwhisperMode, inputParam, tokenEnv, icon, fields }
+
+    /// The Pebble Index webhook in transcription-only mode, so a receiver built for it accepts a config without fields.
+    static let defaultPostFields = ["transcription": "{text}", "recordedAt": "{recordedAtMs}", "client": "ring"]
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -237,14 +246,42 @@ struct WakeAction: Decodable {
             throw DecodingError.dataCorruptedError(forKey: .inputParam, in: c,
                 debugDescription: "Wake action inputParam must be a non-empty RFC 3986 unreserved query name.")
         }
+        icon = try c.decodeIfPresent(String.self, forKey: .icon)
         tokenEnv = try c.decodeIfPresent(String.self, forKey: .tokenEnv)
         if let t = tokenEnv, t.trimmingCharacters(in: .whitespaces).isEmpty || !url.rawValue.lowercased().hasPrefix("https://") {
             throw DecodingError.dataCorruptedError(forKey: .tokenEnv, in: c,
                 debugDescription: "Wake action tokenEnv needs an https:// url and a non-empty environment variable name.")
         }
+        if tokenEnv != nil, inputParam != nil {
+            throw DecodingError.dataCorruptedError(forKey: .inputParam, in: c,
+                debugDescription: "Wake action inputParam does not apply to a tokenEnv action; name the multipart fields in fields instead.")
+        }
+        fields = try c.decodeIfPresent([String: String].self, forKey: .fields)
+        if let f = fields {
+            if tokenEnv == nil {
+                throw DecodingError.dataCorruptedError(forKey: .fields, in: c,
+                    debugDescription: "Wake action fields needs tokenEnv; only a POST action sends multipart fields.")
+            }
+            // A quote or line break in a name would end the Content-Disposition header early.
+            if f.keys.contains(where: { name in name.isEmpty || name.contains(where: { "\"\r\n".contains($0) }) }) {
+                throw DecodingError.dataCorruptedError(forKey: .fields, in: c,
+                    debugDescription: "Wake action fields must not have an empty field name or a name with a quote or line break.")
+            }
+        }
         guard !wakeWords.isEmpty else {
             throw DecodingError.dataCorruptedError(forKey: .wakeWords, in: c,
                 debugDescription: "Wake action needs at least one wake word.")
+        }
+    }
+
+    /// Multipart name/value pairs sorted by name. `{text}` is replaced in one pass, so a dictation containing
+    /// "{recordedAtMs}" stays literal.
+    func postFields(text: String, recordedAtMs: Int64) -> [(name: String, value: String)] {
+        let ms = String(recordedAtMs)
+        return (fields ?? WakeAction.defaultPostFields).sorted { $0.key < $1.key }.map { field in
+            (field.key, field.value.components(separatedBy: "{text}")
+                .map { $0.replacingOccurrences(of: "{recordedAtMs}", with: ms) }
+                .joined(separator: text))
         }
     }
 

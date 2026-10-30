@@ -57,6 +57,8 @@ the text either.
 ## Webhooks
 
 An action with `tokenEnv` and an `https://` url POSTs the dictation as
-multipart fields `transcription` (or `inputParam`), `recordedAt`, and
-`client` (the Pebble Index webhook shape) with a bearer token read from that
-environment variable, on Windows and Mac. See the README.
+multipart fields with a bearer token read from that environment variable, on
+Windows and Mac. Its `fields` object names each field and its value, where
+`{text}` is the dictation and `{recordedAtMs}` the Unix time in ms; without
+it, the Pebble Index webhook shape (`transcription`, `recordedAt`, `client`)
+is sent. See the README for setup and a Grok Bot example.
