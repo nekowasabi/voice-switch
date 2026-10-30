@@ -130,8 +130,9 @@ win-publish: win-stop win-build ## Windows: quit the running app, then publish a
 	@# An existing config.json in RELEASE_DIR is never overwritten. The old in-repo release/config.json seeds it once.
 	[ -f "$(RELEASE_DIR)/config.json" ] || [ ! -f release/config.json ] || cp release/config.json "$(RELEASE_DIR)/config.json"
 	[ -f "$(RELEASE_DIR)/config.json" ] || cp config.example.windows.json "$(RELEASE_DIR)/config.json"
-	@# cwd is RELEASE_DIR so the exe starts from local disk, not a UNC path.
-	cd "$(RELEASE_DIR)" && powershell.exe -NoProfile -Command "Start-Process -FilePath .\voice-switch.exe"
+	@# Launched through explorer so the tray gets the current user environment (setx values such as tokenEnv);
+	@# a child of WSL keeps the environment WSL started with. explorer.exe exits 1 even on success.
+	-explorer.exe "$$(wslpath -w "$(RELEASE_DIR)/voice-switch.exe")"
 	@echo "Windows build → $(RELEASE_DIR)"
 	@echo "Run:  $(RELEASE_DIR)/voice-switch.exe            (tray app, listens on launch)"
 	@echo "Try:  $(RELEASE_DIR)/voice-switch.exe --self-test"
