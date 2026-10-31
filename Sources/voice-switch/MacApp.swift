@@ -182,8 +182,10 @@ func check(_ paths: [String], cfg: Config) async throws {
                 let tr = try await transcribe(buf, locale: locale)
                 let stt = Int(Date().timeIntervalSince(began) * 1000)
                 let at = (i + frameLen) * 1000 / Int(rate) // audio ms at which this probe could fire
-                if let hit = Segmenter.earlyWake(tr, cfg: cfg, tailSilentFrames: seg.tailSilentFrames) {
-                    verdicts.append(hit.map { "early-dictate@\(at)ms+stt\(stt):\($0.rest)" } ?? "early-wake@\(at)ms+stt\(stt)")
+                if let early = Segmenter.earlyWake(tr, cfg: cfg, tailSilentFrames: seg.tailSilentFrames) {
+                    let hit = early.start
+                    let action = early.action.map { " action=\($0.name)" } ?? ""
+                    verdicts.append(hit.map { "early-dictate@\(at)ms+stt\(stt):\($0.rest)\(action)" } ?? "early-wake@\(at)ms+stt\(stt)\(action)")
                     earlyHit = true
                 }
             }
@@ -1293,19 +1295,30 @@ final class Listener {
                 let earlyOrigin = WakeOrigin(rule: .strict, inputIdleSeconds: MacInputActivity.idleSeconds())
                 log("dictation recognition: complete id=\(takeRecognitionId()) \(earlyOrigin.fields) \(sidField(nil))")
                 let stt = Int(Date().timeIntervalSince(began) * 1000)
-                guard let hit = Segmenter.earlyWake(tr, cfg: config.cfg, tailSilentFrames: seg.tailSilentFrames) else { continue }
-                let start = config.cfg.dictation == nil ? nil : hit
+                guard let early = Segmenter.earlyWake(tr, cfg: config.cfg, tailSilentFrames: seg.tailSilentFrames) else { continue }
+                let hit = early.start
+                let earlyAction = early.action
+                let start = config.cfg.dictation == nil && earlyAction == nil ? nil : hit
                 guard start != nil || hit == nil else { continue } // a continuing transcript without dictation is not a wake
+                if let action = earlyAction {
+                    guard !handoffBusy.withLock({ $0 }) else { log("action skipped: previous dictation still in flight"); continue }
+                    _ = action
+                }
                 if let busy = micInUse(by: config.cfg.skipWhileMicInUseBy ?? []) { log("skipped: \(busy) is using the microphone"); continue }
-                if config.cfg.dictation?.noWakeWord?.enabled != true { log("early: \(tr.text)  [buf \(buf.count * 1000 / Int(rate)) ms, stt \(stt) ms]") }
+                if config.cfg.dictation?.noWakeWord?.enabled != true { log("early: \(tr.text)\(earlyAction.map { " action=\($0.name)" } ?? "")  [buf \(buf.count * 1000 / Int(rate)) ms, stt \(stt) ms]") }
                 seg.reset()
                 if let start {
-                    dictation = Dictation(samples: trimmed(buf, cutAt: start.cutAt), generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: true)
-                    log("dictation started early (cut at \(Int(start.cutAt * 1000)) ms)")
+                    dictation = Dictation(samples: trimmed(buf, cutAt: start.cutAt), generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: true, action: earlyAction)
+                    log("dictation started early (cut at \(Int(start.cutAt * 1000)) ms)\(earlyAction.map { " action=\($0.name)" } ?? "")")
                     Hotkeys.begin()
-                } else if config.cfg.dictation != nil {
-                    dictation = Dictation(samples: [], generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: false)
-                    log("dictation started early (waiting for text)")
+                } else if config.cfg.dictation != nil || earlyAction != nil {
+                    dictation = Dictation(samples: [], generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: false, action: earlyAction)
+                    if let action = earlyAction, UserDefaults.standard.bool(forKey: soundKey) {
+                        actionWakeChime?.play()
+                        dictation?.deafFrames = frames(ms: 600)
+                        _ = action
+                    }
+                    log("dictation started early (waiting for text)\(earlyAction.map { " action=\($0.name)" } ?? "")")
                     Hotkeys.begin()
                 } else {
                     Macrowhisper.prepare(config.cfg.macrowhisper)

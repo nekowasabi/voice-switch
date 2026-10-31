@@ -60,7 +60,13 @@ def check_wiring(repo):
     assert action_pos < route_pos and "return" in handoff[action_pos:route_pos]
     segmenter = repo.code("Sources/voice-switch/Segmenter.swift")
     early = extract_braced_body(segmenter, r"static func earlyWake[^\{]*\{")
-    assert "cfg.wakeWords" in early and ".actions" not in early
+    assert "cfg.wakeWords" in early and ".actions" in early
+    assert "prefixGapFrames" in early
+    assert "dictationStart" in early
+    assert "longerWords" in early
+    assert "cfg.macOS?.actions" in early
+    transcript = repo.code("Sources/voice-switch/Transcript.swift")
+    assert "longerWords" in transcript
 
 repo = SourceTree(root)
 check_wiring(repo)
@@ -91,6 +97,9 @@ mutations = [
     ("MacApp.swift", "Platform.runURLProcess(p, wait: false)\n        return"),
     ("MacApp.swift", "if isHead && start == nil"),
     ("MacApp.swift", "let route = await routeDictation(result)"),
+    ("Segmenter.swift", "cfg.macOS?.actions"),
+    ("Segmenter.swift", "longerWords"),
+    ("Transcript.swift", "longerWords"),
 ]
 for filename, marker in mutations:
     path = "Sources/voice-switch/" + filename
