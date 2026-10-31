@@ -397,6 +397,28 @@ sealed class PhaseRecorder : IDictationRuntimeObserver
     public void NoiseProcessorCompleted(NoiseProcessorStatus status) { }
 }
 
+sealed class ActionHudObserver : IDictationRuntimeObserver
+{
+    public List<DictationPhase> Phases { get; } = new();
+    public List<bool> WakeSounds { get; } = new();
+    public List<WakeAction?> Waitings { get; } = new();
+
+    public void PhaseChanged(DictationPhase phase) => Phases.Add(phase);
+    public bool PlayWakeSound(bool action)
+    {
+        WakeSounds.Add(action);
+        return true;
+    }
+
+    public void WaitingFor(WakeAction? action) => Waitings.Add(action);
+    public void RecognitionQueued(RecognitionRequest request, int pending, long retainedStart, long retainedEnd) { }
+    public void RecognitionCompleted(RecognitionRequest request, RecognizedUtterance? recognition, Exception? error) { }
+    public void HandoffSubmitted(DictationAudio audio, HandoffResult result) { }
+    public void RetentionObserved(long retainedStart, long retainedEnd, int pending) { }
+    public void NoiseProcessorCompleted(NoiseProcessorStatus status) { }
+    public bool PlayStopSound() => false;
+}
+
 sealed class CapturingTextWriter : TextWriter
 {
     private readonly StringBuilder output = new();

@@ -426,13 +426,13 @@ public sealed class WindowsDictationRuntime
 
                         var probe = outcome.Work.Request.Extent == RecognitionExtent.Probe;
                         var prefix = probe
-                            ? DictationBoundaries.EarlyWake(outcome.Recognition!, config.Wakes())
+                            ? DictationBoundaries.EarlyWakeOrdered(outcome.Recognition!, OrderedWakeSets())?.Prefix
                             : DictationBoundaries.LeadingWake(outcome.Recognition!, config.Wakes());
                         var byReading = config.Dictation?.NoWakeWord?.Enabled == true ? "" : session.Action is { } action ? $" action={action.Name}"
                             : prefix?.ByReading is { } readingWake ? $" via=reading d={prefix.Distance} wake=\"{readingWake.Reading}\"" : "";
                         if (probe && wasIdle && (session.IsActive || session.IsAwaitingBody))
                         {
-                            Log.Info($"dictation session: early-wake id={outcome.Work.Request.Id} tail={outcome.Work.Request.TailSilenceSamples * 1000 / (long)Segmenter.Rate}ms {Sid(session)}");
+                            Log.Info($"dictation session: early-wake id={outcome.Work.Request.Id} tail={outcome.Work.Request.TailSilenceSamples * 1000 / (long)Segmenter.Rate}ms{byReading} {Sid(session)}");
                         }
 
                         if (wasIdle && session.IsAwaitingBody)
@@ -927,6 +927,9 @@ public sealed class WindowsDictationRuntime
     private bool SpeaksWake(RecognizedUtterance recognition) =>
         DictationBoundaries.LeadingWake(recognition, config.Wakes()) is not null
         || (config.Windows?.Actions ?? []).Any(action => DictationBoundaries.LeadingWake(recognition, action.Wakes()) is not null);
+
+    private IReadOnlyList<(WakeAction? Owner, WakeWord[] Wakes)> OrderedWakeSets() =>
+        ((config.Windows?.Actions ?? []).Select(action => ((WakeAction?)action, action.Wakes())).Prepend(((WakeAction?)null, config.Wakes())).ToArray());
 
     private WakeOrigin RecognitionOrigin(DictationSession session, RecognizedUtterance recognition)
     {
