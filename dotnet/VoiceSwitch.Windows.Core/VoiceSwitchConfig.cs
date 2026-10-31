@@ -6,6 +6,11 @@ using System.Text.RegularExpressions;
 
 namespace VoiceSwitch.Windows.Core;
 
+public sealed record HaasConfig(
+    string[]? Command = null,
+    double? TimeoutSeconds = null,
+    string? Vocabulary = null);
+
 public sealed record DictationConfig(
     string? RecordingsDir = null,
     int? EndSilenceMs = null,
@@ -23,7 +28,11 @@ public sealed record DictationConfig(
     bool DedicatedStopRecognizer = false,
     // Cancel what the speakers play before the VAD so playback never starts a recording. Absent means on; false keeps the raw input.
     bool? EchoCancellation = null,
-    string? JournalDir = null);
+    string? JournalDir = null,
+    // Body transcriber: absent or "superwhisper" keeps today's handoff; "haas" runs the external GPU runner.
+    string? Transcriber = null,
+    // External Haas-ja-v1.0 runner, read only when Transcriber is "haas".
+    HaasConfig? Haas = null);
 
 /// <summary>Load-time guardrails for timing fields that are easy to mistype 10x. No clamp — warn only.</summary>
 public static class DictationTimingGuard
@@ -287,6 +296,20 @@ public static class ConfigLoader
                     throw new InvalidDataException($"{field}.fields must not have an empty field name, a name with a quote or line break, or a null value.");
                 }
             }
+        }
+
+        var transcriber = config.Dictation?.Transcriber ?? "superwhisper";
+        if (transcriber != "superwhisper" && transcriber != "haas")
+            throw new InvalidDataException("dictation.transcriber must be \"superwhisper\" or \"haas\" (got " + transcriber + ").");
+        if (transcriber == "haas")
+        {
+            var cmd = config.Dictation?.Haas?.Command;
+            if (cmd is null || cmd.Length == 0 || cmd.Any(part => string.IsNullOrEmpty(part)))
+                throw new InvalidDataException("dictation.haas.command must be a non-empty string array when transcriber is haas.");
+            if (config.Dictation?.Haas?.TimeoutSeconds is { } timeout && !(timeout > 0))
+                throw new InvalidDataException("dictation.haas.timeoutSeconds must be > 0.");
+            if (config.Dictation?.Haas?.Vocabulary is { Length: 0 })
+                throw new InvalidDataException("dictation.haas.vocabulary must be a non-empty path.");
         }
 
         if (config.Dictation?.NoWakeWord is { } noWake && (noWake.FollowupMs is < 1000 or > 30000))

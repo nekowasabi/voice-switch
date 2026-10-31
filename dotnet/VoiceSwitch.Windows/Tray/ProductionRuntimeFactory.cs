@@ -33,9 +33,10 @@ public sealed class ProductionRuntimeFactory(string configPath, TrayRuntimeHooks
         }
 
         IDictationHandoff handoff = source.RecordOnlyDir is null
-            ? new RegisteredSuperwhisperHandoff(RegisteredSuperwhisperHandoff.DefaultRoot(), WindowsPaths.SuperwhisperRecordingsPath(config.Dictation),
+            ? DictationHandoffs.Create(config, RegisteredSuperwhisperHandoff.DefaultRoot(),
+                WindowsPaths.SuperwhisperRecordingsPath(config.Dictation),
                 restoreFocus: hooks.RestoreFocus, onTranscribed: TmuxPaneRouter.RouteAsync,
-                superwhisperMode: config.Dictation.SuperwhisperMode)
+                wrapLocalHistory: false)
             : new LocalRecordingHandoff(source.RecordOnlyDir, source.WavPath);
 
         if (handoff is RegisteredSuperwhisperHandoff registered && !await registered.RecoverAsync(cancellation))
@@ -43,7 +44,7 @@ public sealed class ProductionRuntimeFactory(string configPath, TrayRuntimeHooks
         IPcmCapture capture = source.WavPath is null
             ? MicCapture.Open(hooks.MicDevice?.Invoke(), config)
             : new WavPcmCapture(source.WavPath, paced: true);
-        if (source.RecordOnlyDir is null) handoff = LocalHistoryHandoff.Wrap(handoff, config, WindowFocus.Paste);
+        if (source.RecordOnlyDir is null && handoff is not HaasRunnerHandoff) handoff = LocalHistoryHandoff.Wrap(handoff, config, WindowFocus.Paste);
         var observer = new TrayRuntimeObserver(hooks);
         var recognizer = new SpeechPowerShellDictationRecognizer(config, observer.RecordSapiTiming);
         var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation);

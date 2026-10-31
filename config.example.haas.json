@@ -1,0 +1,13 @@
+{
+  "wakeWords": ["音声入力", "音声入る", "おんせい"],
+  "locale": "ja_JP",
+  "command": "open -g superwhisper://record",
+  "dictation": {
+    "recordingsDir": "~/Documents/superwhisper/recordings",
+    "transcriber": "haas",
+    "haas": {
+      "command": ["python3", "scripts/haas_transcribe.py"],
+      "timeoutSeconds": 120
+    }
+  }
+}

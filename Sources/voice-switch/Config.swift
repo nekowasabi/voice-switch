@@ -127,13 +127,77 @@ struct DictationConfig: Decodable {
     /// Absent uses the platform default. An unusable path is logged and the default is used.
     var journalDir: String? = nil
 
+    /// Body transcriber: absent or "superwhisper" keeps today's handoff; "haas" runs the external GPU runner.
+    var transcriber: String? = nil
+    /// External Haas-ja-v1.0 runner, read only when transcriber is "haas".
+    var haas: HaasConfig? = nil
+
     init(recordingsDir: String? = nil, endSilenceMs: Int? = nil, maxSeconds: Double? = nil,
-         excludeBundleIDs: [String]? = nil, startTimeoutMs: Int? = nil) {
+         excludeBundleIDs: [String]? = nil, startTimeoutMs: Int? = nil,
+         transcriber: String? = nil, haas: HaasConfig? = nil) {
         self.recordingsDir = recordingsDir
         self.endSilenceMs = endSilenceMs
         self.maxSeconds = maxSeconds
         self.excludeBundleIDs = excludeBundleIDs
         self.startTimeoutMs = startTimeoutMs
+        self.transcriber = transcriber
+        self.haas = haas
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case recordingsDir, endSilenceMs, maxSeconds, excludeBundleIDs, startTimeoutMs
+        case excludeProcessNames, superwhisperMode, pasteMode, noWakeWord
+        case dedicatedStopRecognizer, echoCancellation, journalDir
+        case transcriber, haas
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        recordingsDir = try c.decodeIfPresent(String.self, forKey: .recordingsDir)
+        endSilenceMs = try c.decodeIfPresent(Int.self, forKey: .endSilenceMs)
+        maxSeconds = try c.decodeIfPresent(Double.self, forKey: .maxSeconds)
+        excludeBundleIDs = try c.decodeIfPresent([String].self, forKey: .excludeBundleIDs)
+        startTimeoutMs = try c.decodeIfPresent(Int.self, forKey: .startTimeoutMs)
+        excludeProcessNames = try c.decodeIfPresent([String].self, forKey: .excludeProcessNames)
+        superwhisperMode = try c.decodeIfPresent(String.self, forKey: .superwhisperMode)
+        pasteMode = try c.decodeIfPresent(String.self, forKey: .pasteMode)
+        noWakeWord = try c.decodeIfPresent(NoWakeWordConfig.self, forKey: .noWakeWord)
+        dedicatedStopRecognizer = try c.decodeIfPresent(Bool.self, forKey: .dedicatedStopRecognizer)
+        echoCancellation = try c.decodeIfPresent(Bool.self, forKey: .echoCancellation)
+        journalDir = try c.decodeIfPresent(String.self, forKey: .journalDir)
+        transcriber = try c.decodeIfPresent(String.self, forKey: .transcriber)
+        haas = try c.decodeIfPresent(HaasConfig.self, forKey: .haas)
+        let mode = transcriber ?? "superwhisper"
+        guard mode == "superwhisper" || mode == "haas" else {
+            throw DecodingError.dataCorruptedError(forKey: .transcriber, in: c,
+                debugDescription: "dictation.transcriber must be \"superwhisper\" or \"haas\" (got \(mode)).")
+        }
+        if mode == "haas" {
+            guard let cmd = haas?.command, !cmd.isEmpty, cmd.allSatisfy({ !$0.isEmpty }) else {
+                throw DecodingError.dataCorruptedError(forKey: .haas, in: c,
+                    debugDescription: "dictation.haas.command must be a non-empty string array when transcriber is haas.")
+            }
+            if let timeout = haas?.timeoutSeconds, !(timeout > 0) {
+                throw DecodingError.dataCorruptedError(forKey: .haas, in: c,
+                    debugDescription: "dictation.haas.timeoutSeconds must be > 0.")
+            }
+            if let vocab = haas?.vocabulary, vocab.isEmpty {
+                throw DecodingError.dataCorruptedError(forKey: .haas, in: c,
+                    debugDescription: "dictation.haas.vocabulary must be a non-empty path.")
+            }
+        }
+    }
+}
+
+struct HaasConfig: Decodable {
+    var command: [String]?
+    var timeoutSeconds: Double?
+    var vocabulary: String?
+
+    init(command: [String]? = nil, timeoutSeconds: Double? = nil, vocabulary: String? = nil) {
+        self.command = command
+        self.timeoutSeconds = timeoutSeconds
+        self.vocabulary = vocabulary
     }
 }
 

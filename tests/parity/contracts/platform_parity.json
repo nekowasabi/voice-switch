@@ -107,6 +107,11 @@
       "flag": "--hotkey-test",
       "platform": "windows",
       "reason": "The hotkey tap borrows macOS Accessibility and CGEvent APIs around superwhisper shortcuts."
+    },
+    {
+      "flag": "--vocab",
+      "platform": "macos",
+      "reason": "The --vocab token is an argv element of the external Haas runner contract (scripts/haas_transcribe.py), spelled in C# HaasRunnerHandoff.BuildArguments and Swift HaasRunner.arguments; it is not a voice-switch CLI flag on either platform, so the macOS app CLI in main.swift has no such switch."
     }
   ],
   "shared_capabilities": [

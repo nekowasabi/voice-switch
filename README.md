@@ -111,6 +111,32 @@ Any action, webhook or not, tells you it is listening by sound and HUD. With the
 
 The menu items are 一時停止 (releases the microphone), マイク, 設定ファイルを開く, ログを開く, ログイン時に起動, and 終了.
 
+
+## Haas-ja-v1.0 (Japanese local option)
+
+Opt-in Japanese body transcriber `third-intelligence/Haas-ja-v1.0` (Apache 2.0) via an external GPU runner.
+Set `dictation.transcriber` to `"haas"` and give `dictation.haas.command` as a non-empty argv array.
+Absent or `"superwhisper"` keeps today's Superwhisper handoff. `local` is not a config value.
+
+Requires Linux with an NVIDIA GPU (CUDA/Triton). Mac in-process transcription is unsupported.
+
+```json
+"dictation": {
+  "transcriber": "haas",
+  "haas": {
+    "command": ["python3", "scripts/haas_transcribe.py"],
+    "timeoutSeconds": 120
+  }
+}
+```
+
+Linux GPU: `"command": ["python3", "scripts/haas_transcribe.py"]` after `make haas-setup` and `make haas-model`.
+Windows via WSL: `"command": ["wsl.exe", "-e", "python3", "/mnt/c/takeda/tools/voice-switch/scripts/haas_transcribe.py"]`.
+Remote GPU wrapper: `"command": ["ssh", "gpu-box", "haas-transcribe"]` where the wrapper prints only the transcript on stdout.
+
+The runner contract is: 16 kHz mono WAV path last, `--vocab` plus path before it when set, plain UTF-8 text on stdout, exit 0.
+Failure (non-zero exit, empty stdout, timeout) returns no result and never falls back to Superwhisper.
+
 ## Pane routing (tmux and Jev)
 
 The dictation string is matched to a closed catalog from `tmux list-panes -a -F '#{pane_id}\t#{window_name}\t#{pane_title}\t#{pane_current_command}'`. On macOS the command runs through `/usr/bin/env`. On Windows it runs as `wsl.exe -e tmux ...`, so the target is tmux inside WSL. The app does not start a tmux server. If tmux fails or there is no server, nothing is sent and the failure is logged. A pane hits when any non-empty label is a case-insensitive substring of the text. Labels are the pane title, the window name, and the current command. On Linux, an allowlisted agent name found for that pane through `/proc` (`claude`, `aider`, `gemini`, `copilot`, `codex`, `devin`, `hermes`, `opencode`, `pi`, `grok`, `cursor-agent`) is a label too. Mac and Windows have no `/proc` walk, so there only title, window, and command match.

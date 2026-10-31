@@ -208,6 +208,17 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation handoff root falls back to an intake-safe path", () => Check(DictationHandoffRootFallsBackToIntakeSafePath())),
     ("dictation handoff root resolves a spaced non-ASCII profile on Windows", DictationHandoffRootResolvesOnWindows),
     ("dictation handoff launch failure deletes WAV", () => Check(DictationHandoffLaunchFailureDeletesWav())),
+    ("haas config absent transcriber stays superwhisper", () => Check(HaasConfigAbsentStaysSuperwhisper())),
+    ("haas config decodes command timeout and vocabulary", () => Check(HaasConfigDecodesCommandTimeoutAndVocabulary())),
+    ("haas config rejects an unknown transcriber", () => Check(HaasConfigRejectsUnknownTranscriber())),
+    ("haas config rejects an empty command", () => Check(HaasConfigRejectsEmptyCommand())),
+    ("haas runner sends mock text to tmux and does not launch superwhisper", () => Check(HaasRunnerSendsMockTextToTmux())),
+    ("haas runner sends mock text to the action url and not to tmux", () => Check(HaasRunnerSendsMockTextToActionUrl())),
+    ("haas runner pastes when tmux does not take the text", () => Check(HaasRunnerPastesWhenTmuxMisses())),
+    ("haas runner non-zero exit does not send and does not fall back", () => Check(HaasRunnerNonZeroExitDoesNotSend())),
+    ("haas runner empty stdout does not send and does not fall back", () => Check(HaasRunnerEmptyStdoutDoesNotSend())),
+    ("haas runner timeout does not send and does not fall back", () => Check(HaasRunnerTimeoutDoesNotSend())),
+    ("haas default factory keeps the superwhisper handoff", () => Check(HaasDefaultFactoryKeepsSuperwhisper())),
     ("dictation handoff accepts trusted ancestor junction only", DictationHandoffAcceptsTrustedAncestorJunctionOnly),
     ("handoff owned links never touch outside sentinel", HandoffOwnedLinksRejectSafely),
     ("runtime keeps listening after every handoff status", () => Check(RuntimeKeepsListeningAfterEveryHandoffStatus())),
@@ -4538,6 +4549,180 @@ static bool DictationHandoffLaunchFailureDeletesWav()
         && !Directory.EnumerateFileSystemEntries(root).Any();
 }
 
+
+static string HaasMockScript(string dir, string name, string body)
+{
+    var path = Path.Combine(dir, name);
+    File.WriteAllText(path, "#!/bin/sh\n" + body + "\n");
+    return path;
+}
+
+static VoiceSwitchConfig HaasTestConfig(string transcriber, string[]? command = null, double? timeout = null, string? vocab = null) =>
+    new(["wake"], null, "cmd", Dictation: new DictationConfig(
+        Transcriber: transcriber,
+        Haas: command is null && timeout is null && vocab is null ? null
+            : new HaasConfig(Command: command, TimeoutSeconds: timeout, Vocabulary: vocab)));
+
+static bool HaasConfigAbsentStaysSuperwhisper()
+{
+    using var temp = RuntimeTemp();
+    var plain = Path.Combine(temp.Dir, "plain.json");
+    var explicitMode = Path.Combine(temp.Dir, "explicit.json");
+    File.WriteAllText(plain, """{"wakeWords":["a"],"command":"wake"}""");
+    File.WriteAllText(explicitMode, """{"wakeWords":["a"],"command":"wake","dictation":{"transcriber":"superwhisper"}}""");
+    return ConfigLoader.Load(plain).Dictation?.Transcriber is null
+        && ConfigLoader.Load(explicitMode).Dictation?.Transcriber == "superwhisper";
+}
+
+static bool HaasConfigDecodesCommandTimeoutAndVocabulary()
+{
+    using var temp = RuntimeTemp();
+    var path = Path.Combine(temp.Dir, "haas.json");
+    File.WriteAllText(path, """{"wakeWords":["a"],"command":"wake","dictation":{"transcriber":"haas","haas":{"command":["python3","scripts/haas_transcribe.py"],"timeoutSeconds":45,"vocabulary":"/tmp/v.json"}}}""");
+    var dictation = ConfigLoader.Load(path).Dictation;
+    if (dictation?.Transcriber != "haas") return false;
+    if (dictation?.Haas?.Command?.SequenceEqual(["python3", "scripts/haas_transcribe.py"]) != true) return false;
+    if (dictation?.Haas?.TimeoutSeconds != 45) return false;
+    if (dictation?.Haas?.Vocabulary != "/tmp/v.json") return false;
+    var omitted = Path.Combine(temp.Dir, "omitted.json");
+    File.WriteAllText(omitted, """{"wakeWords":["a"],"command":"wake","dictation":{"transcriber":"haas","haas":{"command":["x"]}}}""");
+    return ConfigLoader.Load(omitted).Dictation?.Haas?.TimeoutSeconds is null;
+}
+
+static bool HaasConfigRejectsUnknownTranscriber() =>
+    Rejects("""{"wakeWords":["a"],"command":"wake","dictation":{"transcriber":"local"}}""", "dictation.transcriber");
+
+static bool HaasConfigRejectsEmptyCommand() =>
+    Rejects("""{"wakeWords":["a"],"command":"wake","dictation":{"transcriber":"haas"}}""", "dictation.haas.command")
+    && Rejects("""{"wakeWords":["a"],"command":"wake","dictation":{"transcriber":"haas","haas":{"command":[]}}}""", "dictation.haas.command")
+    && Rejects("""{"wakeWords":["a"],"command":"wake","dictation":{"transcriber":"haas","haas":{"command":["x"],"timeoutSeconds":0}}}""", "dictation.haas.timeoutSeconds");
+
+static bool HaasNoBadProcess(IEnumerable<ProcessStartInfo> seen) =>
+    !seen.Any(psi => (psi.FileName + " " + string.Join(' ', psi.ArgumentList)).Contains("superwhisper", StringComparison.OrdinalIgnoreCase)
+        || (psi.FileName + " " + string.Join(' ', psi.ArgumentList)).Contains("rundll32", StringComparison.OrdinalIgnoreCase));
+
+static bool HaasRunnerSendsMockTextToTmux()
+{
+    using var temp = RuntimeTemp();
+    var script = HaasMockScript(temp.Dir, "mock.sh", "printf 'hello haas'");
+    var seen = new List<ProcessStartInfo>();
+    Func<ProcessStartInfo, Process?> start = psi => { seen.Add(psi); return Process.Start(psi); };
+    var routed = new List<string>();
+    var pasted = new List<string>();
+    var handoff = new HaasRunnerHandoff(Path.Combine(temp.Dir, "handoff"), ["/bin/sh", script], 30, null, start,
+        onTranscribed: text => { routed.Add(text); return Task.FromResult(RouteResult.Sent); },
+        paste: (text, _) => { pasted.Add(text); return true; });
+    if (handoff is not HaasRunnerHandoff) return false;
+    var audio = new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2));
+    var (_, output) = CaptureConsole(() => { var r = SubmitHandoff(handoff, audio); return r.Status == HandoffStatus.Transcribed ? 0 : 1; });
+    var wav = seen.FirstOrDefault()?.ArgumentList.LastOrDefault();
+    return routed.SequenceEqual(["hello haas"])
+        && pasted.Count == 0
+        && HaasNoBadProcess(seen)
+        && seen.Count == 1
+        && seen[0].FileName == "/bin/sh"
+        && seen[0].ArgumentList[0] == script
+        && seen[0].ArgumentList[^1].EndsWith(".wav", StringComparison.Ordinal)
+        && output.Contains("dictation delivered: pane", StringComparison.Ordinal);
+}
+
+static bool HaasRunnerSendsMockTextToActionUrl()
+{
+    using var temp = RuntimeTemp();
+    var script = HaasMockScript(temp.Dir, "mock.sh", "printf 'action text'");
+    var seen = new List<ProcessStartInfo>();
+    Func<ProcessStartInfo, Process?> start = psi => { seen.Add(psi); return psi.FileName == "rundll32.exe" ? Process.GetCurrentProcess() : Process.Start(psi); };
+    var tmuxCalls = 0;
+    var pasted = 0;
+    var handoff = new HaasRunnerHandoff(Path.Combine(temp.Dir, "handoff"), ["/bin/sh", script], 30, null, start,
+        onTranscribed: _ => { tmuxCalls++; return Task.FromResult(RouteResult.Sent); },
+        paste: (_, _) => { pasted++; return true; });
+    var action = new WakeAction("progress", ["プログレス"], "alter://action/1?input=old&k=v");
+    var audio = new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2), Target: 0x42, Action: action);
+    HandoffResult? result = null;
+    var (_, output) = CaptureConsole(() => { result = SubmitHandoff(handoff, audio); return 0; });
+    var opened = seen.Where(psi => psi.FileName == "rundll32.exe").ToList();
+    return result!.Status == HandoffStatus.Transcribed
+        && tmuxCalls == 0
+        && pasted == 0
+        && !seen.Any(psi => psi.FileName.Contains("superwhisper", StringComparison.OrdinalIgnoreCase))
+        && opened.Count == 1
+        && opened[0].ArgumentList.Any(arg => arg.Contains("alter://action/1", StringComparison.Ordinal))
+        && output.Contains("dictation delivered: action progress", StringComparison.Ordinal);
+}
+
+static bool HaasRunnerPastesWhenTmuxMisses()
+{
+    using var temp = RuntimeTemp();
+    var script = HaasMockScript(temp.Dir, "mock.sh", "printf 'paste me'");
+    var seen = new List<ProcessStartInfo>();
+    Func<ProcessStartInfo, Process?> start = psi => { seen.Add(psi); return Process.Start(psi); };
+    var pasted = new List<string>();
+    var handoff = new HaasRunnerHandoff(Path.Combine(temp.Dir, "handoff"), ["/bin/sh", script], 30, null, start,
+        onTranscribed: _ => Task.FromResult(RouteResult.NotRouted),
+        paste: (text, _) => { pasted.Add(text); return true; });
+    var audio = new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2));
+    var result = SubmitHandoff(handoff, audio);
+    return result.Status == HandoffStatus.Transcribed
+        && pasted.SequenceEqual(["paste me"])
+        && HaasNoBadProcess(seen);
+}
+
+static bool HaasRunnerNonZeroExitDoesNotSend() =>
+    HaasFailureYieldsNoResult("fail.sh", "exit 1", 30);
+
+static bool HaasRunnerEmptyStdoutDoesNotSend() =>
+    HaasFailureYieldsNoResult("empty.sh", "printf ''", 30);
+
+static bool HaasRunnerTimeoutDoesNotSend() =>
+    HaasFailureYieldsNoResult("slow.sh", "sleep 5", 1);
+
+static bool HaasFailureYieldsNoResult(string name, string body, double timeout)
+{
+    using var temp = RuntimeTemp();
+    var script = HaasMockScript(temp.Dir, name, body);
+    var seen = new List<ProcessStartInfo>();
+    Func<ProcessStartInfo, Process?> start = psi => { seen.Add(psi); return Process.Start(psi); };
+    var tmuxCalls = 0;
+    var pasted = 0;
+    var posted = 0;
+    var handoff = new HaasRunnerHandoff(Path.Combine(temp.Dir, "handoff"), ["/bin/sh", script], timeout, null, start,
+        onTranscribed: _ => { tmuxCalls++; return Task.FromResult(RouteResult.Sent); },
+        post: (_, _, _) => { posted++; return Task.CompletedTask; },
+        paste: (_, _) => { pasted++; return true; });
+    if (handoff is not HaasRunnerHandoff || handoff is LocalHistoryHandoff) return false;
+    var audio = new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2));
+    HandoffResult? result = null;
+    var (_, output) = CaptureConsole(() => { result = SubmitHandoff(handoff, audio); return 0; });
+    return result!.Status == HandoffStatus.NoResult
+        && tmuxCalls == 0
+        && pasted == 0
+        && posted == 0
+        && HaasNoBadProcess(seen)
+        && output.Contains("dictation: haas runner failed", StringComparison.Ordinal);
+}
+
+static bool HaasDefaultFactoryKeepsSuperwhisper()
+{
+    using var temp = RuntimeTemp();
+    var root = Path.Combine(temp.Dir, "handoff");
+    var recordings = Path.Combine(temp.Dir, "recordings");
+    var plain = new VoiceSwitchConfig(["w"], null, "cmd", Dictation: new DictationConfig());
+    var named = new VoiceSwitchConfig(["w"], null, "cmd", Dictation: new DictationConfig(Transcriber: "superwhisper"));
+    var haas = HaasTestConfig("haas", ["/bin/sh", "x"], 5);
+    var plainWrapped = DictationHandoffs.Create(plain, root, recordings, wrapLocalHistory: true);
+    var namedWrapped = DictationHandoffs.Create(named, root, recordings, wrapLocalHistory: true);
+    var plainBare = DictationHandoffs.Create(plain, root, recordings, wrapLocalHistory: false);
+    var namedBare = DictationHandoffs.Create(named, root, recordings, wrapLocalHistory: false);
+    var haasWrapped = DictationHandoffs.Create(haas, root, recordings, wrapLocalHistory: true);
+    var haasBare = DictationHandoffs.Create(haas, root, recordings, wrapLocalHistory: false);
+    return plainWrapped is LocalHistoryHandoff
+        && namedWrapped is LocalHistoryHandoff
+        && plainBare is RegisteredSuperwhisperHandoff
+        && namedBare is RegisteredSuperwhisperHandoff
+        && haasWrapped is HaasRunnerHandoff
+        && haasBare is HaasRunnerHandoff;
+}
 
 static bool SuperwhisperModeResolvePrefersKeyOverName()
 {

@@ -158,3 +158,22 @@ win-verify: ## Verify Windows path layout / Makefile routing (no Swift SDK requi
 	@grep -q 'defaultSuperwhisperToggle' Sources/voice-switch/Platform.swift
 	@grep -q 'SpeechPowerShell' dotnet/VoiceSwitch.Windows/Program.cs
 	@echo "win-verify: ok (PC=$(PC) PC_NORM=$(PC_NORM) default-goal=$(.DEFAULT_GOAL))"
+
+HAAS_VENV ?= $(HOME)/.cache/voice-switch/haas-venv
+HAAS_MODEL_DIR ?= $(HOME)/.cache/voice-switch/models/Haas-ja-v1.0
+
+.PHONY: haas-setup haas-model
+
+haas-setup: ## Create the GPU venv and install haas-asr (needs NVIDIA + CUDA)
+	mkdir -p "$$(dirname "$(HAAS_VENV)")"
+	python3 -m venv "$(HAAS_VENV)"
+	"$(HAAS_VENV)/bin/pip" install --upgrade pip
+	"$(HAAS_VENV)/bin/pip" install "haas-asr @ git+https://github.com/third-intelligence/Haas-ASR.git"
+
+haas-model: ## Download Haas-ja-v1.0 weights (needs huggingface-cli or huggingface_hub)
+	mkdir -p "$(HAAS_MODEL_DIR)"
+	@if command -v huggingface-cli >/dev/null 2>&1; then \
+		huggingface-cli download third-intelligence/Haas-ja-v1.0 --local-dir "$(HAAS_MODEL_DIR)"; \
+	else \
+		python3 -c "from huggingface_hub import snapshot_download; snapshot_download('third-intelligence/Haas-ja-v1.0', local_dir='$(HAAS_MODEL_DIR)')"; \
+	fi

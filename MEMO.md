@@ -69,3 +69,8 @@ KPI n=8 failed=0 meanCER=0.056 p50local=252.5ms p50superwhisper=172.5ms
 - Mac: `.claude/skills/verify-voice-switch-mac/features/local-transcription.md`（LT0〜LT6）と、ヘルパー `engine_bench_mac.py`
 - Windows: `.claude/skills/verify-voice-switch/features/local-transcription.md`
 - LT0 は今すぐ実行できる。LT1〜LT6 は実装後に、実際のログの行に合わせて書き直す。
+
+## 2026-10-31 追記: 日本語本文は Haas を外部 GPU ランナーで
+
+- 日本語本文の推奨は Haas-ja-v1.0（`third-intelligence/Haas-ja-v1.0`）を外部 GPU ランナー（`scripts/haas_transcribe.py`）で動かす方式。Linux + NVIDIA GPU（CUDA/Triton）が必須。
+- Cohere GGUF / Whisper（transcribe.cpp / speech.cpp）は CPU と Mac の代替として残す。`local` は設定値ではない（`dictation.transcriber` は `superwhisper` か `haas` のみ）。

@@ -95,6 +95,32 @@ Grok Bot 向けの例（既定のフィールドをそのまま書いたもの�
 
 メニューは、一時停止（マイクを放す）、マイク、設定ファイルを開く、ログを開く、ログイン時に起動、終了。
 
+
+## Haas-ja-v1.0 (Japanese local option)
+
+日本語本文のオプトイン文字起こし `third-intelligence/Haas-ja-v1.0`（Apache 2.0）を外部 GPU ランナーで使う。
+`dictation.transcriber` を `"haas"` にし、`dictation.haas.command` に空でない argv 配列を書く。
+省略または `"superwhisper"` は従来の Superwhisper 受け渡しのまま。`local` は設定値ではない。
+
+Linux + NVIDIA GPU（CUDA/Triton）が必須。Mac のプロセス内実行は非対応。
+
+```json
+"dictation": {
+  "transcriber": "haas",
+  "haas": {
+    "command": ["python3", "scripts/haas_transcribe.py"],
+    "timeoutSeconds": 120
+  }
+}
+```
+
+Linux GPU: `make haas-setup` と `make haas-model` のあと `"command": ["python3", "scripts/haas_transcribe.py"]`。
+Windows 経由（wsl.exe）: `"command": ["wsl.exe", "-e", "python3", "/mnt/c/takeda/tools/voice-switch/scripts/haas_transcribe.py"]`。
+リモート GPU のラッパー: `"command": ["ssh", "gpu-box", "haas-transcribe"]`。ラッパーは標準出力に本文だけを出す。
+
+契約は 16 kHz モノラル WAV を最後に渡し、設定時はその前に `--vocab` とパスを付け、標準出力に UTF-8 本文を返し、終了 0。
+失敗（非ゼロ終了・空出力・タイムアウト）は結果なしで終わり、Superwhisper には戻さない。
+
 ## ペインへの振り分け（tmux と Jev）
 
 入力の本文は、`tmux list-panes -a -F '#{pane_id}\t#{window_name}\t#{pane_title}\t#{pane_current_command}'` から作る閉じたカタログと照合する。macOS では `/usr/bin/env` 経由で実行する。Windows では `wsl.exe -e tmux ...` として実行するので、対象は WSL の中の tmux。アプリは tmux サーバを起動しない。tmux が失敗したか、サーバが無いときは、何も送らず失敗をログする。本文に、空でないラベルが大文字小文字を無視した部分文字列として含まれると、そのペインはヒットする。ラベルは、ペインのタイトル、ウィンドウ名、現在のコマンド。Linux では、`/proc` からそのペインに見つけた許可リストのエージェント名（`claude`、`aider`、`gemini`、`copilot`、`codex`、`devin`、`hermes`、`opencode`、`pi`、`grok`、`cursor-agent`）もラベルになる。Mac と Windows には `/proc` の走査が無いので、タイトル、ウィンドウ名、コマンドだけが一致する。

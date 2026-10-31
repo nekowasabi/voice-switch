@@ -425,7 +425,70 @@ func macPasteSafety(target: NSRunningApplication, lastInput: TimeInterval) -> Pa
 /// notDispatched means the caller should fall back to local history; noResult means superwhisper returned no words.
 enum HandoffOutcome { case notDispatched, noResult, delivered }
 
+func handoffHaas(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplication?, action: WakeAction?, origin: WakeOrigin, sessionID: UUID, transcriptPolicy: AutomaticTranscriptPolicy, stillCurrent: () -> Bool) async -> HandoffOutcome {
+    if DictationHistory.shared.select(sessionID) != nil { return .delivered }
+    let historyGeneration = DictationHistory.shared.generation
+    guard let cmd = cfg.haas?.command, !cmd.isEmpty, cmd.allSatisfy({ !$0.isEmpty }) else {
+        log("dictation: haas runner failed: missing command \(sidField(sessionID))")
+        return .noResult
+    }
+    let timeout = cfg.haas?.timeoutSeconds ?? 120
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("voice-switch")
+    let wav = dir.appendingPathComponent("\(UUID().uuidString).wav")
+    do {
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try writeWAV(Array(trimQuietHead(samples, rate: rate)), to: wav)
+    } catch {
+        log("dictation: haas runner failed: wav write \(error) \(sidField(sessionID))")
+        return .noResult
+    }
+    let submitted = Date()
+    guard let result = HaasRunner.run(command: cmd, vocabulary: cfg.haas?.vocabulary, wavPath: wav.path, timeoutSeconds: timeout) else {
+        log("dictation: haas runner failed: non-zero exit, empty stdout, or timeout \(sidField(sessionID)) wav=\(wav.path)")
+        return .noResult
+    }
+    try? FileManager.default.removeItem(at: wav)
+    log("dictation: haas \(result.count) chars in \(Int(Date().timeIntervalSince(submitted) * 1000)) ms \(sidField(sessionID))")
+    guard stillCurrent() else { return .delivered }
+    guard DictationHistory.shared.add(id: sessionID, text: result, origin: origin, expectedGeneration: historyGeneration, policy: transcriptPolicy) else { return .delivered }
+    let controlled = origin.isAutomatic
+    if controlled { return .delivered }
+    if let action, action.tokenEnv != nil {
+        do {
+            try await postAction(action, text: result)
+            log("dictation delivered: post \(action.name)")
+        } catch {
+            log("dictation action \(action.name) failed: \(error.localizedDescription)")
+        }
+        return .delivered
+    }
+    if let action {
+        if GrokBotPrompt.isPrompt(action.url.rawValue) {
+            let (_, truncated) = GrokBotPrompt.fit(result)
+            if truncated {
+                log("grokbot prompt text truncated to 1000 encoded chars for action \(action.name)")
+            }
+        }
+        let proc = Platform.urlProcess(action.url)
+        proc.arguments = action.openArguments(input: result)
+        Platform.runURLProcess(proc, wait: false)
+        return .delivered
+    }
+    let route = await routeDictation(result)
+    if decideDictationDelivery(modeRequested: true, route: route.disposition) == .paste {
+        let body = route.disposition == .sendFailed ? (route.body ?? result) : result
+        _ = await MainActor.run { pasteDictation(body, target: target) }
+        log("dictation delivered: paste")
+    } else {
+        log("dictation delivered: pane")
+    }
+    return .delivered
+}
+
 func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplication?, action: WakeAction?, origin: WakeOrigin = WakeOrigin(rule: .strict, inputIdleSeconds: nil), sessionID: UUID = UUID(), transcriptPolicy: AutomaticTranscriptPolicy = .disabled, stillCurrent: () -> Bool = { true }) async -> HandoffOutcome {
+    if (cfg.transcriber ?? "superwhisper") == "haas" {
+        return await handoffHaas(samples, cfg: cfg, target: target, action: action, origin: origin, sessionID: sessionID, transcriptPolicy: transcriptPolicy, stillCurrent: stillCurrent)
+    }
     if DictationHistory.shared.select(sessionID) != nil { return .delivered }
     guard let ownership = await acquireModeOwnership() else {
         log("superwhisper handoff: not dispatched, mode lock not acquired within 45 s \(sidField(sessionID))"); return .notDispatched

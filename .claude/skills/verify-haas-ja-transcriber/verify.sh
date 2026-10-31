@@ -197,7 +197,7 @@ item_runner() {
     echo "--help did not mention wav" >>"$EVIDENCE/item-detail.txt"
     return 1
   fi
-  if ! python3 - "$src" <<'PY'
+  if python3 - "$src" <<'PY'
 import ast, sys
 tree = ast.parse(open(sys.argv[1], encoding="utf-8").read())
 for node in tree.body:

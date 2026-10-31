@@ -98,12 +98,13 @@ public static class Program
                     }
                     else
                     {
-                        handoff = new RegisteredSuperwhisperHandoff(
+                        handoff = DictationHandoffs.Create(
+                            config,
                             RegisteredSuperwhisperHandoff.DefaultRoot(),
                             WindowsPaths.SuperwhisperRecordingsPath(config.Dictation),
-                            dryRun: effectiveDryRun,
                             onTranscribed: TmuxPaneRouter.RouteAsync,
-                            superwhisperMode: config.Dictation.SuperwhisperMode);
+                            dryRun: effectiveDryRun,
+                            wrapLocalHistory: false);
                     }
 
                     if (handoff is RegisteredSuperwhisperHandoff registered)
@@ -125,7 +126,7 @@ public static class Program
                         capture = MicCapture.Open(null, config);
                     }
 
-                    if (!effectiveDryRun && options.OutputDir is null) handoff = LocalHistoryHandoff.Wrap(handoff, config, Tray.WindowFocus.Paste);
+                    if (!effectiveDryRun && options.OutputDir is null && handoff is not HaasRunnerHandoff) handoff = LocalHistoryHandoff.Wrap(handoff, config, Tray.WindowFocus.Paste);
                     if (config.Dictation?.NoWakeWord?.Enabled == true) _ = WordAgreement.Warm();
                     DictationJournal.Bind(config, Log.Info);
                     return new WindowsDictationRuntime(
