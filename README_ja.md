@@ -114,7 +114,7 @@ Linux + NVIDIA GPU（CUDA/Triton）が必須。Mac のプロセス内実行は�
 }
 ```
 
-Linux GPU: `make haas-setup` と `make haas-model` のあと `"command": ["python3", "scripts/haas_transcribe.py"]`。
+Linux GPU: `make haas-setup` と `make haas-model` のあと `"command": ["python3", "scripts/haas_transcribe.py"]`。`~/.cache/voice-switch/models/Haas-ja-v1.0/Haas-ja-v1.0.nemo` があればそれを読み、無ければ `third-intelligence/Haas-ja-v1.0` を読む。
 Windows 経由（wsl.exe）: `"command": ["wsl.exe", "-e", "python3", "/mnt/c/takeda/tools/voice-switch/scripts/haas_transcribe.py"]`。
 リモート GPU のラッパー: `"command": ["ssh", "gpu-box", "haas-transcribe"]`。ラッパーは標準出力に本文だけを出す。
 

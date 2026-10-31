@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Collections.Immutable;
+using System.Text;
 using VoiceSwitch.Windows.Core;
 
 namespace VoiceSwitch.Windows;
@@ -80,6 +81,8 @@ public sealed class HaasRunnerHandoff : IDictationHandoff
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            StandardOutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+            StandardErrorEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
         };
         foreach (var arg in argv.Skip(1)) psi.ArgumentList.Add(arg);
         Process? process;

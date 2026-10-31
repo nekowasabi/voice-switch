@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import io
 import json
+import os
 import sys
-import wave
+from pathlib import Path
 
 
 DEFAULT_MODEL = "third-intelligence/Haas-ja-v1.0"
+LONGFORM_SECONDS = 30
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -24,30 +25,34 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("wav", help="input WAV path (16 kHz mono PCM16)")
     parser.add_argument("--vocab", default=None, help="optional vocabulary JSON path (object of word to readings)")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help=f"model id (default {DEFAULT_MODEL})")
+    parser.add_argument("--model", default=DEFAULT_MODEL, help=f"model id or .nemo path (default {DEFAULT_MODEL})")
     return parser
 
 
-def wav_duration_seconds(path: str) -> float:
-    with wave.open(path, "rb") as handle:
-        frames = handle.getnframes()
-        rate = handle.getframerate() or 16000
-        return frames / float(rate)
+def cached_nemo() -> Path:
+    root = os.environ.get("HAAS_MODEL_DIR")
+    if root:
+        return Path(root) / "Haas-ja-v1.0.nemo"
+    return Path.home() / ".cache/voice-switch/models/Haas-ja-v1.0/Haas-ja-v1.0.nemo"
 
 
-def load_audio(path: str):
-    # haas_asr accepts a path; keep raw bytes out of stdout. Real decode
-    # happens inside haas_asr; here we just pass the path through.
-    return path
+def resolve_model(requested: str) -> str:
+    # make haas-model stores the repo here. load_model takes a .nemo file or a hub id.
+    if requested == DEFAULT_MODEL:
+        local = cached_nemo()
+        if local.is_file():
+            return str(local)
+    return requested
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        import haas_asr  # type: ignore
-    except Exception:
+        import haas_asr
+    except ImportError:
         print(
-            "error: haas_asr is not installed; run `make haas-setup` or `pip install haas-asr`",
+            "error: haas_asr is not installed; run `make haas-setup` or "
+            'pip install "haas-asr @ git+https://github.com/third-intelligence/Haas-ASR.git"',
             file=sys.stderr,
         )
         return 1
@@ -64,24 +69,20 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:
             print(f"error: haas_asr.Vocabulary failed: {exc}", file=sys.stderr)
             return 1
-    try:
-        duration = wav_duration_seconds(args.wav)
-    except FileNotFoundError:
-        print(f"error: WAV not found: {args.wav}", file=sys.stderr)
-        return 1
-    except Exception as exc:
-        print(f"error: cannot read WAV: {exc}", file=sys.stderr)
-        return 1
-    audio = load_audio(args.wav)
+    model_ref = resolve_model(args.model)
     # Keep library chatter off stdout; the transcript is the only stdout content.
-    buffer = io.StringIO()
     try:
         with contextlib.redirect_stdout(sys.stderr):
-            model = haas_asr.load_model(args.model)
-            if duration > 30:
+            model = haas_asr.load_model(model_ref)
+            audio = haas_asr.load_audio(args.wav)
+            if audio.shape[0] > LONGFORM_SECONDS * haas_asr.SAMPLE_RATE:
                 text = haas_asr.transcribe_longform(model, audio, batch_size=64, vocabulary=vocab)
             else:
                 text = haas_asr.transcribe(model, [audio], vocabulary=vocab)[0]
+    except FileNotFoundError as exc:
+        missing = exc.filename or args.wav
+        print(f"error: file not found: {missing}", file=sys.stderr)
+        return 1
     except Exception as exc:
         print(f"error: transcription failed: {exc}", file=sys.stderr)
         return 1
@@ -91,7 +92,8 @@ def main(argv: list[str] | None = None) -> int:
     if not text:
         print("error: empty transcript", file=sys.stderr)
         return 1
-    sys.stdout.write(text + "\n")
+    sys.stdout.buffer.write(text.encode("utf-8") + b"\n")
+    sys.stdout.buffer.flush()
     return 0
 
 

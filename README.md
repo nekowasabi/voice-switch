@@ -130,7 +130,7 @@ Requires Linux with an NVIDIA GPU (CUDA/Triton). Mac in-process transcription is
 }
 ```
 
-Linux GPU: `"command": ["python3", "scripts/haas_transcribe.py"]` after `make haas-setup` and `make haas-model`.
+Linux GPU: `"command": ["python3", "scripts/haas_transcribe.py"]` after `make haas-setup` and `make haas-model`. The runner loads `~/.cache/voice-switch/models/Haas-ja-v1.0/Haas-ja-v1.0.nemo` when that file is present, and otherwise loads `third-intelligence/Haas-ja-v1.0`.
 Windows via WSL: `"command": ["wsl.exe", "-e", "python3", "/mnt/c/takeda/tools/voice-switch/scripts/haas_transcribe.py"]`.
 Remote GPU wrapper: `"command": ["ssh", "gpu-box", "haas-transcribe"]` where the wrapper prints only the transcript on stdout.
 
