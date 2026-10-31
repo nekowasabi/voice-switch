@@ -95,13 +95,14 @@ uninstall: ## macOS: remove installed app
 logs: ## macOS: tail the log file
 	tail -f $(HOME)/Library/Logs/voice-switch.log
 
-win: win-publish ## Windows: build, test, and publish voice-switch.exe (PC=wsl default)
+win: win-publish ## Windows: build and publish voice-switch.exe without tests (PC=wsl default); run make win-test while developing
 
 win-restore: ## Windows: restore .NET projects
 	$(DOTNET) restore $(WIN_APP) -r $(WIN_RID) $(DOTNET_RESTORE_FLAGS)
 	$(DOTNET) restore $(WIN_TESTS) $(DOTNET_RESTORE_FLAGS)
 
-win-build: win-restore win-test ## Windows: build .NET app and behavior tests
+# Tests are not a prerequisite: they made every build-and-try cycle slow. Run make win-test separately.
+win-build: win-restore ## Windows: build .NET app (tests run only with make win-test)
 	$(DOTNET) build $(WIN_APP) -c $(WIN_CONFIG) -r $(WIN_RID) --no-restore
 
 win-test: win-restore ## Windows: run behavior tests
