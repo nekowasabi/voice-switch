@@ -1023,9 +1023,8 @@ final class Listener {
         }
     }
 
-    /// `hearing`: a voice is heard but the voice activity gate has not opened an automatic session yet.
     /// `stopping`: a stop word was heard and the dictation is waiting the moment that confirms it.
-    enum Phase { case idle, waiting, hearing, recording, stopping, ended, followup }
+    enum Phase { case idle, waiting, recording, stopping, ended, followup }
 
     /// Called on the main thread whenever the dictation phase changes.
     var onPhase: ((Phase, String?) -> Void)?
@@ -1094,14 +1093,11 @@ final class Listener {
             var endedByUser = false
             // Derived from `dictation` after every frame (defer covers each `continue`) instead of at each place that sets it.
             defer {
-                // An automatic session awaiting its agreed words keeps the mic glyph, so the pill does not vanish between it and the red dot.
+                // An automatic session that has heard speech shows nothing until its words are confirmed, and a waiting phrase shows nothing,
+                // so a noise that blips the detector never lights the pill.
                 let phase: Phase = endedByUser ? .ended
-                    : dictation.map { $0.stopHeard ? .stopping : !$0.heardSpeech ? .waiting : $0.confirmed ? .recording : .hearing }
-                    ?? (clock < followupUntil && config.cfg.dictation?.noWakeWord?.followup == true ? .followup
-                        // Under the gate only a phrase the detector heard is a voice; energy alone can be speaker playback (MS14).
-                        : speechFrames > 0 && config.cfg.dictation?.noWakeWord?.enabled == true
-                            && (phraseHAL > 0 || config.cfg.dictation?.echoCancellation == false || voiceActivity.withLock { $0.device == 0 })
-                            && (lastAutomaticBlock == nil || lastAutomaticBlock == Listener.noVoiceActivity) ? .hearing : .idle)
+                    : dictation.map { $0.heardSpeech && !$0.confirmed ? .idle : $0.stopHeard ? .stopping : !$0.heardSpeech ? .waiting : .recording }
+                    ?? (clock < followupUntil && config.cfg.dictation?.noWakeWord?.followup == true ? .followup : .idle)
                 // .ended hides itself after a moment; the idle that follows it is not a change.
                 if phase != shown, !(shown == .ended && phase == .idle) {
                     shown = phase
@@ -1904,7 +1900,8 @@ final class HUD {
     /// icon: the waking action's `icon`, drawn in place of the mic while .waiting; nil keeps the mic.
     func show(_ phase: Listener.Phase, icon: String? = nil) {
         self.phase = phase
-        if phase == .waiting { glyphView.waitingImage = icon.flatMap(Self.image) }
+        // Only .waiting carries the action icon; clear it so one left from the last action does not show on a later .waiting.
+        glyphView.waitingImage = phase == .waiting ? icon.flatMap(Self.image) : nil
         render()
     }
 
@@ -1944,8 +1941,6 @@ final class HUD {
         // A short recording dropped before its handoff never reports a delivery.
         case (.ended, nil): (.processing, 1.5)
         case (.followup, nil): (.followup, nil)
-        // Below every delivery, so superwhisper's own recording keeps its red dot while the user speaks into it.
-        case (.hearing, nil): (.waiting, nil)
         case (.idle, nil): nil
         } }
         // A HUD the user reported missing leaves no other trace, so each visible change is logged.
