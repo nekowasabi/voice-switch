@@ -194,10 +194,13 @@ public static class DictationBoundaries
 
     // Mac earlyWake(). A probe whose text is the start of a longer wake (音声入 or 音声 for 音声入力) may be mid-word,
     // so it fires only as a bare wake word after the prefix gap. Fuzzy readings never fire from a probe.
-    public static WakePrefix? EarlyWake(RecognizedUtterance recognition, IReadOnlyList<WakeWord> wakes)
+    // Ordered action wakes: prefixWakes is every wake word in every set for the prefix gap; guardWakes is the
+    // pause-before-body list (default set alone for a plain wake, every word for an action wake).
+    public static WakePrefix? EarlyWake(RecognizedUtterance recognition, IReadOnlyList<WakeWord> wakes, IReadOnlyList<WakeWord>? guardWakes = null, IReadOnlyList<WakeWord>? prefixWakes = null)
     {
         var text = TextMatching.Normalize(recognition.Text);
-        if (wakes.Any(wake => wake.Text.Length > text.Length && wake.Text.StartsWith(text, StringComparison.Ordinal)))
+        var prefixWords = prefixWakes ?? guardWakes ?? wakes;
+        if (prefixWords.Any(wake => wake.Text.Length > text.Length && wake.Text.StartsWith(text, StringComparison.Ordinal)))
         {
             if (recognition.TailSilenceSamples < PrefixGapSamples || !wakes.Any(wake => wake.Text == text))
             {
@@ -208,7 +211,7 @@ public static class DictationBoundaries
             return new WakePrefix(last?.Range.End ?? recognition.Source.End, null);
         }
 
-        return LeadingWake(recognition, wakes) switch
+        return LeadingWake(recognition, wakes, guardWakes) switch
         {
             { Distance: > 0 } => null,
             { BodyStart: not null } hit => hit,
@@ -217,10 +220,87 @@ public static class DictationBoundaries
         };
     }
 
+    // Ordered early wake across the default set then each action in config order. Returns the hit and the
+    // set index (0 is the default set). The prefix gap sees every wake word; the default pause check sees
+    // only the default words while an action pause check sees every wake word.
+    public static (WakePrefix Prefix, int SetIndex)? EarlyWakeOrdered(RecognizedUtterance recognition, IReadOnlyList<(WakeAction? Owner, WakeWord[] Wakes)> wakeSets)
+    {
+        var all = wakeSets.SelectMany(set => set.Wakes).ToArray();
+        var text = TextMatching.Normalize(recognition.Text);
+        var lastEnd = recognition.Lexemes.LastOrDefault(run => TextMatching.Normalize(run.Text).Length > 0)?.Range.End ?? recognition.Source.End;
+        // The whole probe text is a proper prefix of some wake word anywhere: only a bare exact word fires, after the gap.
+        if (all.Any(wake => wake.Text.Length > text.Length && wake.Text.StartsWith(text, StringComparison.Ordinal)))
+        {
+            if (recognition.TailSilenceSamples < PrefixGapSamples)
+            {
+                return null;
+            }
+
+            for (var i = 0; i < wakeSets.Count; i++)
+            {
+                if (wakeSets[i].Wakes.Any(wake => wake.Text == text))
+                {
+                    return (new WakePrefix(lastEnd, null), i);
+                }
+            }
+
+            return null;
+        }
+
+        // A bare probe that equals a wake word exactly fires here, so a short default wake never steals an
+        // action word through a fused split. The winner is the first set that contains that exact word.
+        if (all.Any(wake => wake.Text == text))
+        {
+            if (recognition.TailSilenceSamples <= 0)
+            {
+                return null;
+            }
+
+            for (var i = 0; i < wakeSets.Count; i++)
+            {
+                if (wakeSets[i].Wakes.Any(wake => wake.Text == text))
+                {
+                    return (new WakePrefix(lastEnd, null), i);
+                }
+            }
+
+            return null;
+        }
+
+        var defaultHit = LeadingWake(recognition, wakeSets[0].Wakes) switch
+        {
+            { Distance: > 0 } => null,
+            { BodyStart: not null } hit => hit,
+            { } hit when recognition.TailSilenceSamples > 0 => hit,
+            _ => null
+        };
+        if (defaultHit is not null)
+        {
+            return (defaultHit, 0);
+        }
+
+        for (var i = 1; i < wakeSets.Count; i++)
+        {
+            var hit = LeadingWake(recognition, wakeSets[i].Wakes, guardWakes: all) switch
+            {
+                { Distance: > 0 } => null,
+                { BodyStart: not null } h => h,
+                { } h when recognition.TailSilenceSamples > 0 => h,
+                _ => null
+            };
+            if (hit is not null)
+            {
+                return (hit, i);
+            }
+        }
+
+        return null;
+    }
+
     public static WakePrefix? LeadingWake(RecognizedUtterance recognition, IEnumerable<string> wakeWords) =>
         LeadingWake(recognition, wakeWords.Select(word => WakeWord.From(word)).ToArray());
 
-    public static WakePrefix? LeadingWake(RecognizedUtterance recognition, IReadOnlyList<WakeWord> wakes)
+    public static WakePrefix? LeadingWake(RecognizedUtterance recognition, IReadOnlyList<WakeWord> wakes, IReadOnlyList<WakeWord>? guardWakes = null)
     {
         var lexemes = recognition.Lexemes.Where(run => TextMatching.Normalize(run.Text).Length > 0).ToArray();
         if (lexemes.Length == 0)
@@ -235,8 +315,14 @@ public static class DictationBoundaries
             .OrderByDescending(value => value.Length)
             .ToArray();
 
+        var guardWords = (guardWakes ?? wakes)
+            .Select(wake => wake.Text)
+            .Where(value => value.Length > 0)
+            .Distinct()
+            .ToArray();
+
         bool StartsLongerWake(string wake) =>
-            normalizedWake.Any(value => value.Length > wake.Length && value.StartsWith(wake, StringComparison.Ordinal));
+            guardWords.Any(value => value.Length > wake.Length && value.StartsWith(wake, StringComparison.Ordinal));
 
         // A probe that has ended in the prefix gap is read like a closed utterance, so an exact おんせい can fire early.
         var closed = recognition.Extent == RecognitionExtent.ClosedUtterance
@@ -824,9 +910,13 @@ public sealed class DictationSession
 
             if (recognition.Extent == RecognitionExtent.Probe)
             {
-                if (DictationBoundaries.EarlyWake(recognition, wakeSets[0].Wakes) is { BodyStart: long early } && early > wakeEnd)
+                var all = wakeSets.SelectMany(set => set.Wakes).ToArray();
+                WakePrefix? early = Action is null
+                    ? DictationBoundaries.EarlyWake(recognition, wakes, prefixWakes: all)
+                    : DictationBoundaries.EarlyWake(recognition, wakes, guardWakes: all, prefixWakes: all);
+                if (early is { BodyStart: long earlyStart } && earlyStart > wakeEnd)
                 {
-                    StartBody(early, recognition.Source.End, now);
+                    StartBody(earlyStart, recognition.Source.End, now);
                 }
 
                 return null;
@@ -860,15 +950,32 @@ public sealed class DictationSession
 
         if (bodyStart is null)
         {
-            // Probes and rejected hypotheses use the default wakes only, as on Mac.
-            var wake = recognition.Extent == RecognitionExtent.Probe
-                ? DictationBoundaries.EarlyWake(recognition, wakes)
-                : DictationBoundaries.LeadingWake(recognition, wakes) ?? DictationBoundaries.RejectedWake(recognition, wakes);
+            // Rejected hypotheses stay on the default wakes. Probes use the ordered early wake:
+            // default set first, then each action in config order, with the prefix gap across every word.
+            WakePrefix? wake;
+            if (recognition.Extent == RecognitionExtent.Probe)
+            {
+                wake = null;
+                if (DictationBoundaries.EarlyWakeOrdered(recognition, wakeSets) is { } ordered)
+                {
+                    wake = ordered.Prefix;
+                    if (ordered.SetIndex > 0)
+                    {
+                        wakes = wakeSets[ordered.SetIndex].Wakes;
+                        Action = wakeSets[ordered.SetIndex].Owner;
+                    }
+                }
+            }
+            else
+            {
+                wake = DictationBoundaries.LeadingWake(recognition, wakes) ?? DictationBoundaries.RejectedWake(recognition, wakes);
+            }
             if (wake is null && recognition.Extent != RecognitionExtent.Probe)
             {
+                var all = wakeSets.SelectMany(set => set.Wakes).ToArray();
                 foreach (var (owner, set) in wakeSets.Skip(1))
                 {
-                    if (DictationBoundaries.LeadingWake(recognition, set) is { } hit)
+                    if (DictationBoundaries.LeadingWake(recognition, set, guardWakes: all) is { } hit)
                     {
                         wake = hit;
                         wakes = set;

@@ -226,10 +226,13 @@ public static class CheckMode
                         var began = Stopwatch.GetTimestamp();
                         var early = await recognizer.RecognizeAsync(new RecognitionRequest(++id, RecognitionExtent.Probe, probeRange, samples[(int)probeRange.Start..(int)probeRange.End], probe.TailSilenceSamples), CancellationToken.None);
                         var stt = (long)Stopwatch.GetElapsedTime(began).TotalMilliseconds;
-                        if (DictationBoundaries.EarlyWake(early, config.Wakes()) is { } hit)
+                        if (DictationBoundaries.EarlyWakeOrdered(early, OrderedWakeSets(config)) is { } ordered)
                         {
                             var at = end * 1000L / (long)Segmenter.Rate;
-                            verdicts.Add(hit.BodyStart is null ? $"early-wake@{at}ms+stt{stt}" : $"early-dictate@{at}ms+stt{stt}:{AfterWakes(TextMatching.Normalize(early.Text), config)}");
+                            var owner = OrderedWakeSets(config)[ordered.SetIndex].Owner;
+                            var action = owner is null ? "" : $" action={owner.Name}";
+                            var wakesForRest = owner is null ? config.WakeWords : owner.WakeWords;
+                            verdicts.Add(ordered.Prefix.BodyStart is null ? $"early-wake@{at}ms+stt{stt}{action}" : $"early-dictate@{at}ms+stt{stt}:{AfterWakes(TextMatching.Normalize(early.Text), wakesForRest)}{action}");
                             earlyHit = true;
                         }
                     }
@@ -283,7 +286,12 @@ public static class CheckMode
 
     private static string AfterWakes(string text, VoiceSwitchConfig config)
     {
-        var wakes = config.WakeWords.Select(TextMatching.Normalize).OrderByDescending(wake => wake.Length).ToArray();
+        return AfterWakes(text, config.WakeWords);
+    }
+
+    private static string AfterWakes(string text, string[] wakeWords)
+    {
+        var wakes = wakeWords.Select(TextMatching.Normalize).OrderByDescending(wake => wake.Length).ToArray();
         while (wakes.FirstOrDefault(wake => text.StartsWith(wake, StringComparison.Ordinal)) is { } wake)
         {
             text = text[wake.Length..];
@@ -291,6 +299,9 @@ public static class CheckMode
 
         return text;
     }
+
+    private static IReadOnlyList<(WakeAction? Owner, WakeWord[] Wakes)> OrderedWakeSets(VoiceSwitchConfig config) =>
+        ((config.Windows?.Actions ?? []).Select(action => ((WakeAction?)action, action.Wakes())).Prepend(((WakeAction?)null, config.Wakes())).ToArray());
 }
 
 public sealed class ResidentRuntime

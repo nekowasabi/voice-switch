@@ -80,13 +80,28 @@ struct Segmenter {
 
     /// Early-probe verdict. A transcript that is the start of a longer wake word ("音声入" or "音声" for "音声入力")
     /// may be mid-word: it fires only as a bare wake word, and only after `prefixGapFrames` of silence.
-    static func earlyWake(_ tr: Transcript, cfg: Config, tailSilentFrames: Int) -> (cutAt: Double, rest: String)?? {
-        let words = cfg.wakeWords.map(normalize)
-        if words.contains(where: { $0.count > tr.text.count && $0.hasPrefix(tr.text) }) {
-            return tailSilentFrames >= prefixGapFrames && words.contains(tr.text) ? .some(nil) : nil
+    /// Wake sets stay ordered: default wakes first, then each action in config order. The first set that matches wins.
+    static func earlyWake(_ tr: Transcript, cfg: Config, tailSilentFrames: Int, guardWords: [String]? = nil) -> (start: (cutAt: Double, rest: String)?, action: WakeAction?)? {
+        let defaultWords = cfg.wakeWords
+        let actions = cfg.macOS?.actions ?? []
+        let allWords = defaultWords + actions.flatMap { $0.wakeWords }
+        let _ = guardWords
+        let words = defaultWords.map(normalize)
+        let all = allWords.map(normalize)
+        if all.contains(where: { $0.count > tr.text.count && $0.hasPrefix(tr.text) }) {
+            guard tailSilentFrames >= prefixGapFrames, all.contains(tr.text) else { return nil }
+            if words.contains(tr.text) { return (nil, nil) }
+            for action in actions {
+                if action.wakeWords.map(normalize).contains(tr.text) { return (nil, action) }
+            }
+            return nil
         }
-        if let start = dictationStart(tr, wakeWords: cfg.wakeWords) { return .some(start) }
-        if tailSilentFrames > 0, words.contains(tr.text) { return .some(nil) }
+        if let start = dictationStart(tr, wakeWords: defaultWords) { return (start, nil) }
+        if tailSilentFrames > 0, words.contains(tr.text) { return (nil, nil) }
+        for action in actions {
+            if let start = dictationStart(tr, wakeWords: action.wakeWords, longerWords: allWords) { return (start, action) }
+            if tailSilentFrames > 0, action.wakeWords.map(normalize).contains(tr.text) { return (nil, action) }
+        }
         return nil
     }
 
