@@ -342,7 +342,7 @@
       },
       "windows": {
         "file": "dotnet/VoiceSwitch.Windows/Tray/DictationHud.cs",
-        "markers": ["WaitingImage", "ExtractAssociatedIcon"]
+        "markers": ["ActionImage", "ExtractAssociatedIcon"]
       }
     },
     {

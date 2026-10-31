@@ -37,8 +37,9 @@ public interface IDictationRuntimeObserver
     void NoiseProcessorCompleted(NoiseProcessorStatus status);
     // Called on the runtime thread after a frame or recognition batch changes the phase; Ended -> Idle is not reported.
     void PhaseChanged(DictationPhase phase) { }
-    // Called just before PhaseChanged(Waiting) with the action the wake word chose, null for a plain wake word.
-    void WaitingFor(WakeAction? action) { }
+    // Called just before every PhaseChanged: the action the wake word chose while Waiting or Recording, null otherwise,
+    // so a HUD never keeps an icon left from an earlier action.
+    void ActionIcon(WakeAction? action) { }
     // A stop word or finish key just ended the recording, before the handoff starts. Return true when a sound was played so the runtime ignores the microphone briefly.
     bool PlayStopSound() => false;
 
@@ -1043,7 +1044,7 @@ public sealed class WindowsDictationRuntime
 
         shownPhase = phase;
         Log.Info($"dictation phase: {phase}");
-        if (phase == DictationPhase.Waiting) observer?.WaitingFor(action);
+        observer?.ActionIcon(phase is DictationPhase.Waiting or DictationPhase.Recording ? action : null);
         observer?.PhaseChanged(phase);
     }
 

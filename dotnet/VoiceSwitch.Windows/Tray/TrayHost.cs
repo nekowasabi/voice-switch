@@ -55,8 +55,8 @@ public static class TrayHost
                     Hotkeys: hotkeys,
                     MicDevice: () => TraySettings.MicDevice,
                     OnDelivery: state => hud.Post(() => hud.Deliver(state)),
-                    // Posted before the Waiting phase it belongs to, so the pill opens with the action's icon.
-                    OnWaitingFor: action => hud.Post(() => hud.WaitingIcon(action?.Icon)))),
+                    // Posted before the phase it belongs to, so the pill opens with the action's icon.
+                    OnActionIcon: action => hud.Post(() => hud.ActionIcon(action?.Icon)))),
                 instance.Key,
                 pauseDuringMeet: PauseDuringMeet(options.ConfigPath),
                 // --paused is the user's pause: a call ending must not start the tray.

@@ -52,11 +52,11 @@ public sealed class DictationHud : Form
 
     // UI thread only. The icon an action's wake word shows in place of the mic, so the user sees which mode opened.
     // An exe or dll gives its own icon; anything else is read as an image. A file that fails to load keeps the mic.
-    public void WaitingIcon(string? path)
+    public void ActionIcon(string? path)
     {
         if (path is null)
         {
-            glyph.WaitingImage = null;
+            glyph.ActionImage = null;
             return;
         }
 
@@ -77,7 +77,7 @@ public sealed class DictationHud : Form
             icons[full] = image;
         }
 
-        glyph.WaitingImage = image;
+        glyph.ActionImage = image;
     }
 
     private readonly Dictionary<string, Image?> icons = new(StringComparer.OrdinalIgnoreCase);
@@ -260,18 +260,19 @@ public sealed class DictationHud : Form
             frames.Tick += (_, _) => Invalidate();
         }
 
-        // Drawn instead of the mic while Waiting; null draws the mic.
-        public Image? WaitingImage
+        // Drawn instead of the mic while Waiting, and under a red dot while Recording, so an action dictation stays
+        // distinct from a plain one; null draws the usual glyph.
+        public Image? ActionImage
         {
-            get => waitingImage;
+            get => actionImage;
             set
             {
-                waitingImage = value;
+                actionImage = value;
                 Invalidate();
             }
         }
 
-        private Image? waitingImage;
+        private Image? actionImage;
 
         public HudGlyph Glyph
         {
@@ -320,11 +321,19 @@ public sealed class DictationHud : Form
             graphics.SmoothingMode = SmoothingMode.AntiAlias;
             var side = Math.Min(Width, Height);
             if (side <= 0) return;
-            if (current == HudGlyph.Waiting && waitingImage is { } image)
+            if (current is HudGlyph.Waiting or HudGlyph.Recording && actionImage is { } image)
             {
                 // The same 22 px box the Mac glyph view uses, in screen pixels, not the Y-up design space.
+                int left = (Width - 22) / 2, top = (Height - 22) / 2;
                 graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                graphics.DrawImage(image, (Width - 22) / 2, (Height - 22) / 2, 22, 22);
+                graphics.DrawImage(image, left, top, 22, 22);
+                if (current == HudGlyph.Recording)
+                {
+                    const float dot = 22 * 0.32f;
+                    using var red = new SolidBrush(ColorFor(HudGlyph.Recording));
+                    graphics.FillEllipse(red, left + 22 - dot, top, dot, dot);
+                }
+
                 return;
             }
             // Y-up design space, matching HUDGlyphView in MacApp.swift: one glyph table, one meaning for "above".

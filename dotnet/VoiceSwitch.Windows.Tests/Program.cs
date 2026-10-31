@@ -114,6 +114,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation runtime preserves queued session after delayed stop", () => Check(DictationRuntimePreservesQueuedSessionAfterDelayedStop())),
     ("dictation phases follow lone wake, body and stop word", () => Check(DictationPhasesFollowLoneWakeBodyAndStop())),
     ("dictation phases follow one-breath dictation ended by silence", () => Check(DictationPhasesFollowOneBreathDictationEndedBySilence())),
+    ("dictation action icon follows Waiting and Recording and clears on other phases", () => Check(DictationActionIconFollowsWaitingAndRecording())),
     ("dictation phases follow lone wake ended by stop word", () => Check(DictationPhasesFollowLoneWakeEndedByStop())),
     ("dictation phase stays recording when the wake word is repeated while waiting", () => Check(DictationPhaseStaysRecordingOnRepeatedWake())),
     ("dictation phase ends when a recording probe hears the stop word, before the hangover closes it", () => Check(DictationPhaseEndsWhenProbeHearsStop())),
@@ -2701,6 +2702,30 @@ static bool DictationPhasesFollowOneBreathDictationEndedBySilence()
     return RunWithTimeout(runtime, TimeSpan.FromSeconds(5)) == 0
         && handoff.Submissions.Single().Reason == FinishReason.Silence
         && observer.Phases.SequenceEqual([DictationPhase.Recording, DictationPhase.Idle]);
+}
+
+// The default wake is unreachable here, so "音声入力" wakes the action: its icon follows Waiting and Recording,
+// including a one-breath wake that skips Waiting, and every other phase clears it.
+static bool DictationActionIconFollowsWaitingAndRecording()
+{
+    var action = new WakeAction("grok", ["音声入力"], "alter://action/1");
+    var config = DictationRuntimeTestConfig(endSilenceMs: 5000) with { WakeWords = ["ほげほげ"], Windows = new WindowsActions([action]) };
+    var lone = new PhaseRecorder();
+    var loneRuntime = new WindowsDictationRuntime(config, new FixturePcmCapture(ThreeUtteranceFrames(), [24, 28]), Recognizing("wake", "body", "stop"), new RecordingDictationHandoff(), dryRun: true, lone);
+
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 50, loud: false);
+    var breath = new PhaseRecorder();
+    var breathRuntime = new WindowsDictationRuntime(config with { Dictation = config.Dictation! with { EndSilenceMs = 1200 } }, new FixturePcmCapture(frames, delayAfterFrame: 24), Recognizing("wakebody"), new RecordingDictationHandoff(), dryRun: true, breath);
+
+    return RunWithTimeout(loneRuntime, TimeSpan.FromSeconds(5)) == 0
+        && lone.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Recording, DictationPhase.Ended])
+        && lone.ActionIcons.Select(a => a?.Name).SequenceEqual(["grok", "grok", null])
+        && RunWithTimeout(breathRuntime, TimeSpan.FromSeconds(5)) == 0
+        && breath.Phases.SequenceEqual([DictationPhase.Recording, DictationPhase.Idle])
+        && breath.ActionIcons.Select(a => a?.Name).SequenceEqual(["grok", null]);
 }
 
 static bool DictationPhasesFollowLoneWakeEndedByStop()

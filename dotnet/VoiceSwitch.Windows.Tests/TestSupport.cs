@@ -376,6 +376,8 @@ sealed class PhaseRecorder : IDictationRuntimeObserver
     public bool StopSound { get; init; }
 
     public void DeliveryChanged(DeliveryState state) => Deliveries.Add(state);
+    public List<WakeAction?> ActionIcons { get; } = new();
+    public void ActionIcon(WakeAction? action) => ActionIcons.Add(action);
     public int StopSounds { get; private set; }
 
     public void PhaseChanged(DictationPhase phase)
