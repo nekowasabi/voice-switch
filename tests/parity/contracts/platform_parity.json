@@ -338,7 +338,7 @@
       "id": "wake_action_hud_icon",
       "macos": {
         "file": "Sources/voice-switch/MacApp.swift",
-        "markers": ["waitingImage", "action?.icon"]
+        "markers": ["actionImage", "action?.icon"]
       },
       "windows": {
         "file": "dotnet/VoiceSwitch.Windows/Tray/DictationHud.cs",

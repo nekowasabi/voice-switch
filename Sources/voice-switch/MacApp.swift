@@ -613,6 +613,7 @@ enum Hotkeys {
 
     static let state = OSAllocatedUnfairLock(initialState: State())
     static let relevantFlags: CGEventFlags = [.maskCommand, .maskShift, .maskAlternate, .maskControl]
+    static let escape = Shortcut(keyCode: 53, flags: 0)
     nonisolated(unsafe) static var tap: CFMachPort?
     nonisolated(unsafe) static var triedTap = false
 
@@ -620,8 +621,9 @@ enum Hotkeys {
     static func begin(finishOnly: Bool = false) {
         let defaults = UserDefaults(suiteName: "com.superduper.superwhisper")
         let keys = [("KeyboardShortcuts_toggleRecording", Command.finish), ("KeyboardShortcuts_cancelRecording", .cancel)]
+        // superwhisper stores a shortcut only once the user changes it; its default cancel, Escape, is never written.
         let read = keys.prefix(finishOnly ? 1 : 2).map {
-            (key: $0.0, command: $0.1, shortcut: defaults?.string(forKey: $0.0).flatMap(parseShortcut))
+            (key: $0.0, command: $0.1, shortcut: defaults?.string(forKey: $0.0).flatMap(parseShortcut) ?? ($0.1 == .cancel ? escape : nil))
         }
         let shortcuts = read.compactMap { r in r.shortcut.map { ($0, r.command) } }
         let missing = read.filter { $0.shortcut == nil }.map(\.key)
@@ -1101,7 +1103,7 @@ final class Listener {
                 // .ended hides itself after a moment; the idle that follows it is not a change.
                 if phase != shown, !(shown == .ended && phase == .idle) {
                     shown = phase
-                    phaseCont.yield((phase, phase == .waiting ? dictation?.action?.icon : nil))
+                    phaseCont.yield((phase, dictation?.action?.icon))
                 }
             }
             if f.isEmpty { seg = Segmenter(cfg: config.cfg); dictation = nil; followupUntil = 0; recent = []; speechFrames = 0; Hotkeys.end(); continue }
@@ -1664,8 +1666,9 @@ enum HUDLabel: String, CaseIterable {
 /// every other glyph is static, so a hidden HUD costs nothing.
 final class HUDGlyphView: NSView {
     private(set) var glyph: HUDLabel = .waiting
-    /// Drawn instead of the mic while .waiting; nil draws the mic.
-    var waitingImage: NSImage? { didSet { needsDisplay = true } }
+    /// The waking action's icon: drawn instead of the mic while .waiting, and under a red dot while .recording, so an
+    /// action dictation stays distinct from a plain one; nil draws the usual glyph.
+    var actionImage: NSImage? { didSet { needsDisplay = true } }
     private var ticker: Timer?
     private var began = Date()
 
@@ -1696,8 +1699,13 @@ final class HUDGlyphView: NSView {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         let side = min(bounds.width, bounds.height)
         guard side > 0 else { return }
-        if glyph == .waiting, let waitingImage {
-            waitingImage.draw(in: bounds)
+        if glyph == .waiting || glyph == .recording, let actionImage {
+            actionImage.draw(in: bounds)
+            if glyph == .recording {
+                let dot = side * 0.32
+                ctx.setFillColor(Ink.red.cgColor)
+                ctx.fillEllipse(in: CGRect(x: bounds.maxX - dot, y: bounds.maxY - dot, width: dot, height: dot))
+            }
             return
         }
         ctx.saveGState()
@@ -1900,8 +1908,8 @@ final class HUD {
     /// icon: the waking action's `icon`, drawn in place of the mic while .waiting; nil keeps the mic.
     func show(_ phase: Listener.Phase, icon: String? = nil) {
         self.phase = phase
-        // Only .waiting carries the action icon; clear it so one left from the last action does not show on a later .waiting.
-        glyphView.waitingImage = phase == .waiting ? icon.flatMap(Self.image) : nil
+        // Cleared on every other phase, so an icon left from the last action never shows on a later dictation.
+        glyphView.actionImage = phase == .waiting || phase == .recording ? icon.flatMap(Self.image) : nil
         render()
     }
 
