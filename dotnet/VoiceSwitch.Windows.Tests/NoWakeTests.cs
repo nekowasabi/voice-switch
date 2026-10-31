@@ -254,6 +254,35 @@ internal static class NoWakeTests
                && stopped.Log.Contains("automatic ended by StandaloneStop, pasting like a wake-word dictation");
     }
 
+    public static bool AutomaticYieldsToSuperwhisperMidSession()
+    {
+        var frames = new List<PcmFrame>();
+        TestFrames.AddSquare(frames, 4, 0);
+        TestFrames.AddSquare(frames, 70, 9000);
+        TestFrames.AddSquare(frames, 30, 0);
+        var config = new VoiceSwitchConfig(["wake"], "en-US", "unused", MaxSeconds: 2.5,
+            HangoverMs: 120, PrerollMs: 60, MinSpeechMs: 90, VadMinRMS: 0.005f,
+            Dictation: new(EndSilenceMs: 240, NoWakeWord: new(AutoIdle: true, MinHandoffMs: 0)));
+        var handoff = new CountingHandoff();
+        var recognizer = new ScriptedDictationRecognizer(request =>
+            Task.FromResult(new RecognizedUtterance(request.Id, request.Extent, request.Range, "body", [new LexicalRun("body", request.Range)])));
+        var checks = 0;
+        var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(frames, new[] { 20, 30, 40, 50, 60, 70, 80 }),
+            recognizer, handoff, false, inputIdleSeconds: () => 4, wakeReading: value => value,
+            micInUseBy: _ => checks++ == 0 ? null : "Superwhisper", voicedWindows: _ => 1, agreedCharacters: _ => Task.FromResult(5));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var previousOutput = Console.Out;
+        using var output = new StringWriter();
+        try
+        {
+            Console.SetOut(output);
+            runtime.RunAsync(timeout.Token).GetAwaiter().GetResult();
+        }
+        finally { Console.SetOut(previousOutput); }
+        var log = output.ToString();
+        return handoff.Count == 0 && log.Contains("dictation session: automatic ") && log.Contains("dictation cancelled: automatic wake blocked: Superwhisper");
+    }
+
     // A playback trace at one level from a minute ago to a minute ahead, so every mic frame of the test pairs with a bin.
     private static LevelTrace ConstantLoopback(float db)
     {

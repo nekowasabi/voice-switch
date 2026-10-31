@@ -117,6 +117,7 @@ public sealed class WindowsDictationRuntime
     private bool provisionalStop;
     private nint target;
     private string? lastAutomaticSkip;
+    private long nextAutomaticMicCheck;
     // Mac heardSpeech: once the voice after the wake word is heard it stays heard, so a repeated wake word keeps 録音中.
     private bool heardAfterWake;
     // Frames before this sample index carry our own confirmation sound, which must not count as the text starting.
@@ -267,6 +268,22 @@ public sealed class WindowsDictationRuntime
                         {
                             TrimStore(session, pending);
                             continue;
+                        }
+
+                        // Superwhisper started recording after this automatic session opened, so the speech is the user's own
+                        // Superwhisper dictation. Handing our copy off as a file while Superwhisper transcribes it fails with
+                        // "Transcription in progress" (2026-10-31 22:47). ponytail: polled every 250 ms of audio.
+                        if (session.Origin.IsAutomatic && session.IsActive && frame.Start >= nextAutomaticMicCheck)
+                        {
+                            nextAutomaticMicCheck = frame.Start + (long)Segmenter.Rate / 4;
+                            if (AutomaticMicBlock() is { } busy)
+                            {
+                                Log.Info($"dictation cancelled: {busy} {Sid(session)}");
+                                session.Cancel();
+                                session = ResetSession(pending, analysisStore.Next);
+                                TrimStore(session, pending);
+                                continue;
+                            }
                         }
 
                         if (pending.Count == 0 && session.AwaitingWakeSourceEnd is long wakeSourceEnd && lastLiveSpeechEnd <= wakeSourceEnd)
