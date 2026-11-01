@@ -85,7 +85,22 @@ expect(plain.macOS?.actions == nil, "actions absent when not configured")
 let uuid = "alter://action/26B00BAB-5655-4581-BCA0-F3880E746CC9"
 let acts = try config(["actions": [["name": "progress", "wakeWords": ["progress", "プログレス"], "url": uuid]]])
 let act = acts.macOS?.actions?.first
-expect(act?.name == "progress" && act?.wakeWords == ["progress", "プログレス"] && act?.url.rawValue == uuid, "action must decode")
+expect(act?.name == "progress" && act?.wakeWords == ["progress", "プログレス"] && act?.url?.rawValue == uuid, "action must decode")
+if case .open(let opened)? = act?.delivery { expect(opened.rawValue == uuid, "open delivery keeps the URL") }
+else { fatalError("a url action without tokenEnv must open its URL") }
+let keypipe = "/usr/local/bin/keypipe --line @@@"
+let commanded = try config(["actions": [["name": "k", "wakeWords": ["k"], "command": keypipe]]]).macOS?.actions?.first
+expect(commanded?.url == nil && commanded?.delivery == .command(keypipe), "a command action decodes with no url")
+expect(commanded?.openArguments(input: "x") == [], "a command action has nothing to open")
+for (extra, key) in [(["url": uuid], "command"), (["tokenEnv": "T"], "tokenEnv"), (["inputParam": "q"], "inputParam"),
+                     (["fields": ["a": "{text}"]], "fields"), (["command": " \n"], "command"), (["command": NSNull()], "url")] as [([String: Any], String)] {
+    var bad: [String: Any] = ["name": "k", "wakeWords": ["k"], "command": keypipe]
+    bad.merge(extra) { $1 }
+    do { _ = try config(["actions": [bad]]); fatalError("accepted invalid command action: \(extra)") }
+    catch DecodingError.dataCorrupted(let context) {
+        expect(context.codingPath.last?.stringValue == key, "command action error must identify \(key), got \(context.codingPath)")
+    }
+}
 expect(act?.superwhisperMode == nil, "superwhisperMode absent when not configured")
 let moded = try config(["actions": [["name": "p", "wakeWords": ["p"], "url": uuid, "superwhisperMode": "input-voice-switch"]]])
 expect(moded.macOS?.actions?.first?.superwhisperMode == "input-voice-switch", "action superwhisperMode must decode")

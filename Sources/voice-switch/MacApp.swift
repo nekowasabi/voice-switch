@@ -514,25 +514,30 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     guard stillCurrent() else { return .delivered }
     guard DictationHistory.shared.add(id: sessionID, text: result, origin: origin, expectedGeneration: historyGeneration, policy: transcriptPolicy) else { return .delivered }
     if controlled { return .delivered }
-    if let action, action.tokenEnv != nil {
-        do {
-            try await postAction(action, text: result)
-            log("dictation delivered: post \(action.name)")
-        } catch {
-            log("dictation action \(action.name) failed: \(error.localizedDescription)")
-        }
-        return .delivered
-    }
     if let action {
-        if GrokBotPrompt.isPrompt(action.url.rawValue) {
-            let (_, truncated) = GrokBotPrompt.fit(result)
-            if truncated {
-                log("grokbot prompt text truncated to 1000 encoded chars for action \(action.name)")
+        switch action.delivery {
+        case .post(let url):
+            do {
+                try await postAction(action, to: url, text: result)
+                log("dictation delivered: post \(action.name)")
+            } catch {
+                log("dictation action \(action.name) failed: \(error.localizedDescription)")
             }
+        case .open(let url):
+            if GrokBotPrompt.isPrompt(url.rawValue) {
+                let (_, truncated) = GrokBotPrompt.fit(result)
+                if truncated {
+                    log("grokbot prompt text truncated to 1000 encoded chars for action \(action.name)")
+                }
+            }
+            let p = Platform.urlProcess(url)
+            p.arguments = action.openArguments(input: result)
+            Platform.runURLProcess(p, wait: false)
+        case .command(let command):
+            // keypipe's when.app must see the app the dictation was aimed at, not voice-switch.
+            Platform.runCommand(command, stdin: result, environment: ["VOICE_SWITCH_APP": target?.bundleIdentifier ?? ""])
+            log("dictation delivered: command \(action.name)")
         }
-        let p = Platform.urlProcess(action.url)
-        p.arguments = action.openArguments(input: result)
-        Platform.runURLProcess(p, wait: false)
         return .delivered
     }
     let route = await routeDictation(result)
@@ -544,7 +549,7 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
 }
 
 /// POSTs `text` to the action's https url as the multipart fields from `postFields` with the bearer token from `tokenEnv`; the token is never in the config.
-func postAction(_ action: WakeAction, text: String) async throws {
+func postAction(_ action: WakeAction, to url: ActionURL, text: String) async throws {
     guard let env = action.tokenEnv, let token = ProcessInfo.processInfo.environment[env] else {
         throw NSError(domain: "voice-switch", code: 1, userInfo: [NSLocalizedDescriptionKey: "environment variable \(action.tokenEnv ?? "") is not set"])
     }
@@ -554,7 +559,7 @@ func postAction(_ action: WakeAction, text: String) async throws {
         body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n".utf8))
     }
     body.append(Data("--\(boundary)--\r\n".utf8))
-    var request = URLRequest(url: URL(string: action.url.rawValue)!, timeoutInterval: 30)
+    var request = URLRequest(url: URL(string: url.rawValue)!, timeoutInterval: 30)
     request.httpMethod = "POST"
     request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
     request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
