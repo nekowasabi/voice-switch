@@ -19,6 +19,12 @@
         "name": "progress",
         "wakeWords": ["progress", "プログレス"],
         "url": "alter://action/26B00BAB-5655-4581-BCA0-F3880E746CC9"
+      },
+      {
+        "name": "keypipe",
+        "wakeWords": ["keypipe", "キーパイプ"],
+        "command": "/usr/local/bin/keypipe --config ~/.config/keypipe/config.json --line @@@ ${VOICE_SWITCH_APP:+--app \"$VOICE_SWITCH_APP\"}",
+        "superwhisperMode": "voice_switch"
       }
     ]
   },

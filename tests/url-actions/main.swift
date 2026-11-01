@@ -101,6 +101,11 @@ for (extra, key) in [(["url": uuid], "command"), (["tokenEnv": "T"], "tokenEnv")
         expect(context.codingPath.last?.stringValue == key, "command action error must identify \(key), got \(context.codingPath)")
     }
 }
+let example = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+    .deletingLastPathComponent().appendingPathComponent("config.example.macos-url.json")
+let exampleActions = try JSONDecoder().decode(Config.self, from: Data(contentsOf: example)).macOS?.actions ?? []
+expect(exampleActions.contains { if case .command(let c) = $0.delivery { c.contains("keypipe") } else { false } },
+       "the macOS URL example must carry a decodable keypipe command action")
 expect(act?.superwhisperMode == nil, "superwhisperMode absent when not configured")
 let moded = try config(["actions": [["name": "p", "wakeWords": ["p"], "url": uuid, "superwhisperMode": "input-voice-switch"]]])
 expect(moded.macOS?.actions?.first?.superwhisperMode == "input-voice-switch", "action superwhisperMode must decode")
