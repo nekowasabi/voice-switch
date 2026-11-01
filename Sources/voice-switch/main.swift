@@ -13,6 +13,8 @@ import Foundation
 import AppKit
 
 setvbuf(stdout, nil, _IOLBF, 0)
+// A command action that exits before reading its stdin must fail the write with EPIPE, not kill the app.
+signal(SIGPIPE, SIG_IGN)
 
 let logURL = Platform.logURL
 var args = Array(CommandLine.arguments.dropFirst())

@@ -63,7 +63,10 @@ enum Platform {
     }
 
     /// Runs the configured action through a shell so users can put any command line in config.
-    static func runCommand(_ command: String) {
+    /// With `stdin`, the text is written as given (no newline added) and then closed, because a reader such as
+    /// `keypipe --line` waits for EOF; the command's stdout is discarded and its stderr reaches the log.
+    /// `environment` is added over the app's own environment.
+    static func runCommand(_ command: String, stdin: String? = nil, environment: [String: String] = [:]) {
         let p = Process()
         #if os(Windows)
         p.executableURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["ComSpec"] ?? #"C:\Windows\System32\cmd.exe"#)
@@ -73,7 +76,21 @@ enum Platform {
         p.arguments = ["-c", command]
         #endif
         p.terminationHandler = { if $0.terminationStatus != 0 { log("command exited \($0.terminationStatus): \(command)") } }
-        do { try p.run() } catch { log("command failed to start: \(error)") }
+        if !environment.isEmpty {
+            p.environment = ProcessInfo.processInfo.environment.merging(environment) { $1 }
+        }
+        guard let stdin else {
+            do { try p.run() } catch { log("command failed to start: \(error)") }
+            return
+        }
+        let pipe = Pipe()
+        p.standardInput = pipe
+        p.standardOutput = FileHandle.nullDevice
+        do { try p.run() } catch { log("command failed to start: \(error)"); return }
+        do {
+            try pipe.fileHandleForWriting.write(contentsOf: Data(stdin.utf8))
+            try pipe.fileHandleForWriting.close()
+        } catch { log("command stdin write failed: \(error): \(command)") }
     }
 
     /// macOS wake/stop dispatch. A URL override never falls back to a shell on failure.
