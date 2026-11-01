@@ -106,4 +106,27 @@ let withInput = try config(["actions": [["name": "p", "wakeWords": ["p"], "url":
 let rebuilt = withInput.openArguments(input: "new")
 expect(inputItems(rebuilt).map(\.value) == ["new"], "existing input must be replaced, not duplicated")
 expect(URLComponents(string: rebuilt[2])!.queryItems!.contains { $0.name == "k" && $0.value == "v" }, "other query items kept")
+#if !os(Windows)
+for text in ["one line @@@", "first\nsecond\n今日"] {
+    let out = directory.appendingPathComponent(UUID().uuidString).path
+    // The file appears only after cat saw EOF, so a missing close shows up as a timeout.
+    Platform.runCommand("cat > '\(out).part' && mv '\(out).part' '\(out)'", stdin: text)
+    var got: Data?
+    for _ in 0 ..< 40 where got == nil {
+        Thread.sleep(forTimeInterval: 0.05)
+        got = FileManager.default.contents(atPath: out)
+    }
+    expect(got != nil, "command must see stdin EOF within 2 s")
+    expect(got == Data(text.utf8), "command stdin must carry the exact text with no newline added: \(text)")
+}
+let envOut = directory.appendingPathComponent(UUID().uuidString).path
+Platform.runCommand("cat > /dev/null; printenv VOICE_SWITCH_APP > '\(envOut).part' && mv '\(envOut).part' '\(envOut)'", stdin: "x",
+                    environment: ["VOICE_SWITCH_APP": "com.example.app"])
+var envGot: Data?
+for _ in 0 ..< 40 where envGot == nil {
+    Thread.sleep(forTimeInterval: 0.05)
+    envGot = FileManager.default.contents(atPath: envOut)
+}
+expect(envGot == Data("com.example.app\n".utf8), "command must see the extra environment variable")
+#endif
 print("URL actions: \(checks) checks passed")
