@@ -81,18 +81,55 @@ Optional Grok Bot message: a wake phrase can fill a Grok Bot prompt composer ins
 
 Replace `YOUR_BOT_ID` with the id at the end of the Bot menu's "Copy link"; keep your real id out of the repository. Saying `グロック` and then the message opens that Bot's composer with the message in it. It never sends: you press send, and a composer that already has text is left alone. The full example is [config.example.grokbot.json](config.example.grokbot.json), and the limits are in [docs/grokbot-message.md](docs/grokbot-message.md). On one Windows PC (2026-10-29) the prompt link left the composer empty, with and without `id`; the cause is not known.
 
-To have the Bot act without pressing send, mail it instead (Windows only). Grok Bot takes instructions by mail at a bot address such as `you+default@mail.grokbot.com`; voice-switch only sends the mail, and what the Bot does with it is Grok Bot's. Give the action a `mailto:` url and an `smtp` account; the dictation is sent as the body:
+### Webhook delivery (Windows and Mac)
+
+Instead of opening a URL, an action can POST the dictation to a webhook. Any receiver works if it is `https://` and accepts a bearer token and `multipart/form-data`. Telling Grok Bot what to do without pressing send is one use, reached through a Cloudflare Worker (example below). An action becomes a POST when it has these keys:
+
+- `url`: the receiver, which must be `https://`.
+- `tokenEnv`: the name of the environment variable that holds the token. It is sent as `Authorization: Bearer <token>`. The token is never read from the config file. Windows: `setx <name> <token>`, then restart the tray. Mac: the variable must be in the app's environment, for example `launchctl setenv <name> <token>`, then restart the app.
+- `fields` (optional): multipart field name to value. In a value, `{text}` becomes the dictation and `{recordedAtMs}` the current Unix time in milliseconds; anything else is sent as written. Without `fields`, the Pebble Index webhook's transcription-only shape is sent: `{"transcription": "{text}", "recordedAt": "{recordedAtMs}", "client": "ring"}`. A POST action does not take `inputParam`; rename the field in `fields` instead.
+
+A Grok Bot example, with the default fields written out:
 
 ```json
 {
-  "name": "grokbot",
-  "wakeWords": ["グロック", "grok bot"],
-  "url": "mailto:YOU+default@mail.grokbot.com?subject=prompt",
-  "smtp": { "host": "smtp.gmail.com", "port": 587, "user": "you@gmail.com", "passwordEnv": "VOICE_SWITCH_SMTP_PASSWORD" }
+  "name": "grokbot-webhook",
+  "wakeWords": ["ボットに送信"],
+  "url": "https://YOUR-WORKER.workers.dev/",
+  "tokenEnv": "VOICE_SWITCH_GROKBOT_TOKEN",
+  "fields": {
+    "transcription": "{text}",
+    "recordedAt": "{recordedAtMs}",
+    "client": "ring"
+  }
 }
 ```
 
-The recipient and subject come from the `mailto:` url. `from` defaults to `user`; send from the address your Grok Bot account knows. The password is read from the environment variable `passwordEnv` names (default `VOICE_SWITCH_SMTP_PASSWORD`; for Gmail, an app password), never from the config file: run `setx VOICE_SWITCH_SMTP_PASSWORD <password>` and restart the tray. The connection uses STARTTLS, so use a submission port such as 587, not 465. The log says `dictation delivered: mail grokbot`, or `dictation action grokbot failed: <reason>`; the body is never logged.
+For another receiver, one that wants `message` and a fixed source would use `"fields": {"message": "voice: {text}", "source": "pc"}`. Only `fields` is sent: no JSON body, no other headers, no audio. A 2xx response is success; anything else is a failure and the log shows the head of the reply. There is no retry, and the request times out after 30 s. The log says `dictation delivered: post <name>`, or `dictation action <name> failed: <reason>`; the body is never logged.
+
+### Shell command delivery (Mac)
+
+An action can hand the dictation to a shell command instead of a URL. Put `command` where `url` would go; an action takes one or the other. `tokenEnv`, `fields`, and `inputParam` need `url` and are rejected beside `command`. The command runs through `/bin/sh -c`, so `~` and `$VAR` expand as in a shell. The dictation arrives on its stdin with no trailing newline, and stdin is closed after it. The command's stdout is discarded and its stderr goes to the log. A non-zero exit is logged as `command exited <status>: <command>`, and a delivery logs `dictation delivered: command <name>`. Windows ignores the key.
+
+The use it was built for is reusing [keypipe](https://github.com/nekowasabi/keypipe) rules from voice, so one rule serves both the keyboard and the microphone:
+
+```json
+{
+  "name": "keypipe",
+  "wakeWords": ["キーパイプ"],
+  "command": "/usr/local/bin/keypipe --config ~/.config/keypipe/config.json --line @@@ ${VOICE_SWITCH_APP:+--app \"$VOICE_SWITCH_APP\"}",
+  "superwhisperMode": "voice_switch"
+}
+```
+
+- Use an absolute path to the binary and pass `--config`. The app's launchd `PATH` does not find `keypipe`.
+- `superwhisperMode` must name a Superwhisper mode with auto-paste off, as for URL actions. Otherwise the text is pasted and also reaches the command.
+- `VOICE_SWITCH_APP` holds the bundle id of the app the dictation was aimed at, or is empty when it is unknown. Passing it as `--app` makes keypipe's `when.app` match the app you were in, not voice-switch. keypipe reads an empty `--app ""` as the app name `""` and does not fall back to the frontmost app, so the `${VOICE_SWITCH_APP:+...}` form leaves the flag out when the value is empty. keypipe then uses the frontmost app, which is the restored target.
+- Only keypipe `trigger` rules fire through `--line`; `hotkey` rules do not. keypipe exits 2 when no rule matched, which shows in the log as `command exited 2: <command>`.
+- The keypipe rule needs `"when": {"focus": "textField"}` to receive the dictation. With the default `focus: any`, keypipe runs the rule with empty input, so the shell sees nothing.
+- A keypipe `replaceInput` output has no visible effect from voice: the rewritten line goes to stdout, which is discarded. Use `output.shell`, `notify`, or `background` instead.
+
+Any action, webhook or not, tells you it is listening by sound and HUD. With the confirmation sound on, it rings a rising two-note chime instead of dictation's single note. With `icon` on an action, the HUD shows that icon instead of the mic while it waits for text. On Windows an `.exe` gives the app's icon (for example `"%LOCALAPPDATA%\\Programs\\Grok Bot\\Grok Bot.exe"`); on Mac an `.app` does (for example `"/Applications/Grok Bot.app"`). Any other path is read as an image. A file that cannot be loaded keeps the mic.
 
 The menu items are 一時停止 (releases the microphone), マイク, 設定ファイルを開く, ログを開く, ログイン時に起動, and 終了.
 

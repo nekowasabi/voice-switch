@@ -210,38 +210,116 @@ struct MacOSActions: Decodable {
     var actions: [WakeAction]?
 }
 
-/// A wake phrase that opens its own URL with the dictated text appended as `input=`.
+/// A wake phrase that hands the dictated text to its own target: a URL opened with the text as `input=`,
+/// an https URL POSTed with `tokenEnv`, or a shell `command` that reads the text on stdin.
 struct WakeAction: Decodable {
+    enum Delivery: Equatable { case open(ActionURL), post(ActionURL), command(String) }
+
     let name: String
     let wakeWords: [String]
-    let url: ActionURL
+    let delivery: Delivery
+    /// nil for a command action.
+    var url: ActionURL? {
+        switch delivery {
+        case .open(let u), .post(let u): return u
+        case .command: return nil
+        }
+    }
     /// Superwhisper mode (key or name) used for this action's dictation, typically one with auto-paste off
-    /// so the text reaches only the URL. Absent falls back to `dictation.superwhisperMode`.
+    /// so the text reaches only the action. Absent falls back to `dictation.superwhisperMode`.
     let superwhisperMode: String?
     /// Query item carrying the dictation. JSON `inputParam`; defaults to `input` when omitted or null.
     let inputParam: String?
+    /// Environment variable holding a bearer token. When set, the dictation is POSTed to the https `url` as
+    /// multipart form fields rendered by `postFields` instead of being opened.
+    let tokenEnv: String?
+    /// Multipart field name to value template for a tokenEnv action; `{text}` and `{recordedAtMs}` are replaced.
+    /// Absent sends `defaultPostFields`.
+    let fields: [String: String]?
+    /// Shown in the HUD instead of the mic while this action waits for text: an .app gives its own icon,
+    /// anything else is read as an image. Windows reads an .exe's icon the same way.
+    let icon: String?
 
-    private enum CodingKeys: String, CodingKey { case name, wakeWords, url, superwhisperMode, inputParam }
+    private enum CodingKeys: String, CodingKey { case name, wakeWords, url, command, superwhisperMode, inputParam, tokenEnv, icon, fields }
+
+    /// The Pebble Index webhook in transcription-only mode, so a receiver built for it accepts a config without fields.
+    static let defaultPostFields = ["transcription": "{text}", "recordedAt": "{recordedAtMs}", "client": "ring"]
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = try c.decode(String.self, forKey: .name)
         wakeWords = try c.decode([String].self, forKey: .wakeWords)
-        url = try c.decode(ActionURL.self, forKey: .url)
+        let url = try c.decodeIfPresent(ActionURL.self, forKey: .url)
+        let command = try c.decodeIfPresent(String.self, forKey: .command)
         superwhisperMode = try c.decodeIfPresent(String.self, forKey: .superwhisperMode)
         inputParam = try c.decodeIfPresent(String.self, forKey: .inputParam)
+        icon = try c.decodeIfPresent(String.self, forKey: .icon)
+        tokenEnv = try c.decodeIfPresent(String.self, forKey: .tokenEnv)
+        fields = try c.decodeIfPresent([String: String].self, forKey: .fields)
+        guard !wakeWords.isEmpty else {
+            throw DecodingError.dataCorruptedError(forKey: .wakeWords, in: c,
+                debugDescription: "Wake action needs at least one wake word.")
+        }
+        if let command {
+            if url != nil {
+                throw DecodingError.dataCorruptedError(forKey: .command, in: c,
+                    debugDescription: "Wake action takes either url or command, not both.")
+            }
+            for (key, present) in [(CodingKeys.tokenEnv, tokenEnv != nil), (.fields, fields != nil), (.inputParam, inputParam != nil)] where present {
+                throw DecodingError.dataCorruptedError(forKey: key, in: c,
+                    debugDescription: "Wake action \(key.stringValue) needs url; a command action reads the dictation on stdin.")
+            }
+            if command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                throw DecodingError.dataCorruptedError(forKey: .command, in: c,
+                    debugDescription: "Wake action command must not be empty.")
+            }
+            delivery = .command(command)
+            return
+        }
+        guard let url else {
+            throw DecodingError.dataCorruptedError(forKey: .url, in: c,
+                debugDescription: "Wake action needs a url or a command.")
+        }
+        delivery = tokenEnv == nil ? .open(url) : .post(url)
         if let p = inputParam, !GrokBotPrompt.isValidInputParam(p) {
             throw DecodingError.dataCorruptedError(forKey: .inputParam, in: c,
                 debugDescription: "Wake action inputParam must be a non-empty RFC 3986 unreserved query name.")
         }
-        guard !wakeWords.isEmpty else {
-            throw DecodingError.dataCorruptedError(forKey: .wakeWords, in: c,
-                debugDescription: "Wake action needs at least one wake word.")
+        if let t = tokenEnv, t.trimmingCharacters(in: .whitespaces).isEmpty || !url.rawValue.lowercased().hasPrefix("https://") {
+            throw DecodingError.dataCorruptedError(forKey: .tokenEnv, in: c,
+                debugDescription: "Wake action tokenEnv needs an https:// url and a non-empty environment variable name.")
+        }
+        if tokenEnv != nil, inputParam != nil {
+            throw DecodingError.dataCorruptedError(forKey: .inputParam, in: c,
+                debugDescription: "Wake action inputParam does not apply to a tokenEnv action; name the multipart fields in fields instead.")
+        }
+        if let f = fields {
+            if tokenEnv == nil {
+                throw DecodingError.dataCorruptedError(forKey: .fields, in: c,
+                    debugDescription: "Wake action fields needs tokenEnv; only a POST action sends multipart fields.")
+            }
+            // A quote or line break in a name would end the Content-Disposition header early.
+            if f.keys.contains(where: { name in name.isEmpty || name.contains(where: { "\"\r\n".contains($0) }) }) {
+                throw DecodingError.dataCorruptedError(forKey: .fields, in: c,
+                    debugDescription: "Wake action fields must not have an empty field name or a name with a quote or line break.")
+            }
+        }
+    }
+
+    /// Multipart name/value pairs sorted by name. `{text}` is replaced in one pass, so a dictation containing
+    /// "{recordedAtMs}" stays literal.
+    func postFields(text: String, recordedAtMs: Int64) -> [(name: String, value: String)] {
+        let ms = String(recordedAtMs)
+        return (fields ?? WakeAction.defaultPostFields).sorted { $0.key < $1.key }.map { field in
+            (field.key, field.value.components(separatedBy: "{text}")
+                .map { $0.replacingOccurrences(of: "{recordedAtMs}", with: ms) }
+                .joined(separator: text))
         }
     }
 
     /// `open` arguments with the URL's `input` query replaced by `input` (one item, percent-encoded).
     func openArguments(input: String) -> [String] {
+        guard case .open(let url) = delivery else { return [] }
         let param = inputParam ?? "input"
         let text: String
         if GrokBotPrompt.isPrompt(url.rawValue) {
@@ -287,8 +365,8 @@ enum GrokBotPrompt {
         for scalar in collapsed.unicodeScalars {
             var chunk = ""
             for b in String(scalar).utf8 {
-                if unreserved.contains(b), let scalarValue = UnicodeScalar(b) {
-                    chunk.append(Character(scalarValue))
+                if unreserved.contains(b) {
+                    chunk.append(Character(UnicodeScalar(b)))
                 } else {
                     chunk += String(format: "%%%02X", b)
                 }
@@ -303,7 +381,7 @@ enum GrokBotPrompt {
     }
 }
 
-struct ActionURL: Decodable {
+struct ActionURL: Decodable, Equatable {
     let rawValue: String
     var openArguments: [String] { ["-g", "--", rawValue] }
 

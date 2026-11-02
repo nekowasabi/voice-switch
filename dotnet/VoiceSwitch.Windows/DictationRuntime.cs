@@ -37,11 +37,15 @@ public interface IDictationRuntimeObserver
     void NoiseProcessorCompleted(NoiseProcessorStatus status);
     // Called on the runtime thread after a frame or recognition batch changes the phase; Ended -> Idle is not reported.
     void PhaseChanged(DictationPhase phase) { }
+    // Called just before every PhaseChanged: the action the wake word chose while Waiting or Recording, null otherwise,
+    // so a HUD never keeps an icon left from an earlier action.
+    void ActionIcon(WakeAction? action) { }
     // A stop word or finish key just ended the recording, before the handoff starts. Return true when a sound was played so the runtime ignores the microphone briefly.
     bool PlayStopSound() => false;
 
     // Lone wake word only. Return true when a sound was played so the runtime ignores the microphone briefly.
-    bool PlayWakeSound() => false;
+    // action: the wake word chose an action, which rings its own chime so the mode is known by ear.
+    bool PlayWakeSound(bool action) => false;
 
     // Mac HUD DeliveryState: Processing when a handoff begins, then exactly one of the others when it ends.
     void DeliveryChanged(DeliveryState state) { }
@@ -113,6 +117,7 @@ public sealed class WindowsDictationRuntime
     private bool provisionalStop;
     private nint target;
     private string? lastAutomaticSkip;
+    private long nextAutomaticMicCheck;
     // Mac heardSpeech: once the voice after the wake word is heard it stays heard, so a repeated wake word keeps 録音中.
     private bool heardAfterWake;
     // Frames before this sample index carry our own confirmation sound, which must not count as the text starting.
@@ -263,6 +268,22 @@ public sealed class WindowsDictationRuntime
                         {
                             TrimStore(session, pending);
                             continue;
+                        }
+
+                        // Superwhisper started recording after this automatic session opened, so the speech is the user's own
+                        // Superwhisper dictation. Handing our copy off as a file while Superwhisper transcribes it fails with
+                        // "Transcription in progress" (2026-10-31 22:47). ponytail: polled every 250 ms of audio.
+                        if (session.Origin.IsAutomatic && session.IsActive && frame.Start >= nextAutomaticMicCheck)
+                        {
+                            nextAutomaticMicCheck = frame.Start + (long)Segmenter.Rate / 4;
+                            if (AutomaticMicBlock() is { } busy)
+                            {
+                                Log.Info($"dictation cancelled: {busy} {Sid(session)}");
+                                session.Cancel();
+                                session = ResetSession(pending, analysisStore.Next);
+                                TrimStore(session, pending);
+                                continue;
+                            }
                         }
 
                         if (pending.Count == 0 && session.AwaitingWakeSourceEnd is long wakeSourceEnd && lastLiveSpeechEnd <= wakeSourceEnd)
@@ -929,7 +950,7 @@ public sealed class WindowsDictationRuntime
     {
         if (session.IsActive || session.IsAwaitingBody) return session.Origin;
         var relaxed = config.Dictation?.NoWakeWord?.RelaxedReadingDistance2 == true
-            && DictationBoundaries.RejectedWake(recognition, config.WakeWords) is null
+            && DictationBoundaries.RejectedWake(recognition, config.Wakes()) is null
             && !SpeaksWake(recognition)
             && NoWakePolicy.RelaxedWake(recognition, config.Wakes()) is not null;
         return new(relaxed ? WakeRule.RelaxedD2 : WakeRule.Strict, inputIdleSeconds());
@@ -975,7 +996,7 @@ public sealed class WindowsDictationRuntime
             : session.IsActive ? (Confirmed(session) ? (provisionalStop ? DictationPhase.Ended : DictationPhase.Recording) : DictationPhase.Idle)
             : session.IsAwaitingBody ? (HeardAfterWake(session, lastLiveSpeechEnd) ? DictationPhase.Recording : DictationPhase.Waiting)
             : config.Dictation?.NoWakeWord?.Followup == true && analysisStore.Next < followupUntil ? DictationPhase.Followup
-            : DictationPhase.Idle);
+            : DictationPhase.Idle, session.Action);
     }
 
     private bool Confirmed(DictationSession session) =>
@@ -1023,7 +1044,7 @@ public sealed class WindowsDictationRuntime
         return Math.Max(Math.Max(speechOnsets[onset] - preroll, wakeEnd), originalStore.Start);
     }
 
-    private void PublishPhase(DictationPhase phase)
+    private void PublishPhase(DictationPhase phase, WakeAction? action = null)
     {
         endedByUser = false;
         // Ended hides itself after a moment; the Idle that follows it is not a change.
@@ -1033,13 +1054,14 @@ public sealed class WindowsDictationRuntime
         }
 
         // Only a lone wake word: in a one-breath dictation the user is already talking and the sound would be recorded.
-        if (phase == DictationPhase.Waiting && observer?.PlayWakeSound() == true)
+        if (phase == DictationPhase.Waiting && observer?.PlayWakeSound(action is not null) == true)
         {
             deafUntil = analysisStore.Next + MsToSamples(600);
         }
 
         shownPhase = phase;
         Log.Info($"dictation phase: {phase}");
+        observer?.ActionIcon(phase is DictationPhase.Waiting or DictationPhase.Recording ? action : null);
         observer?.PhaseChanged(phase);
     }
 

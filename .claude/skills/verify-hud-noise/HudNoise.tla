@@ -82,9 +82,9 @@ Next == \E s \in Sounds : Frame(s)
 
 Spec == Init /\ [][Next]_vars /\ WF_vars(Next)
 
-\* The phase `defer` with dictation.echoCancellation false: a dictation shows .waiting / .hearing / .recording,
-\* and with none a voiced phrase shows .hearing. HUD.render draws all of them as the mic glyph.
-HudVisible == dict = "auto" \/ speechFrames > 0
+\* The phase `defer` hides idle phrases and unconfirmed automatic sessions after body speech.
+\* This model has no wake waiting; only confirmed automatic sessions show the mic HUD.
+HudVisible == dict = "auto" /\ confirmed
 
 \* Once nobody talks and the room settles (silence, or steady noise such as a fan on a raw mic, from some frame
 \* on), the mic HUD eventually goes away and stays away. Bursts of noise between silences are not covered.

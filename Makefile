@@ -40,7 +40,7 @@ DOTNET_RESTORE_FLAGS ?= --ignore-failed-sources --disable-parallel
 # Why: Run from local disk, not \\wsl.localhost, as focusbm does; AV heuristics flag UNC-launched exes.
 RELEASE_DIR ?= /mnt/c/takeda/tools/voice-switch
 
-.PHONY: build app model install relaunch uninstall logs win win-restore win-build win-test parity-test win-publish win-verify help url-test
+.PHONY: build app model install relaunch uninstall logs win win-stop win-restore win-build win-test parity-test win-publish win-verify help url-test
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -95,13 +95,14 @@ uninstall: ## macOS: remove installed app
 logs: ## macOS: tail the log file
 	tail -f $(HOME)/Library/Logs/voice-switch.log
 
-win: win-publish ## Windows: build, test, and publish voice-switch.exe (PC=wsl default)
+win: win-publish ## Windows: build and publish voice-switch.exe without tests (PC=wsl default); run make win-test while developing
 
 win-restore: ## Windows: restore .NET projects
 	$(DOTNET) restore $(WIN_APP) -r $(WIN_RID) $(DOTNET_RESTORE_FLAGS)
 	$(DOTNET) restore $(WIN_TESTS) $(DOTNET_RESTORE_FLAGS)
 
-win-build: win-restore win-test ## Windows: build .NET app and behavior tests
+# Tests are not a prerequisite: they made every build-and-try cycle slow. Run make win-test separately.
+win-build: win-restore ## Windows: build .NET app (tests run only with make win-test)
 	$(DOTNET) build $(WIN_APP) -c $(WIN_CONFIG) -r $(WIN_RID) --no-restore
 
 win-test: win-restore ## Windows: run behavior tests
@@ -115,10 +116,12 @@ url-test: ## Require Swift URL action regression tests (macOS or Linux with Swif
 parity-test: ## Run macOS/Windows parity contract checks
 	python3 tests/parity/run_parity.py
 
-win-publish: win-build ## Windows: publish voice-switch.exe to RELEASE_DIR
-	mkdir -p "$(RELEASE_DIR)"
+win-stop: ## Windows: quit the running voice-switch.exe
 	@# A running voice-switch.exe locks its DLLs and publish fails with Access denied, so wait until it has exited.
 	-powershell.exe -NoProfile -Command "Get-Process -Name voice-switch -ErrorAction SilentlyContinue | Stop-Process -Force -PassThru | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue"
+
+win-publish: win-stop win-build ## Windows: quit the running app, then publish and launch voice-switch.exe from RELEASE_DIR
+	mkdir -p "$(RELEASE_DIR)"
 	@# The tray used to ship as a second exe; drop its leftovers so release/ holds one app.
 	rm -f "$(RELEASE_DIR)"/voice-switch-tray.*
 	$(DOTNET) publish $(WIN_APP) -c $(WIN_CONFIG) -r $(WIN_RID) --self-contained false \
@@ -129,8 +132,9 @@ win-publish: win-build ## Windows: publish voice-switch.exe to RELEASE_DIR
 	@# An existing config.json in RELEASE_DIR is never overwritten. The old in-repo release/config.json seeds it once.
 	[ -f "$(RELEASE_DIR)/config.json" ] || [ ! -f release/config.json ] || cp release/config.json "$(RELEASE_DIR)/config.json"
 	[ -f "$(RELEASE_DIR)/config.json" ] || cp config.example.windows.json "$(RELEASE_DIR)/config.json"
-	@# cwd is RELEASE_DIR so the exe starts from local disk, not a UNC path.
-	cd "$(RELEASE_DIR)" && powershell.exe -NoProfile -Command "Start-Process -FilePath .\voice-switch.exe"
+	@# Launched through explorer so the tray gets the current user environment (setx values such as tokenEnv);
+	@# a child of WSL keeps the environment WSL started with. explorer.exe exits 1 even on success.
+	-explorer.exe "$$(wslpath -w "$(RELEASE_DIR)/voice-switch.exe")"
 	@echo "Windows build → $(RELEASE_DIR)"
 	@echo "Run:  $(RELEASE_DIR)/voice-switch.exe            (tray app, listens on launch)"
 	@echo "Try:  $(RELEASE_DIR)/voice-switch.exe --self-test"

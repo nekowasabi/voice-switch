@@ -13,6 +13,8 @@ import Foundation
 import AppKit
 
 setvbuf(stdout, nil, _IOLBF, 0)
+// A command action that exits before reading its stdin must fail the write with EPIPE, not kill the app.
+signal(SIGPIPE, SIG_IGN)
 
 let logURL = Platform.logURL
 var args = Array(CommandLine.arguments.dropFirst())
@@ -192,7 +194,7 @@ if mode == "--enroll-speaker" {
     let listener = Listener(config: try ConfigFile(path: configPath))
     _ = NSApplication.shared
     let hud = HUD()
-    listener.onPhase = { log("phase: \($0)"); hud.show($0) }
+    listener.onPhase = { log("phase: \($0)"); hud.show($0, icon: $1) }
     listener.onDelivery = { hud.deliver($0) }
     Task {
         do {

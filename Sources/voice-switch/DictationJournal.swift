@@ -31,7 +31,7 @@ final class DictationJournal {
     }
 
     static func bind(_ configured: String?) {
-        active = open(configured) { log($0) }
+        active = open(configured) { voice_switch.log($0) }
     }
 
     static func defaultDirectory() -> String {

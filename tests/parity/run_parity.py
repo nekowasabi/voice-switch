@@ -874,6 +874,8 @@ def check_swift_core_behavior(result: Result, require_swift: bool) -> None:
         completed = subprocess.run(
             [
                 swiftc,
+                "-module-name",
+                "voice_switch",
                 "-module-cache-path",
                 str(Path(tmp) / "module-cache"),
                 str(ROOT / "Sources/voice-switch/Config.swift"),
