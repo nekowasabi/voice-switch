@@ -46,8 +46,9 @@ public static class TraySettings
     }
 
     // Any thread. True when a sound was played, so the runtime can ignore the microphone while it rings.
-    // Wake is one A5; stop falls A5 -> E5, so the two read differently without looking.
-    public static bool PlayWakeSound() => Play(WakeChime);
+    // Wake is one A5; an action's wake rises A5 -> E6; stop falls A5 -> E5. All three read differently without looking,
+    // which matters on a wireless mic away from the screen.
+    public static bool PlayWakeSound(bool action) => Play(action ? ActionWakeChime : WakeChime);
 
     public static bool PlayStopSound() => Play(StopChime);
 
@@ -63,6 +64,8 @@ public static class TraySettings
     }
 
     private static readonly Lazy<SoundPlayer> WakeChime = new(() => Synthesize(880.0));
+
+    private static readonly Lazy<SoundPlayer> ActionWakeChime = new(() => Synthesize(880.0, 1318.51));
 
     private static readonly Lazy<SoundPlayer> StopChime = new(() => Synthesize(880.0, 659.25));
 

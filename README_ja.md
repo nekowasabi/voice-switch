@@ -65,18 +65,55 @@ Grok Bot への送信（任意）: ウェイクワードで Grok Bot のプロ�
 
 `YOUR_BOT_ID` は、Bot のメニューの「Copy link」で得たリンクの末尾の ID に置き換える。実際の ID はリポジトリに入れない。「グロック」と言ってから本文を話すと、その Bot の入力欄に本文が入った状態で開く。自動では送信しないので、送信ボタンは自分で押す。入力欄にすでに文字があるときは書き込まない。全体の例は [config.example.grokbot.json](config.example.grokbot.json)、文字数などの制限は [docs/grokbot-message.md](docs/grokbot-message.md)。Windows の PC 1 台（2026-10-29）では、`id` の有無にかかわらず、プロンプトリンクを開いても入力欄は空のままだった。原因は分かっていない。
 
-送信ボタンを押さずに Bot に指示したいときは、メールで送る（Windows のみ）。Grok Bot は `you+default@mail.grokbot.com` のような Bot 宛てのアドレスでメールの指示を受け付ける。voice-switch はメールを送るだけで、受け取った Bot が何をするかは Grok Bot 側の動作になる。アクションの `url` を `mailto:` にし、`smtp` にアカウントを書く。音声入力の内容が本文になる。
+### Webhook への送信（Windows・Mac）
+
+アクションは URL を開く代わりに、音声入力の内容を Webhook へ POST することもできる。受け手は何でもよく、`https://` で、Bearer トークンと `multipart/form-data` を受け付ければ足りる。Grok Bot に送信ボタンを押さずに指示する使い方はその一例で、Cloudflare Worker を経由して送る（下の例）。アクションに次のキーを書くと POST になる。
+
+- `url`: 送り先。`https://` で始める。
+- `tokenEnv`: トークンを入れた環境変数の名前。`Authorization: Bearer <トークン>` として送る。トークンは config に書かない。Windows は `setx <変数名> <トークン>` を実行してから、トレイを起動し直す。Mac はアプリの環境に変数が必要で、たとえば `launchctl setenv <変数名> <トークン>` の後にアプリを起動し直す。
+- `fields`（任意）: multipart のフィールド名と値の組。値の中の `{text}` は音声入力の内容に、`{recordedAtMs}` は現在の Unix 時刻（ミリ秒）に置き換わる。それ以外の文字はそのまま送る。`fields` を書かなければ、Pebble Index の Webhook（文字起こしのみ）と同じ `{"transcription": "{text}", "recordedAt": "{recordedAtMs}", "client": "ring"}` を送る。POST のアクションには `inputParam` を書けない。フィールド名を変えたいときは `fields` で書く。
+
+Grok Bot 向けの例（既定のフィールドをそのまま書いたもの）:
 
 ```json
 {
-  "name": "grokbot",
-  "wakeWords": ["グロック", "grok bot"],
-  "url": "mailto:YOU+default@mail.grokbot.com?subject=prompt",
-  "smtp": { "host": "smtp.gmail.com", "port": 587, "user": "you@gmail.com", "passwordEnv": "VOICE_SWITCH_SMTP_PASSWORD" }
+  "name": "grokbot-webhook",
+  "wakeWords": ["ボットに送信"],
+  "url": "https://YOUR-WORKER.workers.dev/",
+  "tokenEnv": "VOICE_SWITCH_GROKBOT_TOKEN",
+  "fields": {
+    "transcription": "{text}",
+    "recordedAt": "{recordedAtMs}",
+    "client": "ring"
+  }
 }
 ```
 
-宛先と件名は `mailto:` の URL から読む。差出人の `from` は省略すると `user` になる。Grok Bot のアカウントに登録したアドレスから送ること。パスワードは config に書かず、`passwordEnv` が指す環境変数（既定は `VOICE_SWITCH_SMTP_PASSWORD`。Gmail ならアプリ パスワード）から読む。`setx VOICE_SWITCH_SMTP_PASSWORD <パスワード>` を実行してから、トレイを起動し直す。接続は STARTTLS なので、ポートは 465 ではなく 587 などの送信用ポートを使う。ログには `dictation delivered: mail grokbot` か `dictation action grokbot failed: <理由>` が出る。本文はログに出さない。
+ほかの受け手の例として、`message` と固定の送信元を求めるなら `"fields": {"message": "voice: {text}", "source": "pc"}` と書く。送るのは `fields` の中身だけで、JSON の本文も、ほかのヘッダーも、音声も付けない。2xx を成功とし、それ以外は失敗として応答の先頭をログに出す。再送はせず、30 秒でタイムアウトする。ログには `dictation delivered: post <name>` か `dictation action <name> failed: <理由>` が出る。本文はログに出さない。
+
+### シェルコマンドへの受け渡し（Mac）
+
+アクションは URL の代わりに、音声入力の内容をシェルコマンドへ渡すこともできる。`url` の代わりに `command` を書く。アクションにはどちらか一方だけを書く。`tokenEnv`・`fields`・`inputParam` は `url` が必要で、`command` と並べると設定エラーになる。コマンドは `/bin/sh -c` で動くので、`~` や `$VAR` はシェルと同じく展開される。音声入力の内容は末尾の改行なしで標準入力に届き、書き終えると標準入力は閉じる。コマンドの標準出力は捨て、標準エラーはログに出る。終了コードが 0 以外なら `command exited <status>: <command>` と記録し、渡せたときは `dictation delivered: command <name>` と記録する。Windows はこのキーを無視する。
+
+もともとの用途は [keypipe](https://github.com/nekowasabi/keypipe) の規則を音声からも使うことで、ひとつの規則がキーボードとマイクの両方に効く。
+
+```json
+{
+  "name": "keypipe",
+  "wakeWords": ["キーパイプ"],
+  "command": "/usr/local/bin/keypipe --config ~/.config/keypipe/config.json --line @@@ ${VOICE_SWITCH_APP:+--app \"$VOICE_SWITCH_APP\"}",
+  "superwhisperMode": "voice_switch"
+}
+```
+
+- バイナリは絶対パスで書き、`--config` も渡す。アプリの launchd の `PATH` では `keypipe` が見つからない。
+- `superwhisperMode` には、URL アクションと同じく自動ペーストがオフの Superwhisper モードを指定する。そうしないと、文章がペーストされたうえでコマンドにも届く。
+- `VOICE_SWITCH_APP` には音声入力の宛先だったアプリの bundle id が入る。不明なら空。これを `--app` で渡すと、keypipe の `when.app` は voice-switch ではなく、入力していたアプリに一致する。keypipe は `--app ""` を `""` というアプリ名として読み、最前面のアプリには戻らない。そのため `${VOICE_SWITCH_APP:+...}` の形で、値が空のときはフラグごと省く。keypipe はそのとき最前面のアプリを使い、それはフォーカスを戻した宛先になる。
+- `--line` で動くのは keypipe の `trigger` 規則だけで、`hotkey` 規則は動かない。一致する規則がないと keypipe は 2 で終了し、ログには `command exited 2: <command>` と出る。
+- keypipe の規則が音声入力の内容を受け取るには `"when": {"focus": "textField"}` が必要。既定の `focus: any` のままだと keypipe は空の入力で規則を動かし、シェルには何も届かない。
+- keypipe の `replaceInput` 出力は音声からは何も起こさない。書き換えた行は標準出力に出るが、捨てられる。代わりに `output.shell`・`notify`・`background` を使う。
+
+アクションで待機に入ったことは、音と HUD で分かる（どのアクションでも共通。Webhook に限らない）。効果音がオンなら、音声入力の 1 音ではなく上がる 2 音が鳴る。アクションに `icon` を書くと、HUD のマイクの代わりにそのアイコンを出す。Windows は `.exe` を指せばアプリのアイコンを読む（例: `"%LOCALAPPDATA%\\Programs\\Grok Bot\\Grok Bot.exe"`）。Mac は `.app` を指せばアプリのアイコンを読む（例: `"/Applications/Grok Bot.app"`）。それ以外のパスは画像ファイルとして読む。読めないときはマイクのまま。
 
 メニューは、一時停止（マイクを放す）、マイク、設定ファイルを開く、ログを開く、ログイン時に起動、終了。
 

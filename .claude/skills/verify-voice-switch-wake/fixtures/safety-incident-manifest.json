@@ -1,0 +1,8 @@
+{
+  "rules": [
+    "followup"
+  ],
+  "negativeExposureHours": {},
+  "safetyIncidents": 1,
+  "attempts": []
+}

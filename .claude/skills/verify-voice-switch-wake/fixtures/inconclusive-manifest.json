@@ -1,0 +1,8 @@
+{
+  "rules": [
+    "auto_b"
+  ],
+  "negativeExposureHours": {},
+  "safetyIncidents": 0,
+  "attempts": []
+}

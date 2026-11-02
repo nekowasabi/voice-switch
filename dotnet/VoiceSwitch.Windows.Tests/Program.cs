@@ -24,6 +24,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("clearing history invalidates pending transcription", () => Check(NoWakeTests.ClearPendingHistory())),
     ("automatic wake gates and immutable provenance", () => Check(NoWakeTests.WakeRules())),
     ("automatic recording shows 録音中 only once two recognizers agree, drops a cough they disagree on, hands off when they fail, and pastes when ended by the stop word", () => Check(NoWakeTests.AutomaticWordAgreement())),
+    ("an automatic session is dropped, not handed off, once Superwhisper starts recording during it", () => Check(NoWakeTests.AutomaticYieldsToSuperwhisperMidSession())),
     ("automatic runtime repeats sessions, fails closed on idle or microphone uncertainty, yields to a spoken wake word, records fragmented speech from its start, and logs playback-vs-mic levels at start and end", () => Check(NoWakeTests.AutomaticRuntime())),
     ("loopback shadow fields give medians, the above-zero share, silent and unknown", () => Check(NoWakeTests.LoopbackShadowFields())),
     ("transcript shape counts letters and spots filler-only text without the text", () => Check(NoWakeTests.TranscriptShapeFields())),
@@ -66,6 +67,10 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation repeated wake prefix keeps body", () => Check(DictationRepeatedWakePrefixKeepsBody())),
     ("dictation wake reading recovers near-homophones but never cuts a body from a fuzzy match", () => Check(DictationWakeReadingRecoversNearHomophones())),
     ("dictation long wake reading recovers distance-2 closed 縫製入力 as wake-only", () => Check(DictationLongWakeReadingRecoversDistance2ClosedHosei())),
+    ("dictation long wake reading keeps a one-kana particle tail as wake-only", () => Check(DictationLongWakeReadingKeepsParticleTail())),
+    ("dictation short wake reading keeps an exact copula tail inside one lexeme", () => Check(DictationShortWakeReadingKeepsCopulaTail())),
+    ("dictation leading wake accepts an exact alternate inside a near miss", () => Check(DictationLeadingWakeAcceptsExactAlternateInsideNearMiss())),
+    ("dictation rejected wake hypothesis accepts a wake reading at distance zero", () => Check(DictationRejectedWakeAcceptsReadingAtDistanceZero())),
     ("dictation kana wake word matches SAPI's kanji through the reading", () => Check(DictationKanaWakeMatchesKanjiThroughReading())),
     ("dictation session opens a wait on a fuzzy wake and starts the body on the next utterance", () => Check(DictationSessionOpensWaitOnFuzzyWake())),
     ("dictation runtime logs a reading-matched wake-only with its distance", () => Check(DictationRuntimeLogsReadingWakeOnly())),
@@ -110,6 +115,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation runtime preserves queued session after delayed stop", () => Check(DictationRuntimePreservesQueuedSessionAfterDelayedStop())),
     ("dictation phases follow lone wake, body and stop word", () => Check(DictationPhasesFollowLoneWakeBodyAndStop())),
     ("dictation phases follow one-breath dictation ended by silence", () => Check(DictationPhasesFollowOneBreathDictationEndedBySilence())),
+    ("dictation action icon follows Waiting and Recording and clears on other phases", () => Check(DictationActionIconFollowsWaitingAndRecording())),
     ("dictation phases follow lone wake ended by stop word", () => Check(DictationPhasesFollowLoneWakeEndedByStop())),
     ("dictation phase stays recording when the wake word is repeated while waiting", () => Check(DictationPhaseStaysRecordingOnRepeatedWake())),
     ("dictation phase ends when a recording probe hears the stop word, before the hangover closes it", () => Check(DictationPhaseEndsWhenProbeHearsStop())),
@@ -188,8 +194,9 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("automatic session never opens an action URL", () => Check(AutomaticSessionNeverOpensActionUrl())),
     ("dictation action wake selects its action after the default wakes", () => Check(DictationActionWakeSelectsAction())),
     ("dictation handoff with an action opens its URL instead of routing or pasting", () => Check(DictationHandoffActionOpensUrl())),
-    ("config loads a mail action and rejects smtp without a mailto recipient or host", () => Check(ConfigLoadsMailAction())),
-    ("dictation handoff with an smtp action mails the text and opens no URL", () => Check(DictationHandoffMailActionSendsMail())),
+    ("config loads a post action and rejects tokenEnv without an https url or a name", () => Check(ConfigLoadsPostAction())),
+    ("post action renders the default Pebble fields or the configured templates", () => Check(PostActionRendersFields())),
+    ("dictation handoff with a tokenEnv action posts the text and opens no URL", () => Check(DictationHandoffPostActionPostsText())),
     ("dictation handoff switches mode only for automatic audio", () => Check(DictationHandoffSwitchesModeOnlyForAutomaticAudio())),
     ("automatic audio stays out of Superwhisper when the mode switch fails", () => Check(DictationHandoffKeepsAutomaticAudioOutOfSuperwhisperWhenModeSwitchFails())),
     ("dictation handoff keeps WAV when Superwhisper writes no result", () => Check(DictationHandoffKeepsWavWithoutResult())),
@@ -894,8 +901,21 @@ static bool ConfigWakeWordsCarryReadings()
 {
     var plain = new VoiceSwitchConfig(["音声入力", "おんせい"], "ja_JP", "wake");
     var read = plain with { WakeReadings = ["おんせいにゅうりょく", null] };
+    var table = new (string Text, string Reading)[]
+    {
+        ("音声入力", "おんせいにゅうりょく"),
+        ("音声", "おんせい"),
+        ("音声入る", "おんせいはいる"),
+        ("音声に入る", "おんせいにはいる"),
+        ("音声に入るよ", "おんせいにはいるよ"),
+        ("音声によって", "おんせいによって"),
+        ("インプット", "いんぷっと"),
+    };
     return read.Wakes().SequenceEqual([new WakeWord("音声入力", "おんせいにゅうりょく"), new WakeWord("おんせい", "おんせい")])
-        && plain.Wakes()[0] == new WakeWord("音声入力", "音声入力")
+        && plain.Wakes()[0] == new WakeWord("音声入力", "おんせいにゅうりょく")
+        && table.All(item => WakeWord.From(item.Text) == new WakeWord(item.Text, item.Reading))
+        && WakeWord.From("音声入力", "かすたむよみ") == new WakeWord("音声入力", "かすたむよみ")
+        && WakeWord.From("明日") == new WakeWord("明日", "明日")
         && plain.RecognitionKey() == read.RecognitionKey();
 }
 
@@ -1190,6 +1210,173 @@ static bool DictationLongWakeReadingRecoversDistance2ClosedHosei()
         && DictationBoundaries.LeadingWake(inkutoFused, [inputWake]) is null
         && DictationBoundaries.LeadingWake(ninputo, wakes) is null
         && DictationBoundaries.LeadingWake(inkuto, wakes) is null;
+}
+
+// s1: a long closed wake (reading len>=MinReadingDistance2) at d<=2 may keep a one-kana tail that is
+// exactly は, よ, ね, な, or わ. Not の. Not a content word. Mirrors corpus rows hosei-wa/ne/yo (wake)
+// and hosei-no/ashita/honbun plus ninshiki-fused/split (no-wake).
+static bool DictationLongWakeReadingKeepsParticleTail()
+{
+    var longWake = WakeWord.From("音声入力", "おんせいにゅうりょく"); // len=10
+    WakeWord[] wakes = [longWake];
+    var wa = Recognized(1, RecognitionExtent.ClosedUtterance, 0, 11000, "縫製入力は", false,
+        Run("縫製入力は", 0, 11000, "ほうせいにゅうりょくは"));
+    var ne = Recognized(2, RecognitionExtent.ClosedUtterance, 0, 11000, "縫製入力ね", false,
+        Run("縫製入力ね", 0, 11000, "ほうせいにゅうりょくね"));
+    var yo = Recognized(3, RecognitionExtent.ClosedUtterance, 0, 11000, "縫製入力よ", false,
+        Run("縫製入力よ", 0, 11000, "ほうせいにゅうりょくよ"));
+    var na = Recognized(4, RecognitionExtent.ClosedUtterance, 0, 11000, "縫製入力な", false,
+        Run("縫製入力な", 0, 11000, "ほうせいにゅうりょくな"));
+    var waKana = Recognized(5, RecognitionExtent.ClosedUtterance, 0, 11000, "縫製入力わ", false,
+        Run("縫製入力わ", 0, 11000, "ほうせいにゅうりょくわ"));
+    var no = Recognized(6, RecognitionExtent.ClosedUtterance, 0, 11000, "縫製入力の", false,
+        Run("縫製入力の", 0, 11000, "ほうせいにゅうりょくの"));
+    var ashita = Recognized(7, RecognitionExtent.ClosedUtterance, 0, 16000, "縫製入力明日", false,
+        Run("縫製", 0, 4000, "ほうせい"), Run("入力", 4000, 10000, "にゅうりょく"), Run("明日", 13000, 16000, "あした"));
+    var honbun = Recognized(8, RecognitionExtent.ClosedUtterance, 0, 14000, "縫製入力の本文です", false,
+        Run("縫製", 0, 3000, "ほうせい"), Run("入力", 3000, 7000, "にゅうりょく"), Run("の", 7000, 8000, "の"),
+        Run("本文", 8000, 12000, "ほんぶん"), Run("です", 12000, 14000, "です"));
+    var ninshikiFused = Recognized(9, RecognitionExtent.ClosedUtterance, 0, 6000, "音声認識", false,
+        Run("音声認識", 0, 6000));
+    var ninshikiSplit = Recognized(10, RecognitionExtent.ClosedUtterance, 0, 8000, "音声認識の精度を上げたい", false,
+        Run("音声", 0, 2000), Run("認識", 2000, 4000), Run("の", 4000, 4500), Run("精度", 4500, 6000), Run("を上げたい", 6000, 8000));
+    // A probe without the prefix gap is not closed, so the d=2 tail stays rejected.
+    var waProbe = wa with { Extent = RecognitionExtent.Probe, TailSilenceSamples = 0 };
+    return DictationBoundaries.LeadingWake(wa, wakes) is { BodyStart: null, Distance: 2, ByReading: not null }
+        && DictationBoundaries.LeadingWake(ne, wakes) is { BodyStart: null, Distance: 2, ByReading: not null }
+        && DictationBoundaries.LeadingWake(yo, wakes) is { BodyStart: null, Distance: 2, ByReading: not null }
+        && DictationBoundaries.LeadingWake(na, wakes) is { BodyStart: null, Distance: 2, ByReading: not null }
+        && DictationBoundaries.LeadingWake(waKana, wakes) is { BodyStart: null, Distance: 2, ByReading: not null }
+        && DictationBoundaries.LeadingWake(no, wakes) is null
+        && DictationBoundaries.LeadingWake(ashita, wakes) is null
+        && DictationBoundaries.LeadingWake(honbun, wakes) is null
+        && DictationBoundaries.LeadingWake(ninshikiFused, wakes) is null
+        && DictationBoundaries.LeadingWake(ninshikiSplit, wakes) is null
+        && DictationBoundaries.LeadingWake(waProbe, wakes) is null;
+}
+
+// s2: a short closed wake (reading len<=ShortWakeReading) at d==0 may keep exactly です or
+// ます when the wake plus the tail are one lexeme. Not d<=1. Not a one-kana tail. Mirrors
+// corpus rows onsei-desu/onsei-masu (wake) and onsen-desu/onsen-wa/onsei-memo plus
+// ninshiki-fused/split (no-wake). Split lexemes 音声 + です stay on the prefix-gap rule.
+static bool DictationShortWakeReadingKeepsCopulaTail()
+{
+    var shortWake = WakeWord.From("音声", "おんせい"); // len=4
+    var longWake = WakeWord.From("音声入力", "おんせいにゅうりょく"); // len=10
+    WakeWord[] wakes = [longWake, shortWake];
+    var desu = Recognized(1, RecognitionExtent.ClosedUtterance, 0, 6000, "音声です", false,
+        Run("音声です", 0, 6000, "おんせいです"));
+    var masu = Recognized(2, RecognitionExtent.ClosedUtterance, 0, 6000, "音声ます", false,
+        Run("音声ます", 0, 6000, "おんせいます"));
+    var onsenDesu = Recognized(3, RecognitionExtent.ClosedUtterance, 0, 6000, "温泉です", false,
+        Run("温泉です", 0, 6000, "おんせんです"));
+    var onsenWa = Recognized(4, RecognitionExtent.ClosedUtterance, 0, 5000, "温泉は", false,
+        Run("温泉", 0, 4000, "おんせん"), Run("は", 4000, 5000, "は"));
+    var memo = Recognized(5, RecognitionExtent.ClosedUtterance, 0, 7000, "音声メモ", false,
+        Run("音声", 0, 4000, "おんせい"), Run("メモ", 4000, 7000, "めも"));
+    var splitCopula = Recognized(6, RecognitionExtent.ClosedUtterance, 0, 6000, "音声です", false,
+        Run("音声", 0, 4000, "おんせい"), Run("です", 4000, 6000, "です"));
+    var ninshikiFused = Recognized(7, RecognitionExtent.ClosedUtterance, 0, 6000, "音声認識", false,
+        Run("音声認識", 0, 6000));
+    var ninshikiSplit = Recognized(8, RecognitionExtent.ClosedUtterance, 0, 8000, "音声認識の精度を上げたい", false,
+        Run("音声", 0, 2000), Run("認識", 2000, 4000), Run("の", 4000, 4500), Run("精度", 4500, 6000), Run("を上げたい", 6000, 8000));
+    // A probe without the prefix gap is not closed, so the copula tail stays rejected.
+    var desuProbe = desu with { Extent = RecognitionExtent.Probe, TailSilenceSamples = 0 };
+    return DictationBoundaries.LeadingWake(desu, wakes) is { Distance: 0, ByReading: not null }
+        && DictationBoundaries.LeadingWake(masu, wakes) is { Distance: 0, ByReading: not null }
+        && DictationBoundaries.LeadingWake(onsenDesu, wakes) is null
+        && DictationBoundaries.LeadingWake(onsenWa, wakes) is null
+        && DictationBoundaries.LeadingWake(memo, wakes) is null
+        && DictationBoundaries.LeadingWake(splitCopula, wakes) is null
+        && DictationBoundaries.LeadingWake(ninshikiFused, wakes) is null
+        && DictationBoundaries.LeadingWake(ninshikiSplit, wakes) is null
+        && DictationBoundaries.LeadingWake(desuProbe, wakes) is null;
+}
+
+// s3: if LeadingWake would miss, one alternate whose reading exactly equals a long wake
+// reading (len>=10) plus a primary whole-utterance reading within raw distance 3 accepts
+// wake-only. Mirrors corpus rows houzei-alt (wake), houzei (miss, no alternate) and
+// zatsudan-alt (no-wake, far primary). Not on probes, even past the prefix gap. Not for
+// short wakes.
+static bool DictationLeadingWakeAcceptsExactAlternateInsideNearMiss()
+{
+    var longWake = WakeWord.From("音声入力", "おんせいにゅうりょく"); // len=10
+    WakeWord[] wakes = [longWake];
+    var houzeiAlt = Recognized(1, RecognitionExtent.ClosedUtterance, 0, 10000, "法政入力", false,
+        Run("法政入力", 0, 10000, "ほうぜいにゅうりょく")) with
+    {
+        Alternates = [new RecognitionAlternate("音声入力", "おんせいにゅうりょく")],
+    };
+    var houzei = Recognized(2, RecognitionExtent.ClosedUtterance, 0, 10000, "法政入力", false,
+        Run("法政入力", 0, 10000, "ほうぜいにゅうりょく"));
+    var zatsudanAlt = Recognized(3, RecognitionExtent.ClosedUtterance, 0, 8000, "雑談です", false,
+        Run("雑談です", 0, 8000, "ざつだんです")) with
+    {
+        Alternates = [new RecognitionAlternate("音声入力", "おんせいにゅうりょく")],
+    };
+    var shortWake = WakeWord.From("音声", "おんせい"); // len=4
+    var anzenAlt = Recognized(4, RecognitionExtent.ClosedUtterance, 0, 6000, "安全", false,
+        Run("安全", 0, 6000, "あんぜん")) with
+    {
+        Alternates = [new RecognitionAlternate("音声", "おんせい")],
+    };
+    // Probes never use the alternate rule, even past the prefix gap.
+    var houzeiAltProbe = houzeiAlt with { Extent = RecognitionExtent.Probe, TailSilenceSamples = 0 };
+    var houzeiAltGapProbe = houzeiAlt with { Extent = RecognitionExtent.Probe, TailSilenceSamples = DictationBoundaries.PrefixGapSamples };
+    return DictationBoundaries.LeadingWake(houzeiAlt, wakes) is { BodyStart: null, Distance: 3, ByReading: not null }
+        && DictationBoundaries.LeadingWake(houzei, wakes) is null
+        && DictationBoundaries.LeadingWake(zatsudanAlt, wakes) is null
+        && DictationBoundaries.LeadingWake(anzenAlt, [shortWake]) is null
+        && DictationBoundaries.LeadingWake(houzeiAltProbe, wakes) is null
+        && DictationBoundaries.LeadingWake(houzeiAltGapProbe, wakes) is null;
+}
+
+// s4: a rejected hypothesis whose text equals a wake reading at distance 0 (after
+// NormalizeReading) opens a wait but never a body. Mirrors corpus rows rejected-kana
+// (wake) and rejected-kanji (wake, surface equality), plus the no-wake guards
+// rejected-low, rejected-longer, rejected-prefix and rejected-kana-hosei (d != 0).
+// Every caller passes config.Wakes(), so a kana rejected text wakes only when the
+// config carries that reading.
+static bool DictationRejectedWakeAcceptsReadingAtDistanceZero()
+{
+    static RecognizedUtterance RejectedReading(string rejectedText, double confidence, RecognitionExtent extent = RecognitionExtent.ClosedUtterance) =>
+        new(1, extent, new SampleRange(0, 8000), "", [], HadRejectedSpeech: true, Confidence: confidence, RejectedText: rejectedText);
+
+    var config = DictationConfig() with { WakeReadings = ["おんせいにゅうりょく"] };
+    var wakes = config.Wakes();
+    var kana = RejectedReading("おんせいにゅうりょく", 0.35);
+    var katakana = RejectedReading("オンセイニュウリョク", 0.35);
+    var kanji = RejectedReading("音声入力", 0.35);
+    var low = RejectedReading("音声入力", 0.05);
+    var longer = RejectedReading("音声入力です", 0.35);
+    var kanaLonger = RejectedReading("おんせいにゅうりょくです", 0.35);
+    var hosei = RejectedReading("ほうせいにゅうりょく", 0.35);
+    var prefix = RejectedReading("音声入力", 0.35, RecognitionExtent.PrefixHead);
+    var direct = DictationBoundaries.RejectedWake(kana, wakes) is { BodyStart: null }
+        && DictationBoundaries.RejectedWake(katakana, wakes) is { BodyStart: null }
+        && DictationBoundaries.RejectedWake(kanji, wakes) is { BodyStart: null }
+        && DictationBoundaries.RejectedWake(low, wakes) is null
+        && DictationBoundaries.RejectedWake(longer, wakes) is null
+        && DictationBoundaries.RejectedWake(kanaLonger, wakes) is null
+        && DictationBoundaries.RejectedWake(hosei, wakes) is null
+        && DictationBoundaries.RejectedWake(prefix, wakes) is null;
+
+    // With the built-in table the surface config also carries the reading, so the kana
+    // hypothesis now hits there too: surface WakeWord.From("音声入力") reads おんせいにゅうりょく.
+    var surface = DictationConfig();
+    var surfaceHit = DictationBoundaries.RejectedWake(kana, surface.Wakes()) is { BodyStart: null };
+
+    var store = StoreWithRamp(0, 40000);
+    var waited = new DictationSession(config);
+    waited.Apply(kana, store.Copy);
+    var surfaced = new DictationSession(surface);
+    surfaced.Apply(kana, store.Copy);
+    var guarded = new DictationSession(config);
+    guarded.Apply(hosei, store.Copy);
+    return direct && surfaceHit
+        && waited.IsAwaitingBody && !waited.IsActive
+        && surfaced.IsAwaitingBody && !surfaced.IsActive
+        && !guarded.IsAwaitingBody && !guarded.IsActive;
 }
 
 static bool DictationKanaWakeMatchesKanjiThroughReading()
@@ -2516,6 +2703,30 @@ static bool DictationPhasesFollowOneBreathDictationEndedBySilence()
     return RunWithTimeout(runtime, TimeSpan.FromSeconds(5)) == 0
         && handoff.Submissions.Single().Reason == FinishReason.Silence
         && observer.Phases.SequenceEqual([DictationPhase.Recording, DictationPhase.Idle]);
+}
+
+// The default wake is unreachable here, so "音声入力" wakes the action: its icon follows Waiting and Recording,
+// including a one-breath wake that skips Waiting, and every other phase clears it.
+static bool DictationActionIconFollowsWaitingAndRecording()
+{
+    var action = new WakeAction("grok", ["音声入力"], "alter://action/1");
+    var config = DictationRuntimeTestConfig(endSilenceMs: 5000) with { WakeWords = ["ほげほげ"], Windows = new WindowsActions([action]) };
+    var lone = new PhaseRecorder();
+    var loneRuntime = new WindowsDictationRuntime(config, new FixturePcmCapture(ThreeUtteranceFrames(), [24, 28]), Recognizing("wake", "body", "stop"), new RecordingDictationHandoff(), dryRun: true, lone);
+
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 50, loud: false);
+    var breath = new PhaseRecorder();
+    var breathRuntime = new WindowsDictationRuntime(config with { Dictation = config.Dictation! with { EndSilenceMs = 1200 } }, new FixturePcmCapture(frames, delayAfterFrame: 24), Recognizing("wakebody"), new RecordingDictationHandoff(), dryRun: true, breath);
+
+    return RunWithTimeout(loneRuntime, TimeSpan.FromSeconds(5)) == 0
+        && lone.Phases.SequenceEqual([DictationPhase.Waiting, DictationPhase.Recording, DictationPhase.Ended])
+        && lone.ActionIcons.Select(a => a?.Name).SequenceEqual(["grok", "grok", null])
+        && RunWithTimeout(breathRuntime, TimeSpan.FromSeconds(5)) == 0
+        && breath.Phases.SequenceEqual([DictationPhase.Recording, DictationPhase.Idle])
+        && breath.ActionIcons.Select(a => a?.Name).SequenceEqual(["grok", null]);
 }
 
 static bool DictationPhasesFollowLoneWakeEndedByStop()
@@ -4640,23 +4851,36 @@ static bool DictationHandoffActionOpensUrl()
         && routes == 0;
 }
 
-static bool ConfigLoadsMailAction()
+static bool ConfigLoadsPostAction()
 {
     static string WithAction(string action) =>
         $$$"""{"wakeWords":["音声入力"],"command":"wake","windows":{"actions":[{{{action}}}]}}""";
     using var temp = RuntimeTemp();
-    var path = Path.Combine(temp.Dir, "mail.json");
-    File.WriteAllText(path, WithAction("""{"name":"grokbot","wakeWords":["gb"],"url":"mailto:takets+default@mail.grokbot.com?subject=prompt","smtp":{"host":"smtp.example.com","user":"me@example.com"}}"""));
+    var path = Path.Combine(temp.Dir, "post.json");
+    File.WriteAllText(path, WithAction("""{"name":"grokbot","wakeWords":["gb"],"url":"https://example.workers.dev/","tokenEnv":"VOICE_SWITCH_GROKBOT_TOKEN","fields":{"message":"voice: {text}"}}"""));
     var action = ConfigLoader.Load(path).Windows!.Actions!.Single();
-    return action.Smtp == new SmtpSettings("smtp.example.com", "me@example.com", 587, null, "VOICE_SWITCH_SMTP_PASSWORD")
-        && MailAction.Parse(action.Url) == ("takets+default@mail.grokbot.com", "prompt")
-        && MailAction.Parse("mailto:a%40b.example?Subject=%E4%BB%8A&body=x") == ("a@b.example", "今")
-        && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"grokbot://app/v1/prompt","smtp":{"host":"h","user":"u"}}"""), "windows.actions[0].smtp")
-        && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"mailto:?subject=prompt","smtp":{"host":"h","user":"u"}}"""), "windows.actions[0].smtp")
-        && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"mailto:a@b.example","smtp":{"host":"","user":"u"}}"""), "windows.actions[0].smtp");
+    return action.TokenEnv == "VOICE_SWITCH_GROKBOT_TOKEN"
+        && action.Fields is { Count: 1 } fields && fields["message"] == "voice: {text}"
+        && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"https://example.com/","tokenEnv":"T","inputParam":"text"}"""), "windows.actions[0].inputParam")
+        && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"https://example.com/","fields":{"message":"{text}"}}"""), "windows.actions[0].fields")
+        && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"https://example.com/","tokenEnv":"T","fields":{"":"{text}"}}"""), "windows.actions[0].fields")
+        && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"https://example.com/","tokenEnv":"T","fields":{"a\"b":"{text}"}}"""), "windows.actions[0].fields")
+        && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"grokbot://app/v1/prompt","tokenEnv":"T"}"""), "windows.actions[0].tokenEnv")
+        && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"http://example.com/","tokenEnv":"T"}"""), "windows.actions[0].tokenEnv")
+        && Rejects(WithAction("""{"name":"m","wakeWords":["m"],"url":"https://example.com/","tokenEnv":" "}"""), "windows.actions[0].tokenEnv");
 }
 
-static bool DictationHandoffMailActionSendsMail()
+static bool PostActionRendersFields()
+{
+    var url = "https://example.workers.dev/";
+    var defaults = PostAction.Fields(new WakeAction("grokbot", ["gb"], url, TokenEnv: "T"), "今日 {recordedAtMs}", 1761800000123);
+    var custom = PostAction.Fields(new WakeAction("grokbot", ["gb"], url, TokenEnv: "T",
+        Fields: new Dictionary<string, string> { ["message"] = "voice: {text}", ["source"] = "pc" }), "今日", 1);
+    return defaults.SequenceEqual([("client", "ring"), ("recordedAt", "1761800000123"), ("transcription", "今日 {recordedAtMs}")])
+        && custom.SequenceEqual([("message", "voice: 今日"), ("source", "pc")]);
+}
+
+static bool DictationHandoffPostActionPostsText()
 {
     using var temp = RuntimeTemp();
     var recordings = Path.Combine(temp.Dir, "recordings");
@@ -4678,15 +4902,14 @@ static bool DictationHandoffMailActionSendsMail()
             opened.Add(string.Join(' ', psi.ArgumentList));
         return Process.GetCurrentProcess();
     };
-    var sent = new List<(SmtpSettings Smtp, string To, string Subject, string Body)>();
+    var sent = new List<(WakeAction Action, string Text)>();
     var handoff = new RegisteredSuperwhisperHandoff(Path.Combine(temp.Dir, "handoff"), recordings, start, delay: _ => Task.CompletedTask,
         superwhisperMode: "voice_switch", preferencesPath: preferences, modesDir: modes,
-        sendMail: (smtp, to, subject, body, _) => { sent.Add((smtp, to, subject, body)); return Task.CompletedTask; });
-    var smtp = new SmtpSettings("smtp.example.com", "me@example.com");
-    var action = new WakeAction("grokbot", ["gb"], "mailto:takets+default@mail.grokbot.com?subject=prompt", Smtp: smtp);
+        post: (action, text, _) => { sent.Add((action, text)); return Task.CompletedTask; });
+    var action = new WakeAction("grokbot", ["gb"], "https://example.workers.dev/", TokenEnv: "VOICE_SWITCH_GROKBOT_TOKEN");
     var result = SubmitHandoff(handoff, new DictationAudio(Guid.NewGuid(), new SampleRange(0, 2), ImmutableArray.Create<short>(1, 2), Target: 0x42, Action: action));
     return result.Status == HandoffStatus.Transcribed
-        && sent.SequenceEqual([(smtp, "takets+default@mail.grokbot.com", "prompt", "一行目\n二行目")])
+        && sent.SequenceEqual([(action, "一行目\n二行目")])
         && opened.Count == 0;
 }
 

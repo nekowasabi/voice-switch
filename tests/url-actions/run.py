@@ -52,12 +52,16 @@ def check_wiring(repo):
     enter_mode = "enterSuperwhisperMode(wantedMode, target: target)"
     assert mode_override in handoff and enter_mode in handoff
     assert handoff.index(mode_override) < handoff.index(enter_mode)
-    assert "Platform.urlProcess(action.url)" in handoff
+    assert "case .open(let url)" in handoff and "Platform.urlProcess(url)" in handoff
     assert "Platform.runURLProcess(p, wait: false)" in handoff
+    assert "case .command(let command)" in handoff, "command action must have its own delivery"
+    assert "Platform.runCommand(command, stdin: result" in handoff, "command action must get the dictation on stdin"
+    assert '"VOICE_SWITCH_APP": target?.bundleIdentifier' in handoff, "command action must name the dictation target app"
     assert "openArguments(input:" in handoff and "let route = await routeDictation(result)" in handoff
     action_pos = handoff.index("openArguments(input:")
+    command_pos = handoff.index("Platform.runCommand(command, stdin: result")
     route_pos = handoff.index("let route = await routeDictation(result)")
-    assert action_pos < route_pos and "return" in handoff[action_pos:route_pos]
+    assert action_pos < command_pos < route_pos and "return .delivered" in handoff[command_pos:route_pos]
     segmenter = repo.code("Sources/voice-switch/Segmenter.swift")
     early = extract_braced_body(segmenter, r"static func earlyWake[^\{]*\{")
     assert "cfg.wakeWords" in early and ".actions" not in early
@@ -85,10 +89,14 @@ mutations = [
     ("MacApp.swift", "guard modeRequested, superwhisperAutoPasteDisabled"),
     ("MacApp.swift", "action == nil ? nil : action?.superwhisperMode ?? cfg.superwhisperMode"),
     ("MacApp.swift", "enterSuperwhisperMode(wantedMode, target: target)"),
-    ("MacApp.swift", "Platform.urlProcess(action.url)"),
+    ("MacApp.swift", "case .open(let url)"),
+    ("MacApp.swift", "Platform.urlProcess(url)"),
     ("MacApp.swift", "Platform.runURLProcess(p, wait: false)"),
+    ("MacApp.swift", "case .command(let command)"),
+    ("MacApp.swift", "Platform.runCommand(command, stdin: result"),
+    ("MacApp.swift", '"VOICE_SWITCH_APP": target?.bundleIdentifier'),
     ("MacApp.swift", "openArguments(input:"),
-    ("MacApp.swift", "Platform.runURLProcess(p, wait: false)\n        return"),
+    ("MacApp.swift", "        }\n        return .delivered\n"),
     ("MacApp.swift", "if isHead && start == nil"),
     ("MacApp.swift", "let route = await routeDictation(result)"),
 ]
@@ -108,7 +116,7 @@ if not shutil.which("swiftc"):
     sys.exit(1 if args.require_swift else 0)
 with tempfile.TemporaryDirectory(prefix="voice-switch-url-test-") as temp:
     binary = pathlib.Path(temp) / "url-actions"
-    subprocess.run(["swiftc", "-module-cache-path", str(pathlib.Path(temp) / "module-cache"),
+    subprocess.run(["swiftc", "-module-name", "voice_switch", "-module-cache-path", str(pathlib.Path(temp) / "module-cache"),
                     str(root / "Sources/voice-switch/DictationJournal.swift"),
                     str(root / "Sources/voice-switch/WakeSafety.swift"), str(root / "Sources/voice-switch/Transcript.swift"),
                     str(root / "Sources/voice-switch/Config.swift"),

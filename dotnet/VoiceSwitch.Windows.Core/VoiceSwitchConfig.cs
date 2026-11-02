@@ -110,9 +110,10 @@ public sealed record VoiceSwitchConfig(
 
 public sealed record WakeWord(string Text, string Reading)
 {
-    // Without a computed reading the word itself stands in, so a kana wake word still compares with SAPI's lexical forms.
+    // Without a computed reading the built-in table fills in the example vocabulary, so a surface-only
+    // caller still compares readings. An explicit non-empty reading still wins, and unknown words stand in.
     public static WakeWord From(string word, string? reading = null) =>
-        new(TextMatching.Normalize(word), TextMatching.NormalizeReading(string.IsNullOrEmpty(reading) ? word : reading));
+        new(TextMatching.Normalize(word), TextMatching.NormalizeReading(string.IsNullOrEmpty(reading) ? WakeReadingFallback.For(TextMatching.Normalize(word)) ?? word : reading));
 
     public static WakeWord[] All(string[] words, string?[]? readings) =>
         words.Select((word, i) => From(word, readings is { } r && i < r.Length ? r[i] : null)).ToArray();
@@ -121,7 +122,7 @@ public sealed record WakeWord(string Text, string Reading)
 public sealed record WindowsActions(WakeAction[]? Actions = null);
 
 /// <summary>A wake phrase whose dictation opens its own URL with the text as `input=` instead of being pasted or routed.</summary>
-public sealed record WakeAction(string Name, string[] WakeWords, string Url, string? SuperwhisperMode = null, string? InputParam = null, SmtpSettings? Smtp = null)
+public sealed record WakeAction(string Name, string[] WakeWords, string Url, string? SuperwhisperMode = null, string? InputParam = null, string? TokenEnv = null, string? Icon = null, IReadOnlyDictionary<string, string>? Fields = null)
 {
     [JsonIgnore]
     public string?[]? WakeReadings { get; init; }
@@ -264,12 +265,28 @@ public static class ConfigLoader
                 throw new InvalidDataException($"{field}.url must be an absolute application URL (for example superwhisper://record); encode spaces as %20, use valid percent escapes, and do not use file/data/javascript URLs.");
             }
 
-            if (action.Smtp is { } smtp
-                && (!MailAction.IsMailto(action.Url) || MailAction.Parse(action.Url).To.Length == 0
-                    || string.IsNullOrWhiteSpace(smtp.Host) || string.IsNullOrWhiteSpace(smtp.User)
-                    || smtp.Port is < 1 or > 65535 || string.IsNullOrWhiteSpace(smtp.PasswordEnv)))
+            if (action.TokenEnv is { } tokenEnv && (string.IsNullOrWhiteSpace(tokenEnv) || !PostAction.IsHttps(action.Url)))
             {
-                throw new InvalidDataException($"{field}.smtp needs a mailto: url with a recipient, a host, a user, a port 1..65535, and passwordEnv.");
+                throw new InvalidDataException($"{field}.tokenEnv needs an https:// url and a non-empty environment variable name.");
+            }
+
+            if (action.TokenEnv is not null && action.InputParam is not null)
+            {
+                throw new InvalidDataException($"{field}.inputParam does not apply to a tokenEnv action; name the multipart fields in fields instead.");
+            }
+
+            if (action.Fields is { } fields)
+            {
+                if (action.TokenEnv is null)
+                {
+                    throw new InvalidDataException($"{field}.fields needs tokenEnv; only a POST action sends multipart fields.");
+                }
+
+                // A quote or line break in a name would end the Content-Disposition header early.
+                if (fields.Any(pair => string.IsNullOrEmpty(pair.Key) || pair.Key.IndexOfAny(['"', '\r', '\n']) >= 0 || pair.Value is null))
+                {
+                    throw new InvalidDataException($"{field}.fields must not have an empty field name, a name with a quote or line break, or a null value.");
+                }
             }
         }
 

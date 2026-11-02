@@ -85,7 +85,27 @@ expect(plain.macOS?.actions == nil, "actions absent when not configured")
 let uuid = "alter://action/26B00BAB-5655-4581-BCA0-F3880E746CC9"
 let acts = try config(["actions": [["name": "progress", "wakeWords": ["progress", "プログレス"], "url": uuid]]])
 let act = acts.macOS?.actions?.first
-expect(act?.name == "progress" && act?.wakeWords == ["progress", "プログレス"] && act?.url.rawValue == uuid, "action must decode")
+expect(act?.name == "progress" && act?.wakeWords == ["progress", "プログレス"] && act?.url?.rawValue == uuid, "action must decode")
+if case .open(let opened)? = act?.delivery { expect(opened.rawValue == uuid, "open delivery keeps the URL") }
+else { fatalError("a url action without tokenEnv must open its URL") }
+let keypipe = "/usr/local/bin/keypipe --line @@@"
+let commanded = try config(["actions": [["name": "k", "wakeWords": ["k"], "command": keypipe]]]).macOS?.actions?.first
+expect(commanded?.url == nil && commanded?.delivery == .command(keypipe), "a command action decodes with no url")
+expect(commanded?.openArguments(input: "x") == [], "a command action has nothing to open")
+for (extra, key) in [(["url": uuid], "command"), (["tokenEnv": "T"], "tokenEnv"), (["inputParam": "q"], "inputParam"),
+                     (["fields": ["a": "{text}"]], "fields"), (["command": " \n"], "command"), (["command": NSNull()], "url")] as [([String: Any], String)] {
+    var bad: [String: Any] = ["name": "k", "wakeWords": ["k"], "command": keypipe]
+    bad.merge(extra) { $1 }
+    do { _ = try config(["actions": [bad]]); fatalError("accepted invalid command action: \(extra)") }
+    catch DecodingError.dataCorrupted(let context) {
+        expect(context.codingPath.last?.stringValue == key, "command action error must identify \(key), got \(context.codingPath)")
+    }
+}
+let example = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+    .deletingLastPathComponent().appendingPathComponent("config.example.macos-url.json")
+let exampleActions = try JSONDecoder().decode(Config.self, from: Data(contentsOf: example)).macOS?.actions ?? []
+expect(exampleActions.contains { if case .command(let c) = $0.delivery { c.contains("keypipe") } else { false } },
+       "the macOS URL example must carry a decodable keypipe command action")
 expect(act?.superwhisperMode == nil, "superwhisperMode absent when not configured")
 let moded = try config(["actions": [["name": "p", "wakeWords": ["p"], "url": uuid, "superwhisperMode": "input-voice-switch"]]])
 expect(moded.macOS?.actions?.first?.superwhisperMode == "input-voice-switch", "action superwhisperMode must decode")
@@ -106,4 +126,27 @@ let withInput = try config(["actions": [["name": "p", "wakeWords": ["p"], "url":
 let rebuilt = withInput.openArguments(input: "new")
 expect(inputItems(rebuilt).map(\.value) == ["new"], "existing input must be replaced, not duplicated")
 expect(URLComponents(string: rebuilt[2])!.queryItems!.contains { $0.name == "k" && $0.value == "v" }, "other query items kept")
+#if !os(Windows)
+for text in ["one line @@@", "first\nsecond\n今日"] {
+    let out = directory.appendingPathComponent(UUID().uuidString).path
+    // The file appears only after cat saw EOF, so a missing close shows up as a timeout.
+    Platform.runCommand("cat > '\(out).part' && mv '\(out).part' '\(out)'", stdin: text)
+    var got: Data?
+    for _ in 0 ..< 40 where got == nil {
+        Thread.sleep(forTimeInterval: 0.05)
+        got = FileManager.default.contents(atPath: out)
+    }
+    expect(got != nil, "command must see stdin EOF within 2 s")
+    expect(got == Data(text.utf8), "command stdin must carry the exact text with no newline added: \(text)")
+}
+let envOut = directory.appendingPathComponent(UUID().uuidString).path
+Platform.runCommand("cat > /dev/null; printenv VOICE_SWITCH_APP > '\(envOut).part' && mv '\(envOut).part' '\(envOut)'", stdin: "x",
+                    environment: ["VOICE_SWITCH_APP": "com.example.app"])
+var envGot: Data?
+for _ in 0 ..< 40 where envGot == nil {
+    Thread.sleep(forTimeInterval: 0.05)
+    envGot = FileManager.default.contents(atPath: envOut)
+}
+expect(envGot == Data("com.example.app\n".utf8), "command must see the extra environment variable")
+#endif
 print("URL actions: \(checks) checks passed")

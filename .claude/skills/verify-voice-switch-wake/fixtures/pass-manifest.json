@@ -1,0 +1,1812 @@
+{
+  "rules": [
+    "auto_b"
+  ],
+  "negativeExposureHours": {
+    "after_input": 10,
+    "idle": 10
+  },
+  "safetyIncidents": 0,
+  "attempts": [
+    {
+      "id": "after_input-0",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "after_input-1",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "after_input-2",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "after_input-3",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "after_input-4",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "after_input-5",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "after_input-6",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "after_input-7",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "after_input-8",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "after_input-9",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "after_input-10",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "after_input-11",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "after_input-12",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "after_input-13",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "after_input-14",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "after_input-15",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "after_input-16",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "after_input-17",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "after_input-18",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "after_input-19",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "after_input-20",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "after_input-21",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "after_input-22",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "after_input-23",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "after_input-24",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "after_input-25",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-26",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-27",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-28",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-29",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-30",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-31",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-32",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-33",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-34",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-35",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-36",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-37",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-38",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-39",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-40",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-41",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-42",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-43",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-44",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-45",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-46",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-47",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-48",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-49",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-50",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-51",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-52",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-53",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-54",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-55",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-56",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-57",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-58",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-59",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-60",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-61",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-62",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-63",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-64",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-65",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-66",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-67",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-68",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-69",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-70",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-71",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-72",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-73",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-74",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-75",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-76",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-77",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-78",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-79",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-80",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-81",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-82",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-83",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-84",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-85",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-86",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-87",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-88",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-89",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-90",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-91",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-92",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-93",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-94",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-95",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-96",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-97",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-98",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "after_input-99",
+      "context": "after_input",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-0",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "idle-1",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "idle-2",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "idle-3",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "idle-4",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "idle-5",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "idle-6",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "idle-7",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "idle-8",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "idle-9",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "idle-10",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "idle-11",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "idle-12",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "idle-13",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "idle-14",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "idle-15",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "idle-16",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "idle-17",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "idle-18",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "idle-19",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "idle-20",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "idle-21",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "idle-22",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "idle-23",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "idle-24",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": false
+      }
+    },
+    {
+      "id": "idle-25",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-26",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-27",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-28",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-29",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-30",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-31",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-32",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-33",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-34",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-35",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-36",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-37",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-38",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-39",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-40",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-41",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-42",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-43",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-44",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-45",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-46",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-47",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-48",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-49",
+      "context": "idle",
+      "intent": true,
+      "strictWake": false,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-50",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-51",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-52",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-53",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-54",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-55",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-56",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-57",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-58",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-59",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-60",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-61",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-62",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-63",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-64",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-65",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-66",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-67",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-68",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-69",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-70",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-71",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-72",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-73",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-74",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-75",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-76",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-77",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-78",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-79",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-80",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-81",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-82",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-83",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-84",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-85",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-86",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-87",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-88",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-89",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-90",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-91",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-92",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-93",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-94",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-95",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-96",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-97",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-98",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    },
+    {
+      "id": "idle-99",
+      "context": "idle",
+      "intent": true,
+      "strictWake": true,
+      "wakes": {
+        "auto_b": true
+      }
+    }
+  ]
+}
