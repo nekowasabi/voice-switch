@@ -1008,8 +1008,7 @@ public sealed class DictationSession
     public bool StartAction(WakeAction action, long now, double? idleSeconds)
     {
         if (!StartManual(now, idleSeconds)) return false;
-        Action = action;
-        wakes = action.Wakes();
+        wakeSet = wakeSets.FirstOrDefault(set => set.Owner == action) ?? new WakeSet(action, action.Wakes());
         return true;
     }
 

@@ -403,7 +403,7 @@ sealed class ActionHudObserver : IDictationRuntimeObserver
 {
     public List<DictationPhase> Phases { get; } = new();
     public List<bool> WakeSounds { get; } = new();
-    public List<WakeAction?> Waitings { get; } = new();
+    public List<WakeAction?> ActionIcons { get; } = new();
 
     public void PhaseChanged(DictationPhase phase) => Phases.Add(phase);
     public bool PlayWakeSound(bool action)
@@ -412,7 +412,7 @@ sealed class ActionHudObserver : IDictationRuntimeObserver
         return true;
     }
 
-    public void WaitingFor(WakeAction? action) => Waitings.Add(action);
+    public void ActionIcon(WakeAction? action) => ActionIcons.Add(action);
     public void RecognitionQueued(RecognitionRequest request, int pending, long retainedStart, long retainedEnd) { }
     public void RecognitionCompleted(RecognitionRequest request, RecognizedUtterance? recognition, Exception? error) { }
     public void HandoffSubmitted(DictationAudio audio, HandoffResult result) { }

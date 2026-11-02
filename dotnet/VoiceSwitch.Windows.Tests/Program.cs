@@ -2773,7 +2773,7 @@ static bool DictationActionIconFollowsWaitingAndRecording()
     var action = new WakeAction("grok", ["音声入力"], "alter://action/1");
     var config = DictationRuntimeTestConfig(endSilenceMs: 5000) with { WakeWords = ["ほげほげ"], Windows = new WindowsActions([action]) };
     var lone = new PhaseRecorder();
-    var loneRuntime = new WindowsDictationRuntime(config, new FixturePcmCapture(ThreeUtteranceFrames(), [24, 28]), Recognizing("wake", "body", "stop"), new RecordingDictationHandoff(), dryRun: true, lone);
+    var loneRuntime = new WindowsDictationRuntime(config, new FixturePcmCapture(ThreeUtteranceFrames(), [24, 28]), RecognizingClosed("wake", "body", "stop"), new RecordingDictationHandoff(), dryRun: true, lone);
 
     var frames = new List<PcmFrame>();
     AddFrames(frames, 3, loud: false);
@@ -3466,6 +3466,15 @@ static RecognizedUtterance Utterance(RecognitionRequest request, string kind) =>
 // kinds[i] answers request i+1; the last kind repeats for any later request.
 static ScriptedDictationRecognizer Recognizing(params string[] kinds) =>
     new(request => Task.FromResult(Utterance(request, kinds[Math.Min((int)request.Id, kinds.Length) - 1])));
+
+// kinds[i] answers closed utterance i+1; probes hear nothing, so an action's silence-gap probes do not take the script.
+static ScriptedDictationRecognizer RecognizingClosed(params string[] kinds)
+{
+    var closed = 0;
+    return new(request => Task.FromResult(request.Extent == RecognitionExtent.Probe
+        ? new RecognizedUtterance(request.Id, request.Extent, request.Range, "", [], TailSilenceSamples: request.TailSilenceSamples)
+        : Utterance(request, kinds[Math.Min(Interlocked.Increment(ref closed), kinds.Length) - 1])));
+}
 
 static bool DictationCaptureFollowsPinnedMicrophoneWhileConnected()
 {
@@ -4977,7 +4986,7 @@ static bool ProbeActionWakeLogsActionAndShowsWaiting()
         && output.Contains("action=progress", StringComparison.Ordinal)
         && observer.Phases.Contains(DictationPhase.Waiting)
         && observer.WakeSounds.Contains(true)
-        && observer.Waitings.Any(action => action?.Name == "progress");
+        && observer.ActionIcons.Any(action => action?.Name == "progress");
 }
 
 static bool ProbeActionWakeSkippedWhileMicInUse()
