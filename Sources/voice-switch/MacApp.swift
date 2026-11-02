@@ -1343,10 +1343,7 @@ final class Listener {
                 let earlyAction = early.action
                 let start = config.cfg.dictation == nil && earlyAction == nil ? nil : hit
                 guard start != nil || hit == nil else { continue } // a continuing transcript without dictation is not a wake
-                if let action = earlyAction {
-                    guard !handoffBusy.withLock({ $0 }) else { log("action skipped: previous dictation still in flight"); continue }
-                    _ = action
-                }
+                if earlyAction != nil, handoffBusy.withLock({ $0 }) { log("action skipped: previous dictation still in flight"); continue }
                 if let busy = micInUse(by: config.cfg.skipWhileMicInUseBy ?? []) { log("skipped: \(busy) is using the microphone"); continue }
                 if config.cfg.dictation?.noWakeWord?.enabled != true { log("early: \(tr.text)\(earlyAction.map { " action=\($0.name)" } ?? "")  [buf \(buf.count * 1000 / Int(rate)) ms, stt \(stt) ms]") }
                 seg.reset()
@@ -1356,10 +1353,9 @@ final class Listener {
                     Hotkeys.begin()
                 } else if config.cfg.dictation != nil || earlyAction != nil {
                     dictation = Dictation(samples: [], generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: false, action: earlyAction)
-                    if let action = earlyAction, UserDefaults.standard.bool(forKey: soundKey) {
+                    if earlyAction != nil, UserDefaults.standard.bool(forKey: soundKey) {
                         actionWakeChime?.play()
                         dictation?.deafFrames = frames(ms: 600)
-                        _ = action
                     }
                     log("dictation started early (waiting for text)\(earlyAction.map { " action=\($0.name)" } ?? "")")
                     Hotkeys.begin()

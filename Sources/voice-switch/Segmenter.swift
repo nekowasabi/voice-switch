@@ -81,11 +81,10 @@ struct Segmenter {
     /// Early-probe verdict. A transcript that is the start of a longer wake word ("音声入" or "音声" for "音声入力")
     /// may be mid-word: it fires only as a bare wake word, and only after `prefixGapFrames` of silence.
     /// Wake sets stay ordered: default wakes first, then each action in config order. The first set that matches wins.
-    static func earlyWake(_ tr: Transcript, cfg: Config, tailSilentFrames: Int, guardWords: [String]? = nil) -> (start: (cutAt: Double, rest: String)?, action: WakeAction?)? {
+    static func earlyWake(_ tr: Transcript, cfg: Config, tailSilentFrames: Int) -> (start: (cutAt: Double, rest: String)?, action: WakeAction?)? {
         let defaultWords = cfg.wakeWords
         let actions = cfg.macOS?.actions ?? []
         let allWords = defaultWords + actions.flatMap { $0.wakeWords }
-        let _ = guardWords
         let words = defaultWords.map(normalize)
         let all = allWords.map(normalize)
         if all.contains(where: { $0.count > tr.text.count && $0.hasPrefix(tr.text) }) {
