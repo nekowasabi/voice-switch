@@ -95,7 +95,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation runtime max uses live speech while recognition is delayed", () => Check(DictationRuntimeMaxUsesLiveSpeechWhileRecognitionIsDelayed())),
     ("dictation runtime stop after lone wake cancels empty session", () => Check(DictationRuntimeStopAfterLoneWakeCancelsEmptySession())),
     ("config loads earlyWakeMs and leaves it null when absent", () => Check(ConfigLoadsEarlyWakeMs())),
-    ("segmenter probe fires at the 60 and 150 ms gaps and after earlyWakeMs of audio", () => Check(SegmenterProbeFiresAtGapsAndGrowth())),
+    ("segmenter probe fires at the 60 and 150 ms gaps and after earlyWakeMs of audio, and only at the gaps for an action without earlyWakeMs", () => Check(SegmenterProbeFiresAtGapsAndGrowth())),
     ("early wake fires a prefix wake only after the prefix gap and never from a fuzzy reading", () => Check(EarlyWakeFiresOnlySafeProbes())),
     ("leading wake needs a pause after a wake that starts a longer wake", () => Check(LeadingWakeNeedsPauseAfterShortWake())),
     ("dictation session keeps probe wake audio out of the body", () => Check(DictationSessionKeepsProbeWakeOutOfBody())),
@@ -1506,6 +1506,7 @@ static bool SegmenterProbeFiresAtGapsAndGrowth()
 
     var gaps = Trace(new Segmenter(Config(10000)), (7, false), (17, true), (12, false));
     var off = Trace(new Segmenter(Config(null)), (7, false), (17, true), (12, false));
+    var actionGaps = Trace(new Segmenter(Config(null) with { Windows = new WindowsActions([new WakeAction("progress", ["プログレス"], "alter://action/1")]) }), (7, false), (40, true), (12, false));
     var growth = new Segmenter(Config(300));
     var beforeReset = Trace(growth, (7, false), (17, true));
     growth.Reset();
@@ -1514,6 +1515,7 @@ static bool SegmenterProbeFiresAtGapsAndGrowth()
     var skippedProbes = Trace(capped, (7, false), (40, true), (2, false));
     return gaps.SequenceEqual(["25:12480:960", "28:13920:2400"])
         && off.Count == 0
+        && actionGaps.SequenceEqual(["48:23520:960", "51:24960:2400"])
         && beforeReset.SequenceEqual(["9:4800:0", "19:9600:0"])
         && afterReset.SequenceEqual(["9:4800:0"])
         && capped.IsSkipping

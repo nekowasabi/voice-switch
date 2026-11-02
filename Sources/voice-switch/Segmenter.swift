@@ -66,11 +66,12 @@ struct Segmenter {
     // ponytail: fixed 150 ms from synthetic speech; make it a config knob if real voices pause longer inside the word.
     static let prefixGapFrames = 5
     mutating func probe() -> [Float]? {
-        guard let every = cfg.earlyWakeMs, !utt.isEmpty, !skipping else { return nil }
+        // An action wake word gets the silence-gap probes without earlyWakeMs; speech-interval probes stay opt-in.
+        guard cfg.earlyWakeMs != nil || !(cfg.macOS?.actions ?? []).isEmpty, !utt.isEmpty, !skipping else { return nil }
         let minFrames = frames(ms: cfg.minSpeechMs ?? 300)
         guard utt.count >= minFrames else { return nil }
         let gap = silent == 2 || silent == Segmenter.prefixGapFrames
-        guard gap || utt.count - lastProbe >= frames(ms: every) else { return nil }
+        guard gap || cfg.earlyWakeMs.map({ utt.count - lastProbe >= frames(ms: $0) }) == true else { return nil }
         lastProbe = utt.count
         return Array(utt.joined())
     }

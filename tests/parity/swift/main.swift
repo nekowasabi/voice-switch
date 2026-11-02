@@ -332,7 +332,28 @@ for item in wakeFixture.cases {
     }
 }
 
+do {
+    let json: [String: Any] = ["wakeWords": ["test"], "command": "true", "maxSeconds": 2.5, "hangoverMs": 300, "prerollMs": 300, "minSpeechMs": 300,
+                               "vadRatio": 3, "vadMinRMS": 0.005, "macOS": ["actions": [["name": "progress", "wakeWords": ["プログレス"], "url": "alter://fixture"]]]]
+    let actionCfg = try decoder.decode(Config.self, from: JSONSerialization.data(withJSONObject: json))
+    func trace(_ cfg: Config) -> [String] {
+        var seg = Segmenter(cfg: cfg)
+        let quiet = [Float](repeating: 0.0001, count: frameLen)
+        let loud = (0..<frameLen).map { i in Float(0.2 * sin(Float(i) * 0.5)) }
+        var fired: [String] = []
+        for (index, isLoud) in (Array(repeating: false, count: 7) + Array(repeating: true, count: 40) + Array(repeating: false, count: 12)).enumerated() {
+            if seg.push(isLoud ? loud : quiet) == nil, let buf = seg.probe() { fired.append("\(index):\(buf.count):\(seg.tailSilentFrames)") }
+        }
+        return fired
+    }
+    var noAction = actionCfg
+    noAction.macOS = nil
+    check(trace(actionCfg) == ["48:23520:2", "51:24960:5"], "action without earlyWakeMs probes at the gaps only: \(trace(actionCfg))")
+    check(trace(noAction).isEmpty, "no action and no earlyWakeMs never probes: \(trace(noAction))")
+}
+
 if failures.isEmpty {
+    print("PASS gap probe without earlyWakeMs")
     print("PASS wake verdict fixtures")
     print("PASS behavior fixtures")
     print("PASS pane route fixtures")

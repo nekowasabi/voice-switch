@@ -16,7 +16,8 @@ struct Config: Decodable {
     var vadRatio: Float?
     var vadMinRMS: Float?
     /// Experimental: probe the open utterance with STT every this many ms of speech (and at short internal gaps),
-    /// firing a wake as soon as the transcript starts with a wake word, before hangoverMs. Absent turns it off.
+    /// firing a wake as soon as the transcript starts with a wake word, before hangoverMs. Absent turns it off,
+    /// except the gap probes, which still run when macOS.actions is set.
     var earlyWakeMs: Int?
     /// Bundle IDs / process names whose microphone use blocks firing.
     var skipWhileMicInUseBy: [String]?

@@ -1,6 +1,6 @@
 # Action wake words on the early-wake probe
 
-`earlyWakeMs` is opt-in. Null keeps today's timing. Do not set it in the example configs.
+`earlyWakeMs` is opt-in for the periodic speech probes. With it null, a config with at least one action still gets the 60 ms and 150 ms silence probes; without actions, null keeps today's timing. Do not set it in the example configs.
 
 ## Problem
 
