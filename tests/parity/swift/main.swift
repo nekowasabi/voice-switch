@@ -323,12 +323,12 @@ for item in wakeFixture.cases {
         return segment.text.enumerated().map { (String($1), start + 0.1 * Double($0), start + 0.1 * Double($0 + 1)) }
     }
     let tr = Transcript(runs: runs)
-    // Mac has no closed-utterance entry point outside the listener yet, so only probes run here.
-    for probe in item.checks where probe.extent == "probe" {
-        let early = Segmenter.earlyWake(tr, cfg: cfg, tailSilentFrames: (probe.tailMs ?? 0) / 30)
-        let actual = early.map { "\($0.action?.name ?? "default") body=\($0.start.map { String(Int(($0.cutAt * 1000).rounded())) } ?? "nil")" } ?? "nil"
-        let expected = probe.expect.map { "\($0.set) body=\($0.bodyMs.map(String.init) ?? "nil")" } ?? "nil"
-        check(actual == expected, "wake verdict \(item.name) probe tail=\(probe.tailMs ?? 0) expected=\(expected) actual=\(actual)")
+    for row in item.checks {
+        let closed = row.extent == "closed"
+        let verdict = wakeVerdict(tr, sets: wakeSets(cfg), tailSilentFrames: (row.tailMs ?? 0) / 30, closed: closed)
+        let actual = verdict.map { "\($0.action?.name ?? "default") body=\($0.start.map { String(Int(($0.cutAt * 1000).rounded())) } ?? "nil")" } ?? "nil"
+        let expected = row.expect.map { "\($0.set) body=\($0.bodyMs.map(String.init) ?? "nil")" } ?? "nil"
+        check(actual == expected, "wake verdict \(item.name) \(closed ? "closed" : "probe tail=\(row.tailMs ?? 0)") expected=\(expected) actual=\(actual)")
     }
 }
 

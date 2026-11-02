@@ -197,7 +197,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("probe action wake keeps the prefix gap across every wake word", () => Check(ProbeActionWakeKeepsPrefixGap())),
     ("probe action wake ignores a fuzzy reading", () => Check(ProbeActionWakeIgnoresFuzzyReading())),
     ("probe action wake with a body opens the action recording", () => Check(ProbeActionWakeWithBodyOpensRecording())),
-    ("probe prefers the default wake over an action word", () => Check(ProbePrefersDefaultWakeOverAction())),
+    ("probe prefers the default wake over an action word only after a pause", () => Check(ProbePrefersDefaultWakeOverAction())),
     ("probe of a non-wake opens no session", () => Check(ProbeNonWakeOpensNoSession())),
     ("probe action wake logs the action and shows waiting", () => Check(ProbeActionWakeLogsActionAndShowsWaiting())),
     ("probe action wake is skipped while the microphone is in use", () => Check(ProbeActionWakeSkippedWhileMicInUse())),
@@ -1524,7 +1524,7 @@ static bool EarlyWakeFiresOnlySafeProbes()
 {
     WakeWord[] wakes = [WakeWord.From("音声", "おんせい"), WakeWord.From("音声入力", "おんせいにゅうりょく"), WakeWord.From("音声に入る", "おんせいにはいる")];
     WakePrefix? Early(string text, long tail, params LexicalRun[] runs) =>
-        DictationBoundaries.EarlyWake(new RecognizedUtterance(1, RecognitionExtent.Probe, new SampleRange(0, 8000), text, runs.ToImmutableArray(), TailSilenceSamples: tail), wakes);
+        DictationBoundaries.Verdict(new RecognizedUtterance(1, RecognitionExtent.Probe, new SampleRange(0, 8000), text, runs.ToImmutableArray(), TailSilenceSamples: tail), [new WakeSet(null, wakes)])?.Prefix;
     LexicalRun[] onsei = [Run("音声", 0, 3000)];
     LexicalRun[] onseiNyu = [Run("音声", 0, 2000), Run("入", 2000, 3000)];
     LexicalRun[] onseiNyuryoku = [Run("音声", 0, 2000), Run("入力", 2000, 4000)];
@@ -4831,8 +4831,8 @@ static bool WakeActionUrlCarriesInput()
 static bool DictationActionWakeSelectsAction()
 {
     var progress = new WakeAction("progress", ["プログレス"], "alter://action/1");
-    var shadowed = new WakeAction("memo", ["音声入力メモ"], "alter://action/2");
-    var config = DictationConfig() with { Windows = new WindowsActions([shadowed, progress]) };
+    var memo = new WakeAction("memo", ["音声入力メモ"], "alter://action/2");
+    var config = DictationConfig() with { Windows = new WindowsActions([memo, progress]) };
     var store = StoreWithRamp(0, 40000);
 
     var leading = new DictationSession(config);
@@ -4844,15 +4844,15 @@ static bool DictationActionWakeSelectsAction()
     var bareWaiting = bare.IsAwaitingBody && bare.Action == progress;
     bare.Apply(Recognized(3, RecognitionExtent.ClosedUtterance, 12000, 20000, "プログレス今日は", false, Run("プログレス", 12000, 15000), Run("今日は", 16000, 20000)), store.Copy);
 
-    var byDefault = new DictationSession(config);
-    byDefault.Apply(Recognized(4, RecognitionExtent.PrefixHead, 0, 20000, "音声入力メモ今日", false, Run("音声入力", 0, 4000), Run("メモ", 4000, 6000), Run("今日", 8000, 20000)), store.Copy);
+    var byMemo = new DictationSession(config);
+    byMemo.Apply(Recognized(4, RecognitionExtent.PrefixHead, 0, 20000, "音声入力メモ今日", false, Run("音声入力", 0, 4000), Run("メモ", 4000, 6000), Run("今日", 8000, 20000)), store.Copy);
 
     var probe = new DictationSession(config);
     probe.Apply(new RecognizedUtterance(5, RecognitionExtent.Probe, new SampleRange(0, 8000), "プログレス", [Run("プログレス", 0, 5000)], TailSilenceSamples: 3000), store.Copy);
 
     return leadingAudio is { Action: var a, Range: var r } && a == progress && r == new SampleRange(6000, 20000)
         && bareWaiting && bare.IsActive && bare.PendingBody == new SampleRange(16000, 20000)
-        && byDefault.IsActive && byDefault.Action is null && byDefault.PendingBody?.Start == 4000
+        && byMemo.IsActive && byMemo.Action == memo && byMemo.PendingBody?.Start == 8000
         && !probe.IsActive && probe.IsAwaitingBody && probe.Action == progress;
 }
 
@@ -4933,10 +4933,15 @@ static bool ProbePrefersDefaultWakeOverAction()
 {
     var config = DictationConfig() with { Windows = new WindowsActions([new WakeAction("memo", ["音声入力メモ"], "alter://m")]) };
     var store = StoreWithRamp(0, 40000);
-    var session = new DictationSession(config);
-    session.Apply(new RecognizedUtterance(1, RecognitionExtent.Probe, new SampleRange(0, 20000), "音声入力メモ今日",
+    // 音声入力 starts the longer action word, so only a pause after it lets the default win.
+    var paused = new DictationSession(config);
+    paused.Apply(new RecognizedUtterance(1, RecognitionExtent.Probe, new SampleRange(0, 20000), "音声入力メモ今日",
+        [Run("音声入力", 0, 4000), Run("メモ", 6400, 8000), Run("今日", 8000, 20000)], TailSilenceSamples: 0), store.Copy);
+    var joined = new DictationSession(config);
+    joined.Apply(new RecognizedUtterance(2, RecognitionExtent.Probe, new SampleRange(0, 20000), "音声入力メモ今日",
         [Run("音声入力", 0, 4000), Run("メモ", 4000, 6000), Run("今日", 8000, 20000)], TailSilenceSamples: 0), store.Copy);
-    return session.IsActive && session.Action is null && session.PendingBody?.Start == 4000;
+    return paused.IsActive && paused.Action is null && paused.PendingBody?.Start == 6400
+        && joined.IsActive && joined.Action?.Name == "memo" && joined.PendingBody?.Start == 8000;
 }
 
 static bool ProbeNonWakeOpensNoSession()

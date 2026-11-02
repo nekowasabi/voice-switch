@@ -13,21 +13,23 @@ Confirmed in the tree at `c472ac9`:
 - `CheckMode` and Mac `check` pass only the default wakes into the early verdict.
 - `tests/url-actions/run.py` asserts that `.actions` is absent from `earlyWake`.
 
-The closed path already prefers the default wake words, then each action in config order. Keep that priority. `音声入力メモ今日` with default `音声入力` and action `音声入力メモ` stays a plain wake whose body starts at `メモ`. Do not put every wake word in one longest-match list.
+The closed path already prefers the default wake words, then each action in config order. Keep that priority.
 
 Rejected hypotheses stay on the default wakes. Do not redo the merged wake-matcher slices in `plan/2026-10-29-wake/`.
 
 ## Rule
 
-One rule on both platforms. Wake sets stay ordered. The default set is first. Each action follows in config order. The first set that matches wins.
+One pure function per platform judges every wake: Swift `wakeVerdict(_:sets:tailSilentFrames:closed:)` and C# `DictationBoundaries.Verdict(recognition, sets)`. The early probe, the closed utterance, and both check modes call it and only act on its verdict. The sets are ordered: the default set first (owner nil), then each action in config order (`wakeSets(cfg)` / `DictationBoundaries.WakeSets(config)`).
 
-1. If the whole probe text is a proper prefix of any wake word in any set, fire only when the text equals a wake word and the tail silence is at least 150 ms (`prefixGapFrames` / `PrefixGapSamples` 2400). The winner is the first set that contains that exact word. A non-equal prefix such as `音声入` never fires. A bare word still needs some tail silence when this gate does not apply. Distance greater than 0 never fires from a probe.
-2. Otherwise try the default set with today's early-wake match, using only the default words for its pause check. A hit is a plain wake.
-3. If the default set misses, try each action with the same match. The pause-before-body check for that match sees every wake word, so an action word `音声` does not open inside `音声認識` when `音声入力` is configured anywhere.
-4. A hit on an action opens the action dictation the way the closed path does. Mac sets `action` on `Dictation`. A bare wait with the sound preference on plays `actionWakeChime` and sets `deafFrames` to 600 ms. A one-breath body does not play the chime. `handoffBusy` and `micInUse` stay in force. Windows sets `Action` and the session's wake set. `PublishPhase` already calls `PlayWakeSound(true)` and `WaitingFor(action)` for `DictationPhase.Waiting`. While a session is awaiting, a later probe uses that session's wake set, not only the default set, so the body can start before the hangover.
-5. Log the action name on the existing early line. Mac `early:` gains `action=<name>` when the hit is an action. Windows `dictation session: early-wake` gains `action=<name>`. Mac `check` and Windows `CheckMode` put the same `action=<name>` on the early verdict token.
+1. The pause guard (a word that is a proper prefix of a longer wake word needs a 150 ms pause or `、` before a body) always sees the union of every set's words. `音声入力メモ今日` with default `音声入力` and action `音声入力メモ` opens `音声入力メモ` with body `今日`; with a pause after `音声入力` the default wins with body `メモ今日`.
+2. If the whole text is a proper prefix of any wake word, fire only as an exact bare word after the 150 ms prefix gap (a closed utterance counts as satisfied). The winner is the first set that contains that word. `音声入` never fires.
+3. If the whole text equals a wake word, it is a bare wake for the first set that contains it; a probe needs some tail silence. `音声メモ` with default `音声` and action `音声メモ` is the action.
+4. Otherwise a leading wake with a body: the default set first, then each action, first hit wins.
+5. A probe never fires on a fuzzy reading (`Distance > 0`). Anything that is not a probe keeps today's fallbacks after the exact layer: a fuzzy reading of the default set, `RejectedWake` on the default set, then a fuzzy reading of each action.
+6. An action verdict opens the action dictation the way the closed path does: `action` on `Dictation`, `actionWakeChime` and 600 ms `deafFrames` on a bare wait with sound on, `handoffBusy` and `micInUse` in force. Windows keeps the session's wake set; while awaiting, a probe body counts only when the verdict names that same set.
+7. The early line and the check-mode verdict carry `action=<name>`.
 
-`Segmenter.earlyWake` itself reads `cfg.macOS?.actions`. `dictationStart` may grow an optional longer-word list. The default argument keeps every current caller. `EarlyWake` may grow an optional guard list. With the guard omitted, `EarlyWakeFiresOnlySafeProbes` stays true.
+`dictationStart` takes the union as a required `longerWords`; C# `LeadingWake` has a public one-set overload and an internal one that takes the union.
 
 ## Measurable acceptance
 

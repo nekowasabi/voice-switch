@@ -26,7 +26,7 @@ export DOTNET_CLI_TELEMETRY_OPTOUT=1
 This host is a stand-in. A run on a Mac or a Windows desktop will not do these steps, and they stay unverified until one does:
 
 - Run `VoiceSwitch.Windows.Tests` with the .NET 8 SDK. No SAPI recognizer and no microphone.
-- Read `Segmenter.earlyWake`, the Mac listener's early-wake block, and the two README sentences. `swiftc` on this box exits 127 (`libncurses.so.6`). The script does not install that library and does not compile the Mac target.
+- Read `wakeVerdict` and `wakeSets` in Segmenter.swift, the Mac listener's early-wake block, and the two README sentences. `swiftc` on this box exits 127 (`libncurses.so.6`). The script does not install that library and does not compile the Mac target.
 - Run `tests/url-actions/run.py` without `--require-swift`, and `tests/parity/run_parity.py`.
 
 Item ids and pass conditions are in [items.md](items.md). That file is the map.
@@ -87,7 +87,7 @@ Proof standards:
 
 - A `PASS` needle is a line the test process prints. A plan sentence is not a result.
 - `awl-suite` counts `PASS` lines. A quiet exit with no lines is a failed suite.
-- The Mac items read the listener and `Segmenter.earlyWake`. They do not launch the app.
+- The Mac items read the listener and `wakeVerdict` in Segmenter.swift. They do not launch the app.
 - `awl-parity` fails when a new `FAIL ` line appears. It does not fail when one of the two baseline Swift-library failures disappears.
 - These drives do not open a URL, paste, or touch the clipboard.
 

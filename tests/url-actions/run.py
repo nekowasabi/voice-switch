@@ -34,13 +34,13 @@ def check_wiring(repo):
     assert 'var openArguments: [String] { ["-g", "--", rawValue] }' in config
     runner = extract_braced_body(platform, r"static func runURLProcess[^\{]*\{")
     assert "return process.terminationStatus == 0" in runner
-    assert "let hit = !isHead && config.cfg.wakeWords.map(normalize).contains(t)" in mac
     consume = extract_braced_body(mac, r"private func consume[^\{]*\{")
-    for marker in ("config.cfg.macOS?.actions", "handoffBusy", "if !hit && start == nil",
-                   "dictationStart(transcript, wakeWords: action.wakeWords)"):
+    for marker in ("wakeVerdict(transcript, sets: wakeSets(config.cfg), tailSilentFrames: 0, closed: !isHead)",
+                   "wakeVerdict(tr, sets: wakeSets(config.cfg), tailSilentFrames: seg.tailSilentFrames, closed: false)",
+                   "handoffBusy", "if let action = verdict?.action"):
         assert marker in consume, "action selection missing: " + marker
     assert "let start =" in consume and "if isHead && start == nil" in consume
-    assert consume.index("let start =") < consume.index("config.cfg.macOS?.actions") < consume.index("if isHead && start == nil")
+    assert consume.index("let start =") < consume.index("if let action = verdict?.action") < consume.index("if isHead && start == nil")
     assert "var action: WakeAction? = nil" in mac
     submit = extract_braced_body(mac, r"private func submit[^\{]*\{")
     assert "action: d.action" in submit
@@ -63,14 +63,11 @@ def check_wiring(repo):
     route_pos = handoff.index("let route = await routeDictation(result)")
     assert action_pos < command_pos < route_pos and "return .delivered" in handoff[command_pos:route_pos]
     segmenter = repo.code("Sources/voice-switch/Segmenter.swift")
-    early = extract_braced_body(segmenter, r"static func earlyWake[^\{]*\{")
-    assert "cfg.wakeWords" in early and ".actions" in early
-    assert "prefixGapFrames" in early
-    assert "dictationStart" in early
-    assert "longerWords" in early
-    assert "cfg.macOS?.actions" in early
-    transcript = repo.code("Sources/voice-switch/Transcript.swift")
-    assert "longerWords" in transcript
+    sets = extract_braced_body(segmenter, r"func wakeSets[^\{]*\{")
+    assert "cfg.wakeWords" in sets and "cfg.macOS?.actions" in sets
+    verdict = extract_braced_body(segmenter, r"func wakeVerdict[^\{]*\{")
+    assert "prefixGapFrames" in verdict
+    assert "dictationStart(tr, wakeWords: set.words, longerWords: all)" in verdict
 
 repo = SourceTree(root)
 check_wiring(repo)
@@ -85,11 +82,10 @@ mutations = [
     ("Platform.swift", "return process.terminationStatus == 0"),
     ("Platform.swift", '"/usr/bin/open"'),
     ("Config.swift", '["-g", "--", rawValue]'),
-    ("MacApp.swift", "let hit = !isHead && config.cfg.wakeWords.map(normalize).contains(t)"),
-    ("MacApp.swift", "config.cfg.macOS?.actions"),
+    ("MacApp.swift", "wakeVerdict(transcript, sets: wakeSets(config.cfg), tailSilentFrames: 0, closed: !isHead)"),
+    ("MacApp.swift", "wakeVerdict(tr, sets: wakeSets(config.cfg), tailSilentFrames: seg.tailSilentFrames, closed: false)"),
     ("MacApp.swift", "handoffBusy"),
-    ("MacApp.swift", "if !hit && start == nil"),
-    ("MacApp.swift", "dictationStart(transcript, wakeWords: action.wakeWords)"),
+    ("MacApp.swift", "if let action = verdict?.action"),
     ("MacApp.swift", "var action: WakeAction? = nil"),
     ("MacApp.swift", "action: d.action"),
     ("MacApp.swift", "guard modeRequested, superwhisperAutoPasteDisabled"),
@@ -106,8 +102,8 @@ mutations = [
     ("MacApp.swift", "if isHead && start == nil"),
     ("MacApp.swift", "let route = await routeDictation(result)"),
     ("Segmenter.swift", "cfg.macOS?.actions"),
-    ("Segmenter.swift", "longerWords"),
-    ("Transcript.swift", "longerWords"),
+    ("Segmenter.swift", "Segmenter.prefixGapFrames ? bare"),
+    ("Segmenter.swift", "longerWords: all"),
 ]
 for filename, marker in mutations:
     path = "Sources/voice-switch/" + filename

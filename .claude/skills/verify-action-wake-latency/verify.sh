@@ -126,26 +126,24 @@ def fail(message):
 
 if item == "awl-url-static":
     segmenter = strip_line_comments(read("Sources/voice-switch/Segmenter.swift"))
-    start = segmenter.find("static func earlyWake")
+    if "static func earlyWake" in segmenter:
+        fail("Segmenter.earlyWake is back beside wakeVerdict")
+    start = segmenter.find("func wakeSets(")
+    if start < 0 or ".actions" not in segmenter[start:segmenter.find("\n}", start)]:
+        fail("wakeSets missing .actions")
+    start = segmenter.find("func wakeVerdict(")
     if start < 0:
-        fail("missing Segmenter.earlyWake")
-    rest = segmenter[start:]
-    nxt = rest.find("\n    static func ", 1)
-    if nxt < 0:
-        nxt = rest.find("\n    mutating func ", 1)
-    body = rest if nxt < 0 else rest[:nxt]
-    if ".actions" not in body or "prefixGapFrames" not in body:
-        fail("earlyWake body missing .actions or prefixGapFrames")
-    run_py = read("tests/url-actions/run.py")
-    if "not in early" in run_py:
-        fail("url-actions still asserts actions are absent from earlyWake")
+        fail("missing wakeVerdict")
+    body = segmenter[start:segmenter.find("\n}", start)]
+    if "prefixGapFrames" not in body or "longerWords: all" not in body:
+        fail("wakeVerdict body missing prefixGapFrames or longerWords: all")
     print("url-static markers ok")
 elif item == "awl-mac-early":
     mac = strip_line_comments(read("Sources/voice-switch/MacApp.swift"))
-    marker = "cfg: config.cfg, tailSilentFrames"
+    marker = "wakeVerdict(tr, sets: wakeSets(config.cfg), tailSilentFrames: seg.tailSilentFrames, closed: false)"
     start = mac.find(marker)
     if start < 0:
-        fail("missing listener earlyWake call")
+        fail("missing listener wakeVerdict probe call")
     end = mac.find("guard let event else", start)
     if end < 0:
         fail("missing guard let event else after the early-wake block")

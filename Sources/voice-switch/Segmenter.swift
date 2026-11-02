@@ -78,32 +78,6 @@ struct Segmenter {
     /// Frames of silence at the tail of the open utterance (0 while speech continues).
     var tailSilentFrames: Int { silent }
 
-    /// Early-probe verdict. A transcript that is the start of a longer wake word ("音声入" or "音声" for "音声入力")
-    /// may be mid-word: it fires only as a bare wake word, and only after `prefixGapFrames` of silence.
-    /// Wake sets stay ordered: default wakes first, then each action in config order. The first set that matches wins.
-    static func earlyWake(_ tr: Transcript, cfg: Config, tailSilentFrames: Int) -> (start: (cutAt: Double, rest: String)?, action: WakeAction?)? {
-        let defaultWords = cfg.wakeWords
-        let actions = cfg.macOS?.actions ?? []
-        let allWords = defaultWords + actions.flatMap { $0.wakeWords }
-        let words = defaultWords.map(normalize)
-        let all = allWords.map(normalize)
-        if all.contains(where: { $0.count > tr.text.count && $0.hasPrefix(tr.text) }) {
-            guard tailSilentFrames >= prefixGapFrames, all.contains(tr.text) else { return nil }
-            if words.contains(tr.text) { return (nil, nil) }
-            for action in actions {
-                if action.wakeWords.map(normalize).contains(tr.text) { return (nil, action) }
-            }
-            return nil
-        }
-        if let start = dictationStart(tr, wakeWords: defaultWords) { return (start, nil) }
-        if tailSilentFrames > 0, words.contains(tr.text) { return (nil, nil) }
-        for action in actions {
-            if let start = dictationStart(tr, wakeWords: action.wakeWords, longerWords: allWords) { return (start, action) }
-            if tailSilentFrames > 0, action.wakeWords.map(normalize).contains(tr.text) { return (nil, action) }
-        }
-        return nil
-    }
-
     /// Drop the open utterance after an early wake fired, so the hangover does not report it a second time.
     mutating func reset() {
         utt = []; ring = []; skipping = false; silent = 0; lastProbe = 0
@@ -153,6 +127,41 @@ struct Segmenter {
         levelSum = 0; levelCount = 0
         return done ?? head
     }
+}
+
+/// The words one owner answers to: the default wake words (action nil) or one macOS.actions entry.
+struct WakeSet {
+    var action: WakeAction?
+    var words: [String]
+}
+
+/// The default set first, then each action in config order.
+func wakeSets(_ cfg: Config) -> [WakeSet] {
+    [WakeSet(action: nil, words: cfg.wakeWords)] + (cfg.macOS?.actions ?? []).map { WakeSet(action: $0, words: $0.wakeWords) }
+}
+
+/// The set an utterance wakes; start nil is a bare wake word that waits for the body.
+struct WakeVerdict {
+    var action: WakeAction?
+    var start: (cutAt: Double, rest: String)?
+}
+
+/// The one wake judgment for probes (closed false, tail silence so far) and whole utterances (closed true).
+/// An over-cap head is a probe with no tail silence. Mirrors DictationBoundaries.Verdict in VoiceSwitch.Windows.Core.
+func wakeVerdict(_ tr: Transcript, sets: [WakeSet], tailSilentFrames: Int, closed: Bool) -> WakeVerdict? {
+    let all = sets.flatMap(\.words)
+    let text = tr.text
+    let bare = sets.first { $0.words.map(normalize).contains(text) }.map { WakeVerdict(action: $0.action) }
+    // "音声入" or "音声" beside "音声入力" may be mid-word: only a bare wake word, after the prefix gap.
+    if all.map(normalize).contains(where: { $0.count > text.count && $0.hasPrefix(text) }) {
+        return closed || tailSilentFrames >= Segmenter.prefixGapFrames ? bare : nil
+    }
+    // Checked before any leading match, so "音声メモ" is the 音声メモ action and never 音声 with body メモ.
+    if let bare { return closed || tailSilentFrames > 0 ? bare : nil }
+    for set in sets {
+        if let start = dictationStart(tr, wakeWords: set.words, longerWords: all) { return WakeVerdict(action: set.action, start: start) }
+    }
+    return nil
 }
 
 /// Superwhisper drops the first sentence of quiet speech when the file opens with the session's 300 ms preroll of

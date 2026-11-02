@@ -29,10 +29,10 @@ func stopWordStart(_ t: Transcript, stopWords: [String]) -> Double? {
 
 /// Where to cut the audio so it starts after any leading wake words, plus the normalized text heard after them.
 /// nil if the transcript does not start with a wake word or has nothing after it.
-/// longerWords is the pause-before-body list: an action match sees every wake word, so it stays nil for a plain wake.
-func dictationStart(_ t: Transcript, wakeWords: [String], longerWords: [String]? = nil) -> (cutAt: Double, rest: String)? {
+/// longerWords is every configured wake word: a word that starts any of them needs a pause before the body.
+func dictationStart(_ t: Transcript, wakeWords: [String], longerWords: [String]) -> (cutAt: Double, rest: String)? {
     let targets = Set(wakeWords.map(normalize))
-    let longer = Set((longerWords ?? wakeWords).map(normalize))
+    let longer = Set(longerWords.map(normalize))
     let longest = targets.map(\.count).max() ?? 0
     var next = 0 // first run not yet consumed by a wake word
     var wakeEnd: Double?

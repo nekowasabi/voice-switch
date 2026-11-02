@@ -590,7 +590,7 @@ def check_swift_runtime_call_chain(result: Result, repo: SourceTree) -> None:
             "var seg = Segmenter(cfg: config.cfg)",
             "let event = seg.push(f, voice: hal)",
             "transcript = try await transcribe",
-            "let hit = !isHead && config.cfg.wakeWords.map(normalize).contains(t)",
+            "let verdict = wakeVerdict(transcript, sets: wakeSets(config.cfg), tailSilentFrames: 0, closed: !isHead)",
             "Platform.runMacAction(config.cfg)",
         ],
     )

@@ -75,6 +75,27 @@
       ]
     },
     {
+      "name": "音声メモ opens the action that is that whole word, not 音声 with body メモ",
+      "wakeWords": ["音声"],
+      "actions": [{ "name": "voicememo", "wakeWords": ["音声メモ"] }],
+      "segments": [{ "text": "音声メモ", "startMs": 0 }],
+      "checks": [
+        { "extent": "probe", "tailMs": 0, "expect": null },
+        { "extent": "probe", "tailMs": 60, "expect": { "set": "voicememo", "bodyMs": null } },
+        { "extent": "closed", "expect": { "set": "voicememo", "bodyMs": null } }
+      ]
+    },
+    {
+      "name": "音声入力メモ without a pause opens the 音声入力メモ action",
+      "wakeWords": ["音声入力"],
+      "actions": [{ "name": "memo", "wakeWords": ["音声入力メモ"] }],
+      "segments": [{ "text": "音声入力メモ", "startMs": 0 }, { "text": "今日", "startMs": 800 }],
+      "checks": [
+        { "extent": "probe", "tailMs": 0, "expect": { "set": "memo", "bodyMs": 800 } },
+        { "extent": "closed", "expect": { "set": "memo", "bodyMs": 800 } }
+      ]
+    },
+    {
       "name": "a fuzzy reading never fires from a probe",
       "wakeWords": ["音声入力"],
       "actions": [{ "name": "hairu", "wakeWords": ["音声に入る"] }],
