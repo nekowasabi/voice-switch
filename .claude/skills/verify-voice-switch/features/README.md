@@ -38,6 +38,7 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [Local transcription](./local-transcription.md) transcribes dictation without Superwhisper (Cohere GGUF on transcribe.cpp). It is not drivable yet; the engine baseline runs from the Mac skill.
 - [HUD glyphs](./hud-labels.md) covers the vector HUD glyphs. Source checks run from the Mac skill; rendering needs a Windows desktop.
 - [Secret redaction](./secret-redaction.md) keeps a missing environment variable's value out of Mac and Windows logs. The proof is `dotnet run --project dotnet/VoiceSwitch.SharedChecks`.
+- [Action shortcuts](./action-shortcuts.md) starts one wake action from a real keyboard chord on Mac and Windows. The chord parse is in the same shared check. Live key delivery needs that OS.
 - [Stop sound](./stop-sound.md) tells apart one stop ring, the chime's two notes, and Superwhisper's own sound when a stop sounds doubled. It needs the live tray.
 - [Tray host and IPC](./tray-ipc.md) covers start, pause, reload, and quit of the tray app. It is not drivable on this machine yet.
 - [Pause during Google Meet](./meet-pause.md) is the port of the Mac Meet pause. It is implemented behind `pauseDuringMeet` but not driven on the tray yet, and its ordering is model-checked by `verify-meet-pause-windows`.

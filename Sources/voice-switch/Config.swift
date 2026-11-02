@@ -70,6 +70,10 @@ struct Config: Decodable {
         let key = l.replacingOccurrences(of: "_", with: "-").lowercased()
         stopWords = Self.defaultStopWords.first { $0.key.lowercased() == key }?.value
     }
+
+    func action(named name: String) -> WakeAction? {
+        macOS?.actions?.first { $0.name == name }
+    }
 }
 
 struct NoiseReductionOptions: Decodable {
@@ -241,8 +245,10 @@ struct WakeAction: Decodable {
     /// Shown in the HUD instead of the mic while this action waits for text: an .app gives its own icon,
     /// anything else is read as an image. Windows reads an .exe's icon the same way.
     let icon: String?
+    /// Global key that starts this action, same names as `pauseShortcut`. Absent registers none.
+    let shortcut: String?
 
-    private enum CodingKeys: String, CodingKey { case name, wakeWords, url, command, superwhisperMode, inputParam, tokenEnv, icon, fields }
+    private enum CodingKeys: String, CodingKey { case name, wakeWords, url, command, superwhisperMode, inputParam, tokenEnv, icon, fields, shortcut }
 
     /// The Pebble Index webhook in transcription-only mode, so a receiver built for it accepts a config without fields.
     static let defaultPostFields = ["transcription": "{text}", "recordedAt": "{recordedAtMs}", "client": "ring"]
@@ -256,6 +262,7 @@ struct WakeAction: Decodable {
         superwhisperMode = try c.decodeIfPresent(String.self, forKey: .superwhisperMode)
         inputParam = try c.decodeIfPresent(String.self, forKey: .inputParam)
         icon = try c.decodeIfPresent(String.self, forKey: .icon)
+        shortcut = try c.decodeIfPresent(String.self, forKey: .shortcut)
         tokenEnv = try c.decodeIfPresent(String.self, forKey: .tokenEnv)
         fields = try c.decodeIfPresent([String: String].self, forKey: .fields)
         guard !wakeWords.isEmpty else {

@@ -80,6 +80,7 @@ enum MacInputActivity {
 enum MacWakeShortcuts {
     private static var handler: EventHandlerRef?
     private static var keys: [EventHotKeyRef] = []
+    private static var actionById: [UInt32: String] = [:]
     private static let signature: OSType = 0x5653574B
 
     static func install() {
@@ -96,6 +97,7 @@ enum MacWakeShortcuts {
             if id.id == 3 { MacWakeShortcuts.copyNewestHistory() }
             if id.id == 4, let line = WakeMissLabel.shared.record() { log(line) }
             if id.id == 5 { (NSApp.delegate as? AppDelegate)?.togglePause() }
+            if let name = MacWakeShortcuts.actionById[id.id] { Hotkeys.requestAction(name) }
             return noErr
         }, 1, &event, nil, &handler)
         guard status == noErr else { log("history hotkey handler unavailable status=\(status)"); return }
@@ -116,6 +118,29 @@ enum MacWakeShortcuts {
         let registered = RegisterEventHotKey(parsed.keyCode, parsed.modifiers, EventHotKeyID(signature: signature, id: 5), GetApplicationEventTarget(), 0, &key)
         if registered == noErr, let key { keys.append(key); log("pause hotkey: \(name)") }
         else { log("pause hotkey unavailable: \(name) status=\(registered)") }
+    }
+
+    // Called once after the config loads. Same chord names as pauseShortcut. A bad chord is skipped.
+    static func registerActions(_ actions: [WakeAction]) {
+        var id: UInt32 = 100
+        for action in actions {
+            guard let shortcut = action.shortcut, !shortcut.isEmpty else { continue }
+            guard let parsed = PauseShortcut.parse(shortcut) else {
+                log("action hotkey ignored: cannot parse \"\(shortcut)\"")
+                continue
+            }
+            var key: EventHotKeyRef?
+            let registered = RegisterEventHotKey(parsed.keyCode, parsed.modifiers,
+                EventHotKeyID(signature: signature, id: id), GetApplicationEventTarget(), 0, &key)
+            if registered == noErr, let key {
+                keys.append(key)
+                actionById[id] = action.name
+                log("action hotkey: \(action.name) \(shortcut)")
+            } else {
+                log("action hotkey unavailable: \(action.name) \(shortcut)")
+            }
+            id += 1
+        }
     }
 
     // Copies only the newest retained entry. Pasting stays a manual step, as in the HUD.

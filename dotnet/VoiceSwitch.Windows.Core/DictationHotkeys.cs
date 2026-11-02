@@ -34,6 +34,7 @@ public sealed class DictationHotkeys
     private readonly Dictionary<int, long> swallowUp = new();
     private (KeyChord Finish, KeyChord Cancel)? armed;
     private DictationCommand? pending;
+    private string? pendingAction;
 
     // Superwhisper preferences.json uses KeyboardEvent.code names: "Control+Space", "Escape", "Control+Shift+KeyM".
     public static KeyChord? Parse(string name)
@@ -99,6 +100,7 @@ public sealed class DictationHotkeys
         {
             armed = shortcuts;
             pending = null;
+            pendingAction = null;
             swallowUp.Clear();
         }
     }
@@ -109,6 +111,7 @@ public sealed class DictationHotkeys
         {
             armed = null;
             pending = null;
+            pendingAction = null;
         }
     }
 
@@ -152,7 +155,9 @@ public sealed class DictationHotkeys
         }
     }
 
-    public void RequestStart() { lock (sync) pending = DictationCommand.Start; }
+    public void RequestStart() { lock (sync) { pending = DictationCommand.Start; pendingAction = null; } }
+
+    public void RequestAction(string name) { lock (sync) { pending = DictationCommand.Start; pendingAction = name; } }
 
     public DictationCommand? Take()
     {
@@ -160,7 +165,18 @@ public sealed class DictationHotkeys
         {
             var command = pending;
             pending = null;
+            if (command != DictationCommand.Start) pendingAction = null;
             return command;
+        }
+    }
+
+    public string? TakeAction()
+    {
+        lock (sync)
+        {
+            var name = pendingAction;
+            pendingAction = null;
+            return name;
         }
     }
 

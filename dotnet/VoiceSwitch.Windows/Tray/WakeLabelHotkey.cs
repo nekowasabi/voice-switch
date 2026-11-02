@@ -15,11 +15,15 @@ public sealed class WakeLabelHotkey : NativeWindow, IDisposable
     private readonly Action? showHistory;
     private readonly bool pauseRegistered;
     private readonly Action? togglePause;
-    public WakeLabelHotkey(Action? showHistory = null, Action? startRecording = null, KeyChord? pause = null, Action? togglePause = null)
+    private readonly Action<string>? onAction;
+    private readonly Dictionary<int, string> actionNames = new();
+    public WakeLabelHotkey(Action? showHistory = null, Action? startRecording = null, KeyChord? pause = null, Action? togglePause = null,
+        IReadOnlyList<(KeyChord Chord, string Name)>? actions = null, Action<string>? onAction = null)
     {
         this.showHistory = showHistory;
         this.startRecording = startRecording;
         this.togglePause = togglePause;
+        this.onAction = onAction;
         CreateHandle(new CreateParams { Parent = new nint(-3) });
         if (pause is { } chord)
         {
@@ -34,6 +38,14 @@ public sealed class WakeLabelHotkey : NativeWindow, IDisposable
         copyRegistered = RegisterHotKey(Handle, Id + 3, 0x4000 | 0x2 | 0x4, 0x7A);
         if (!copyRegistered) Log.Info("history copy hotkey unavailable: Ctrl+Shift+F11 is already registered");
         if (!registered) Log.Info("wake MISS hotkey unavailable: Ctrl+Shift+F8 is already registered");
+        var next = Id + 5;
+        foreach (var (actionChord, name) in actions ?? [])
+        {
+            var ok = RegisterHotKey(Handle, next, 0x4000 | ModFlags(actionChord.Mods), (uint)actionChord.Vk);
+            Log.Info(ok ? $"action hotkey: {name} vk=0x{actionChord.Vk:X2} mods={actionChord.Mods}" : $"action hotkey unavailable: {name}");
+            if (ok) actionNames[next] = name;
+            next++;
+        }
     }
     protected override void WndProc(ref Message message)
     {
@@ -42,6 +54,7 @@ public sealed class WakeLabelHotkey : NativeWindow, IDisposable
         if (message.Msg == 0x0312 && message.WParam == Id + 2) startRecording?.Invoke();
         if (message.Msg == 0x0312 && message.WParam == Id + 3) CopyNewestHistory();
         if (message.Msg == 0x0312 && message.WParam == Id + 4) togglePause?.Invoke();
+        if (message.Msg == 0x0312 && actionNames.TryGetValue((int)message.WParam, out var action)) onAction?.Invoke(action);
         base.WndProc(ref message);
     }
     public void Dispose()
@@ -51,6 +64,7 @@ public sealed class WakeLabelHotkey : NativeWindow, IDisposable
         if (startRegistered) UnregisterHotKey(Handle, Id + 2);
         if (copyRegistered) UnregisterHotKey(Handle, Id + 3);
         if (pauseRegistered) UnregisterHotKey(Handle, Id + 4);
+        foreach (var id in actionNames.Keys) UnregisterHotKey(Handle, id);
         DestroyHandle();
     }
     // RegisterHotKey MOD_* bits differ from KeyMods.
