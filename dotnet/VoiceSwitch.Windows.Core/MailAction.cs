@@ -29,8 +29,11 @@ public static class MailAction
 
     public static async Task SendAsync(SmtpSettings smtp, string to, string subject, string body, CancellationToken cancellation)
     {
-        var password = Environment.GetEnvironmentVariable(smtp.PasswordEnv)
-            ?? throw new InvalidOperationException($"environment variable {smtp.PasswordEnv} is not set");
+        var password = Environment.GetEnvironmentVariable(smtp.PasswordEnv);
+        if (string.IsNullOrEmpty(password))
+        {
+            throw new InvalidOperationException($"environment variable {smtp.PasswordEnv} is not set");
+        }
         using var message = new MailMessage(smtp.From ?? smtp.User, to, subject, body)
         {
             SubjectEncoding = Encoding.UTF8,

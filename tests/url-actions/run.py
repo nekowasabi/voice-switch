@@ -119,6 +119,7 @@ with tempfile.TemporaryDirectory(prefix="voice-switch-url-test-") as temp:
     subprocess.run(["swiftc", "-module-name", "voice_switch", "-module-cache-path", str(pathlib.Path(temp) / "module-cache"),
                     str(root / "Sources/voice-switch/DictationJournal.swift"),
                     str(root / "Sources/voice-switch/WakeSafety.swift"), str(root / "Sources/voice-switch/Transcript.swift"),
+                    str(root / "Sources/voice-switch/SecretLog.swift"),
                     str(root / "Sources/voice-switch/Config.swift"),
                     str(root / "Sources/voice-switch/Platform.swift"),
                     str(root / "tests/url-actions/main.swift"), "-o", str(binary)], check=True)

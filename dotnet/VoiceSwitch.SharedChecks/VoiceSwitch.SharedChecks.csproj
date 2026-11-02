@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\VoiceSwitch.Windows.Core\SecretLog.cs" Link="SecretLog.cs" />
+    <Compile Include="..\VoiceSwitch.Windows.Core\MailAction.cs" Link="MailAction.cs" />
+  </ItemGroup>
+</Project>

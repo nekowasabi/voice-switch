@@ -1,7 +1,7 @@
 // Shared config types (macOS + Windows).
 import Foundation
 
-func log(_ s: String) { print("\(Date().formatted(.iso8601)) \(s)") }
+func log(_ s: String) { print("\(Date().formatted(.iso8601)) \(SecretLog.redact(s))") }
 
 struct Config: Decodable {
     var wakeWords: [String]

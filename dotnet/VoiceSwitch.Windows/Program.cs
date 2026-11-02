@@ -574,14 +574,14 @@ public static class Log
 
     public static void Info(string message)
     {
-        var line = $"{DateTimeOffset.Now:O} {message}";
+        var line = $"{DateTimeOffset.Now:O} {SecretLog.Redact(message)}";
         Console.WriteLine(line);
         AppendToFile(line);
     }
 
     public static void Fatal(string message)
     {
-        var line = $"{DateTimeOffset.Now:O} fatal: {message}";
+        var line = $"{DateTimeOffset.Now:O} fatal: {SecretLog.Redact(message)}";
         Console.Error.WriteLine(line);
         AppendToFile(line);
     }
