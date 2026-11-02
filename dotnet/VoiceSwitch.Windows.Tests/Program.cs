@@ -265,6 +265,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("tray IPC times out unread response then serves status", TrayIpcTimesOutUnreadResponseThenServesStatus),
     ("pane route parses the four-field catalog", () => Check(PaneRouteParsesCatalog())),
     ("pane route accepts only percent-digit pane ids", () => Check(PaneRouteAcceptsOnlyPaneIds())),
+    ("wake verdict routes utterances like the shared fixture", WakeVerdictMatchesFixture),
     ("pane route matches labels like the shared fixture", PaneRouteMatchesFixtureLabels),
     ("pane route policy table matches the shared fixture", PaneRoutePolicyMatchesFixture),
     ("pane route parses jev answers like the shared fixture", PaneRouteParsesJevAnswersLikeFixture),
@@ -344,10 +345,59 @@ static bool PaneRouteAcceptsOnlyPaneIds() =>
     && !PaneRoute.IsPaneId("0") && !PaneRoute.IsPaneId("%") && !PaneRoute.IsPaneId("%1a")
     && !PaneRoute.IsPaneId("dev:0.1") && !PaneRoute.IsPaneId("%１");
 
-// The same file drives the Swift parity harness, so both platforms assert the same literal rows.
-static JsonElement PaneRouteFixture()
+// The same file drives the Swift parity harness, so both platforms route the same utterances to the same wake set.
+static TestOutcome WakeVerdictMatchesFixture()
 {
-    var relative = Path.Combine("tests", "parity", "fixtures", "pane_route.json");
+    foreach (var item in ParityFixture("wake_verdict.json").GetProperty("cases").EnumerateArray())
+    {
+        var actions = item.GetProperty("actions").EnumerateArray()
+            .Select(a => new WakeAction(a.GetProperty("name").GetString()!, a.GetProperty("wakeWords").EnumerateArray().Select(w => w.GetString()!).ToArray(), "alter://fixture"))
+            .ToArray();
+        var config = new VoiceSwitchConfig(item.GetProperty("wakeWords").EnumerateArray().Select(w => w.GetString()!).ToArray(), "ja_JP", "wake",
+            Dictation: DictationConfig().Dictation, Windows: new WindowsActions(actions));
+        var runs = new List<LexicalRun>();
+        foreach (var segment in item.GetProperty("segments").EnumerateArray())
+        {
+            var text = segment.GetProperty("text").GetString()!;
+            var start = segment.GetProperty("startMs").GetInt64() * 16;
+            if (segment.TryGetProperty("reading", out var reading))
+            {
+                runs.Add(Run(text, start, start + 1600L * text.Length, reading.GetString()));
+                continue;
+            }
+
+            runs.AddRange(text.Select((c, i) => Run(c.ToString(), start + 1600L * i, start + 1600L * (i + 1))));
+        }
+
+        foreach (var check in item.GetProperty("checks").EnumerateArray())
+        {
+            var probe = check.GetProperty("extent").GetString() == "probe";
+            var tail = probe ? check.GetProperty("tailMs").GetInt64() * 16 : 0;
+            var recognition = new RecognizedUtterance(1, probe ? RecognitionExtent.Probe : RecognitionExtent.ClosedUtterance,
+                new SampleRange(0, runs[^1].Range.End + tail), string.Concat(runs.Select(run => run.Text)), runs.ToImmutableArray(), TailSilenceSamples: tail);
+            var session = new DictationSession(config);
+            session.Apply(recognition, StoreWithRamp(0, 40000).Copy);
+            var actual = !session.IsActive && !session.IsAwaitingBody ? "nil"
+                : $"{session.Action?.Name ?? "default"} body={(session.IsActive ? (session.PendingBody!.Value.Start / 16).ToString() : "nil")}";
+            var expect = check.GetProperty("expect");
+            var expected = expect.ValueKind == JsonValueKind.Null ? "nil"
+                : $"{expect.GetProperty("set").GetString()} body={(expect.GetProperty("bodyMs").ValueKind == JsonValueKind.Null ? "nil" : expect.GetProperty("bodyMs").GetInt64().ToString())}";
+            if (actual != expected)
+            {
+                return TestOutcome.Fail($"{item.GetProperty("name").GetString()} {(probe ? $"probe tail={tail / 16}" : "closed")}: expected {expected}, got {actual}");
+            }
+        }
+    }
+
+    return TestOutcome.Pass();
+}
+
+static JsonElement PaneRouteFixture() => ParityFixture("pane_route.json");
+
+// The same file drives the Swift parity harness, so both platforms assert the same literal rows.
+static JsonElement ParityFixture(string name)
+{
+    var relative = Path.Combine("tests", "parity", "fixtures", name);
     var dir = new DirectoryInfo(AppContext.BaseDirectory);
     while (dir is not null && !File.Exists(Path.Combine(dir.FullName, relative)))
     {

@@ -225,10 +225,25 @@ struct PaneRouteFixture: Decodable {
     var resolve_body: [ResolveBody]
 }
 
+struct WakeVerdictFixture: Decodable {
+    struct Action: Decodable { var name: String; var wakeWords: [String] }
+    struct Segment: Decodable { var text: String; var startMs: Int; var reading: String? }
+    struct Expect: Decodable { var set: String; var bodyMs: Int? }
+    struct Check: Decodable { var extent: String; var tailMs: Int?; var expect: Expect? }
+    struct Case: Decodable {
+        var name: String
+        var wakeWords: [String]
+        var actions: [Action]
+        var segments: [Segment]
+        var checks: [Check]
+    }
+    var cases: [Case]
+}
+
 var failures: [String] = []
 let args = CommandLine.arguments
-guard args.count == 4 else {
-    FileHandle.standardError.write(Data("usage: swift-parity text_matching.json segmenter.json pane_route.json\n".utf8))
+guard args.count == 5 else {
+    FileHandle.standardError.write(Data("usage: swift-parity text_matching.json segmenter.json pane_route.json wake_verdict.json\n".utf8))
     exit(2)
 }
 
@@ -297,7 +312,28 @@ for item in paneFixture.resolve_body {
           "resolve body \(item.name) expected=\(item.body ?? "nil") (\(item.reason)) actual=\(actual.body ?? "nil") (\(actual.reason))")
 }
 
+let wakeFixture = try decoder.decode(WakeVerdictFixture.self, from: Data(contentsOf: URL(fileURLWithPath: args[4])))
+for item in wakeFixture.cases {
+    let json: [String: Any] = ["wakeWords": item.wakeWords, "command": "true",
+                               "macOS": ["actions": item.actions.map { ["name": $0.name, "wakeWords": $0.wakeWords, "url": "alter://fixture"] }]]
+    let cfg = try decoder.decode(Config.self, from: JSONSerialization.data(withJSONObject: json))
+    let runs = item.segments.flatMap { segment -> [(text: String, start: Double?, end: Double?)] in
+        let start = Double(segment.startMs) / 1000
+        if segment.reading != nil { return [(segment.text, start, start + 0.1 * Double(segment.text.count))] }
+        return segment.text.enumerated().map { (String($1), start + 0.1 * Double($0), start + 0.1 * Double($0 + 1)) }
+    }
+    let tr = Transcript(runs: runs)
+    // Mac has no closed-utterance entry point outside the listener yet, so only probes run here.
+    for probe in item.checks where probe.extent == "probe" {
+        let early = Segmenter.earlyWake(tr, cfg: cfg, tailSilentFrames: (probe.tailMs ?? 0) / 30)
+        let actual = early.map { "\($0.action?.name ?? "default") body=\($0.start.map { String(Int(($0.cutAt * 1000).rounded())) } ?? "nil")" } ?? "nil"
+        let expected = probe.expect.map { "\($0.set) body=\($0.bodyMs.map(String.init) ?? "nil")" } ?? "nil"
+        check(actual == expected, "wake verdict \(item.name) probe tail=\(probe.tailMs ?? 0) expected=\(expected) actual=\(actual)")
+    }
+}
+
 if failures.isEmpty {
+    print("PASS wake verdict fixtures")
     print("PASS behavior fixtures")
     print("PASS pane route fixtures")
     print("PASS pane extract fixtures")

@@ -1,0 +1,92 @@
+{
+  "_comment": "Which wake set an utterance opens, and where its body starts. Read by tests/parity/swift/main.swift and VoiceSwitch.Windows.Tests. A segment without a reading is split into one run per character, 100 ms each, from startMs; a segment with a reading is one run of 100 ms per character. expect null: no wake. set: \"default\" or an action name. bodyMs null: a bare wake word that waits for the body.",
+  "cases": [
+    {
+      "name": "メモ帳を開いて opens メモ帳, not メモ with body 帳",
+      "wakeWords": ["音声入力"],
+      "actions": [{ "name": "memo", "wakeWords": ["メモ"] }, { "name": "notepad", "wakeWords": ["メモ帳"] }],
+      "segments": [{ "text": "メモ帳を開いて", "startMs": 0 }],
+      "checks": [
+        { "extent": "probe", "tailMs": 0, "expect": { "set": "notepad", "bodyMs": 300 } },
+        { "extent": "closed", "expect": { "set": "notepad", "bodyMs": 300 } }
+      ]
+    },
+    {
+      "name": "音声認識の話 is not a wake beside 音声入力",
+      "wakeWords": ["音声入力"],
+      "actions": [{ "name": "short", "wakeWords": ["音声"] }],
+      "segments": [{ "text": "音声認識の話", "startMs": 0 }],
+      "checks": [
+        { "extent": "probe", "tailMs": 0, "expect": null },
+        { "extent": "probe", "tailMs": 60, "expect": null },
+        { "extent": "closed", "expect": null }
+      ]
+    },
+    {
+      "name": "音声入 may be mid-word in 音声入力",
+      "wakeWords": ["音声入力"],
+      "actions": [{ "name": "short", "wakeWords": ["音声"] }],
+      "segments": [{ "text": "音声入", "startMs": 0 }],
+      "checks": [
+        { "extent": "probe", "tailMs": 150, "expect": null },
+        { "extent": "closed", "expect": null }
+      ]
+    },
+    {
+      "name": "a bare 音声 beside 音声入力 fires only after the 150 ms prefix gap",
+      "wakeWords": ["音声入力"],
+      "actions": [{ "name": "short", "wakeWords": ["音声"] }],
+      "segments": [{ "text": "音声", "startMs": 0 }],
+      "checks": [
+        { "extent": "probe", "tailMs": 60, "expect": null },
+        { "extent": "probe", "tailMs": 150, "expect": { "set": "short", "bodyMs": null } },
+        { "extent": "closed", "expect": { "set": "short", "bodyMs": null } }
+      ]
+    },
+    {
+      "name": "a word in both sets opens the default with its body",
+      "wakeWords": ["音声入力"],
+      "actions": [{ "name": "dup", "wakeWords": ["音声入力"] }],
+      "segments": [{ "text": "音声入力今日", "startMs": 0 }],
+      "checks": [
+        { "extent": "probe", "tailMs": 0, "expect": { "set": "default", "bodyMs": 400 } },
+        { "extent": "closed", "expect": { "set": "default", "bodyMs": 400 } }
+      ]
+    },
+    {
+      "name": "a bare word in both sets opens the default",
+      "wakeWords": ["音声入力"],
+      "actions": [{ "name": "dup", "wakeWords": ["音声入力"] }],
+      "segments": [{ "text": "音声入力", "startMs": 0 }],
+      "checks": [
+        { "extent": "probe", "tailMs": 0, "expect": null },
+        { "extent": "probe", "tailMs": 60, "expect": { "set": "default", "bodyMs": null } },
+        { "extent": "closed", "expect": { "set": "default", "bodyMs": null } }
+      ]
+    },
+    {
+      "name": "the default wins when a pause follows it inside a longer action word",
+      "wakeWords": ["音声入力"],
+      "actions": [{ "name": "memo", "wakeWords": ["音声入力メモ"] }],
+      "segments": [{ "text": "音声入力", "startMs": 0 }, { "text": "メモ今日", "startMs": 600 }],
+      "checks": [
+        { "extent": "probe", "tailMs": 0, "expect": { "set": "default", "bodyMs": 600 } },
+        { "extent": "closed", "expect": { "set": "default", "bodyMs": 600 } }
+      ]
+    },
+    {
+      "name": "a fuzzy reading never fires from a probe",
+      "wakeWords": ["音声入力"],
+      "actions": [{ "name": "hairu", "wakeWords": ["音声に入る"] }],
+      "segments": [
+        { "text": "温泉", "startMs": 0, "reading": "おんせん" },
+        { "text": "に", "startMs": 200, "reading": "に" },
+        { "text": "入", "startMs": 300, "reading": "はい" },
+        { "text": "る", "startMs": 400, "reading": "る" }
+      ],
+      "checks": [
+        { "extent": "probe", "tailMs": 150, "expect": null }
+      ]
+    }
+  ]
+}
