@@ -32,7 +32,18 @@ endif
 SWIFT ?= swift
 
 WIN_CONFIG ?= Release
-DOTNET ?= $(shell command -v dotnet 2>/dev/null || printf '%s' "$(HOME)/.local/share/mise/shims/dotnet")
+# The one place that finds the .NET SDK; every gate gets it through DOTNET. The first candidate that answers --version
+# wins: a mise shim with no version set is on PATH but fails, and dotnet-install.sh puts the SDK in ~/.dotnet.
+DOTNET ?= $(shell for d in "$$(command -v dotnet)" "$(HOME)/.dotnet/dotnet" "$(HOME)/.local/share/mise/shims/dotnet"; do \
+	[ -x "$$d" ] && "$$d" --version >/dev/null 2>&1 && { echo "$$d"; exit 0; }; done; echo dotnet)
+export DOTNET
+# The test scripts call plain `dotnet`; putting the found SDK first on PATH makes them all use it.
+ifneq ($(DOTNET),dotnet)
+export PATH := $(patsubst %/,%,$(dir $(DOTNET))):$(PATH)
+endif
+ifeq ($(DOTNET),$(HOME)/.dotnet/dotnet)
+export DOTNET_ROOT ?= $(HOME)/.dotnet
+endif
 WIN_RID ?= win-x64
 WIN_APP := dotnet/VoiceSwitch.Windows/VoiceSwitch.Windows.csproj
 WIN_TESTS := dotnet/VoiceSwitch.Windows.Tests/VoiceSwitch.Windows.Tests.csproj
@@ -40,7 +51,7 @@ DOTNET_RESTORE_FLAGS ?= --ignore-failed-sources --disable-parallel
 # Why: Run from local disk, not \\wsl.localhost, as focusbm does; AV heuristics flag UNC-launched exes.
 RELEASE_DIR ?= /mnt/c/takeda/tools/voice-switch
 
-.PHONY: build app model install relaunch uninstall logs win win-stop win-restore win-build win-test parity-test win-publish win-verify help url-test
+.PHONY: build app model install relaunch uninstall logs win win-stop win-restore win-build win-test parity-test win-publish win-verify help url-test check
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -114,7 +125,15 @@ url-test: ## Require Swift URL action regression tests (macOS or Linux with Swif
 	python3 tests/url-actions/run.py --require-swift
 
 parity-test: ## Run macOS/Windows parity contract checks
-	python3 tests/parity/run_parity.py
+	python3 tests/parity/run_parity.py $(PARITY_FLAGS)
+
+# Why: agents reported Swift and C# changes done without building them (27183c9, 07c8db2, PR #71);
+# a missing swift or dotnet fails here instead of skipping.
+check: ## Every gate a change must pass before it is called done (fails when swift or dotnet is missing)
+	$(SWIFT) build -c release
+	$(MAKE) url-test
+	$(MAKE) win-test PARITY_FLAGS=--require-swift
+	sh .claude/skills/verify-wake-allowances/check.sh
 
 win-stop: ## Windows: quit the running voice-switch.exe
 	@# A running voice-switch.exe locks its DLLs and publish fails with Access denied, so wait until it has exited.
