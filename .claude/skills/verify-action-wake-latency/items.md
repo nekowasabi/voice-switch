@@ -115,7 +115,7 @@ The full `VoiceSwitch.Windows.Tests` process exits 0, prints no line `FAIL `, an
 
 kind: builtin
 
-`python3 tests/url-actions/run.py` (no `--require-swift`) prints `URL action static call-chain checks passed` and `URL static mutation checks passed`. Exit 0 passes. Exit 1 passes only when stderr contains `libncurses.so.6`, which is the broken `swiftc` on this box. Any other non-zero exit fails. After `//` comments are stripped, Segmenter.swift has no `static func earlyWake`, `wakeSets` contains `.actions`, and `wakeVerdict` contains `prefixGapFrames` and `longerWords: all`.
+`python3 tests/url-actions/run.py` (no `--require-swift`) prints `URL action static call-chain checks passed` and `URL static mutation checks passed`. Exit 0 passes. Exit 1 passes only when stderr contains `libncurses.so.6`, which is the broken `swiftc` on this box. Any other non-zero exit fails. Which set an utterance wakes is checked as behavior by `tests/parity/fixtures/wake_verdict.json`, not by reading Segmenter.swift.
 
 ## awl-mac-early
 

@@ -35,12 +35,9 @@ def check_wiring(repo):
     runner = extract_braced_body(platform, r"static func runURLProcess[^\{]*\{")
     assert "return process.terminationStatus == 0" in runner
     consume = extract_braced_body(mac, r"private func consume[^\{]*\{")
-    for marker in ("wakeVerdict(transcript, sets: wakeSets(config.cfg), tailSilentFrames: 0, closed: !isHead)",
-                   "wakeVerdict(tr, sets: wakeSets(config.cfg), tailSilentFrames: seg.tailSilentFrames, closed: false)",
-                   "handoffBusy", "if let action = verdict?.action"):
-        assert marker in consume, "action selection missing: " + marker
+    # Which set an utterance wakes is behavior: tests/parity/fixtures/wake_verdict.json runs it on Swift and C#.
+    assert "handoffBusy" in consume, "action selection must skip while a handoff is in flight"
     assert "let start =" in consume and "if isHead && start == nil" in consume
-    assert consume.index("let start =") < consume.index("if let action = verdict?.action") < consume.index("if isHead && start == nil")
     assert "var action: WakeAction? = nil" in mac
     submit = extract_braced_body(mac, r"private func submit[^\{]*\{")
     assert "action: d.action" in submit
@@ -62,12 +59,6 @@ def check_wiring(repo):
     command_pos = handoff.index("Platform.runCommand(command, stdin: result")
     route_pos = handoff.index("let route = await routeDictation(result)")
     assert action_pos < command_pos < route_pos and "return .delivered" in handoff[command_pos:route_pos]
-    segmenter = repo.code("Sources/voice-switch/Segmenter.swift")
-    sets = extract_braced_body(segmenter, r"func wakeSets[^\{]*\{")
-    assert "cfg.wakeWords" in sets and "cfg.macOS?.actions" in sets
-    verdict = extract_braced_body(segmenter, r"func wakeVerdict[^\{]*\{")
-    assert "prefixGapFrames" in verdict
-    assert "dictationStart(tr, wakeWords: set.words, longerWords: all)" in verdict
 
 repo = SourceTree(root)
 check_wiring(repo)
@@ -82,10 +73,7 @@ mutations = [
     ("Platform.swift", "return process.terminationStatus == 0"),
     ("Platform.swift", '"/usr/bin/open"'),
     ("Config.swift", '["-g", "--", rawValue]'),
-    ("MacApp.swift", "wakeVerdict(transcript, sets: wakeSets(config.cfg), tailSilentFrames: 0, closed: !isHead)"),
-    ("MacApp.swift", "wakeVerdict(tr, sets: wakeSets(config.cfg), tailSilentFrames: seg.tailSilentFrames, closed: false)"),
     ("MacApp.swift", "handoffBusy"),
-    ("MacApp.swift", "if let action = verdict?.action"),
     ("MacApp.swift", "var action: WakeAction? = nil"),
     ("MacApp.swift", "action: d.action"),
     ("MacApp.swift", "guard modeRequested, superwhisperAutoPasteDisabled"),
@@ -101,9 +89,6 @@ mutations = [
     ("MacApp.swift", "        }\n        return .delivered\n"),
     ("MacApp.swift", "if isHead && start == nil"),
     ("MacApp.swift", "let route = await routeDictation(result)"),
-    ("Segmenter.swift", "cfg.macOS?.actions"),
-    ("Segmenter.swift", "Segmenter.prefixGapFrames ? bare"),
-    ("Segmenter.swift", "longerWords: all"),
 ]
 for filename, marker in mutations:
     path = "Sources/voice-switch/" + filename

@@ -124,21 +124,7 @@ def fail(message):
     print(message)
     sys.exit(1)
 
-if item == "awl-url-static":
-    segmenter = strip_line_comments(read("Sources/voice-switch/Segmenter.swift"))
-    if "static func earlyWake" in segmenter:
-        fail("Segmenter.earlyWake is back beside wakeVerdict")
-    start = segmenter.find("func wakeSets(")
-    if start < 0 or ".actions" not in segmenter[start:segmenter.find("\n}", start)]:
-        fail("wakeSets missing .actions")
-    start = segmenter.find("func wakeVerdict(")
-    if start < 0:
-        fail("missing wakeVerdict")
-    body = segmenter[start:segmenter.find("\n}", start)]
-    if "prefixGapFrames" not in body or "longerWords: all" not in body:
-        fail("wakeVerdict body missing prefixGapFrames or longerWords: all")
-    print("url-static markers ok")
-elif item == "awl-mac-early":
+if item == "awl-mac-early":
     mac = strip_line_comments(read("Sources/voice-switch/MacApp.swift"))
     marker = "wakeVerdict(tr, sets: wakeSets(config.cfg), tailSilentFrames: seg.tailSilentFrames, closed: false)"
     start = mac.find(marker)
@@ -289,10 +275,8 @@ drive() {
             elif ! grep -q 'URL action static call-chain checks passed' "$LAST_OUT/stdout.txt" \
               || ! grep -q 'URL static mutation checks passed' "$LAST_OUT/stdout.txt"; then
               record FAIL awl-url-static "static checks did not pass"
-            elif source_checks awl-url-static >"$RUN_DIR/awl-url-static/markers.txt" 2>&1; then
-              record PASS awl-url-static
             else
-              record FAIL awl-url-static "markers"
+              record PASS awl-url-static
             fi
             ;;
           awl-mac-early|awl-readme)
