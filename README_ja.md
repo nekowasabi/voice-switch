@@ -95,22 +95,21 @@ Grok Bot 向けの例（既定のフィールドをそのまま書いたもの�
 
 アクションは URL の代わりに、音声入力の内容をシェルコマンドへ渡すこともできる。`url` の代わりに `command` を書く。アクションにはどちらか一方だけを書く。`tokenEnv`・`fields`・`inputParam` は `url` が必要で、`command` と並べると設定エラーになる。コマンドは `/bin/sh -c` で動くので、`~` や `$VAR` はシェルと同じく展開される。音声入力の内容は末尾の改行なしで標準入力に届き、書き終えると標準入力は閉じる。コマンドの標準出力は捨て、標準エラーはログに出る。終了コードが 0 以外なら `command exited <status>: <command>` と記録し、渡せたときは `dictation delivered: command <name>` と記録する。Windows はこのキーを無視する。
 
-もともとの用途は [keypipe](https://github.com/nekowasabi/keypipe) の規則を音声からも使うことで、ひとつの規則がキーボードとマイクの両方に効く。
+もともとの用途は [keypipe](https://github.com/nekowasabi/keypipe) の規則を音声からも使うことで、ひとつの規則がキーボードとマイクの両方に効く。keypipe の規則に `name` を付け、アクションからはその名前を `--rule` で呼ぶ。シェルは keypipe 側に一度だけ書く。
 
 ```json
 {
-  "name": "keypipe",
-  "wakeWords": ["キーパイプ"],
-  "command": "/usr/local/bin/keypipe --config ~/.config/keypipe/config.json --line @@@ ${VOICE_SWITCH_APP:+--app \"$VOICE_SWITCH_APP\"}",
+  "name": "annotate",
+  "wakeWords": ["注釈"],
+  "command": "/usr/local/bin/keypipe --rule annotate ${VOICE_SWITCH_APP:+--app \"$VOICE_SWITCH_APP\"}",
   "superwhisperMode": "voice_switch"
 }
 ```
 
-- バイナリは絶対パスで書き、`--config` も渡す。アプリの launchd の `PATH` では `keypipe` が見つからない。
+- バイナリは絶対パスで書く。アプリの launchd の `PATH` では `keypipe` が見つからない。keypipe の設定が既定の場所（`~/.config/keypipe/config.json`）にあれば `--config` は省ける。
 - `superwhisperMode` には、URL アクションと同じく自動ペーストがオフの Superwhisper モードを指定する。そうしないと、文章がペーストされたうえでコマンドにも届く。
 - `VOICE_SWITCH_APP` には音声入力の宛先だったアプリの bundle id が入る。不明なら空。これを `--app` で渡すと、keypipe の `when.app` は voice-switch ではなく、入力していたアプリに一致する。keypipe は `--app ""` を `""` というアプリ名として読み、最前面のアプリには戻らない。そのため `${VOICE_SWITCH_APP:+...}` の形で、値が空のときはフラグごと省く。keypipe はそのとき最前面のアプリを使い、それはフォーカスを戻した宛先になる。
-- `--line` で動くのは keypipe の `trigger` 規則だけで、`hotkey` 規則は動かない。一致する規則がないと keypipe は 2 で終了し、ログには `command exited 2: <command>` と出る。
-- keypipe の規則が音声入力の内容を受け取るには `"when": {"focus": "textField"}` が必要。既定の `focus: any` のままだと keypipe は空の入力で規則を動かし、シェルには何も届かない。
+- `--rule` は、`trigger` と `hotkey` のどちらの規則でも、その `name` の規則を動かす。音声入力の内容は、`focus` にかかわらず規則のシェルの標準入力・`$1`・`KEYPIPE_INPUT` に届く。その名前の規則が無いときや、規則の `when`・`deny` で止まったときは keypipe が 2 で終了し、ログには `command exited 2: <command>` と出る。
 - keypipe の `replaceInput` 出力は音声からは何も起こさない。書き換えた行は標準出力に出るが、捨てられる。代わりに `output.shell`・`notify`・`background` を使う。
 
 アクションで待機に入ったことは、音と HUD で分かる（どのアクションでも共通。Webhook に限らない）。効果音がオンなら、音声入力の 1 音ではなく上がる 2 音が鳴る。アクションに `icon` を書くと、HUD のマイクの代わりにそのアイコンを出す。Windows は `.exe` を指せばアプリのアイコンを読む（例: `"%LOCALAPPDATA%\\Programs\\Grok Bot\\Grok Bot.exe"`）。Mac は `.app` を指せばアプリのアイコンを読む（例: `"/Applications/Grok Bot.app"`）。それ以外のパスは画像ファイルとして読む。読めないときはマイクのまま。
