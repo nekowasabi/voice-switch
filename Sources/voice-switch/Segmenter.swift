@@ -67,12 +67,32 @@ struct Segmenter {
     /// than the ~90 ms gaps inside 音声入力, so "音声" followed by this much silence is the whole word.
     // ponytail: fixed 150 ms from synthetic speech; make it a config knob if real voices pause longer inside the word.
     static let prefixGapFrames = 5
+
+    /// Silero's silence at the tail of the open utterance: ms since it last scored voice, nil until it has.
+    /// The HAL detector holds "voice" 300-700 ms past the word and the energy threshold can sit above the voice,
+    /// so this is the only signal near the true word end (Silero fell within 32-64 ms on real recordings).
+    private(set) var voiceSilentMs: Int?
+    private var voiceEdge = false
+    /// One Silero window score (32 ms), with Silero's own hysteresis: voice at 0.5, silence below 0.35.
+    mutating func noteVoice(_ p: Float) {
+        guard !utt.isEmpty else { return }
+        if p >= 0.5 { voiceSilentMs = 0; return }
+        guard p < 0.35, let ms = voiceSilentMs else { return }
+        voiceSilentMs = ms + 32
+        let prefixMs = Segmenter.prefixGapFrames * 30
+        voiceEdge = voiceEdge || ms == 0 || (ms < prefixMs && ms + 32 >= prefixMs)
+    }
+
+    /// Tail silence for the probe verdict: the later of the HAL/energy silence and Silero's.
+    var probeSilentFrames: Int { max(silent, (voiceSilentMs ?? 0) / 30) }
+
     mutating func probe() -> [Float]? {
+        defer { voiceEdge = false }
         // An action wake word gets the silence-gap probes without earlyWakeMs; speech-interval probes stay opt-in.
         guard cfg.earlyWakeMs != nil || !(cfg.macOS?.actions ?? []).isEmpty, !utt.isEmpty, !skipping else { return nil }
         let minFrames = frames(ms: cfg.minSpeechMs ?? 300)
         guard utt.count >= minFrames else { return nil }
-        let gap = silent == 2 || silent == Segmenter.prefixGapFrames
+        let gap = silent == 2 || silent == Segmenter.prefixGapFrames || voiceEdge
         guard gap || cfg.earlyWakeMs.map({ utt.count - lastProbe >= frames(ms: $0) }) == true else { return nil }
         lastProbe = utt.count
         return Array(utt.joined())
@@ -84,7 +104,7 @@ struct Segmenter {
     /// Drop the open utterance after an early wake fired, so the hangover does not report it a second time.
     mutating func reset() {
         utt = []; ring = []; skipping = false; silent = 0; energySilent = 0; lastProbe = 0
-        levelSum = 0; levelCount = 0
+        levelSum = 0; levelCount = 0; voiceSilentMs = nil; voiceEdge = false
     }
 
     mutating func push(_ f: [Float], voice: Bool = false) -> Event? {
@@ -129,7 +149,7 @@ struct Segmenter {
         let done = !skipping && utt.count - hangover >= minFrames ? Event.utterance(Array(utt.joined()))
             : skipping && !tailFrames.isEmpty ? Event.tail(Array(tailFrames.joined())) : nil
         utt = []; ring = []; tailFrames = []; skipping = false; lastProbe = 0
-        levelSum = 0; levelCount = 0
+        levelSum = 0; levelCount = 0; voiceSilentMs = nil; voiceEdge = false
         return done ?? head
     }
 }
