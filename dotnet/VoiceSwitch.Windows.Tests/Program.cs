@@ -95,7 +95,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation runtime max uses live speech while recognition is delayed", () => Check(DictationRuntimeMaxUsesLiveSpeechWhileRecognitionIsDelayed())),
     ("dictation runtime stop after lone wake cancels empty session", () => Check(DictationRuntimeStopAfterLoneWakeCancelsEmptySession())),
     ("config loads earlyWakeMs and leaves it null when absent", () => Check(ConfigLoadsEarlyWakeMs())),
-    ("segmenter probe fires at the 60 and 150 ms gaps and after earlyWakeMs of audio", () => Check(SegmenterProbeFiresAtGapsAndGrowth())),
+    ("segmenter probe fires at the 60 and 150 ms gaps and after earlyWakeMs of audio, and only at the gaps for an action without earlyWakeMs", () => Check(SegmenterProbeFiresAtGapsAndGrowth())),
     ("early wake fires a prefix wake only after the prefix gap and never from a fuzzy reading", () => Check(EarlyWakeFiresOnlySafeProbes())),
     ("leading wake needs a pause after a wake that starts a longer wake", () => Check(LeadingWakeNeedsPauseAfterShortWake())),
     ("dictation session keeps probe wake audio out of the body", () => Check(DictationSessionKeepsProbeWakeOutOfBody())),
@@ -193,6 +193,15 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("config rejects invalid inputParam at load", () => Check(ConfigRejectsInvalidInputParam())),
     ("automatic session never opens an action URL", () => Check(AutomaticSessionNeverOpensActionUrl())),
     ("dictation action wake selects its action after the default wakes", () => Check(DictationActionWakeSelectsAction())),
+    ("probe action wake opens the action wait", () => Check(ProbeActionWakeOpensActionWait())),
+    ("probe action wake keeps the prefix gap across every wake word", () => Check(ProbeActionWakeKeepsPrefixGap())),
+    ("probe action wake ignores a fuzzy reading", () => Check(ProbeActionWakeIgnoresFuzzyReading())),
+    ("probe action wake with a body opens the action recording", () => Check(ProbeActionWakeWithBodyOpensRecording())),
+    ("probe prefers the default wake over an action word only after a pause", () => Check(ProbePrefersDefaultWakeOverAction())),
+    ("probe of a non-wake opens no session", () => Check(ProbeNonWakeOpensNoSession())),
+    ("probe action wake logs the action and shows waiting", () => Check(ProbeActionWakeLogsActionAndShowsWaiting())),
+    ("probe action wake is skipped while the microphone is in use", () => Check(ProbeActionWakeSkippedWhileMicInUse())),
+    ("check mode names an early action wake", () => Check(CheckModeNamesEarlyActionWake())),
     ("dictation handoff with an action opens its URL instead of routing or pasting", () => Check(DictationHandoffActionOpensUrl())),
     ("config loads a post action and rejects tokenEnv without an https url or a name", () => Check(ConfigLoadsPostAction())),
     ("post action renders the default Pebble fields or the configured templates", () => Check(PostActionRendersFields())),
@@ -256,6 +265,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("tray IPC times out unread response then serves status", TrayIpcTimesOutUnreadResponseThenServesStatus),
     ("pane route parses the four-field catalog", () => Check(PaneRouteParsesCatalog())),
     ("pane route accepts only percent-digit pane ids", () => Check(PaneRouteAcceptsOnlyPaneIds())),
+    ("wake verdict routes utterances like the shared fixture", WakeVerdictMatchesFixture),
     ("pane route matches labels like the shared fixture", PaneRouteMatchesFixtureLabels),
     ("pane route policy table matches the shared fixture", PaneRoutePolicyMatchesFixture),
     ("pane route parses jev answers like the shared fixture", PaneRouteParsesJevAnswersLikeFixture),
@@ -335,10 +345,59 @@ static bool PaneRouteAcceptsOnlyPaneIds() =>
     && !PaneRoute.IsPaneId("0") && !PaneRoute.IsPaneId("%") && !PaneRoute.IsPaneId("%1a")
     && !PaneRoute.IsPaneId("dev:0.1") && !PaneRoute.IsPaneId("%１");
 
-// The same file drives the Swift parity harness, so both platforms assert the same literal rows.
-static JsonElement PaneRouteFixture()
+// The same file drives the Swift parity harness, so both platforms route the same utterances to the same wake set.
+static TestOutcome WakeVerdictMatchesFixture()
 {
-    var relative = Path.Combine("tests", "parity", "fixtures", "pane_route.json");
+    foreach (var item in ParityFixture("wake_verdict.json").GetProperty("cases").EnumerateArray())
+    {
+        var actions = item.GetProperty("actions").EnumerateArray()
+            .Select(a => new WakeAction(a.GetProperty("name").GetString()!, a.GetProperty("wakeWords").EnumerateArray().Select(w => w.GetString()!).ToArray(), "alter://fixture"))
+            .ToArray();
+        var config = new VoiceSwitchConfig(item.GetProperty("wakeWords").EnumerateArray().Select(w => w.GetString()!).ToArray(), "ja_JP", "wake",
+            Dictation: DictationConfig().Dictation, Windows: new WindowsActions(actions));
+        var runs = new List<LexicalRun>();
+        foreach (var segment in item.GetProperty("segments").EnumerateArray())
+        {
+            var text = segment.GetProperty("text").GetString()!;
+            var start = segment.GetProperty("startMs").GetInt64() * 16;
+            if (segment.TryGetProperty("reading", out var reading))
+            {
+                runs.Add(Run(text, start, start + 1600L * text.Length, reading.GetString()));
+                continue;
+            }
+
+            runs.AddRange(text.Select((c, i) => Run(c.ToString(), start + 1600L * i, start + 1600L * (i + 1))));
+        }
+
+        foreach (var check in item.GetProperty("checks").EnumerateArray())
+        {
+            var probe = check.GetProperty("extent").GetString() == "probe";
+            var tail = probe ? check.GetProperty("tailMs").GetInt64() * 16 : 0;
+            var recognition = new RecognizedUtterance(1, probe ? RecognitionExtent.Probe : RecognitionExtent.ClosedUtterance,
+                new SampleRange(0, runs[^1].Range.End + tail), string.Concat(runs.Select(run => run.Text)), runs.ToImmutableArray(), TailSilenceSamples: tail);
+            var session = new DictationSession(config);
+            session.Apply(recognition, StoreWithRamp(0, 40000).Copy);
+            var actual = !session.IsActive && !session.IsAwaitingBody ? "nil"
+                : $"{session.Action?.Name ?? "default"} body={(session.IsActive ? (session.PendingBody!.Value.Start / 16).ToString() : "nil")}";
+            var expect = check.GetProperty("expect");
+            var expected = expect.ValueKind == JsonValueKind.Null ? "nil"
+                : $"{expect.GetProperty("set").GetString()} body={(expect.GetProperty("bodyMs").ValueKind == JsonValueKind.Null ? "nil" : expect.GetProperty("bodyMs").GetInt64().ToString())}";
+            if (actual != expected)
+            {
+                return TestOutcome.Fail($"{item.GetProperty("name").GetString()} {(probe ? $"probe tail={tail / 16}" : "closed")}: expected {expected}, got {actual}");
+            }
+        }
+    }
+
+    return TestOutcome.Pass();
+}
+
+static JsonElement PaneRouteFixture() => ParityFixture("pane_route.json");
+
+// The same file drives the Swift parity harness, so both platforms assert the same literal rows.
+static JsonElement ParityFixture(string name)
+{
+    var relative = Path.Combine("tests", "parity", "fixtures", name);
     var dir = new DirectoryInfo(AppContext.BaseDirectory);
     while (dir is not null && !File.Exists(Path.Combine(dir.FullName, relative)))
     {
@@ -1447,6 +1506,7 @@ static bool SegmenterProbeFiresAtGapsAndGrowth()
 
     var gaps = Trace(new Segmenter(Config(10000)), (7, false), (17, true), (12, false));
     var off = Trace(new Segmenter(Config(null)), (7, false), (17, true), (12, false));
+    var actionGaps = Trace(new Segmenter(Config(null) with { Windows = new WindowsActions([new WakeAction("progress", ["プログレス"], "alter://action/1")]) }), (7, false), (40, true), (12, false));
     var growth = new Segmenter(Config(300));
     var beforeReset = Trace(growth, (7, false), (17, true));
     growth.Reset();
@@ -1455,6 +1515,7 @@ static bool SegmenterProbeFiresAtGapsAndGrowth()
     var skippedProbes = Trace(capped, (7, false), (40, true), (2, false));
     return gaps.SequenceEqual(["25:12480:960", "28:13920:2400"])
         && off.Count == 0
+        && actionGaps.SequenceEqual(["48:23520:960", "51:24960:2400"])
         && beforeReset.SequenceEqual(["9:4800:0", "19:9600:0"])
         && afterReset.SequenceEqual(["9:4800:0"])
         && capped.IsSkipping
@@ -1465,7 +1526,7 @@ static bool EarlyWakeFiresOnlySafeProbes()
 {
     WakeWord[] wakes = [WakeWord.From("音声", "おんせい"), WakeWord.From("音声入力", "おんせいにゅうりょく"), WakeWord.From("音声に入る", "おんせいにはいる")];
     WakePrefix? Early(string text, long tail, params LexicalRun[] runs) =>
-        DictationBoundaries.EarlyWake(new RecognizedUtterance(1, RecognitionExtent.Probe, new SampleRange(0, 8000), text, runs.ToImmutableArray(), TailSilenceSamples: tail), wakes);
+        DictationBoundaries.Verdict(new RecognizedUtterance(1, RecognitionExtent.Probe, new SampleRange(0, 8000), text, runs.ToImmutableArray(), TailSilenceSamples: tail), [new WakeSet(null, wakes)])?.Prefix;
     LexicalRun[] onsei = [Run("音声", 0, 3000)];
     LexicalRun[] onseiNyu = [Run("音声", 0, 2000), Run("入", 2000, 3000)];
     LexicalRun[] onseiNyuryoku = [Run("音声", 0, 2000), Run("入力", 2000, 4000)];
@@ -2712,7 +2773,7 @@ static bool DictationActionIconFollowsWaitingAndRecording()
     var action = new WakeAction("grok", ["音声入力"], "alter://action/1");
     var config = DictationRuntimeTestConfig(endSilenceMs: 5000) with { WakeWords = ["ほげほげ"], Windows = new WindowsActions([action]) };
     var lone = new PhaseRecorder();
-    var loneRuntime = new WindowsDictationRuntime(config, new FixturePcmCapture(ThreeUtteranceFrames(), [24, 28]), Recognizing("wake", "body", "stop"), new RecordingDictationHandoff(), dryRun: true, lone);
+    var loneRuntime = new WindowsDictationRuntime(config, new FixturePcmCapture(ThreeUtteranceFrames(), [24, 28]), RecognizingClosed("wake", "body", "stop"), new RecordingDictationHandoff(), dryRun: true, lone);
 
     var frames = new List<PcmFrame>();
     AddFrames(frames, 3, loud: false);
@@ -3405,6 +3466,15 @@ static RecognizedUtterance Utterance(RecognitionRequest request, string kind) =>
 // kinds[i] answers request i+1; the last kind repeats for any later request.
 static ScriptedDictationRecognizer Recognizing(params string[] kinds) =>
     new(request => Task.FromResult(Utterance(request, kinds[Math.Min((int)request.Id, kinds.Length) - 1])));
+
+// kinds[i] answers closed utterance i+1; probes hear nothing, so an action's silence-gap probes do not take the script.
+static ScriptedDictationRecognizer RecognizingClosed(params string[] kinds)
+{
+    var closed = 0;
+    return new(request => Task.FromResult(request.Extent == RecognitionExtent.Probe
+        ? new RecognizedUtterance(request.Id, request.Extent, request.Range, "", [], TailSilenceSamples: request.TailSilenceSamples)
+        : Utterance(request, kinds[Math.Min(Interlocked.Increment(ref closed), kinds.Length) - 1])));
+}
 
 static bool DictationCaptureFollowsPinnedMicrophoneWhileConnected()
 {
@@ -4772,8 +4842,8 @@ static bool WakeActionUrlCarriesInput()
 static bool DictationActionWakeSelectsAction()
 {
     var progress = new WakeAction("progress", ["プログレス"], "alter://action/1");
-    var shadowed = new WakeAction("memo", ["音声入力メモ"], "alter://action/2");
-    var config = DictationConfig() with { Windows = new WindowsActions([shadowed, progress]) };
+    var memo = new WakeAction("memo", ["音声入力メモ"], "alter://action/2");
+    var config = DictationConfig() with { Windows = new WindowsActions([memo, progress]) };
     var store = StoreWithRamp(0, 40000);
 
     var leading = new DictationSession(config);
@@ -4785,16 +4855,183 @@ static bool DictationActionWakeSelectsAction()
     var bareWaiting = bare.IsAwaitingBody && bare.Action == progress;
     bare.Apply(Recognized(3, RecognitionExtent.ClosedUtterance, 12000, 20000, "プログレス今日は", false, Run("プログレス", 12000, 15000), Run("今日は", 16000, 20000)), store.Copy);
 
-    var byDefault = new DictationSession(config);
-    byDefault.Apply(Recognized(4, RecognitionExtent.PrefixHead, 0, 20000, "音声入力メモ今日", false, Run("音声入力", 0, 4000), Run("メモ", 4000, 6000), Run("今日", 8000, 20000)), store.Copy);
+    var byMemo = new DictationSession(config);
+    byMemo.Apply(Recognized(4, RecognitionExtent.PrefixHead, 0, 20000, "音声入力メモ今日", false, Run("音声入力", 0, 4000), Run("メモ", 4000, 6000), Run("今日", 8000, 20000)), store.Copy);
 
     var probe = new DictationSession(config);
     probe.Apply(new RecognizedUtterance(5, RecognitionExtent.Probe, new SampleRange(0, 8000), "プログレス", [Run("プログレス", 0, 5000)], TailSilenceSamples: 3000), store.Copy);
 
     return leadingAudio is { Action: var a, Range: var r } && a == progress && r == new SampleRange(6000, 20000)
         && bareWaiting && bare.IsActive && bare.PendingBody == new SampleRange(16000, 20000)
-        && byDefault.IsActive && byDefault.Action is null && byDefault.PendingBody?.Start == 4000
-        && !probe.IsActive && !probe.IsAwaitingBody;
+        && byMemo.IsActive && byMemo.Action == memo && byMemo.PendingBody?.Start == 8000
+        && !probe.IsActive && probe.IsAwaitingBody && probe.Action == progress;
+}
+
+static bool ProbeActionWakeOpensActionWait()
+{
+    var progress = new WakeAction("progress", ["プログレス"], "alter://action/1");
+    var config = DictationConfig() with { Windows = new WindowsActions([progress]) };
+    var store = StoreWithRamp(0, 20000);
+    var waiting = new DictationSession(config);
+    waiting.Apply(new RecognizedUtterance(1, RecognitionExtent.Probe, new SampleRange(0, 8000), "プログレス", [Run("プログレス", 0, 5000)], TailSilenceSamples: 2400), store.Copy);
+    var opened = waiting.IsAwaitingBody && !waiting.IsActive && waiting.Action == progress;
+    var silent = new DictationSession(config);
+    silent.Apply(new RecognizedUtterance(2, RecognitionExtent.Probe, new SampleRange(0, 8000), "プログレス", [Run("プログレス", 0, 5000)], TailSilenceSamples: 0), store.Copy);
+    return opened && !silent.IsActive && !silent.IsAwaitingBody;
+}
+
+static bool ProbeActionWakeKeepsPrefixGap()
+{
+    var store = StoreWithRamp(0, 30000);
+    RecognizedUtterance Probe(long id, string text, long tail, params LexicalRun[] runs) =>
+        new(id, RecognitionExtent.Probe, new SampleRange(0, 8000), text, runs.ToImmutableArray(), TailSilenceSamples: tail);
+    var first = new VoiceSwitchConfig(["音声"], "ja_JP", "wake", Dictation: DictationConfig().Dictation, Windows: new WindowsActions([new WakeAction("long", ["音声入力"], "alter://a")]));
+    var shortBare60 = new DictationSession(first);
+    shortBare60.Apply(Probe(1, "音声", 960, Run("音声", 0, 3000)), store.Copy);
+    var shortBare150 = new DictationSession(first);
+    shortBare150.Apply(Probe(2, "音声", 2400, Run("音声", 0, 3000)), store.Copy);
+    var midPrefix = new DictationSession(first);
+    midPrefix.Apply(Probe(3, "音声入", 2400, Run("音声", 0, 2000), Run("入", 2000, 3000)), store.Copy);
+    var longBare60 = new DictationSession(first);
+    longBare60.Apply(Probe(4, "音声入力", 960, Run("音声入力", 0, 4000)), store.Copy);
+    var second = new VoiceSwitchConfig(["音声入力"], "ja_JP", "wake", Dictation: DictationConfig().Dictation, Windows: new WindowsActions([new WakeAction("short", ["音声"], "alter://b")]));
+    var short60 = new DictationSession(second);
+    short60.Apply(Probe(5, "音声", 960, Run("音声", 0, 3000)), store.Copy);
+    var short150 = new DictationSession(second);
+    short150.Apply(Probe(6, "音声", 2400, Run("音声", 0, 3000)), store.Copy);
+    var long60 = new DictationSession(second);
+    long60.Apply(Probe(7, "音声入力", 960, Run("音声入力", 0, 4000)), store.Copy);
+    return !shortBare60.IsAwaitingBody && !shortBare60.IsActive
+        && shortBare150.IsAwaitingBody && shortBare150.Action is null
+        && !midPrefix.IsAwaitingBody && !midPrefix.IsActive
+        && longBare60.IsAwaitingBody && longBare60.Action?.Name == "long"
+        && !short60.IsAwaitingBody && !short60.IsActive
+        && short150.IsAwaitingBody && short150.Action?.Name == "short"
+        && long60.IsAwaitingBody && long60.Action is null;
+}
+
+static bool ProbeActionWakeIgnoresFuzzyReading()
+{
+    var config = new VoiceSwitchConfig(["音声入力"], "ja_JP", "wake", Dictation: DictationConfig().Dictation, Windows: new WindowsActions([new WakeAction("hairu", ["音声に入る"], "alter://c")]));
+    var store = StoreWithRamp(0, 20000);
+    var start = 0L;
+    var quarter = 1250L;
+    var session = new DictationSession(config);
+    session.Apply(new RecognizedUtterance(1, RecognitionExtent.Probe, new SampleRange(0, 8000), "温泉に入る",
+        [Run("温泉", start, start + quarter, "おんせん"), Run("に", start + quarter, start + 2 * quarter, "に"), Run("入", start + 2 * quarter, start + 3 * quarter, "はい"), Run("る", start + 3 * quarter, 8000, "る")],
+        TailSilenceSamples: 2400), store.Copy);
+    return !session.IsActive && !session.IsAwaitingBody;
+}
+
+static bool ProbeActionWakeWithBodyOpensRecording()
+{
+    var progress = new WakeAction("progress", ["プログレス"], "alter://action/1");
+    var config = DictationConfig() with { Windows = new WindowsActions([progress]) };
+    var store = StoreWithRamp(0, 40000);
+    var oneBreath = new DictationSession(config);
+    oneBreath.Apply(new RecognizedUtterance(1, RecognitionExtent.Probe, new SampleRange(0, 12000), "プログレス今日は",
+        [Run("プログレス", 0, 4000), Run("今日は", 5500, 12000)], TailSilenceSamples: 0), store.Copy);
+    var oneBreathOk = oneBreath.IsActive && oneBreath.Action == progress && oneBreath.PendingBody?.Start == 5500;
+    var waiting = new DictationSession(config);
+    waiting.Apply(new RecognizedUtterance(2, RecognitionExtent.Probe, new SampleRange(0, 8000), "プログレス", [Run("プログレス", 0, 5000)], TailSilenceSamples: 2400), store.Copy);
+    var waited = waiting.IsAwaitingBody && waiting.Action == progress;
+    waiting.Apply(new RecognizedUtterance(3, RecognitionExtent.Probe, new SampleRange(0, 12000), "プログレス今日は",
+        [Run("プログレス", 0, 4000), Run("今日は", 5500, 12000)], TailSilenceSamples: 0), store.Copy);
+    return oneBreathOk && waited && waiting.IsActive && waiting.Action == progress && waiting.PendingBody?.Start == 5500;
+}
+
+static bool ProbePrefersDefaultWakeOverAction()
+{
+    var config = DictationConfig() with { Windows = new WindowsActions([new WakeAction("memo", ["音声入力メモ"], "alter://m")]) };
+    var store = StoreWithRamp(0, 40000);
+    // 音声入力 starts the longer action word, so only a pause after it lets the default win.
+    var paused = new DictationSession(config);
+    paused.Apply(new RecognizedUtterance(1, RecognitionExtent.Probe, new SampleRange(0, 20000), "音声入力メモ今日",
+        [Run("音声入力", 0, 4000), Run("メモ", 6400, 8000), Run("今日", 8000, 20000)], TailSilenceSamples: 0), store.Copy);
+    var joined = new DictationSession(config);
+    joined.Apply(new RecognizedUtterance(2, RecognitionExtent.Probe, new SampleRange(0, 20000), "音声入力メモ今日",
+        [Run("音声入力", 0, 4000), Run("メモ", 4000, 6000), Run("今日", 8000, 20000)], TailSilenceSamples: 0), store.Copy);
+    return paused.IsActive && paused.Action is null && paused.PendingBody?.Start == 6400
+        && joined.IsActive && joined.Action?.Name == "memo" && joined.PendingBody?.Start == 8000;
+}
+
+static bool ProbeNonWakeOpensNoSession()
+{
+    var config = DictationConfig() with { Windows = new WindowsActions([new WakeAction("progress", ["プログレス"], "alter://action/1")]) };
+    var store = StoreWithRamp(0, 20000);
+    var session = new DictationSession(config);
+    session.Apply(new RecognizedUtterance(1, RecognitionExtent.Probe, new SampleRange(0, 8000), "こんにちは", [Run("こんにちは", 0, 5000)], TailSilenceSamples: 2400), store.Copy);
+    return !session.IsActive && !session.IsAwaitingBody;
+}
+
+static bool ProbeActionWakeLogsActionAndShowsWaiting()
+{
+    var progress = new WakeAction("progress", ["プログレス"], "alter://action/1");
+    var config = DictationRuntimeTestConfig() with { EarlyWakeMs = 10000, Windows = new WindowsActions([progress]) };
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 40, loud: false);
+    var recognizer = new ScriptedDictationRecognizer(request =>
+    {
+        var start = request.Range.Start;
+        return Task.FromResult(new RecognizedUtterance(request.Id, request.Extent, request.Range, "プログレス",
+            [Run("プログレス", start, request.Range.End)], TailSilenceSamples: request.TailSilenceSamples));
+    });
+    var observer = new ActionHudObserver();
+    var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(frames, [16]), recognizer, new RecordingDictationHandoff(), dryRun: true, observer);
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output);
+    return code == 0
+        && output.Contains("dictation session: early-wake", StringComparison.Ordinal)
+        && output.Contains("action=progress", StringComparison.Ordinal)
+        && observer.Phases.Contains(DictationPhase.Waiting)
+        && observer.WakeSounds.Contains(true)
+        && observer.ActionIcons.Any(action => action?.Name == "progress");
+}
+
+static bool ProbeActionWakeSkippedWhileMicInUse()
+{
+    var progress = new WakeAction("progress", ["プログレス"], "alter://action/1");
+    var config = DictationRuntimeTestConfig() with { EarlyWakeMs = 10000, SkipWhileMicInUseBy = ["Superwhisper.exe"], Windows = new WindowsActions([progress]) };
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 40, loud: false);
+    var recognizer = new ScriptedDictationRecognizer(request =>
+    {
+        var start = request.Range.Start;
+        return Task.FromResult(new RecognizedUtterance(request.Id, request.Extent, request.Range, "プログレス",
+            [Run("プログレス", start, request.Range.End)], TailSilenceSamples: request.TailSilenceSamples));
+    });
+    var observer = new ActionHudObserver();
+    var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(frames, [16]), recognizer, new RecordingDictationHandoff(), dryRun: true, observer,
+        micInUseBy: names => names.Contains("Superwhisper.exe") ? "Superwhisper" : null);
+    var code = RunWithCapturedConsole(runtime, TimeSpan.FromSeconds(5), out var output);
+    return code == 0
+        && output.Contains("is using the microphone", StringComparison.Ordinal)
+        && !output.Contains("dictation session: early-wake", StringComparison.Ordinal)
+        && !observer.Phases.Contains(DictationPhase.Waiting);
+}
+
+static bool CheckModeNamesEarlyActionWake()
+{
+    using var temp = RuntimeTemp();
+    var frames = new List<PcmFrame>();
+    AddFrames(frames, 3, loud: false);
+    AddFrames(frames, 12, loud: true);
+    AddFrames(frames, 12, loud: false);
+    var wav = Path.Combine(temp.Dir, "action.wav");
+    File.WriteAllBytes(wav, Pcm16Wav.Encode(frames.SelectMany(frame => frame.Samples).ToArray()));
+    var recognizer = new ScriptedDictationRecognizer(request =>
+        Task.FromResult(new RecognizedUtterance(request.Id, request.Extent, request.Range, "プログレス",
+            [Run("プログレス", request.Range.Start, request.Range.End)], TailSilenceSamples: request.TailSilenceSamples)));
+    var config = DictationRuntimeTestConfig() with { EarlyWakeMs = 10000, Windows = new WindowsActions([new WakeAction("progress", ["プログレス"], "alter://action/1")]) };
+    using var output = new StringWriter();
+    var code = CheckMode.RunAsync([wav], config, recognizer, output).GetAwaiter().GetResult();
+    var text = output.ToString();
+    return code == 0
+        && text.Contains("early-wake@510ms+stt", StringComparison.Ordinal)
+        && text.Contains("action=progress", StringComparison.Ordinal);
 }
 
 static bool DictationHandoffActionOpensUrl()

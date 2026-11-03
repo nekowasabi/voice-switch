@@ -126,7 +126,7 @@
       "id": "whole_utterance_wake_runs_command",
       "macos": {
         "file": "Sources/voice-switch/MacApp.swift",
-        "markers": ["!isHead", "wakeWords.map(normalize).contains(t)", "Platform.runMacAction(config.cfg)"]
+        "markers": ["closed: !isHead", "wakeVerdict(transcript, sets: wakeSets(config.cfg)", "Platform.runMacAction(config.cfg)"]
       },
       "windows": {
         "file": "dotnet/VoiceSwitch.Windows.Core/TextMatching.cs",

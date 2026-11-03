@@ -32,7 +32,8 @@ enroll_own() {
   make -C "$REPO" speaker-model >/dev/null 2>&1 || echo "warn make speaker-model failed; speaker gate stays unavailable"
   [ -f "$spk/own.json" ] && return 0
   : > "$spk/own.txt"
-  for d in $(ls -t "$HOME/Documents/superwhisper/recordings"); do
+  # Newest first, which a glob cannot order; read line by line so a name with spaces stays whole.
+  ls -t "$HOME/Documents/superwhisper/recordings" | while IFS= read -r d; do
     r=$HOME/Documents/superwhisper/recordings/$d
     [ -f "$r/output.wav" ] && [ -n "$(plutil -extract result raw "$r/meta.json" 2>/dev/null)" ] || continue
     [ "$(plutil -extract duration raw "$r/meta.json" 2>/dev/null | cut -d. -f1)" -ge 3000 ] 2>/dev/null || continue
@@ -137,6 +138,88 @@ cmd_hud() {
   return $rc
 }
 
+# latency sim [word]: a lone action wake word through --simulate at each hangoverMs in VS_HANGOVERS, then the
+# audio-time breakdown of "word end -> HUD waiting". Log timestamps are whole seconds, so nothing here uses wall time.
+# --simulate has no HAL voice detector (energy VAD only), so this is the floor; `latency log` reads the real mic.
+cmd_latency_sim() {
+  word=${1:-プログレス}
+  lrun=${VS_RUN_ID:-latency-$(date +%Y%m%d-%H%M%S)}
+  mkdir -p "$FIX" "$EVID/$lrun"
+  # 5 s after the word: startTimeoutMs (3 s) cancels the waiting action, so its command never runs.
+  say -v Kyoko -o "$FIX/latency-action.aiff" "[[slnc 1000]] $word [[slnc 5000]]"
+  table=$EVID/$lrun/latency.tsv
+  printf 'hangoverMs\theard\tvoiced_ms\thal_ms\tstt_ms\test_word_end_to_hud_ms\tphase_waiting\taction_marker\n' > "$table"
+  for h in ${VS_HANGOVERS:-300 150 60}; do
+    cfg=$EVID/$lrun/config-h$h.json
+    sed "s#__HANGOVER__#$h#; s#__WORD__#$word#" "$SKILL/config.action-latency.json" > "$cfg"
+    VS_RUN_ID=$lrun/h$h SIMULATE_REALTIME=1 cmd_run latency-action "$cfg" > /dev/null
+    out=$EVID/$lrun/h$h/latency-action
+    # heard: <text>  [utt N ms, stt M ms]; the first one is the action word.
+    line=$(grep -m 1 'heard: ' "$out/stdout.txt" || true)
+    heard=$(printf '%s' "$line" | sed -n 's/.*heard: \(.*\)  \[utt.*/\1/p')
+    stt=$(printf '%s' "$line" | sed -n 's/.*stt \([0-9]*\) ms\].*/\1/p')
+    phrase=$(grep -m 1 'voice: phrase' "$out/stdout.txt" || true)
+    voiced=$(printf '%s' "$phrase" | sed -n 's/.*voicedMs=\([0-9]*\).*/\1/p')
+    hal=$(printf '%s' "$phrase" | sed -n 's/.*halMs=\([0-9]*\).*/\1/p')
+    waiting=$(grep -c 'phase: waiting' "$out/stdout.txt" || true)
+    marker=no; [ -f "$out/action.marker" ] && marker=yes
+    # The utterance closes hangoverMs after the last voiced frame, the frame loop adds at most one 30 ms frame, then
+    # STT. HUD dispatch to the main thread is not measured (log time is whole seconds). With no HAL detector here the
+    # VAD tail past the word is about one frame, so this is the floor of the real app's delay.
+    total=-; [ -n "$stt" ] && [ "$waiting" -gt 0 ] && total=$((h + 30 + stt))
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$h" "${heard:--}" "${voiced:--}" "${hal:--}" "${stt:--}" "$total" "$waiting" "$marker" >> "$table"
+    printf '%s\n' "${line:-h=$h: no heard line}" > "$out/heard.txt"
+  done
+  column -t -s "$(printf '\t')" "$table"
+  echo "evidence=$EVID/$lrun"
+}
+
+# latency log [file]: every action launch in the real app's log with the phrase line that opened it.
+# hal_only_ms = frames voiced only by the HAL detector, i.e. how long it held the phrase open past the energy VAD.
+cmd_latency_log() {
+  log=${1:-$HOME/Library/Logs/voice-switch.log}
+  [ -f "$log" ] || die "no log $log"
+  awk -v hang="${VS_HANGOVER:-300}" '
+    function msOfDay(ts,   c) { c = substr(ts, 12); sub(/Z$/, "", c); split(c, p, ":"); return int((p[1] * 3600 + p[2] * 60 + p[3]) * 1000) }
+    function field(name,   v) { v = $0; sub(".*" name "=", "", v); sub(/ .*/, "", v); return v }
+    /heard: .*\[utt [0-9]+ ms, stt [0-9]+ ms\]/ { s = $0; sub(/.*stt /, "", s); sub(/ ms\].*/, "", s); stt = s }
+    # Builds that log milliseconds and a "wake probe:" line give a measured row:
+    # energy end -> HUD = energySilentMs + sttMs + (hud log time - probe log time); the probe line is written after STT.
+    /wake probe: .*hit=true/ && $1 ~ /\./ { pts = msOfDay($1); pstt = field("sttMs"); pes = field("energySilentMs"); psil = field("silentMs"); psv = /sileroSilentMs=[0-9]/ ? field("sileroSilentMs") : ""; probe = 1 }
+    /dictation started early.*action=/ && probe { wantHud = 1; ha = $NF; sub(/^action=/, "", ha); hts0 = $1 }
+    wantHud && /hud: waiting/ {
+      d = msOfDay($1) - pts
+      # Silero voice end -> HUD: the nearest signal to the word end (Silero falls 32-64 ms after it on real recordings).
+      printf "measured\t%s\t%s\tvoice_end_to_hud=%s\tenergy_end_to_hud=%d\tsilence_end_to_hud=%d\tstt=%d\tdispatch=%d\tenergySilentMs=%d\n", hts0, ha, (psv == "" ? "-" : psv + pstt + d), pes + pstt + d, psil + pstt + d, pstt, d, pes
+      m++; mv[m] = psv == "" ? pes + pstt + d : psv + pstt + d; wantHud = 0; probe = 0
+    }
+    # main logs "dictation started ... -> action <name>" after the utterance closed (hangoverMs). The early probe
+    # (PR #71) logs "dictation started early ... action=<name>" at a 60 ms silence gap (150 ms for a prefix word).
+    /dictation started.*(-> action |action=)/ {
+      t = $1; a = $NF; sub(/^action=/, "", a); bound = /started early/ ? 60 : hang; pending = 1; next
+    }
+    pending && /voice: phrase .*-> dictation opened/ {
+      v = $0; sub(/.*voicedMs=/, "", v); sub(/ .*/, "", v)
+      e = $0; sub(/.*energyMs=/, "", e); sub(/ .*/, "", e)
+      h = $0; sub(/.*halMs=/, "", h); sub(/ .*/, "", h)
+      only = v - e
+      # stt is logged only while dictation.noWakeWord is off; otherwise the estimate leaves it out.
+      printf "%s\t%s\tvoiced=%s\tenergy=%s\thal=%s\thal_only=%d\tboundary=%d\tstt=%s\test_word_end_to_hud=%d%s\n", t, a, v, e, h, only, bound, (stt == "" ? "-" : stt), only + bound + stt, (stt == "" ? "+stt" : "")
+      n++; sum += only; vals[n] = only; pending = 0; stt = ""; next
+    }
+    pending && /dictation started|dictation session/ { pending = 0 }
+    END {
+      if (m > 0) {
+        for (i = 2; i <= m; i++) { x = mv[i]; j = i - 1; while (j > 0 && mv[j] > x) { mv[j + 1] = mv[j]; j-- } mv[j + 1] = x }
+        printf "measured=%d end_to_hud_ms (voice_end, else energy_end) min=%d median=%d max=%d\n", m, mv[1], mv[int((m + 1) / 2)], mv[m]
+      }
+      if (n == 0) { print "no action launch with a voice: phrase line"; exit }
+      # insertion sort for the median; n is small
+      for (i = 2; i <= n; i++) { x = vals[i]; j = i - 1; while (j > 0 && vals[j] > x) { vals[j + 1] = vals[j]; j-- } vals[j + 1] = x }
+      printf "launches=%d hal_only_ms median=%d max=%d (boundary added per row: hangoverMs=%d, or 60 for an early start)\n", n, vals[int((n + 1) / 2)], vals[n], hang
+    }' "$log"
+}
+
 cmd_cleanup() {
   for p in "$EVID"/*/*/pid.txt; do
     [ -f "$p" ] || continue
@@ -151,11 +234,15 @@ cmd_cleanup() {
   echo "removed $BUILD; kept $EVID and $FIX"
 }
 
-[ $# -ge 1 ] || die "usage: verify.sh build|doctor|say|run|hud|cleanup"
+[ $# -ge 1 ] || die "usage: verify.sh build|doctor|say|run|hud|latency sim|log|cleanup"
 c=$1; shift
 case $c in
   build) cmd_build ;;
   hud) cmd_hud ;;
+  latency)
+    [ $# -ge 1 ] || die "usage: latency sim [word] | latency log [file]"
+    sub=$1; shift
+    case $sub in sim) cmd_latency_sim "$@" ;; log) cmd_latency_log "$@" ;; *) die "unknown latency $sub" ;; esac ;;
   doctor) cmd_doctor ;;
   say) cmd_say "$@" ;;
   run) cmd_run "$@" ;;

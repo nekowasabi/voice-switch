@@ -225,10 +225,25 @@ struct PaneRouteFixture: Decodable {
     var resolve_body: [ResolveBody]
 }
 
+struct WakeVerdictFixture: Decodable {
+    struct Action: Decodable { var name: String; var wakeWords: [String] }
+    struct Segment: Decodable { var text: String; var startMs: Int; var reading: String? }
+    struct Expect: Decodable { var set: String; var bodyMs: Int? }
+    struct Check: Decodable { var extent: String; var tailMs: Int?; var expect: Expect? }
+    struct Case: Decodable {
+        var name: String
+        var wakeWords: [String]
+        var actions: [Action]
+        var segments: [Segment]
+        var checks: [Check]
+    }
+    var cases: [Case]
+}
+
 var failures: [String] = []
 let args = CommandLine.arguments
-guard args.count == 4 else {
-    FileHandle.standardError.write(Data("usage: swift-parity text_matching.json segmenter.json pane_route.json\n".utf8))
+guard args.count == 5 else {
+    FileHandle.standardError.write(Data("usage: swift-parity text_matching.json segmenter.json pane_route.json wake_verdict.json\n".utf8))
     exit(2)
 }
 
@@ -297,7 +312,49 @@ for item in paneFixture.resolve_body {
           "resolve body \(item.name) expected=\(item.body ?? "nil") (\(item.reason)) actual=\(actual.body ?? "nil") (\(actual.reason))")
 }
 
+let wakeFixture = try decoder.decode(WakeVerdictFixture.self, from: Data(contentsOf: URL(fileURLWithPath: args[4])))
+for item in wakeFixture.cases {
+    let json: [String: Any] = ["wakeWords": item.wakeWords, "command": "true",
+                               "macOS": ["actions": item.actions.map { ["name": $0.name, "wakeWords": $0.wakeWords, "url": "alter://fixture"] }]]
+    let cfg = try decoder.decode(Config.self, from: JSONSerialization.data(withJSONObject: json))
+    let runs = item.segments.flatMap { segment -> [(text: String, start: Double?, end: Double?)] in
+        let start = Double(segment.startMs) / 1000
+        if segment.reading != nil { return [(segment.text, start, start + 0.1 * Double(segment.text.count))] }
+        return segment.text.enumerated().map { (String($1), start + 0.1 * Double($0), start + 0.1 * Double($0 + 1)) }
+    }
+    let tr = Transcript(runs: runs)
+    for row in item.checks {
+        let closed = row.extent == "closed"
+        let verdict = wakeVerdict(tr, sets: wakeSets(cfg), tailSilentFrames: (row.tailMs ?? 0) / 30, closed: closed)
+        let actual = verdict.map { "\($0.action?.name ?? "default") body=\($0.start.map { String(Int(($0.cutAt * 1000).rounded())) } ?? "nil")" } ?? "nil"
+        let expected = row.expect.map { "\($0.set) body=\($0.bodyMs.map(String.init) ?? "nil")" } ?? "nil"
+        check(actual == expected, "wake verdict \(item.name) \(closed ? "closed" : "probe tail=\(row.tailMs ?? 0)") expected=\(expected) actual=\(actual)")
+    }
+}
+
+do {
+    let json: [String: Any] = ["wakeWords": ["test"], "command": "true", "maxSeconds": 2.5, "hangoverMs": 300, "prerollMs": 300, "minSpeechMs": 300,
+                               "vadRatio": 3, "vadMinRMS": 0.005, "macOS": ["actions": [["name": "progress", "wakeWords": ["プログレス"], "url": "alter://fixture"]]]]
+    let actionCfg = try decoder.decode(Config.self, from: JSONSerialization.data(withJSONObject: json))
+    func trace(_ cfg: Config) -> [String] {
+        var seg = Segmenter(cfg: cfg)
+        let quiet = [Float](repeating: 0.0001, count: frameLen)
+        let loud = (0..<frameLen).map { i in Float(0.2 * sin(Float(i) * 0.5)) }
+        var fired: [String] = []
+        for (index, isLoud) in (Array(repeating: false, count: 7) + Array(repeating: true, count: 40) + Array(repeating: false, count: 12)).enumerated() {
+            if seg.push(isLoud ? loud : quiet) == nil, let buf = seg.probe() { fired.append("\(index):\(buf.count):\(seg.tailSilentFrames)") }
+        }
+        return fired
+    }
+    var noAction = actionCfg
+    noAction.macOS = nil
+    check(trace(actionCfg) == ["48:23520:2", "51:24960:5"], "action without earlyWakeMs probes at the gaps only: \(trace(actionCfg))")
+    check(trace(noAction).isEmpty, "no action and no earlyWakeMs never probes: \(trace(noAction))")
+}
+
 if failures.isEmpty {
+    print("PASS gap probe without earlyWakeMs")
+    print("PASS wake verdict fixtures")
     print("PASS behavior fixtures")
     print("PASS pane route fixtures")
     print("PASS pane extract fixtures")

@@ -226,10 +226,13 @@ public static class CheckMode
                         var began = Stopwatch.GetTimestamp();
                         var early = await recognizer.RecognizeAsync(new RecognitionRequest(++id, RecognitionExtent.Probe, probeRange, samples[(int)probeRange.Start..(int)probeRange.End], probe.TailSilenceSamples), CancellationToken.None);
                         var stt = (long)Stopwatch.GetElapsedTime(began).TotalMilliseconds;
-                        if (DictationBoundaries.EarlyWake(early, config.Wakes()) is { } hit)
+                        if (DictationBoundaries.Verdict(early, DictationBoundaries.WakeSets(config)) is { } verdict)
                         {
                             var at = end * 1000L / (long)Segmenter.Rate;
-                            verdicts.Add(hit.BodyStart is null ? $"early-wake@{at}ms+stt{stt}" : $"early-dictate@{at}ms+stt{stt}:{AfterWakes(TextMatching.Normalize(early.Text), config)}");
+                            var owner = verdict.Set.Owner;
+                            var action = owner is null ? "" : $" action={owner.Name}";
+                            var wakesForRest = owner is null ? config.WakeWords : owner.WakeWords;
+                            verdicts.Add(verdict.Prefix.BodyStart is null ? $"early-wake@{at}ms+stt{stt}{action}" : $"early-dictate@{at}ms+stt{stt}:{AfterWakes(TextMatching.Normalize(early.Text), wakesForRest)}{action}");
                             earlyHit = true;
                         }
                     }
@@ -266,24 +269,20 @@ public static class CheckMode
 
     private static string Verdict(RecognizedUtterance heard, VoiceSwitchConfig config)
     {
-        var wakes = config.WakeWords.Select(TextMatching.Normalize).OrderByDescending(wake => wake.Length).ToArray();
         var text = TextMatching.Normalize(heard.Text);
-        if ((heard.Extent == RecognitionExtent.ClosedUtterance && wakes.Contains(text)) || DictationBoundaries.RejectedWake(heard, config.Wakes()) is not null)
+        var verdict = DictationBoundaries.Verdict(heard, DictationBoundaries.WakeSets(config));
+        var action = verdict?.Set.Owner is { } owner ? $" action={owner.Name}" : "";
+        return verdict switch
         {
-            return "wake";
-        }
-
-        if (DictationBoundaries.LeadingWake(heard, config.WakeWords) is not { BodyStart: not null })
-        {
-            return text;
-        }
-
-        return "dictate:" + AfterWakes(text, config);
+            { Prefix.BodyStart: not null } => $"dictate:{AfterWakes(text, verdict.Set.Owner?.WakeWords ?? config.WakeWords)}{action}",
+            { Prefix.Distance: 0 } => $"wake{action}",
+            _ => text
+        };
     }
 
-    private static string AfterWakes(string text, VoiceSwitchConfig config)
+    private static string AfterWakes(string text, string[] wakeWords)
     {
-        var wakes = config.WakeWords.Select(TextMatching.Normalize).OrderByDescending(wake => wake.Length).ToArray();
+        var wakes = wakeWords.Select(TextMatching.Normalize).OrderByDescending(wake => wake.Length).ToArray();
         while (wakes.FirstOrDefault(wake => text.StartsWith(wake, StringComparison.Ordinal)) is { } wake)
         {
             text = text[wake.Length..];

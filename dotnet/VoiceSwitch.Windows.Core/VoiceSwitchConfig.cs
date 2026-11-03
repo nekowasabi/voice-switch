@@ -54,7 +54,8 @@ public sealed record VoiceSwitchConfig(
     int? HangoverMs = null,
     int? PrerollMs = null,
     int? MinSpeechMs = null,
-    // Mac earlyWakeMs: recognize the still-open utterance before the hangover closes it. Null keeps it off.
+    // Mac earlyWakeMs: recognize the still-open utterance before the hangover closes it. Null keeps it off,
+    // except the gap probes, which still run when windows.actions is set.
     int? EarlyWakeMs = null,
     float? VadRatio = null,
     float? VadMinRMS = null,

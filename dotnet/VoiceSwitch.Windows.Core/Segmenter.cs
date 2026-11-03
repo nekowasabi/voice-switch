@@ -62,7 +62,8 @@ public sealed class Segmenter
     // Mac probe(). Exact equality fires each gap once per pause, not on every silent frame after it.
     public SegmenterProbe? Probe()
     {
-        if (config.EarlyWakeMs is not int every
+        // An action wake word gets the silence-gap probes without EarlyWakeMs; speech-interval probes stay opt-in.
+        if ((config.EarlyWakeMs is null && (config.Windows?.Actions ?? []).Length == 0)
             || utterance.Count == 0
             || skipping
             || utteranceSamples < MsToSamples(config.MinSpeechMs ?? 300))
@@ -71,7 +72,7 @@ public sealed class Segmenter
         }
 
         var gap = silentSamples == 2 * FrameLength || silentSamples == DictationBoundaries.PrefixGapSamples;
-        if (!gap && utteranceSamples - lastProbeSamples < MsToSamples(every))
+        if (!gap && (config.EarlyWakeMs is not int every || utteranceSamples - lastProbeSamples < MsToSamples(every)))
         {
             return null;
         }

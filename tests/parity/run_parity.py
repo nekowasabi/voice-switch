@@ -23,6 +23,7 @@ SEGMENTER_FIXTURE = HERE / "fixtures" / "segmenter.json"
 CLI_FIXTURE = HERE / "fixtures" / "cli.json"
 PANE_ROUTE_FIXTURE = HERE / "fixtures" / "pane_route.json"
 SPEECH_GATE_FIXTURE = HERE / "fixtures" / "speech_gate.json"
+WAKE_VERDICT_FIXTURE = HERE / "fixtures" / "wake_verdict.json"
 SWIFT_HARNESS = HERE / "swift" / "main.swift"
 
 
@@ -589,7 +590,7 @@ def check_swift_runtime_call_chain(result: Result, repo: SourceTree) -> None:
             "var seg = Segmenter(cfg: config.cfg)",
             "let event = seg.push(f, voice: hal)",
             "transcript = try await transcribe",
-            "let hit = !isHead && config.cfg.wakeWords.map(normalize).contains(t)",
+            "let verdict = wakeVerdict(transcript, sets: wakeSets(config.cfg), tailSilentFrames: 0, closed: !isHead)",
             "Platform.runMacAction(config.cfg)",
         ],
     )
@@ -901,7 +902,7 @@ def check_swift_core_behavior(result: Result, require_swift: bool) -> None:
             result.fail("Swift pure harness failed to compile:\n" + completed.stdout + completed.stderr)
             return
         completed = subprocess.run(
-            [str(binary), str(TEXT_FIXTURE), str(SEGMENTER_FIXTURE), str(PANE_ROUTE_FIXTURE)],
+            [str(binary), str(TEXT_FIXTURE), str(SEGMENTER_FIXTURE), str(PANE_ROUTE_FIXTURE), str(WAKE_VERDICT_FIXTURE)],
             cwd=ROOT,
             text=True,
             stdout=subprocess.PIPE,

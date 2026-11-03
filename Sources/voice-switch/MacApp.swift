@@ -169,21 +169,34 @@ func ensureModel(_ locale: Locale) async throws {
 func check(_ paths: [String], cfg: Config) async throws {
     let locale = Locale(identifier: cfg.locale ?? "ja_JP")
     try await ensureModel(locale)
-    let targets = Set(cfg.wakeWords.map(normalize))
+    let sets = wakeSets(cfg)
     for path in paths {
         let samples = try loadSamples(path) + [Float](repeating: 0, count: Int(rate)) // trailing silence ends the utterance
+        if ProcessInfo.processInfo.environment["VS_VAD_TRACE"] != nil {
+            // Offline word-end study: Silero probability beside the raw level of the same 32 ms window.
+            for (n, p) in try SpeechGate.probabilities(samples).enumerated() {
+                let w = samples[n * SpeechGate.window ..< min((n + 1) * SpeechGate.window, samples.count)]
+                let rms = (w.reduce(0) { $0 + $1 * $1 } / Float(w.count)).squareRoot()
+                FileHandle.standardError.write(Data("vad-trace\t\(path)\t\(n * 32)\t\(p)\t\(rms)\n".utf8))
+            }
+            continue
+        }
         var seg = Segmenter(cfg: cfg)
+        var silero = SileroStream()
         var verdicts: [String] = []
         var earlyHit = false // one early verdict per utterance; the hangover verdict still follows for comparison
         for i in stride(from: 0, to: samples.count - frameLen + 1, by: frameLen) {
-            let event = seg.push(Array(samples[i ..< i + frameLen]))
+            let frame = Array(samples[i ..< i + frameLen])
+            let event = seg.push(frame)
+            if !(cfg.macOS?.actions ?? []).isEmpty { for p in silero.push(frame) { seg.noteVoice(p) } }
             if event == nil, !earlyHit, let buf = seg.probe() {
                 let began = Date()
                 let tr = try await transcribe(buf, locale: locale)
                 let stt = Int(Date().timeIntervalSince(began) * 1000)
                 let at = (i + frameLen) * 1000 / Int(rate) // audio ms at which this probe could fire
-                if let hit = Segmenter.earlyWake(tr, cfg: cfg, tailSilentFrames: seg.tailSilentFrames) {
-                    verdicts.append(hit.map { "early-dictate@\(at)ms+stt\(stt):\($0.rest)" } ?? "early-wake@\(at)ms+stt\(stt)")
+                if let early = wakeVerdict(tr, sets: sets, tailSilentFrames: seg.probeSilentFrames, closed: false) {
+                    let action = early.action.map { " action=\($0.name)" } ?? ""
+                    verdicts.append(early.start.map { "early-dictate@\(at)ms+stt\(stt):\($0.rest)\(action)" } ?? "early-wake@\(at)ms+stt\(stt)\(action)")
                     earlyHit = true
                 }
             }
@@ -193,10 +206,10 @@ func check(_ paths: [String], cfg: Config) async throws {
             let (u, isHead) = switch event { case let .utterance(u): (u, false); case let .head(u): (u, true); case .tail: ([], false) }
             let began = Date()
             let tr = try await transcribe(u, locale: locale)
-            if !isHead, targets.contains(tr.text) {
-                verdicts.append("wake@\((i + frameLen) * 1000 / Int(rate))ms+stt\(Int(Date().timeIntervalSince(began) * 1000))")
-            } else if let start = dictationStart(tr, wakeWords: cfg.wakeWords) {
-                verdicts.append("dictate@\((i + frameLen) * 1000 / Int(rate))ms+stt\(Int(Date().timeIntervalSince(began) * 1000)):\(start.rest)")
+            if let verdict = wakeVerdict(tr, sets: sets, tailSilentFrames: 0, closed: !isHead) {
+                let timing = "@\((i + frameLen) * 1000 / Int(rate))ms+stt\(Int(Date().timeIntervalSince(began) * 1000))"
+                let action = verdict.action.map { " action=\($0.name)" } ?? ""
+                verdicts.append(verdict.start.map { "dictate\(timing):\($0.rest)\(action)" } ?? "wake\(timing)\(action)")
             } else {
                 verdicts.append(tr.text)
             }
@@ -1063,6 +1076,7 @@ final class Listener {
 
     private func consume(_ stream: AsyncStream<CaptureFrame>) async {
         var seg = Segmenter(cfg: config.cfg)
+        var silero = SileroStream()
         var dictation: Dictation?
         var shown = Phase.idle
         var clock = 0
@@ -1104,7 +1118,7 @@ final class Listener {
         for await frame in stream {
             let currentGeneration = localHistoryState.withLock { $0.generation }
             if activeGeneration != currentGeneration {
-                seg = Segmenter(cfg: config.cfg); dictation = nil; followupUntil = 0
+                seg = Segmenter(cfg: config.cfg); silero = SileroStream(); dictation = nil; followupUntil = 0
                 recent = []; speechFrames = 0; Hotkeys.end()
                 activeGeneration = currentGeneration
                 phaseCont.yield((.idle, nil))
@@ -1128,10 +1142,14 @@ final class Listener {
                     phaseCont.yield((phase, dictation?.action?.icon))
                 }
             }
-            if f.isEmpty { seg = Segmenter(cfg: config.cfg); dictation = nil; followupUntil = 0; recent = []; speechFrames = 0; Hotkeys.end(); continue }
+            if f.isEmpty { seg = Segmenter(cfg: config.cfg); silero = SileroStream(); dictation = nil; followupUntil = 0; recent = []; speechFrames = 0; Hotkeys.end(); continue }
             seg.adaptFloor = dictation == nil
             let hal = voiceBeingHeard()
             let event = seg.push(f, voice: hal)
+            // Only action wake words probe on silence gaps, so only they pay for Silero on every frame.
+            if dictation == nil, !(config.cfg.macOS?.actions ?? []).isEmpty {
+                for p in silero.push(f) { seg.noteVoice(p) }
+            }
             let energy = seg.lastWasEnergy
             let speaking = seg.lastWasSpeech
             // The automatic session opens on voice activity before any transcript, so a spoken wake word replaces it with the
@@ -1331,24 +1349,36 @@ final class Listener {
             // starts with a wake word and continues opens the dictation now; a bare wake word at a short gap fires now.
             if event == nil, let buf = seg.probe() {
                 let began = Date()
+                let energySilentMs = seg.energySilent * frameLen * 1000 / Int(rate)
+                let voiceSilentMs = seg.voiceSilentMs
                 guard let tr = try? await transcribe(buf, locale: Locale(identifier: config.cfg.locale ?? "ja_JP")) else { continue }
                 guard localHistoryState.withLock({ $0.generation == generation }) else { continue }
                 let earlyOrigin = WakeOrigin(rule: .strict, inputIdleSeconds: MacInputActivity.idleSeconds())
                 log("dictation recognition: complete id=\(takeRecognitionId()) \(earlyOrigin.fields) \(sidField(nil))")
                 let stt = Int(Date().timeIntervalSince(began) * 1000)
-                guard let hit = Segmenter.earlyWake(tr, cfg: config.cfg, tailSilentFrames: seg.tailSilentFrames) else { continue }
-                let start = config.cfg.dictation == nil ? nil : hit
+                let early = wakeVerdict(tr, sets: wakeSets(config.cfg), tailSilentFrames: seg.probeSilentFrames, closed: false)
+                // No transcript text: this line is logged with noWakeWord on too, where speech text stays out of the log.
+                log("wake probe: sttMs=\(stt) energySilentMs=\(energySilentMs) silentMs=\(seg.tailSilentFrames * frameLen * 1000 / Int(rate)) sileroSilentMs=\(voiceSilentMs.map(String.init) ?? "-") bufMs=\(buf.count * 1000 / Int(rate)) hit=\(early != nil)")
+                guard let early else { continue }
+                let hit = early.start
+                let earlyAction = early.action
+                let start = config.cfg.dictation == nil && earlyAction == nil ? nil : hit
                 guard start != nil || hit == nil else { continue } // a continuing transcript without dictation is not a wake
+                if earlyAction != nil, handoffBusy.withLock({ $0 }) { log("action skipped: previous dictation still in flight"); continue }
                 if let busy = micInUse(by: config.cfg.skipWhileMicInUseBy ?? []) { log("skipped: \(busy) is using the microphone"); continue }
-                if config.cfg.dictation?.noWakeWord?.enabled != true { log("early: \(tr.text)  [buf \(buf.count * 1000 / Int(rate)) ms, stt \(stt) ms]") }
+                if config.cfg.dictation?.noWakeWord?.enabled != true { log("early: \(tr.text)\(earlyAction.map { " action=\($0.name)" } ?? "")  [buf \(buf.count * 1000 / Int(rate)) ms, stt \(stt) ms]") }
                 seg.reset()
                 if let start {
-                    dictation = Dictation(samples: trimmed(buf, cutAt: start.cutAt), generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: true)
-                    log("dictation started early (cut at \(Int(start.cutAt * 1000)) ms)")
+                    dictation = Dictation(samples: trimmed(buf, cutAt: start.cutAt), generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: true, action: earlyAction)
+                    log("dictation started early (cut at \(Int(start.cutAt * 1000)) ms)\(earlyAction.map { " action=\($0.name)" } ?? "")")
                     Hotkeys.begin()
-                } else if config.cfg.dictation != nil {
-                    dictation = Dictation(samples: [], generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: false)
-                    log("dictation started early (waiting for text)")
+                } else if config.cfg.dictation != nil || earlyAction != nil {
+                    dictation = Dictation(samples: [], generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: false, action: earlyAction)
+                    if earlyAction != nil, UserDefaults.standard.bool(forKey: soundKey) {
+                        actionWakeChime?.play()
+                        dictation?.deafFrames = frames(ms: 600)
+                    }
+                    log("dictation started early (waiting for text)\(earlyAction.map { " action=\($0.name)" } ?? "")")
                     Hotkeys.begin()
                 } else {
                     Macrowhisper.prepare(config.cfg.macrowhisper)
@@ -1398,38 +1428,29 @@ final class Listener {
                 }
                 continue
             }
-            let hit = !isHead && config.cfg.wakeWords.map(normalize).contains(t)
+            let verdict = wakeVerdict(transcript, sets: wakeSets(config.cfg), tailSilentFrames: 0, closed: !isHead)
+            let hit = verdict != nil && verdict?.action == nil && verdict?.start == nil
             // Utterance length shows whether the VAD holds on past the word; stt is recognizer time.
             if config.cfg.dictation?.noWakeWord?.enabled != true { log("heard: \(t)\(hit ? "  -> wake" : "")  [utt \(u.count * 1000 / Int(rate)) ms, stt \(Int(Date().timeIntervalSince(began) * 1000)) ms]") }
-            let start = hit || config.cfg.dictation == nil ? nil : dictationStart(transcript, wakeWords: config.cfg.wakeWords)
-            var selectedAction: (action: WakeAction, start: (cutAt: Double, rest: String)?)?
-            if !hit && start == nil {
-                for action in config.cfg.macOS?.actions ?? [] {
-                    let actionStart = dictationStart(transcript, wakeWords: action.wakeWords)
-                    if actionStart != nil || (!isHead && action.wakeWords.map(normalize).contains(t)) {
-                        selectedAction = (action, actionStart)
-                        break
-                    }
-                }
-            }
-            if let selectedAction {
+            let start = verdict?.action != nil || config.cfg.dictation == nil ? nil : verdict?.start
+            if let action = verdict?.action {
                 guard !handoffBusy.withLock({ $0 }) else {
                     log("action skipped: previous dictation still in flight"); continue
                 }
                 if let busy = micInUse(by: config.cfg.skipWhileMicInUseBy ?? []) {
                     log("skipped: \(busy) is using the microphone"); continue
                 }
-                if let start = selectedAction.start {
+                if let start = verdict?.start {
                     dictation = Dictation(samples: trimmed(u, cutAt: start.cutAt), generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: true,
-                                          action: selectedAction.action)
-                    log("dictation started (cut at \(Int(start.cutAt * 1000)) ms) -> action \(selectedAction.action.name)")
+                                          action: action)
+                    log("dictation started (cut at \(Int(start.cutAt * 1000)) ms) -> action \(action.name)")
                 } else {
-                    dictation = Dictation(samples: [], generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: false, action: selectedAction.action)
+                    dictation = Dictation(samples: [], generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: false, action: action)
                     if UserDefaults.standard.bool(forKey: soundKey) {
                         actionWakeChime?.play()
                         dictation?.deafFrames = frames(ms: 600)
                     }
-                    log("dictation started (waiting for text) -> action \(selectedAction.action.name)")
+                    log("dictation started (waiting for text) -> action \(action.name)")
                 }
                 Hotkeys.begin()
                 continue
@@ -1479,12 +1500,7 @@ final class Listener {
     }
 
     private func speaksWake(_ transcript: Transcript) -> Bool {
-        let t = transcript.text
-        return config.cfg.wakeWords.map(normalize).contains(t)
-            || dictationStart(transcript, wakeWords: config.cfg.wakeWords) != nil
-            || (config.cfg.macOS?.actions ?? []).contains { action in
-                action.wakeWords.map(normalize).contains(t) || dictationStart(transcript, wakeWords: action.wakeWords) != nil
-            }
+        wakeVerdict(transcript, sets: wakeSets(config.cfg), tailSilentFrames: 0, closed: true) != nil
     }
 
     /// Checked on every voiced frame, so only a change of reason is logged.

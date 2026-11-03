@@ -34,13 +34,10 @@ def check_wiring(repo):
     assert 'var openArguments: [String] { ["-g", "--", rawValue] }' in config
     runner = extract_braced_body(platform, r"static func runURLProcess[^\{]*\{")
     assert "return process.terminationStatus == 0" in runner
-    assert "let hit = !isHead && config.cfg.wakeWords.map(normalize).contains(t)" in mac
     consume = extract_braced_body(mac, r"private func consume[^\{]*\{")
-    for marker in ("config.cfg.macOS?.actions", "handoffBusy", "if !hit && start == nil",
-                   "dictationStart(transcript, wakeWords: action.wakeWords)"):
-        assert marker in consume, "action selection missing: " + marker
+    # Which set an utterance wakes is behavior: tests/parity/fixtures/wake_verdict.json runs it on Swift and C#.
+    assert "handoffBusy" in consume, "action selection must skip while a handoff is in flight"
     assert "let start =" in consume and "if isHead && start == nil" in consume
-    assert consume.index("let start =") < consume.index("config.cfg.macOS?.actions") < consume.index("if isHead && start == nil")
     assert "var action: WakeAction? = nil" in mac
     submit = extract_braced_body(mac, r"private func submit[^\{]*\{")
     assert "action: d.action" in submit
@@ -62,9 +59,6 @@ def check_wiring(repo):
     command_pos = handoff.index("Platform.runCommand(command, stdin: result")
     route_pos = handoff.index("let route = await routeDictation(result)")
     assert action_pos < command_pos < route_pos and "return .delivered" in handoff[command_pos:route_pos]
-    segmenter = repo.code("Sources/voice-switch/Segmenter.swift")
-    early = extract_braced_body(segmenter, r"static func earlyWake[^\{]*\{")
-    assert "cfg.wakeWords" in early and ".actions" not in early
 
 repo = SourceTree(root)
 check_wiring(repo)
@@ -79,11 +73,7 @@ mutations = [
     ("Platform.swift", "return process.terminationStatus == 0"),
     ("Platform.swift", '"/usr/bin/open"'),
     ("Config.swift", '["-g", "--", rawValue]'),
-    ("MacApp.swift", "let hit = !isHead && config.cfg.wakeWords.map(normalize).contains(t)"),
-    ("MacApp.swift", "config.cfg.macOS?.actions"),
     ("MacApp.swift", "handoffBusy"),
-    ("MacApp.swift", "if !hit && start == nil"),
-    ("MacApp.swift", "dictationStart(transcript, wakeWords: action.wakeWords)"),
     ("MacApp.swift", "var action: WakeAction? = nil"),
     ("MacApp.swift", "action: d.action"),
     ("MacApp.swift", "guard modeRequested, superwhisperAutoPasteDisabled"),

@@ -399,7 +399,7 @@ public sealed class WindowsDictationRuntime
                         // The automatic session opens on voice activity before the recognizer can see a wake word, so a spoken
                         // wake word replaces it with the dictation the user asked for.
                         if (session.Origin.IsAutomatic && session.IsActive && outcome.Work.Request.Extent != RecognitionExtent.Probe
-                            && SpeaksWake(outcome.Recognition!))
+                            && DictationBoundaries.Verdict(outcome.Recognition!, DictationBoundaries.WakeSets(config)) is not null)
                         {
                             Log.Info($"dictation session: automatic replaced by wake word id={outcome.Work.Request.Id} {Sid(session)}");
                             session.Cancel(FinishReason.CancelCommand);
@@ -444,14 +444,12 @@ public sealed class WindowsDictationRuntime
                         }
 
                         var probe = outcome.Work.Request.Extent == RecognitionExtent.Probe;
-                        var prefix = probe
-                            ? DictationBoundaries.EarlyWake(outcome.Recognition!, config.Wakes())
-                            : DictationBoundaries.LeadingWake(outcome.Recognition!, config.Wakes());
+                        var prefix = DictationBoundaries.Verdict(outcome.Recognition!, DictationBoundaries.WakeSets(config))?.Prefix;
                         var byReading = config.Dictation?.NoWakeWord?.Enabled == true ? "" : session.Action is { } action ? $" action={action.Name}"
                             : prefix?.ByReading is { } readingWake ? $" via=reading d={prefix.Distance} wake=\"{readingWake.Reading}\"" : "";
                         if (probe && wasIdle && (session.IsActive || session.IsAwaitingBody))
                         {
-                            Log.Info($"dictation session: early-wake id={outcome.Work.Request.Id} tail={outcome.Work.Request.TailSilenceSamples * 1000 / (long)Segmenter.Rate}ms {Sid(session)}");
+                            Log.Info($"dictation session: early-wake id={outcome.Work.Request.Id} tail={outcome.Work.Request.TailSilenceSamples * 1000 / (long)Segmenter.Rate}ms{byReading} {Sid(session)}");
                         }
 
                         if (wasIdle && session.IsAwaitingBody)
@@ -973,16 +971,11 @@ public sealed class WindowsDictationRuntime
             : Math.Min(keepFrom, Math.Max(spoken.Start - Segmenter.Frames(config.PrerollMs ?? 300) * Segmenter.FrameLength,
                 analysisStore.Next - (long)(Segmenter.Rate * 10)));
 
-    private bool SpeaksWake(RecognizedUtterance recognition) =>
-        DictationBoundaries.LeadingWake(recognition, config.Wakes()) is not null
-        || (config.Windows?.Actions ?? []).Any(action => DictationBoundaries.LeadingWake(recognition, action.Wakes()) is not null);
-
     private WakeOrigin RecognitionOrigin(DictationSession session, RecognizedUtterance recognition)
     {
         if (session.IsActive || session.IsAwaitingBody) return session.Origin;
         var relaxed = config.Dictation?.NoWakeWord?.RelaxedReadingDistance2 == true
-            && DictationBoundaries.RejectedWake(recognition, config.Wakes()) is null
-            && !SpeaksWake(recognition)
+            && DictationBoundaries.Verdict(recognition, DictationBoundaries.WakeSets(config)) is null
             && NoWakePolicy.RelaxedWake(recognition, config.Wakes()) is not null;
         return new(relaxed ? WakeRule.RelaxedD2 : WakeRule.Strict, inputIdleSeconds());
     }

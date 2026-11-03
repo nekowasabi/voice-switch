@@ -13,6 +13,8 @@ struct Segmenter {
     private var ring: [[Float]] = []
     private var utt: [[Float]] = []
     private var silent = 0
+    /// Frames since the energy VAD last heard the open utterance; `silent` also waits for the HAL voice detector.
+    private(set) var energySilent = 0
     private var skipping = false
     private var tailFrames: [[Float]] = []
     private(set) var lastRms: Float = 0
@@ -65,12 +67,33 @@ struct Segmenter {
     /// than the ~90 ms gaps inside 音声入力, so "音声" followed by this much silence is the whole word.
     // ponytail: fixed 150 ms from synthetic speech; make it a config knob if real voices pause longer inside the word.
     static let prefixGapFrames = 5
+
+    /// Silero's silence at the tail of the open utterance: ms since it last scored voice, nil until it has.
+    /// The HAL detector holds "voice" 300-700 ms past the word and the energy threshold can sit above the voice,
+    /// so this is the only signal near the true word end (Silero fell within 32-64 ms on real recordings).
+    private(set) var voiceSilentMs: Int?
+    private var voiceEdge = false
+    /// One Silero window score (32 ms), with Silero's own hysteresis: voice at 0.5, silence below 0.35.
+    mutating func noteVoice(_ p: Float) {
+        guard !utt.isEmpty else { return }
+        if p >= 0.5 { voiceSilentMs = 0; return }
+        guard p < 0.35, let ms = voiceSilentMs else { return }
+        voiceSilentMs = ms + 32
+        let prefixMs = Segmenter.prefixGapFrames * 30
+        voiceEdge = voiceEdge || ms == 0 || (ms < prefixMs && ms + 32 >= prefixMs)
+    }
+
+    /// Tail silence for the probe verdict: the later of the HAL/energy silence and Silero's.
+    var probeSilentFrames: Int { max(silent, (voiceSilentMs ?? 0) / 30) }
+
     mutating func probe() -> [Float]? {
-        guard let every = cfg.earlyWakeMs, !utt.isEmpty, !skipping else { return nil }
+        defer { voiceEdge = false }
+        // An action wake word gets the silence-gap probes without earlyWakeMs; speech-interval probes stay opt-in.
+        guard cfg.earlyWakeMs != nil || !(cfg.macOS?.actions ?? []).isEmpty, !utt.isEmpty, !skipping else { return nil }
         let minFrames = frames(ms: cfg.minSpeechMs ?? 300)
         guard utt.count >= minFrames else { return nil }
-        let gap = silent == 2 || silent == Segmenter.prefixGapFrames
-        guard gap || utt.count - lastProbe >= frames(ms: every) else { return nil }
+        let gap = silent == 2 || silent == Segmenter.prefixGapFrames || voiceEdge
+        guard gap || cfg.earlyWakeMs.map({ utt.count - lastProbe >= frames(ms: $0) }) == true else { return nil }
         lastProbe = utt.count
         return Array(utt.joined())
     }
@@ -78,22 +101,10 @@ struct Segmenter {
     /// Frames of silence at the tail of the open utterance (0 while speech continues).
     var tailSilentFrames: Int { silent }
 
-    /// Early-probe verdict. A transcript that is the start of a longer wake word ("音声入" or "音声" for "音声入力")
-    /// may be mid-word: it fires only as a bare wake word, and only after `prefixGapFrames` of silence.
-    static func earlyWake(_ tr: Transcript, cfg: Config, tailSilentFrames: Int) -> (cutAt: Double, rest: String)?? {
-        let words = cfg.wakeWords.map(normalize)
-        if words.contains(where: { $0.count > tr.text.count && $0.hasPrefix(tr.text) }) {
-            return tailSilentFrames >= prefixGapFrames && words.contains(tr.text) ? .some(nil) : nil
-        }
-        if let start = dictationStart(tr, wakeWords: cfg.wakeWords) { return .some(start) }
-        if tailSilentFrames > 0, words.contains(tr.text) { return .some(nil) }
-        return nil
-    }
-
     /// Drop the open utterance after an early wake fired, so the hangover does not report it a second time.
     mutating func reset() {
-        utt = []; ring = []; skipping = false; silent = 0; lastProbe = 0
-        levelSum = 0; levelCount = 0
+        utt = []; ring = []; skipping = false; silent = 0; energySilent = 0; lastProbe = 0
+        levelSum = 0; levelCount = 0; voiceSilentMs = nil; voiceEdge = false
     }
 
     mutating func push(_ f: [Float], voice: Bool = false) -> Event? {
@@ -109,12 +120,14 @@ struct Segmenter {
             if speech {
                 utt = ring
                 silent = 0
+                energySilent = lastWasEnergy ? 0 : 1
                 levelSum = Double(lastRms)
                 levelCount = 1
             }
             return nil
         }
         silent = speech ? 0 : silent + 1
+        energySilent = lastWasEnergy ? 0 : energySilent + 1
         levelSum += Double(lastRms)
         levelCount += 1
         // Too long to be a wake word (dictation or steady noise): stop buffering and
@@ -136,9 +149,44 @@ struct Segmenter {
         let done = !skipping && utt.count - hangover >= minFrames ? Event.utterance(Array(utt.joined()))
             : skipping && !tailFrames.isEmpty ? Event.tail(Array(tailFrames.joined())) : nil
         utt = []; ring = []; tailFrames = []; skipping = false; lastProbe = 0
-        levelSum = 0; levelCount = 0
+        levelSum = 0; levelCount = 0; voiceSilentMs = nil; voiceEdge = false
         return done ?? head
     }
+}
+
+/// The words one owner answers to: the default wake words (action nil) or one macOS.actions entry.
+struct WakeSet {
+    var action: WakeAction?
+    var words: [String]
+}
+
+/// The default set first, then each action in config order.
+func wakeSets(_ cfg: Config) -> [WakeSet] {
+    [WakeSet(action: nil, words: cfg.wakeWords)] + (cfg.macOS?.actions ?? []).map { WakeSet(action: $0, words: $0.wakeWords) }
+}
+
+/// The set an utterance wakes; start nil is a bare wake word that waits for the body.
+struct WakeVerdict {
+    var action: WakeAction?
+    var start: (cutAt: Double, rest: String)?
+}
+
+/// The one wake judgment for probes (closed false, tail silence so far) and whole utterances (closed true).
+/// An over-cap head is a probe with no tail silence. Mirrors DictationBoundaries.Verdict in VoiceSwitch.Windows.Core.
+func wakeVerdict(_ tr: Transcript, sets: [WakeSet], tailSilentFrames: Int, closed: Bool) -> WakeVerdict? {
+    let all = sets.flatMap(\.words)
+    let text = tr.text
+    let bare = sets.first { $0.words.map(normalize).contains(text) }.map { WakeVerdict(action: $0.action) }
+    // "音声入" or "音声" beside "音声入力" may be mid-word: only a bare wake word, after the prefix gap.
+    if all.map(normalize).contains(where: { $0.count > text.count && $0.hasPrefix(text) }) {
+        return closed || tailSilentFrames >= Segmenter.prefixGapFrames ? bare : nil
+    }
+    // Checked before any leading match, so "音声メモ" is the 音声メモ action and never 音声 with body メモ.
+    if let bare { return closed || tailSilentFrames > 0 ? bare : nil }
+    for set in sets {
+        if let start = dictationStart(tr, wakeWords: set.words, longerWords: all) { return WakeVerdict(action: set.action, start: start) }
+    }
+    return nil
 }
 
 /// Superwhisper drops the first sentence of quiet speech when the file opens with the session's 300 ms preroll of

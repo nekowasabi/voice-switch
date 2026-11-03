@@ -1,7 +1,8 @@
 // Shared config types (macOS + Windows).
 import Foundation
 
-func log(_ s: String) { print("\(Date().formatted(.iso8601)) \(SecretLog.redact(s))") }
+// Milliseconds, so the wake-to-HUD delay (target 0.2 s) can be read from the log.
+func log(_ s: String) { print("\(Date().formatted(Date.ISO8601FormatStyle(includingFractionalSeconds: true))) \(SecretLog.redact(s))") }
 
 struct Config: Decodable {
     var wakeWords: [String]
@@ -16,7 +17,8 @@ struct Config: Decodable {
     var vadRatio: Float?
     var vadMinRMS: Float?
     /// Experimental: probe the open utterance with STT every this many ms of speech (and at short internal gaps),
-    /// firing a wake as soon as the transcript starts with a wake word, before hangoverMs. Absent turns it off.
+    /// firing a wake as soon as the transcript starts with a wake word, before hangoverMs. Absent turns it off,
+    /// except the gap probes, which still run when macOS.actions is set.
     var earlyWakeMs: Int?
     /// Bundle IDs / process names whose microphone use blocks firing.
     var skipWhileMicInUseBy: [String]?

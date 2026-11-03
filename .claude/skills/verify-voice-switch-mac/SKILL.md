@@ -1,6 +1,6 @@
 ---
 name: verify-voice-switch-mac
-description: Drive the real macOS voice-switch binary with synthetic Japanese speech through its --simulate mode and keep the runtime log plus command side effects as proof. Use when a change to the Mac listener (wake word, stop word, normalization, early wake, dictation, automatic no-wake sessions) must be shown working in the built Swift binary, not just in parity checks. The Windows exe has its own skill, verify-voice-switch.
+description: Drive the real macOS voice-switch binary with synthetic Japanese speech through its --simulate mode and keep the runtime log plus command side effects as proof. Use when a change to the Mac listener (wake word, stop word, normalization, early wake, dictation, automatic no-wake sessions, action HUD latency) must be shown working or measured in the built Swift binary, not just in parity checks. The Windows exe has its own skill, verify-voice-switch.
 ---
 
 # verify-voice-switch-mac
@@ -49,6 +49,8 @@ VS_RUN_ID=<name> $V run <fixture> [config.json]
 - To run automatic sessions without Superwhisper, set `dictation.superwhisperMode` to a mode that does not exist (e.g. `vs-verify-missing`). The handoff then returns before `open`, and the recording goes to local history (`dictation recognition: complete id=<n> rule=auto_b`). This does not help wake-word dictations or stop-word endings. They hand off without a mode check and still open Superwhisper.
 
 HUD glyphs have their own drive, `VS_RUN_ID=<name> $V hud`. It runs `voice-switch --hud-labels <evidence>/hud`, which shows every HUD glyph on the real `HUD` class and checks it, then compares the Mac and Windows glyph names. See [features/hud-labels.md](features/hud-labels.md).
+
+Action HUD latency has its own drive. `$V latency log` reads the real app's log (read-only) and splits each action launch into HAL tail, hangover, and STT. `VS_RUN_ID=<name> $V latency sim [word]` runs the lone word through `--simulate` at several `hangoverMs` and writes `latency.tsv`. See [features/action-hud-latency.md](features/action-hud-latency.md).
 
 The `run` command prints the exit code, the evidence folder, any marker files, and the `heard` / `dictation` / `phase` / `whisper` lines (the last covers `whisper: ready` and `superwhisper mode:`). The fixture text and expected lines for each feature are in [features/README.md](features/README.md).
 
