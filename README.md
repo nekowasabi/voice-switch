@@ -111,22 +111,21 @@ For another receiver, one that wants `message` and a fixed source would use `"fi
 
 An action can hand the dictation to a shell command instead of a URL. Put `command` where `url` would go; an action takes one or the other. `tokenEnv`, `fields`, and `inputParam` need `url` and are rejected beside `command`. The command runs through `/bin/sh -c`, so `~` and `$VAR` expand as in a shell. The dictation arrives on its stdin with no trailing newline, and stdin is closed after it. The command's stdout is discarded and its stderr goes to the log. A non-zero exit is logged as `command exited <status>: <command>`, and a delivery logs `dictation delivered: command <name>`. Windows ignores the key.
 
-The use it was built for is reusing [keypipe](https://github.com/nekowasabi/keypipe) rules from voice, so one rule serves both the keyboard and the microphone:
+The use it was built for is reusing [keypipe](https://github.com/nekowasabi/keypipe) rules from voice, so one rule serves both the keyboard and the microphone. Give the keypipe rule a `name`, and the action calls it by that name with `--rule`. The shell stays in keypipe, written once:
 
 ```json
 {
-  "name": "keypipe",
-  "wakeWords": ["キーパイプ"],
-  "command": "/usr/local/bin/keypipe --config ~/.config/keypipe/config.json --line @@@ ${VOICE_SWITCH_APP:+--app \"$VOICE_SWITCH_APP\"}",
+  "name": "annotate",
+  "wakeWords": ["注釈"],
+  "command": "/usr/local/bin/keypipe --rule annotate ${VOICE_SWITCH_APP:+--app \"$VOICE_SWITCH_APP\"}",
   "superwhisperMode": "voice_switch"
 }
 ```
 
-- Use an absolute path to the binary and pass `--config`. The app's launchd `PATH` does not find `keypipe`.
+- Use an absolute path to the binary. The app's launchd `PATH` does not find `keypipe`. `--config` can be left out when keypipe's config is at its default path (`~/.config/keypipe/config.json`).
 - `superwhisperMode` must name a Superwhisper mode with auto-paste off, as for URL actions. Otherwise the text is pasted and also reaches the command.
 - `VOICE_SWITCH_APP` holds the bundle id of the app the dictation was aimed at, or is empty when it is unknown. Passing it as `--app` makes keypipe's `when.app` match the app you were in, not voice-switch. keypipe reads an empty `--app ""` as the app name `""` and does not fall back to the frontmost app, so the `${VOICE_SWITCH_APP:+...}` form leaves the flag out when the value is empty. keypipe then uses the frontmost app, which is the restored target.
-- Only keypipe `trigger` rules fire through `--line`; `hotkey` rules do not. keypipe exits 2 when no rule matched, which shows in the log as `command exited 2: <command>`.
-- The keypipe rule needs `"when": {"focus": "textField"}` to receive the dictation. With the default `focus: any`, keypipe runs the rule with empty input, so the shell sees nothing.
+- `--rule` runs the rule with that `name`, whether it has a `trigger` or a `hotkey`. The dictation reaches the rule's shell as stdin, `$1` and `KEYPIPE_INPUT`, with either `focus`. keypipe exits 2 when no rule has that name or the rule's `when` or `deny` stops it, which shows in the log as `command exited 2: <command>`.
 - A keypipe `replaceInput` output has no visible effect from voice: the rewritten line goes to stdout, which is discarded. Use `output.shell`, `notify`, or `background` instead.
 
 Any action, webhook or not, tells you it is listening by sound and HUD. With the confirmation sound on, it rings a rising two-note chime instead of dictation's single note. With `icon` on an action, the HUD shows that icon instead of the mic while it waits for text. On Windows an `.exe` gives the app's icon (for example `"%LOCALAPPDATA%\\Programs\\Grok Bot\\Grok Bot.exe"`); on Mac an `.app` does (for example `"/Applications/Grok Bot.app"`). Any other path is read as an image. A file that cannot be loaded keeps the mic.
