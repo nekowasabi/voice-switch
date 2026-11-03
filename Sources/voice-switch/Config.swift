@@ -1,7 +1,8 @@
 // Shared config types (macOS + Windows).
 import Foundation
 
-func log(_ s: String) { print("\(Date().formatted(.iso8601)) \(SecretLog.redact(s))") }
+// Milliseconds, so the wake-to-HUD delay (target 0.2 s) can be read from the log.
+func log(_ s: String) { print("\(Date().formatted(Date.ISO8601FormatStyle(includingFractionalSeconds: true))) \(SecretLog.redact(s))") }
 
 struct Config: Decodable {
     var wakeWords: [String]

@@ -13,6 +13,8 @@ struct Segmenter {
     private var ring: [[Float]] = []
     private var utt: [[Float]] = []
     private var silent = 0
+    /// Frames since the energy VAD last heard the open utterance; `silent` also waits for the HAL voice detector.
+    private(set) var energySilent = 0
     private var skipping = false
     private var tailFrames: [[Float]] = []
     private(set) var lastRms: Float = 0
@@ -81,7 +83,7 @@ struct Segmenter {
 
     /// Drop the open utterance after an early wake fired, so the hangover does not report it a second time.
     mutating func reset() {
-        utt = []; ring = []; skipping = false; silent = 0; lastProbe = 0
+        utt = []; ring = []; skipping = false; silent = 0; energySilent = 0; lastProbe = 0
         levelSum = 0; levelCount = 0
     }
 
@@ -98,12 +100,14 @@ struct Segmenter {
             if speech {
                 utt = ring
                 silent = 0
+                energySilent = lastWasEnergy ? 0 : 1
                 levelSum = Double(lastRms)
                 levelCount = 1
             }
             return nil
         }
         silent = speech ? 0 : silent + 1
+        energySilent = lastWasEnergy ? 0 : energySilent + 1
         levelSum += Double(lastRms)
         levelCount += 1
         // Too long to be a wake word (dictation or steady noise): stop buffering and

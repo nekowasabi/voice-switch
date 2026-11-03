@@ -1332,12 +1332,16 @@ final class Listener {
             // starts with a wake word and continues opens the dictation now; a bare wake word at a short gap fires now.
             if event == nil, let buf = seg.probe() {
                 let began = Date()
+                let energySilentMs = seg.energySilent * frameLen * 1000 / Int(rate)
                 guard let tr = try? await transcribe(buf, locale: Locale(identifier: config.cfg.locale ?? "ja_JP")) else { continue }
                 guard localHistoryState.withLock({ $0.generation == generation }) else { continue }
                 let earlyOrigin = WakeOrigin(rule: .strict, inputIdleSeconds: MacInputActivity.idleSeconds())
                 log("dictation recognition: complete id=\(takeRecognitionId()) \(earlyOrigin.fields) \(sidField(nil))")
                 let stt = Int(Date().timeIntervalSince(began) * 1000)
-                guard let early = wakeVerdict(tr, sets: wakeSets(config.cfg), tailSilentFrames: seg.tailSilentFrames, closed: false) else { continue }
+                let early = wakeVerdict(tr, sets: wakeSets(config.cfg), tailSilentFrames: seg.tailSilentFrames, closed: false)
+                // No transcript text: this line is logged with noWakeWord on too, where speech text stays out of the log.
+                log("wake probe: sttMs=\(stt) energySilentMs=\(energySilentMs) silentMs=\(seg.tailSilentFrames * frameLen * 1000 / Int(rate)) bufMs=\(buf.count * 1000 / Int(rate)) hit=\(early != nil)")
+                guard let early else { continue }
                 let hit = early.start
                 let earlyAction = early.action
                 let start = config.cfg.dictation == nil && earlyAction == nil ? nil : hit
