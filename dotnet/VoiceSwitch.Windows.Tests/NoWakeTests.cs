@@ -283,6 +283,89 @@ internal static class NoWakeTests
         return handoff.Count == 0 && log.Contains("dictation session: automatic ") && log.Contains("dictation cancelled: automatic wake blocked: Superwhisper");
     }
 
+    private static (CountingHandoff Handoff, PhaseRecorder Phases, string Log) RunAutomaticWithHotkeys(
+        DictationHotkeys hotkeys, Func<ImmutableArray<short>, Task<int>>? agreed, Action<DictationPhase> onPhase)
+    {
+        var frames = new List<PcmFrame>();
+        TestFrames.AddSquare(frames, 4, 0);
+        TestFrames.AddSquare(frames, 70, 9000);
+        TestFrames.AddSquare(frames, 30, 0);
+        var config = new VoiceSwitchConfig(["wake"], "en-US", "unused", MaxSeconds: 2.5,
+            HangoverMs: 120, PrerollMs: 60, MinSpeechMs: 90, VadMinRMS: 0.005f,
+            Dictation: new(EndSilenceMs: 240, NoWakeWord: new(AutoIdle: true, MinHandoffMs: 0)));
+        var handoff = new CountingHandoff();
+        var recognizer = new ScriptedDictationRecognizer(request =>
+            Task.FromResult(new RecognizedUtterance(request.Id, request.Extent, request.Range, "body", [new LexicalRun("body", request.Range)])));
+        var phases = new PhaseRecorder(onPhase);
+        var runtime = new WindowsDictationRuntime(config, new FixturePcmCapture(frames, new[] { 20, 30, 40, 50, 60, 70, 80 }),
+            recognizer, handoff, false, phases, hotkeys: hotkeys, readShortcuts: () => null, inputIdleSeconds: () => 4,
+            wakeReading: value => value, micInUseBy: _ => null, voicedWindows: _ => 1, agreedCharacters: agreed);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var previousOutput = Console.Out;
+        using var output = new StringWriter();
+        try
+        {
+            Console.SetOut(output);
+            runtime.RunAsync(timeout.Token).GetAwaiter().GetResult();
+        }
+        finally { Console.SetOut(previousOutput); }
+        return (handoff, phases, output.ToString());
+    }
+
+    public static bool AutomaticFinishKeyPastesOnceShown()
+    {
+        bool Run(Func<ImmutableArray<short>, Task<int>>? agreed)
+        {
+            var hotkeys = new DictationHotkeys();
+            bool? swallowed = null;
+            var run = RunAutomaticWithHotkeys(hotkeys, agreed, phase =>
+            {
+                if (phase != DictationPhase.Recording || swallowed is not null) return;
+                swallowed = hotkeys.OnKey(0x20, KeyMods.Control, down: true, nowMs: 0)
+                    & hotkeys.OnKey(0x20, KeyMods.None, down: false, nowMs: 50);
+            });
+            // The fixture keeps talking after the press, so a second automatic session may follow; only the first is the key's.
+            return swallowed == true
+                && run.Handoff.Seen.FirstOrDefault() is { Reason: FinishReason.FinishCommand, Wake.IsAutomatic: false }
+                && run.Handoff.Seen.Count(audio => audio.Reason == FinishReason.FinishCommand) == 1
+                && run.Log.Contains("dictation ended by hotkey", StringComparison.Ordinal)
+                && run.Log.Contains("automatic ended by FinishCommand, pasting like a wake-word dictation", StringComparison.Ordinal)
+                && run.Phases.Phases.Take(2).SequenceEqual([DictationPhase.Recording, DictationPhase.Ended]);
+        }
+
+        return Run(null) && Run(_ => Task.FromResult(5));
+    }
+
+    public static bool AutomaticFinishKeyPassesThroughUntilConfirmed()
+    {
+        var hotkeys = new DictationHotkeys();
+        bool? swallowed = null;
+        var run = RunAutomaticWithHotkeys(hotkeys, _ =>
+        {
+            swallowed ??= hotkeys.OnKey(0x20, KeyMods.Control, down: true, nowMs: 0)
+                | hotkeys.OnKey(0x20, KeyMods.None, down: false, nowMs: 50);
+            return Task.FromResult(5);
+        }, _ => { });
+        return swallowed == false
+            && run.Log.Contains("automatic confirmed by agreed words", StringComparison.Ordinal)
+            && !run.Log.Contains("dictation ended by hotkey", StringComparison.Ordinal)
+            && run.Handoff.Seen.All(audio => audio.Reason != FinishReason.FinishCommand);
+    }
+
+    public static bool AutomaticEscapeReachesTheApp()
+    {
+        var hotkeys = new DictationHotkeys();
+        bool? swallowed = null;
+        var run = RunAutomaticWithHotkeys(hotkeys, null, phase =>
+        {
+            if (phase == DictationPhase.Recording) swallowed ??= hotkeys.OnKey(0x1B, KeyMods.None, down: true, nowMs: 0);
+        });
+        return swallowed == false
+            && !run.Log.Contains("dictation cancelled", StringComparison.Ordinal)
+            && run.Handoff.Count == 1
+            && run.Handoff.Seen[0].Reason != FinishReason.CancelCommand;
+    }
+
     // A playback trace at one level from a minute ago to a minute ahead, so every mic frame of the test pairs with a bin.
     private static LevelTrace ConstantLoopback(float db)
     {

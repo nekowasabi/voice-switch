@@ -32,7 +32,7 @@ public sealed class DictationHotkeys
 
     private readonly object sync = new();
     private readonly Dictionary<int, long> swallowUp = new();
-    private (KeyChord Finish, KeyChord Cancel)? armed;
+    private (KeyChord Finish, KeyChord? Cancel)? armed;
     private DictationCommand? pending;
     private string? pendingAction;
 
@@ -94,11 +94,11 @@ public sealed class DictationHotkeys
         return (finish, cancel);
     }
 
-    public void Begin((KeyChord Finish, KeyChord Cancel) shortcuts)
+    public void Begin((KeyChord Finish, KeyChord Cancel) shortcuts, bool finishOnly = false)
     {
         lock (sync)
         {
-            armed = shortcuts;
+            armed = (shortcuts.Finish, finishOnly ? null : shortcuts.Cancel);
             pending = null;
             pendingAction = null;
             swallowUp.Clear();
