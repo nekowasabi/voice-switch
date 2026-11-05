@@ -138,6 +138,10 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("dictation hotkeys load preferences with per-key fallback", () => Check(DictationHotkeysLoadPreferencesWithFallback())),
     ("config pauseShortcut loads and parses as a key chord", () => Check(ConfigPauseShortcutParses())),
     ("dictation hotkeys swallow armed presses and their key ups", () => Check(DictationHotkeysSwallowArmedPressesAndKeyUps())),
+    ("dictation hotkeys armed finish-only take the toggle key and pass Escape", () => Check(DictationHotkeysFinishOnlyPassesEscape())),
+    ("the toggle key ends a shown automatic dictation and pastes it", () => Check(NoWakeTests.AutomaticFinishKeyPastesOnceShown())),
+    ("the toggle key passes through to Superwhisper while an automatic session is unconfirmed", () => Check(NoWakeTests.AutomaticFinishKeyPassesThroughUntilConfirmed())),
+    ("Escape reaches the app during an automatic dictation", () => Check(NoWakeTests.AutomaticEscapeReachesTheApp())),
     ("dictation hotkey finish while recording submits FinishCommand", () => Check(DictationHotkeyFinishWhileRecordingSubmitsFinishCommand())),
     ("dictation hotkey cancel while recording submits nothing", () => Check(DictationHotkeyCancelWhileRecordingSubmitsNothing())),
     ("dictation hotkey finish while waiting without speech is ignored", () => Check(DictationHotkeyFinishWhileWaitingIsIgnored())),
@@ -3299,6 +3303,23 @@ static bool DictationHotkeysSwallowArmedPressesAndKeyUps()
         && cancel == DictationCommand.Cancel
         && !staleRepeat
         && releasableAfterExpiry;
+}
+
+static bool DictationHotkeysFinishOnlyPassesEscape()
+{
+    var hotkeys = new DictationHotkeys();
+    hotkeys.Begin(DictationHotkeys.Load(null), finishOnly: true);
+    var escape = hotkeys.OnKey(0x1B, KeyMods.None, down: true, nowMs: 0);
+    var afterEscape = hotkeys.Take();
+    var toggle = hotkeys.OnKey(0x20, KeyMods.Control, down: true, nowMs: 10);
+    var keyUp = hotkeys.OnKey(0x20, KeyMods.None, down: false, nowMs: 20);
+    var secondKeyUp = hotkeys.OnKey(0x20, KeyMods.None, down: false, nowMs: 30);
+    var taken = hotkeys.Take();
+    hotkeys.End();
+    var afterEnd = hotkeys.OnKey(0x20, KeyMods.Control, down: true, nowMs: 40);
+    return !escape && afterEscape is null
+        && toggle && keyUp && !secondKeyUp && taken == DictationCommand.Finish
+        && !afterEnd;
 }
 
 static bool DictationHotkeyFinishWhileRecordingSubmitsFinishCommand()

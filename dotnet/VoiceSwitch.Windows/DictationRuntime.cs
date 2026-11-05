@@ -648,7 +648,7 @@ public sealed class WindowsDictationRuntime
             {
                 if (session.StartAutomatic(new SampleRange(start, lastLiveSpeechEnd), origin, analysisStore.Next))
                 {
-                    // No hotkeys: the user is mid-task elsewhere and their Escape belongs to that app, so only silence or a stop word ends it.
+                    if (Confirmed(session)) ArmFinishKey();
                     target = window;
                     JournalNotes.Note(session.SessionId, focus: FocusOfWindow(window));
                     Log.Info($"dictation session: automatic {origin.Fields} range={start}..{lastLiveSpeechEnd} {Sid(session)} {LevelFields(new SampleRange(start, lastLiveSpeechEnd))}");
@@ -1046,6 +1046,10 @@ public sealed class WindowsDictationRuntime
     private bool Confirmed(DictationSession session) =>
         !session.Origin.IsAutomatic || agreedCharacters is null || confirmedSession == session.SessionId;
 
+    // Escape stays with the app the user is in. The finish key is the manual stop once the automatic HUD shows;
+    // before that a press means the user is starting Superwhisper, so it passes through.
+    private void ArmFinishKey() => hotkeys?.Begin(DictationHotkeys.Load(readShortcuts()), finishOnly: true);
+
     private void CheckWords(DictationSession session)
     {
         if (wordCheck is { Agreed.IsCompleted: true } done)
@@ -1055,6 +1059,7 @@ public sealed class WindowsDictationRuntime
             if (done.Session == session.SessionId && session.IsActive && (!done.Agreed.IsCompletedSuccessfully || done.Agreed.Result))
             {
                 confirmedSession = session.SessionId;
+                ArmFinishKey();
                 Log.Info($"dictation session: automatic confirmed by {(done.Agreed.IsCompletedSuccessfully ? "agreed words" : "unavailable word agreement")} {Sid(session)}");
             }
         }
