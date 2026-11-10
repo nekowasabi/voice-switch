@@ -26,7 +26,6 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("automatic recording shows 録音中 only once two recognizers agree, drops a cough they disagree on, hands off when they fail, and pastes when ended by the stop word", () => Check(NoWakeTests.AutomaticWordAgreement())),
     ("an automatic session is dropped, not handed off, once Superwhisper starts recording during it", () => Check(NoWakeTests.AutomaticYieldsToSuperwhisperMidSession())),
     ("automatic runtime repeats sessions, fails closed on idle or microphone uncertainty, yields to a spoken wake word, records fragmented speech from its start, and logs playback-vs-mic levels at start and end", () => Check(NoWakeTests.AutomaticRuntime())),
-    ("loopback shadow fields give medians, the above-zero share, silent and unknown", () => Check(NoWakeTests.LoopbackShadowFields())),
     ("transcript shape counts letters and spots filler-only text without the text", () => Check(NoWakeTests.TranscriptShapeFields())),
     ("manual paste requires every safety observation", () => Check(NoWakeTests.PasteGuards())),
     ("local history expires, evicts, deduplicates and clears", () => Check(NoWakeTests.History())),
@@ -689,9 +688,7 @@ static bool TranscribeDeadlineMatchesFormula()
     if (Math.Abs(TranscribeDeadline.Seconds(0.5) - 20.5) > 1e-9) return false;
     // 16 kHz 16-bit mono: 1 s = 32000 bytes = 16000 samples → deadline 21 s.
     if (Math.Abs(TranscribeDeadline.SecondsFromPcmBytes(32000) - 21) > 1e-9) return false;
-    if (Math.Abs(TranscribeDeadline.SecondsFromSampleCount(16000) - 21) > 1e-9) return false;
     if (TranscribeDeadline.SecondsFromPcmBytes(0) != 20) return false;
-    if (TranscribeDeadline.SecondsFromSampleCount(0) != 20) return false;
     return true;
 }
 

@@ -601,11 +601,6 @@ public static class DictationBoundaries
             : null;
     }
 
-    public static bool IsStandaloneStop(RecognizedUtterance recognition, IEnumerable<string> stopWords)
-    {
-        return StandaloneStopRange(recognition, stopWords) is not null;
-    }
-
     // Real stop words said with a soft last mora scored 0.28-0.38 and were ignored at the old 0.4 floor (2026-10-05/07 logs).
     // With both grammars loaded, 20 stop-like TTS phrases (スタッフ, スタート, ストップしないで, ...) were never answered by the
     // stop grammar, so 0.25 adds no false stop there; it stays above the 0.24 the stop grammar alone gave "ストップしないで".

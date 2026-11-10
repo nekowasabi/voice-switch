@@ -77,10 +77,5 @@ internal static class StopWindowTests
             Pressed = true;
             hotkeys.OnKey(0x20, KeyMods.Control, down: true, nowMs: 0);
         }
-
-        public void RecognitionCompleted(RecognitionRequest request, RecognizedUtterance? recognition, Exception? error) { }
-        public void HandoffSubmitted(DictationAudio audio, HandoffResult result) { }
-        public void RetentionObserved(long retainedStart, long retainedEnd, int pending) { }
-        public void NoiseProcessorCompleted(NoiseProcessorStatus status) { }
     }
 }

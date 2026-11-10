@@ -31,10 +31,6 @@ public sealed record RecognitionDiagnostic(
 public interface IDictationRuntimeObserver
 {
     void RecognitionQueued(RecognitionRequest request, int pending, long retainedStart, long retainedEnd);
-    void RecognitionCompleted(RecognitionRequest request, RecognizedUtterance? recognition, Exception? error);
-    void HandoffSubmitted(DictationAudio audio, HandoffResult result);
-    void RetentionObserved(long retainedStart, long retainedEnd, int pending);
-    void NoiseProcessorCompleted(NoiseProcessorStatus status);
     // Called on the runtime thread after a frame or recognition batch changes the phase; Ended -> Idle is not reported.
     void PhaseChanged(DictationPhase phase) { }
     // Called just before every PhaseChanged: the action the wake word chose while Waiting or Recording, null otherwise,
@@ -92,11 +88,6 @@ public sealed class WindowsDictationRuntime
     private long checkedSamples;
     private long stopCheckedSamples;
     private (Guid Session, Task<bool> Agreed)? wordCheck;
-    // Shadow log of playback vs microphone levels: mic dBFS per frame keyed by sample index, loopback dBFS per 10 ms keyed by ms.
-    private readonly LevelTrace micLevels = new(4_000);
-    private readonly LevelTrace? loopbackLevels;
-    private LoopbackCapture? loopbackCapture;
-    private long sampleEpochMs;
     private readonly SampleStore originalStore;
     private readonly SampleStore analysisStore;
     private readonly Segmenter segmenter;
@@ -140,7 +131,6 @@ public sealed class WindowsDictationRuntime
         Func<IReadOnlyCollection<string>, string?>? micInUseBy = null,
         Func<string, string?>? wakeReading = null,
         Func<double?>? inputIdleSeconds = null,
-        LevelTrace? loopbackLevels = null,
         Func<ImmutableArray<short>, int>? voicedWindows = null,
         Func<ImmutableArray<short>, Task<int>>? agreedCharacters = null)
     {
@@ -148,7 +138,6 @@ public sealed class WindowsDictationRuntime
         this.agreedCharacters = agreedCharacters;
         this.wakeReading = wakeReading;
         this.inputIdleSeconds = inputIdleSeconds ?? InputActivity.IdleSeconds;
-        this.loopbackLevels = loopbackLevels;
         config = WithWakeReadings(config);
         this.config = config;
         this.capture = capture;
@@ -196,7 +185,6 @@ public sealed class WindowsDictationRuntime
             SingleWriter = true
         });
 
-        if (loopbackLevels is null && OperatingSystem.IsWindows()) loopbackCapture = LoopbackCapture.Start();
         var captureTask = PumpCaptureAsync(frames.Writer, linked.Token);
         var recognitionTask = PumpRecognitionAsync(requests.Reader, recognitions.Writer, linked.Token);
         var pending = new Dictionary<long, RecognitionWork>();
@@ -352,7 +340,6 @@ public sealed class WindowsDictationRuntime
                                 : $" text=\"{observed.Text}\" conf={(observed.Confidence is double conf ? conf.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) : "-")}{(observed.RejectedText is { } rejectedText ? $" rejectedText=\"{rejectedText}\"" : "")} grammar={(observed.FromStopGrammar ? "stop" : "dictation")} reading=\"{string.Join(' ', observed.Lexemes.Where(lexeme => lexeme.Reading is not null).Select(lexeme => lexeme.Reading))}\"{(observed.Alternates.IsDefaultOrEmpty ? "" : $" alts=\"{string.Join('|', observed.Alternates.Select(alternate => $"{alternate.Text}/{alternate.Reading}"))}\"")}";
                             Log.Info($"dictation recognition: complete id={outcome.Work.Request.Id} extent={outcome.Work.Request.Extent} range={outcome.Work.Request.Range.Start}..{outcome.Work.Request.Range.End} rejected={observed.HadRejectedSpeech} leadingWake={leadingWake} standaloneStop={stopRange is not null} stopRange={(stopRange is null ? "-" : $"{stopRange.Value.Start}..{stopRange.Value.End}")}{WindowStopLog(observed)} pendingBefore={pendingBefore}{heard}{TailStopLog(observed)} {origin.Fields} {Sid(session)}");
                         }
-                        observer?.RecognitionCompleted(outcome.Work.Request, outcome.Recognition, outcome.Error);
 
                         pending.Remove(outcome.Work.Request.Id);
                         if (stale)
@@ -561,7 +548,6 @@ public sealed class WindowsDictationRuntime
             }
             finally
             {
-                loopbackCapture?.Dispose();
                 await capture.DisposeAsync();
                 if (recognizer is IAsyncDisposable warmRecognizer)
                 {
@@ -592,9 +578,6 @@ public sealed class WindowsDictationRuntime
 
         originalStore.Append(frame.Start, frame.Original.AsSpan());
         analysisStore.Append(frame.Start, frame.Analysis.AsSpan());
-        micLevels.Add(frame.Start, LoopbackShadow.Dbfs(frame.Original.AsSpan()));
-        // The frame ended about now; the anchor jitters by the WinMM and channel latency, see LoopbackShadow.LagMs.
-        sampleEpochMs = Environment.TickCount64 - (frame.Start + frame.Original.Length) * 1000 / (long)Segmenter.Rate;
         segmenter.AdaptFloor = !(session.IsActive || session.IsAwaitingBody);
         // Only the VAD goes deaf; the stores keep the real audio so SAPI and the preroll stay intact.
         var ev = segmenter.Push(frame.Start < deafUntil ? new float[frame.Analysis.Length] : ToFloat(frame.Analysis.AsSpan()));
@@ -651,7 +634,7 @@ public sealed class WindowsDictationRuntime
                     if (Confirmed(session)) ArmFinishKey();
                     target = window;
                     JournalNotes.Note(session.SessionId, focus: FocusOfWindow(window));
-                    Log.Info($"dictation session: automatic {origin.Fields} range={start}..{lastLiveSpeechEnd} {Sid(session)} {LevelFields(new SampleRange(start, lastLiveSpeechEnd))}");
+                    Log.Info($"dictation session: automatic {origin.Fields} range={start}..{lastLiveSpeechEnd} {Sid(session)}");
                 }
             }
         }
@@ -1179,17 +1162,10 @@ public sealed class WindowsDictationRuntime
         originalStore.RetainFrom(retainFrom);
         analysisStore.RetainFrom(retainFrom);
         speechOnsets.RemoveAll(at => at < analysisStore.Start);
-        observer?.RetentionObserved(analysisStore.Start, analysisStore.Next, pending.Count);
     }
 
     // Mac parity: one handoff at a time so a recordings-folder result is never attributed to the wrong dictation,
     // and the loop keeps listening while Superwhisper transcribes.
-    private string LevelFields(SampleRange range) =>
-        LoopbackShadow.Fields(
-            micLevels.Between(range.Start, range.End),
-            (loopbackLevels ?? loopbackCapture?.Levels)?.Between(LoopbackShadow.LoopbackMs(range.Start, sampleEpochMs) - 2 * LoopbackShadow.BinMs, LoopbackShadow.LoopbackMs(range.End, sampleEpochMs) + 2 * LoopbackShadow.BinMs),
-            sampleEpochMs);
-
     // "-" before any session opened: a recognition heard while idle belongs to no session yet. A terminal session keeps its
     // id until the loop resets it, so stop-while-waiting and the like still name the session they closed.
     private static string Sid(DictationSession session) =>
@@ -1210,7 +1186,7 @@ public sealed class WindowsDictationRuntime
     private void Submit(DictationAudio audio)
     {
         JournalNotes.Note(audio.SessionId, audio.Reason.ToString(), audio.Range.Length / Segmenter.Rate);
-        Log.Info($"dictation session: end reason={audio.Reason} {audio.Wake.Fields} range={audio.Range.Start}..{audio.Range.End} seconds={audio.Range.Length / Segmenter.Rate:0.00} sid={audio.SessionId} {LevelFields(audio.Range)}");
+        Log.Info($"dictation session: end reason={audio.Reason} {audio.Wake.Fields} range={audio.Range.Start}..{audio.Range.End} seconds={audio.Range.Length / Segmenter.Rate:0.00} sid={audio.SessionId}");
         // Lifted here, on the loop and while the segmenter still holds the over-cap noise; the async discard comes too late,
         // and the next frame reopens.
         if (RanOverRoomNoise(audio)) RebaseFloor($"sid={audio.SessionId}");
@@ -1311,7 +1287,6 @@ public sealed class WindowsDictationRuntime
         try
         {
             var result = await handoff.SubmitAsync(audio, wake.IsAutomatic ? localCancellation : CancellationToken.None);
-            observer?.HandoffSubmitted(audio, result);
             Log.Info($"dictation handoff: {result.Status} sid={result.Id} wav={result.Path ?? "-"} reason={audio.Reason} range={audio.Range.Start}..{audio.Range.End} {(config.Dictation?.NoWakeWord?.Enabled == true || wake.IsAutomatic ? "details suppressed" : result.Message)}");
             return result.Status switch
             {
@@ -1349,7 +1324,6 @@ public sealed class WindowsDictationRuntime
             }
 
             processor.Complete();
-            observer?.NoiseProcessorCompleted(processor.Status);
             while (emitted.TryDequeue(out var analysis))
             {
                 await writer.WriteAsync(analysis, cancellation);
