@@ -118,7 +118,7 @@ public sealed class EchoCancelledCapture : IPcmCapture
         return ValueTask.CompletedTask;
     }
 
-    // The reference follows the default playback device, like LoopbackCapture.
+    // The reference follows the default playback device.
     private void PointAtDefaultPlayback()
     {
         enumerator.GetDefaultAudioEndpoint(RenderFlow, 0, out var render);

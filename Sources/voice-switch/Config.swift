@@ -40,28 +40,6 @@ struct Config: Decodable {
     /// Absent or false turns it off. Read once at launch.
     var pauseDuringMeet: Bool?
 
-    init(wakeWords: [String], locale: String? = nil, command: String,
-         maxSeconds: Double? = nil, hangoverMs: Int? = nil, prerollMs: Int? = nil,
-         minSpeechMs: Int? = nil, vadRatio: Float? = nil, vadMinRMS: Float? = nil,
-         skipWhileMicInUseBy: [String]? = nil, stopWords: [String]? = nil,
-         stopCommand: String? = nil, dictation: DictationConfig? = nil,
-         noiseReduction: NoiseReductionOptions? = nil) {
-        self.wakeWords = wakeWords
-        self.locale = locale
-        self.command = command
-        self.maxSeconds = maxSeconds
-        self.hangoverMs = hangoverMs
-        self.prerollMs = prerollMs
-        self.minSpeechMs = minSpeechMs
-        self.vadRatio = vadRatio
-        self.vadMinRMS = vadMinRMS
-        self.skipWhileMicInUseBy = skipWhileMicInUseBy
-        self.stopWords = stopWords
-        self.stopCommand = stopCommand
-        self.dictation = dictation
-        self.noiseReduction = noiseReduction
-    }
-
     /// Per-locale defaults, used only when stopWords is absent. An explicit value (even []) is kept.
     private static let defaultStopWords = ["ja-JP": ["入力ストップ"], "en-US": ["stop dictation"]]
 
@@ -81,11 +59,6 @@ struct Config: Decodable {
 struct NoiseReductionOptions: Decodable {
     var mode: String?
     var maxAttenuationDb: Double?
-
-    init(mode: String? = nil, maxAttenuationDb: Double? = nil) {
-        self.mode = mode
-        self.maxAttenuationDb = maxAttenuationDb
-    }
 }
 
 /// Optional hooks into the macrowhisper CLI (https://github.com/ognistik/macrowhisper).
@@ -134,38 +107,17 @@ struct DictationConfig: Decodable {
     var journalDir: String? = nil
     /// Optional task file an external updater refreshes; the task read at append time, or null.
     var journalTaskFile: String? = nil
-
-    init(recordingsDir: String? = nil, endSilenceMs: Int? = nil, maxSeconds: Double? = nil,
-         excludeBundleIDs: [String]? = nil, startTimeoutMs: Int? = nil) {
-        self.recordingsDir = recordingsDir
-        self.endSilenceMs = endSilenceMs
-        self.maxSeconds = maxSeconds
-        self.excludeBundleIDs = excludeBundleIDs
-        self.startTimeoutMs = startTimeoutMs
-    }
 }
 
 
 /// Load-time guardrails for timing fields that are easy to mistype 10x. No clamp — warn only.
 /// Thresholds match Windows DictationTimingGuard (endSilenceMs > 10000, startTimeoutMs > 15000).
 enum DictationTimingGuard {
-    static func shouldWarnHighEndSilence(_ ms: Int?) -> Bool {
-        guard let ms else { return false }
-        return ms > 10000
-    }
-
-    static func shouldWarnHighStartTimeout(_ ms: Int?) -> Bool {
-        guard let ms else { return false }
-        return ms > 15000
-    }
-
     static func warnIfNeeded(_ cfg: Config) {
-        if shouldWarnHighEndSilence(cfg.dictation?.endSilenceMs),
-           let ms = cfg.dictation?.endSilenceMs {
+        if let ms = cfg.dictation?.endSilenceMs, ms > 10000 {
             log("dictation timing warn: endSilenceMs unusually high (\(ms)); example is 2400")
         }
-        if shouldWarnHighStartTimeout(cfg.dictation?.startTimeoutMs),
-           let ms = cfg.dictation?.startTimeoutMs {
+        if let ms = cfg.dictation?.startTimeoutMs, ms > 15000 {
             log("dictation timing warn: startTimeoutMs unusually high (\(ms)); example is 3000")
         }
     }

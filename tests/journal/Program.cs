@@ -377,8 +377,6 @@ Run("expand-localappdata", () =>
         var stamp = new DateTimeOffset(2026, 10, 24, 1, 2, 3, TimeSpan.FromHours(9));
         journal.Append(Entry("local", stamp));
         Expect(File.Exists(Path.Combine(expected, "2026-10-24.jsonl")), "expanded file missing at " + expected);
-        var swift = Source("Sources/voice-switch/Platform.swift");
-        Expect(swift.Contains("LOCALAPPDATA", StringComparison.Ordinal) && swift.Contains("%\\(key)%", StringComparison.Ordinal), "Swift Windows expand does not replace %VAR%");
     }
     finally { RestoreEnv(); }
 });

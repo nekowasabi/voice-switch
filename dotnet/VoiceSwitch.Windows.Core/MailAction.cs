@@ -12,8 +12,6 @@ public sealed record SmtpSettings(string Host, string User, int Port = 587, stri
 /// <summary>An action whose url is mailto:&lt;to&gt;?subject=&lt;subject&gt; and that has smtp mails the dictation as the body.</summary>
 public static class MailAction
 {
-    public static bool IsMailto(string url) => url.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase);
-
     public static (string To, string Subject) Parse(string url)
     {
         var rest = url["mailto:".Length..];

@@ -171,9 +171,5 @@ public sealed class ProductionRuntimeFactory(string configPath, TrayRuntimeHooks
         }
 
         public void RecognitionQueued(RecognitionRequest request, int pending, long retainedStart, long retainedEnd) { }
-        public void RecognitionCompleted(RecognitionRequest request, RecognizedUtterance? recognition, Exception? error) { }
-        public void HandoffSubmitted(DictationAudio audio, HandoffResult result) { }
-        public void RetentionObserved(long retainedStart, long retainedEnd, int pending) { }
-        public void NoiseProcessorCompleted(NoiseProcessorStatus status) { }
     }
 }

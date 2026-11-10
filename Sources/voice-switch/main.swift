@@ -4,7 +4,6 @@
 // (Apple Speech on macOS) -> whole-utterance match against config wake words.
 //
 // usage (macOS): VoiceSwitch.app / voice-switch [--check|--simulate|--fire|--vad-selftest|--hud-labels]
-// usage (Windows Swift legacy stub): voice-switch.exe [--fire|--vad-selftest|--help]
 //
 // Build: default `make` → macOS app; `PC=wsl make` → Windows (.NET runtime).
 import Foundation
@@ -222,9 +221,6 @@ if mode == "--enroll-speaker" {
     app.run()
 }
 
-#elseif os(Windows)
-WindowsApp.run(args: Array(CommandLine.arguments.dropFirst()))
-
 #else
-#error("voice-switch supports macOS and Windows only")
+#error("voice-switch supports macOS only; the Windows runtime is dotnet/")
 #endif

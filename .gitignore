@@ -14,3 +14,4 @@ tests/**/obj/
 .audit/
 .tgrep/
 __pycache__/
+.claude/hillclimb/**/traces/

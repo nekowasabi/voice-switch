@@ -50,11 +50,7 @@ final class DictationJournal {
     }
 
     static func defaultDirectory() -> String {
-        #if os(Windows)
-        return Platform.expandPath(#"%LOCALAPPDATA%\voice-switch\journal"#)
-        #else
         return Platform.expandPath("~/Library/Application Support/voice-switch/journal")
-        #endif
     }
 
     static func originLabel(_ origin: WakeOrigin, manual: Bool) -> String {
