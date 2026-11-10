@@ -5,44 +5,23 @@ import Foundation
 /// Thin wrapper around the public macrowhisper CLI
 /// (https://github.com/ognistik/macrowhisper — same commands as the Alfred workflow).
 enum Macrowhisper {
-    /// Resolve `bin` to an absolute path when possible (`which`), else return as-is.
-    static func resolveBin(_ bin: String) -> String {
-        if bin.contains("/") { return bin }
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-        p.arguments = [bin]
-        let out = Pipe()
-        p.standardOutput = out
-        p.standardError = Pipe()
-        do {
-            try p.run()
-            p.waitUntilExit()
-            if p.terminationStatus == 0,
-               let s = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty {
-                return s
-            }
-        } catch {}
-        return bin
-    }
-
     @discardableResult
     static func run(bin: String, arguments: [String]) -> Int32 {
-        let path = resolveBin(bin)
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: path)
-        p.arguments = arguments
+        // env resolves a bare name on PATH (exit 127 when missing) and runs an absolute path as-is.
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        p.arguments = [bin] + arguments
         p.standardOutput = Pipe()
         p.standardError = Pipe()
         do {
             try p.run()
             p.waitUntilExit()
             if p.terminationStatus != 0 {
-                log("macrowhisper exited \(p.terminationStatus): \(path) \(arguments.joined(separator: " "))")
+                log("macrowhisper exited \(p.terminationStatus): \(bin) \(arguments.joined(separator: " "))")
             }
             return p.terminationStatus
         } catch {
-            log("macrowhisper failed to start (\(path)): \(error)")
+            log("macrowhisper failed to start (\(bin)): \(error)")
             return -1
         }
     }

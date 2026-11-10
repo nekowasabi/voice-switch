@@ -164,4 +164,4 @@ $build='C:\temp\voice-switch-validation'
 - Known deviations from macOS: keys typed into an elevated (admin) window bypass the hook (UIPI), `NoResult` keeps the WAV where macOS deletes it, and Alt or Win chords are not specially handled.
 - WSL interop must work to execute generated Windows `.exe` files from WSL. If it fails, run the same commands from Windows in the published folder.
 
-The Swift Windows files remain source-level compatibility stubs. The functional Windows runtime is the .NET implementation under `dotnet/`.
+The Windows runtime is only the .NET implementation under `dotnet/`; the Swift sources are macOS-only.

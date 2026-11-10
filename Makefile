@@ -144,7 +144,6 @@ win-publish: win-stop win-build ## Windows: quit the running app, then publish a
 
 win-verify: ## Verify Windows path layout / Makefile routing (no Swift SDK required)
 	@test -f Sources/voice-switch/Platform.swift
-	@test -f Sources/voice-switch/WindowsApp.swift
 	@test -f Sources/voice-switch/Segmenter.swift
 	@test -f dotnet/VoiceSwitch.Windows/VoiceSwitch.Windows.csproj
 	@test -f dotnet/VoiceSwitch.Windows/Tray/TrayHost.cs
@@ -156,7 +155,6 @@ win-verify: ## Verify Windows path layout / Makefile routing (no Swift SDK requi
 	@test -f tests/windows/run-tray-host.ps1
 	@test -f config.example.windows.json
 	@test -f BUILD.md
-	@grep -q 'os(Windows)' Sources/voice-switch/Platform.swift
 	@grep -q 'defaultSuperwhisperToggle' Sources/voice-switch/Platform.swift
 	@grep -q 'SpeechPowerShell' dotnet/VoiceSwitch.Windows/Program.cs
 	@echo "win-verify: ok (PC=$(PC) PC_NORM=$(PC_NORM) default-goal=$(.DEFAULT_GOAL))"
