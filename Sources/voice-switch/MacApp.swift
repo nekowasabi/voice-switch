@@ -1693,12 +1693,16 @@ let deviceKey = "inputDeviceUID"
 let soundKey = "confirmationSound"
 
 /// Soft pops on the notes Windows plays (TraySettings.Synthesize), so each chime reads the same on both platforms.
+/// One envelope spans every note and the phase runs on across the pitch step: a decay per note fell to silence
+/// between the notes, and a two-note chime was heard as the chime playing twice.
 private func chime(_ name: String, _ notes: [Double]) -> NSSound? {
     let noteSamples = Int(rate) * 120 / 1000
+    let total = Double(noteSamples * notes.count)
+    var phase = 0.0
     let samples = (0 ..< noteSamples * notes.count).map { i -> Float in
-        let t = Double(i % noteSamples)
-        let env = min(1, t / 80) * pow(1 - t / Double(noteSamples), 3)
-        return Float(sin(2 * .pi * notes[i / noteSamples] * Double(i) / rate) * env * 9000 / 32768)
+        phase += 2 * .pi * notes[i / noteSamples] / rate
+        let env = min(1, Double(i) / 80) * pow(1 - Double(i) / total, 3 / Double(notes.count))
+        return Float(sin(phase) * env * 9000 / 32768)
     }
     let url = FileManager.default.temporaryDirectory.appendingPathComponent("voice-switch-\(name)-chime.wav")
     guard (try? writeWAV(samples, to: url)) != nil else { return nil }

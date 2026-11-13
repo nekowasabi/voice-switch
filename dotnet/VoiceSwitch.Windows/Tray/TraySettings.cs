@@ -70,17 +70,19 @@ public static class TraySettings
     private static readonly Lazy<SoundPlayer> StopChime = new(() => Synthesize(880.0, 659.25));
 
     // Soft "pop" notes synthesized in memory: reads as "heard you" without the system error-ish beeps, and needs no file on disk.
+    // One envelope spans every note and the phase runs on across the pitch step: a decay per note fell to silence
+    // between the notes, and a two-note chime was heard as the chime playing twice.
     private static SoundPlayer Synthesize(params double[] notes)
     {
         const int rate = 16000;
         const int noteSamples = rate * 120 / 1000;
         var pcm = new short[noteSamples * notes.Length];
+        var phase = 0.0;
         for (var i = 0; i < pcm.Length; i++)
         {
-            var n = i / noteSamples;
-            var t = i % noteSamples;
-            var env = Math.Min(1.0, t / 80.0) * Math.Pow(1.0 - (double)t / noteSamples, 3);
-            pcm[i] = (short)(Math.Sin(2 * Math.PI * notes[n] * i / rate) * env * 9000);
+            phase += 2 * Math.PI * notes[i / noteSamples] / rate;
+            var env = Math.Min(1.0, i / 80.0) * Math.Pow(1.0 - (double)i / pcm.Length, 3.0 / notes.Length);
+            pcm[i] = (short)(Math.Sin(phase) * env * 9000);
         }
 
         var ms = new MemoryStream();
