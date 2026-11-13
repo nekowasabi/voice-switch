@@ -1138,6 +1138,9 @@ final class Listener {
                     ?? (clock < followupUntil && config.cfg.dictation?.noWakeWord?.followup == true ? .followup : .idle)
                 // .ended hides itself after a moment; the idle that follows it is not a change.
                 if phase != shown, !(shown == .ended && phase == .idle) {
+                    // The stop sound goes with the stop glyph, which .stopping shows as soon as the word is heard. Playing it on the
+                    // later cut lagged the HUD by the 0.5 s wait, and a stop that ended another way after .stopping played none.
+                    if phase == .stopping || (phase == .ended && shown != .stopping) { playStopSound() }
                     shown = phase
                     phaseCont.yield((phase, dictation?.action?.icon))
                 }
@@ -1199,7 +1202,6 @@ final class Listener {
                         d.samples.removeLast(min(cut + stopFrames, d.samples.count))
                         dictation = nil; recent.removeAll(); speechFrames = 0; Hotkeys.end(); endedByUser = true
                         log("dictation finished by stop word \(sidField(d.sessionID))")
-                        playStopSound()
                         if d.heardSpeech, !d.samples.isEmpty { submitAndArm(d, cfg: dc, reason: finishReasonToken("stop word")) }
                         continue
                     }
@@ -1212,9 +1214,11 @@ final class Listener {
                 // utterance or tail comes until it stops; and even in a quiet room the utterance closes only after hangoverMs.
                 // So the newest seconds are also checked during a long utterance and from the first 60 ms gap, so a stop word
                 // reaches the HUD (.stopping) about as soon as the recognizer (~100 ms) has it.
-                // ponytail: at most every 250 ms while a dictation is open; widen it if the recognizer load shows up.
-                default: (seg.isSkipping || seg.tailSilentFrames >= 2) && !stopCheck.pending
-                    && d.samples.count - d.stopCheckedSamples >= Int(rate) / 4
+                // A check that ran mid-sentence no longer holds back the one after the stop word by up to 250 ms; `pending` already
+                // keeps one recognition at a time.
+                // ponytail: at most every 100 ms while a dictation is open; widen it if the recognizer load shows up.
+                default: (seg.isSkipping || seg.tailSilentFrames >= 1) && !stopCheck.pending
+                    && d.samples.count - d.stopCheckedSamples >= Int(rate) / 10
                     ? (Array(d.samples.suffix(Int(rate) * 4)), nil, "window") : nil
                 }
                 if let stopAudio, let words = config.cfg.stopWords, !words.isEmpty {
@@ -1252,7 +1256,6 @@ final class Listener {
                 if reason == "maxSeconds", d.origin.isAutomatic, !d.confirmed { rebaseFloorAfterNoWake(&seg) }
                 dictation = nil; recent.removeAll(); speechFrames = 0; Hotkeys.end(); endedByUser = key == .finish
                 log("dictation ended by \(reason) after \(d.samples.count * 1000 / Int(rate)) ms of audio \(sidField(d.sessionID))")
-                if key == .finish { playStopSound() }
                 submitAndArm(d, cfg: dc, reason: finishReasonToken(reason))
                 continue
             }
