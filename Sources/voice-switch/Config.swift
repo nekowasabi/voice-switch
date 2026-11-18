@@ -39,6 +39,9 @@ struct Config: Decodable {
     /// macOS: pause while Chrome or Edge holds the microphone (a Google Meet call) and resume when it lets go.
     /// Absent or false turns it off. Read once at launch.
     var pauseDuringMeet: Bool?
+    /// macOS: pause while an input device with this exact name is connected. Absent or empty disables it.
+    /// Read once at launch.
+    var pauseWhenMicrophoneConnected: String?
 
     /// Per-locale defaults, used only when stopWords is absent. An explicit value (even []) is kept.
     private static let defaultStopWords = ["ja-JP": ["入力ストップ"], "en-US": ["stop dictation"]]

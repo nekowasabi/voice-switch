@@ -820,10 +820,11 @@ final class Listener {
     private let phaseCont: AsyncStream<(phase: Phase, icon: String?)>.Continuation
     private var pending: [Float] = []
     private(set) var running = false
-    /// The user wants input on; stays true while a failed restart is being retried, unlike `running`.
+    /// Capture is enabled; stays true while a failed restart is being retried, unlike `running`.
     private(set) var wanted = false
     /// Called on the main thread after each restart attempt so the menu bar can follow `running`.
     var onRestart: (() -> Void)?
+    var onInputDevicesChanged: (() -> Void)?
     private var restartError: String?
     private var retryScheduled = false
     /// The device supplying HAL voice activity (0 = unavailable), when its current voice began,
@@ -861,7 +862,10 @@ final class Listener {
         for selector in [kAudioHardwarePropertyDevices, kAudioHardwarePropertyDefaultInputDevice] {
             var addr = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
             AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &addr, .main) { [weak self] _, _ in
-                guard let self, self.wanted, InputRoute.resolve(savedUID: self.deviceUID).route != self.activeRoute else { return }
+                guard let self else { return }
+                // Apply the connection hold before a route change can reopen capture.
+                if selector == kAudioHardwarePropertyDevices { self.onInputDevicesChanged?() }
+                guard self.wanted, InputRoute.resolve(savedUID: self.deviceUID).route != self.activeRoute else { return }
                 log("input devices changed, restarting input")
                 self.restart()
             }
@@ -1011,7 +1015,7 @@ final class Listener {
 
     func stop() { wanted = false; halt(); watchVoiceActivity(on: nil) }
 
-    /// Resume after a Meet hold: unlike start(), a failure keeps `wanted` and retries every 10 s.
+    /// Automatic resume keeps `wanted` on failure and retries every 10 s.
     func startRetrying() { wanted = true; attemptStart() }
 
     private func halt() {
@@ -2070,6 +2074,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let sound = NSMenuItem(title: "効果音", action: #selector(toggleSound), keyEquivalent: "")
     let micMenu = NSMenu()
     let hud = HUD()
+    private var listeningPolicy = ListeningPolicy()
+    private var captureReady = false
+    private var pauseMicrophoneName: String?
 
     init(configPath: String) { self.configPath = configPath }
 
@@ -2097,12 +2104,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         do { config = try ConfigFile(path: configPath) } catch {
             fail("設定ファイルを読めません: \(configPath)\n\(error)"); return
         }
+        pauseMicrophoneName = config.cfg.pauseWhenMicrophoneConnected
         DictationJournal.bind(config.cfg.dictation?.journalDir, journalTaskFile: config.cfg.dictation?.journalTaskFile)
         listener = Listener(config: config)
         listener.onPhase = { [hud] in hud.show($0, icon: $1) }
         listener.onDelivery = { [hud] in hud.deliver($0) }
         DictationHistory.shared.onChange = { [hud] in DispatchQueue.main.async { hud.historyAvailable() } }
         listener.onRestart = { [weak self] in self?.refresh() }
+        listener.onInputDevicesChanged = { [weak self] in self?.followPauseMicrophone() }
         listener.deviceUID = UserDefaults.standard.string(forKey: deviceKey)
         MacWakeShortcuts.registerPause(config.cfg.pauseShortcut)
         MacWakeShortcuts.registerActions(config.cfg.macOS?.actions ?? [])
@@ -2131,9 +2140,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     fail("マイクへのアクセスが許可されていません。システム設定 > プライバシーとセキュリティ > マイク で許可してください。")
                     return
                 }
-                try listener.start()
-                // Same main-actor step as start(), so a call already running never gets a 2 s window of listening.
-                followMeet()
+                captureReady = true
+                updatePauseMicrophone()
+                let browser = activeMeetBrowser()
+                listeningPolicy.configureMeet(inCall: browser != nil)
+                if let browser { log("meet: \(browser) holds the microphone, pausing") }
+                reconcileListening(startError: "起動に失敗しました", notify: false)
             } catch {
                 fail("起動に失敗しました: \(error)")
             }
@@ -2172,11 +2184,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func refresh() {
         let on = listener?.running ?? false
-        let wanted = listener?.wanted ?? false
         item.button?.title = on ? "🔔" : "🔕"
         item.button?.setAccessibilityLabel(on ? "voice-switch: 待ち受け中" : "voice-switch: 停止中")
-        toggle.title = wanted ? "一時停止" : "再開"
-        toggle.isEnabled = listener != nil
+        if listeningPolicy.microphoneConnected {
+            toggle.title = listeningPolicy.offersPause ? "切断後の自動再開を停止" : "切断後の自動再開を有効にする"
+        } else {
+            toggle.title = captureReady && listeningPolicy.offersPause ? "一時停止" : "再開"
+        }
+        toggle.isEnabled = captureReady
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         sound.state = UserDefaults.standard.bool(forKey: soundKey) ? .on : .off
     }
@@ -2199,46 +2214,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Browsers whose microphone input means a Google Meet call (Chrome and Edge only).
     // ponytail: any mic use by these browsers counts, not only Meet; matching the Meet tab needs Screen Recording permission.
     static let meetBrowsers = ["com.google.Chrome", "com.google.Chrome.helper", "com.microsoft.edgemac", "com.microsoft.edgemac.helper"]
-    /// config `pauseDuringMeet`; off leaves followMeet and the toggle's call check inert.
     private var meetEnabled = false
-    private var meetInCall = false
-    /// followMeet stopped the listener and owes it a restart when the call ends.
-    private var meetHeld = false
-    /// The user resumed during this call, so followMeet leaves the listener alone until the call ends.
-    private var meetOverride = false
 
-    /// Model: .claude/skills/verify-meet-pause (MeetPause.tla, action Poll).
-    func followMeet() {
-        guard let listener, meetEnabled else { return }
-        let browser = micInUse(by: Self.meetBrowsers)
-        meetInCall = browser != nil
+    private func activeMeetBrowser() -> String? {
+        meetEnabled ? micInUse(by: Self.meetBrowsers) : nil
+    }
+
+    private func followMeet() {
+        guard captureReady else { return }
+        let browser = activeMeetBrowser()
+        listeningPolicy.configureMeet(inCall: browser != nil)
+        guard listener.wanted != listeningPolicy.shouldListen else { return }
         if let browser {
-            guard listener.wanted, !meetOverride else { return }
             log("meet: \(browser) holds the microphone, pausing")
-            // stop(), not halt(): every restart path checks `wanted`, so none reopens the mic during the call.
-            listener.stop()
-            meetHeld = true
-            hud.notify(.paused)
         } else {
-            meetOverride = false
-            guard meetHeld else { return }
-            meetHeld = false
             log("meet: the browser released the microphone, resuming")
-            listener.startRetrying()
-            hud.notify(.resumed)
         }
-        refresh()
+        reconcileListening()
+    }
+
+    private func updatePauseMicrophone() {
+        guard let pauseMicrophoneName, !pauseMicrophoneName.isEmpty else { return }
+        let connected = inputDeviceIDs().contains { audioDeviceName($0) == pauseMicrophoneName }
+        guard listeningPolicy.microphoneConnected != connected else { return }
+        listeningPolicy.microphoneConnected = connected
+        log("mic pause: \(pauseMicrophoneName) \(connected ? "connected" : "disconnected")")
+    }
+
+    private func followPauseMicrophone() {
+        let wasConnected = listeningPolicy.microphoneConnected
+        updatePauseMicrophone()
+        guard wasConnected != listeningPolicy.microphoneConnected else { return }
+        if wasConnected { listeningPolicy.configureMeet(inCall: activeMeetBrowser() != nil) }
+        reconcileListening()
+    }
+
+    private func reconcileListening(startError: String? = nil, notify: Bool = true) {
+        defer { refresh() }
+        guard captureReady, listener.wanted != listeningPolicy.shouldListen else { return }
+        if !listeningPolicy.shouldListen {
+            listener.stop()
+        } else if let startError {
+            do { try listener.start() } catch {
+                listeningPolicy.pause()
+                fail("\(startError): \(error)")
+            }
+        } else {
+            listener.startRetrying()
+        }
+        if notify { hud.notify(listener.wanted ? .resumed : .paused) }
     }
 
     @objc func togglePause() {
-        if listener.wanted { listener.stop() } else {
-            meetInCall = meetEnabled && micInUse(by: Self.meetBrowsers) != nil
-            meetHeld = false
-            meetOverride = meetInCall
-            do { try listener.start() } catch { fail("再開に失敗しました: \(error)") }
-        }
-        hud.notify(listener.wanted ? .resumed : .paused)
-        refresh()
+        guard captureReady else { return }
+        updatePauseMicrophone()
+        let inCall = listeningPolicy.offersPause ? nil : activeMeetBrowser() != nil
+        listeningPolicy.toggle(inCall: inCall)
+        reconcileListening(startError: "再開に失敗しました")
     }
 
     // Rebuilt on every open so plugged/unplugged devices show up.
@@ -2259,13 +2291,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let uid = sender.representedObject as? String
         UserDefaults.standard.set(uid, forKey: deviceKey)
         guard let listener else { return }
-        let wanted = listener.wanted
-        if wanted { listener.stop() }
+        if listener.wanted { listener.stop() }
         listener.deviceUID = uid
-        if wanted {
-            do { try listener.start() } catch { fail("マイクの切り替えに失敗しました: \(error)") }
-        }
-        refresh()
+        updatePauseMicrophone()
+        listeningPolicy.configureMeet(inCall: activeMeetBrowser() != nil)
+        reconcileListening(startError: "マイクの切り替えに失敗しました", notify: false)
     }
 
     @objc func toggleLogin() {

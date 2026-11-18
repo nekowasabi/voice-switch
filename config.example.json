@@ -13,6 +13,7 @@
   "vadMinRMS": 0.005,
   "pauseShortcut": "Control+Shift+F7",
   "pauseDuringMeet": true,
+  "pauseWhenMicrophoneConnected": null,
   "dictation": {
     "journalDir": "~/Documents/voice-switch/journal",
     "journalTaskFile": null,

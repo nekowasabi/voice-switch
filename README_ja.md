@@ -116,6 +116,8 @@ Grok Bot 向けの例（既定のフィールドをそのまま書いたもの�
 
 メニューは、一時停止（マイクを放す）、マイク、設定ファイルを開く、ログを開く、ログイン時に起動、終了。
 
+macOS でマイクの接続に合わせて待ち受けを止めるには、`config.json` の最上位に `"pauseWhenMicrophoneConnected": "Wireless Mic Rx"` を追加してアプリを再起動します。マイク名はメニューバーの **マイク** に表示される名前をそのまま指定します。接続中は待ち受けを止め、切断すると再開します。手動で一時停止した場合は、切断後も停止したままです。この項目を省略するか `null` にすると無効です。
+
 ## ペインへの振り分け（tmux と Jev）
 
 入力の本文は、`tmux list-panes -a -F '#{pane_id}\t#{window_name}\t#{pane_title}\t#{pane_current_command}'` から作る閉じたカタログと照合する。macOS では `/usr/bin/env` 経由で実行する。Windows では `wsl.exe -e tmux ...` として実行するので、対象は WSL の中の tmux。アプリは tmux サーバを起動しない。tmux が失敗したか、サーバが無いときは、何も送らず失敗をログする。本文に、空でないラベルが大文字小文字を無視した部分文字列として含まれると、そのペインはヒットする。ラベルは、ペインのタイトル、ウィンドウ名、現在のコマンド。Linux では、`/proc` からそのペインに見つけた許可リストのエージェント名（`claude`、`aider`、`gemini`、`copilot`、`codex`、`devin`、`hermes`、`opencode`、`pi`、`grok`、`cursor-agent`）もラベルになる。Mac と Windows には `/proc` の走査が無いので、タイトル、ウィンドウ名、コマンドだけが一致する。
