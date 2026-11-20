@@ -833,6 +833,7 @@ final class Listener {
     var onInputDevicesChanged: (() -> Void)?
     private var restartError: String?
     private var retryScheduled = false
+    private var rerouteScheduled = false
     /// The device supplying HAL voice activity (0 = unavailable), when its current voice began,
     /// and when the last voice long enough to count ended.
     private let voiceActivity = OSAllocatedUnfairLock(initialState: (device: AudioDeviceID(0), onSince: Date?.none, lastVoiceEnd: Date.distantPast))
@@ -877,7 +878,14 @@ final class Listener {
                 guard let self else { return }
                 // Apply the connection hold before a route change can reopen capture.
                 if selector == kAudioHardwarePropertyDevices { self.onInputDevicesChanged?() }
-                self.reroute("input devices changed")
+                // An unplug posts several notices within ~0.3 s. Restarting on each one reached AVAudioEngine.inputNode
+                // while coreaudiod was still removing the device, and the main thread hung there (2026-11-20).
+                guard !self.rerouteScheduled else { return }
+                self.rerouteScheduled = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                    self?.rerouteScheduled = false
+                    self?.reroute("input devices changed")
+                }
             }
         }
         Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in self?.checkStall() }
