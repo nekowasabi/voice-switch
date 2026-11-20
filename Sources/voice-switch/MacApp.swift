@@ -646,12 +646,14 @@ func stickyFallback(_ session: StickySession, text: String, reason: String) {
             secureNow = true
         }
     }
+    session.state = stickyStep(session.state, .stop(true))
     if secureNow {
-        session.state = stickyStep(session.state, .pasteFail)
+        if session.state.phase == .delivering {
+            session.state = stickyStep(session.state, .pasteFail)
+        }
         stickyFallback(session, text: text, reason: "secure")
         return
     }
-    session.state = stickyStep(session.state, .stop(true))
     guard stickyMayPaste(session.state) else {
         stickyFallback(session, text: text, reason: "not-pasteable")
         return
@@ -698,6 +700,9 @@ func stickyFallback(_ session: StickySession, text: String, reason: String) {
     if !same {
         session.state = stickyStep(session.state, .pasteFail)
         stickyFallback(session, text: text, reason: "focus-mismatch")
+        if let back = frontBefore, back.processIdentifier != session.pid, !back.isTerminated {
+            _ = back.activate()
+        }
         return
     }
     let pb = NSPasteboard.general
@@ -719,12 +724,18 @@ func stickyFallback(_ session: StickySession, text: String, reason: String) {
     if !restorable {
         session.state = stickyStep(session.state, .pasteFail)
         stickyFallback(session, text: text, reason: "clipboard-snapshot")
+        if let back = frontBefore, back.processIdentifier != session.pid, !back.isTerminated {
+            _ = back.activate()
+        }
         return
     }
     pb.clearContents()
     guard pb.setString(text, forType: .string) else {
         session.state = stickyStep(session.state, .pasteFail)
         stickyFallback(session, text: text, reason: "clipboard-set")
+        if let back = frontBefore, back.processIdentifier != session.pid, !back.isTerminated {
+            _ = back.activate()
+        }
         return
     }
     let owned = pb.changeCount
@@ -745,8 +756,12 @@ func stickyFallback(_ session: StickySession, text: String, reason: String) {
         if let el = session.element,
             AXUIElementCopyAttributeValue(el, kAXRoleAttribute as CFString, &probe) == .invalidUIElement
         {
+            session.state = stickyStep(session.state, .pasteOk)
             session.state = stickyStep(session.state, .enterFail)
             log("sticky: field chars=\(chars) reason=element-gone")
+            if let back = frontBefore, back.processIdentifier != session.pid, !back.isTerminated {
+                _ = back.activate()
+            }
             return
         }
     }
@@ -851,9 +866,12 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
         launched = true
         // Opening a file brings superwhisper to the front despite -g, and it skips auto-paste when it is
         // still frontmost at the end, so hand focus back to where the user was dictating.
-        for _ in 0 ..< 20 {
-            try? await Task.sleep(nanoseconds: 100_000_000)
-            await restoreFocusIfSuperwhisper(target)
+        // Sticky keeps Superwhisper front so the user can keep working elsewhere.
+        if stickySession == nil {
+            for _ in 0 ..< 20 {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                await restoreFocusIfSuperwhisper(target)
+            }
         }
         let waitForLLM = previousMode != nil && superwhisperModeUsesLLM(wantedMode, modeJsons: readSuperwhisperModeJsons())
         result = await awaitResult(in: recordings, since: Int(submitted.timeIntervalSince1970) - 2, excluding: previousRuns, waitForLLM: waitForLLM,
