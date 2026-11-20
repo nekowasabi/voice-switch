@@ -134,6 +134,8 @@ The menu items are 一時停止 (releases the microphone), マイク, 設定フ�
 
 On macOS, add `"pauseWhenMicrophoneConnected": "Wireless Mic Rx"` at the top level of `config.json` and restart the app. Use the exact device name shown in the menu bar under **マイク**. Voice-switch pauses while that microphone is connected and resumes when it disconnects. If you paused by hand, voice-switch stays paused. Omit the setting or set it to `null` to disable this behavior.
 
+On macOS, `"microphones": ["Wireless Mic Rx", "Mic-j5 WebCam JVCU435", "MacBook Proのマイク"]` at the top level of `config.json` sets the order mics are tried in, by exact device name (as the マイク menu shows it) or UID. The first one plugged in is used, then the built-in mic. Set, it replaces the マイク menu choice and its 予備マイク list; without it, pick the saved mic in the マイク menu and add fallbacks under 予備マイク. Read once at launch.
+
 ## Pane routing (tmux and Jev)
 
 The dictation string is matched to a closed catalog from `tmux list-panes -a -F '#{pane_id}\t#{window_name}\t#{pane_title}\t#{pane_current_command}'`. On macOS the command runs through `/usr/bin/env`. On Windows it runs as `wsl.exe -e tmux ...`, so the target is tmux inside WSL. The app does not start a tmux server. If tmux fails or there is no server, nothing is sent and the failure is logged. A pane hits when any non-empty label is a case-insensitive substring of the text. Labels are the pane title, the window name, and the current command. On Linux, an allowlisted agent name found for that pane through `/proc` (`claude`, `aider`, `gemini`, `copilot`, `codex`, `devin`, `hermes`, `opencode`, `pi`, `grok`, `cursor-agent`) is a label too. Mac and Windows have no `/proc` walk, so there only title, window, and command match.

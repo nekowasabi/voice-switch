@@ -800,12 +800,18 @@ enum InputRoute: Equatable {
         }
     }
 
-    /// A saved device that is unplugged falls back to the built-in mic; the saved choice itself is kept.
-    static func resolve(savedUID: String?) -> (route: InputRoute, missing: Bool) {
-        guard let uid = savedUID else { return (.systemDefault, false) }
-        let id = audioDeviceID(uid: uid).flatMap { inputDeviceIDs().contains($0) ? $0 : nil }
-        guard let target = id ?? builtInInputDeviceID() else { return (.systemDefault, true) }
-        return (.pinned(target), id == nil)
+    /// The first plugged-in candidate (a device UID or exact name) is used, then the built-in mic; an unplugged one
+    /// stays in the list. No candidates means the system default. fallback names the rung taken, nil for the first.
+    static func resolve(candidates: [String]) -> (route: InputRoute, fallback: String?) {
+        guard !candidates.isEmpty else { return (.systemDefault, nil) }
+        let plugged = inputDeviceIDs()
+        for (rank, candidate) in candidates.enumerated() {
+            if let id = plugged.first(where: { audioDeviceUID($0) == candidate || audioDeviceName($0) == candidate }) {
+                return (.pinned(id), rank == 0 ? nil : "fallback \(rank)")
+            }
+        }
+        guard let builtIn = builtInInputDeviceID() else { return (.systemDefault, "system default") }
+        return (.pinned(builtIn), "built-in")
     }
 }
 
@@ -842,7 +848,13 @@ final class Listener {
     }
     /// CoreAudio device UID; nil follows the system default input. Set only while stopped.
     var deviceUID: String?
+    var fallbackUIDs: [String] = []
+    /// config.json microphones; set, it replaces deviceUID and fallbackUIDs.
+    var configuredMicrophones: [String]?
+    private var candidates: [String] { configuredMicrophones ?? deviceUID.map { [$0] + fallbackUIDs } ?? [] }
     private var activeRoute: InputRoute?
+    /// The mic being recorded from, for the menu; nil while not listening.
+    var activeDeviceName: String? { running ? activeRoute?.deviceID.map(audioDeviceName) : nil }
 
     init(config: ConfigFile) {
         self.config = config
@@ -865,9 +877,7 @@ final class Listener {
                 guard let self else { return }
                 // Apply the connection hold before a route change can reopen capture.
                 if selector == kAudioHardwarePropertyDevices { self.onInputDevicesChanged?() }
-                guard self.wanted, InputRoute.resolve(savedUID: self.deviceUID).route != self.activeRoute else { return }
-                log("input devices changed, restarting input")
-                self.restart()
+                self.reroute("input devices changed")
             }
         }
         Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in self?.checkStall() }
@@ -878,6 +888,13 @@ final class Listener {
                 catch { log("whisper: unavailable, automatic recordings skip word agreement: \(error)") }
             }
         }
+    }
+
+    /// Restarts only when the saved mic and fallback list now pick another device than the one in use.
+    func reroute(_ reason: String) {
+        guard wanted, InputRoute.resolve(candidates: candidates).route != activeRoute else { return }
+        log("\(reason), restarting input")
+        restart()
     }
 
     private func checkStall() {
@@ -892,7 +909,7 @@ final class Listener {
     }
 
     func start() throws {
-        let (route, missing) = InputRoute.resolve(savedUID: deviceUID)
+        let (route, fallback) = InputRoute.resolve(candidates: candidates)
         // A pinned unit never follows the system default again, so a different route needs a fresh engine.
         if route != activeRoute { engine = AVAudioEngine(); activeRoute = route }
         if case .pinned(var id) = route {
@@ -907,7 +924,7 @@ final class Listener {
             }
         }
         let deviceName = route.deviceID.map(audioDeviceName) ?? "system default"
-        if missing, let uid = deviceUID { log("input device \(uid) not found, falling back to \(deviceName)") }
+        if let fallback, let uid = candidates.first { log("input device \(uid) not found, falling back to \(deviceName) (\(fallback))") }
         let node = engine.inputNode
         // outputFormat stays at the previous device's rate after CurrentDevice is switched
         // (48 kHz vs the webcam's 16 kHz), and a tap with that format gets no buffers at all.
@@ -1697,6 +1714,7 @@ func micInUse(by bundleIDs: [String], failClosed: Bool = false) -> String? {
 // MARK: menu bar app
 
 let deviceKey = "inputDeviceUID"
+let fallbackKey = "inputFallbackUIDs"
 let soundKey = "confirmationSound"
 
 /// Soft pops on the notes Windows plays (TraySettings.Synthesize), so each chime reads the same on both platforms.
@@ -2113,6 +2131,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         listener.onRestart = { [weak self] in self?.refresh() }
         listener.onInputDevicesChanged = { [weak self] in self?.followPauseMicrophone() }
         listener.deviceUID = UserDefaults.standard.string(forKey: deviceKey)
+        listener.fallbackUIDs = UserDefaults.standard.stringArray(forKey: fallbackKey) ?? []
+        listener.configuredMicrophones = config.cfg.microphones.flatMap { $0.isEmpty ? nil : $0 }
         MacWakeShortcuts.registerPause(config.cfg.pauseShortcut)
         MacWakeShortcuts.registerActions(config.cfg.macOS?.actions ?? [])
         let recordings = Platform.expandPath(config.cfg.dictation?.recordingsDir ?? Platform.defaultRecordingsDir)
@@ -2276,15 +2296,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Rebuilt on every open so plugged/unplugged devices show up.
     func menuNeedsUpdate(_ menu: NSMenu) {
         let selected = UserDefaults.standard.string(forKey: deviceKey)
-        let devices = inputDeviceIDs().compactMap { id in audioDeviceUID(id).map { (audioDeviceName(id), Optional($0)) } }
+        let devices = inputDeviceIDs().compactMap { id in audioDeviceUID(id).map { (audioDeviceName(id), $0) } }
         menu.removeAllItems()
-        for (title, uid) in [("システムのデフォルト", nil)] + devices {
+        menu.addItem(NSMenuItem(title: "使用中: \(listener?.activeDeviceName ?? "なし")", action: nil, keyEquivalent: ""))
+        menu.addItem(.separator())
+        // config.json decides the order, so the menu only shows it; picking here would be ignored.
+        if let configured = listener?.configuredMicrophones {
+            for (n, name) in configured.enumerated() { menu.addItem(NSMenuItem(title: "\(n + 1). \(name)", action: nil, keyEquivalent: "")) }
+            menu.addItem(NSMenuItem(title: "（設定ファイルの microphones で指定）", action: nil, keyEquivalent: ""))
+            return
+        }
+        for (title, uid) in [("システムのデフォルト", nil)] + devices.map({ ($0.0, Optional($0.1)) }) {
             let i = NSMenuItem(title: title, action: #selector(selectDevice), keyEquivalent: "")
             i.target = self
             i.representedObject = uid
             i.state = uid == selected ? .on : .off
             menu.addItem(i)
         }
+        // Listed mics first, numbered in the order they are tried; then the plugged-in mics not listed yet.
+        // Clicking adds a mic to the end of the list or removes it; reordering is remove and add again.
+        let listed = listener?.fallbackUIDs ?? []
+        let fallbacks = NSMenu()
+        let names = Dictionary(devices.map { ($0.1, $0.0) }, uniquingKeysWith: { a, _ in a })
+        for (n, uid) in listed.enumerated() {
+            fallbacks.addItem(fallbackItem("\(n + 1). \(names[uid] ?? "未接続 (\(uid))")", uid: uid, on: true))
+        }
+        for (title, uid) in devices where uid != selected && !listed.contains(uid) {
+            fallbacks.addItem(fallbackItem(title, uid: uid, on: false))
+        }
+        let fb = NSMenuItem(title: "予備マイク（保存したマイクが無いとき）", action: nil, keyEquivalent: "")
+        fb.submenu = fallbacks
+        menu.addItem(.separator())
+        menu.addItem(fb)
+    }
+
+    private func fallbackItem(_ title: String, uid: String, on: Bool) -> NSMenuItem {
+        let i = NSMenuItem(title: title, action: #selector(toggleFallback), keyEquivalent: "")
+        i.target = self
+        i.representedObject = uid
+        i.state = on ? .on : .off
+        return i
+    }
+
+    @objc func toggleFallback(_ sender: NSMenuItem) {
+        guard let uid = sender.representedObject as? String, let listener else { return }
+        var list = listener.fallbackUIDs
+        if let at = list.firstIndex(of: uid) { list.remove(at: at) } else { list.append(uid) }
+        UserDefaults.standard.set(list, forKey: fallbackKey)
+        listener.fallbackUIDs = list
+        // Same path as a plug event, so an edit takes effect now rather than at the next plug.
+        listener.reroute("fallback mics changed")
+        refresh()
     }
 
     @objc func selectDevice(_ sender: NSMenuItem) {

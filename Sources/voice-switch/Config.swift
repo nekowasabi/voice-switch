@@ -42,6 +42,9 @@ struct Config: Decodable {
     /// macOS: pause while an input device with this exact name is connected. Absent or empty disables it.
     /// Read once at launch.
     var pauseWhenMicrophoneConnected: String?
+    /// macOS: input devices to try in order, each an exact device name or UID; the first one plugged in is used,
+    /// then the built-in mic. Set, it replaces the マイク menu choice and its 予備マイク list. Read once at launch.
+    var microphones: [String]?
 
     /// Per-locale defaults, used only when stopWords is absent. An explicit value (even []) is kept.
     private static let defaultStopWords = ["ja-JP": ["入力ストップ"], "en-US": ["stop dictation"]]
