@@ -47,7 +47,7 @@
 
 モデルと Swift の BFS と Python は 300 状態で一致する。同期コミットは `0937dc4`（`stickyStep` はそれ以降変えていない）。
 
-## takets が Mac で見ること
+## Mac で見ること
 
 アクセシビリティ許可があること。Chrome、Safari、Electron（Grok Bot、Slack）、iTerm で開始時の欄を覚えること。iTerm2 + tmux の Claude Code では pane id を取り、括弧付きペーストのあと Enter で送信すること。tmux が無い iTerm は activate + Cmd+V + Enter。配信の開始時に前面だったアプリへフォーカスが戻ること。パスワード欄は拒否すること。フラグがオフのとき今までどおり Superwhisper が貼ること。3 分を超えた宛先は捨ててクリップボードに残ること。`~/Library/Logs/voice-switch.log` に本文が出ず `chars=` だけであること。
 
