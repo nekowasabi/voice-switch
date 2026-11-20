@@ -42,7 +42,7 @@ Read every TLC result, pass or fail, with the `/statechart` skill. A violation i
 
 ## Coverage record
 
-Sync commit: `pending` until the commit that contains this model and `StickyMode.swift` is recorded in `RESULT.md` and this line is updated.
+Sync commit: `0937dc4` on `feat/sticky-mode`. The model matches `stickyStep` there. A later wiring commit that does not change `stickyStep` can keep this line.
 
 | Model part | Code |
 |---|---|
