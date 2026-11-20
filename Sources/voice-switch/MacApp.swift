@@ -816,10 +816,11 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     // Nobody asked for an automatic recording, so it may only enter a mode verified not to paste.
     let controlled = origin.isAutomatic
     let stickySession = sticky
-    let wantedMode = stickySession != nil ? cfg.superwhisperMode : controlled ? cfg.superwhisperMode : action == nil ? nil : action?.superwhisperMode ?? cfg.superwhisperMode
+    let wantedMode = controlled ? cfg.superwhisperMode : action == nil ? nil : action?.superwhisperMode ?? cfg.superwhisperMode
+    let enteredMode = stickySession != nil ? cfg.superwhisperMode : wantedMode
     if stickySession != nil {
-        guard superwhisperAutoPasteDisabled(wantedMode, modeJsons: readSuperwhisperModeJsons()) else {
-            log("superwhisper handoff: not dispatched, sticky mode \(wantedMode ?? "-") missing or has auto-paste on \(sidField(sessionID))"); return .notDispatched
+        guard superwhisperAutoPasteDisabled(enteredMode, modeJsons: readSuperwhisperModeJsons()) else {
+            log("superwhisper handoff: not dispatched, sticky mode \(enteredMode ?? "-") missing or has auto-paste on \(sidField(sessionID))"); return .notDispatched
         }
     } else if controlled {
         guard superwhisperAutoPasteDisabled(wantedMode, modeJsons: readSuperwhisperModeJsons()) else {
@@ -827,10 +828,16 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
         }
     }
     if stickySession == nil, !controlled, action == nil, let mode = cfg.pasteMode { await selectPasteMode(mode) }
-    let (modeRequested, previousMode) = await enterSuperwhisperMode(wantedMode, target: target)
+    let entered: (requested: Bool, previous: String?)
+    if stickySession == nil {
+        entered = await enterSuperwhisperMode(wantedMode, target: target)
+    } else {
+        entered = await enterSuperwhisperMode(enteredMode, target: target)
+    }
+    let (modeRequested, previousMode) = entered
     if stickySession != nil {
-        guard modeRequested, superwhisperAutoPasteDisabled(wantedMode, modeJsons: readSuperwhisperModeJsons()) else {
-            log("superwhisper handoff: not dispatched, sticky mode \(wantedMode ?? "-") not entered (requested=\(modeRequested)) or has auto-paste on \(sidField(sessionID))")
+        guard modeRequested, superwhisperAutoPasteDisabled(enteredMode, modeJsons: readSuperwhisperModeJsons()) else {
+            log("superwhisper handoff: not dispatched, sticky mode \(enteredMode ?? "-") not entered (requested=\(modeRequested)) or has auto-paste on \(sidField(sessionID))")
             _ = await recoverSuperwhisperMode(target: target)
             return .notDispatched
         }
@@ -861,19 +868,18 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
         p.arguments = ["-g", "-a", "superwhisper", wav.path]
         // Exit 0 means LaunchServices accepted the file, not that superwhisper ran; the run lines from awaitResult say that.
         p.terminationHandler = { log("superwhisper handoff: open exited status=\($0.terminationStatus) \(sidField(sessionID))") }
-        log("superwhisper handoff: open audio=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), Double(trimmedForHandoff.count) / rate))s mode=\(wantedMode ?? "active") \(sidField(sessionID))")
+        log("superwhisper handoff: open audio=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), Double(trimmedForHandoff.count) / rate))s mode=\(enteredMode ?? "active") \(sidField(sessionID))")
         try p.run()
         launched = true
         // Opening a file brings superwhisper to the front despite -g, and it skips auto-paste when it is
         // still frontmost at the end, so hand focus back to where the user was dictating.
-        // Sticky keeps Superwhisper front so the user can keep working elsewhere.
         if stickySession == nil {
             for _ in 0 ..< 20 {
                 try? await Task.sleep(nanoseconds: 100_000_000)
                 await restoreFocusIfSuperwhisper(target)
             }
         }
-        let waitForLLM = previousMode != nil && superwhisperModeUsesLLM(wantedMode, modeJsons: readSuperwhisperModeJsons())
+        let waitForLLM = previousMode != nil && superwhisperModeUsesLLM(enteredMode, modeJsons: readSuperwhisperModeJsons())
         result = await awaitResult(in: recordings, since: Int(submitted.timeIntervalSince1970) - 2, excluding: previousRuns, waitForLLM: waitForLLM,
                                    onRun: { log("superwhisper run: \($0) after \(Int(Date().timeIntervalSince(submitted) * 1000)) ms \(sidField(sessionID))") })
     } catch {
@@ -883,7 +889,7 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     // recovery state stays, and the next handoff or launch restores it once nothing is in flight.
     if previousMode != nil {
         if result != nil || !launched { _ = await recoverSuperwhisperMode(target: target) }
-        else { log("superwhisper mode: kept \(wantedMode ?? "") until the run finishes \(sidField(sessionID))") }
+        else { log("superwhisper mode: kept \(enteredMode ?? "") until the run finishes \(sidField(sessionID))") }
     }
     guard launched else { return .notDispatched }
     guard let result else {
