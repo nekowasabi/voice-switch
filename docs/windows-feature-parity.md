@@ -80,6 +80,7 @@ Total: 4 + 15 + 2 = 21 entries, not unique missing features. `menu_bar_device_an
 - The マイク picker and device recovery cover dictation mode only; command mode (SAPI) always records from the default device. Device names are WinMM's, cut at 31 characters.
 - `dictation.excludeProcessNames` replaces `dictation.excludeBundleIDs`, and `skipWhileMicInUseBy` lists executable names instead of bundle IDs.
 - `--check` reads PCM16 mono 16 kHz WAV only, where macOS converts any audio file.
+- Sticky paste is macOS-only; Windows ignores a `macOS` object.
 
 ## Verified by tests or compile only
 

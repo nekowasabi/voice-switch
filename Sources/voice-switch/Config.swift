@@ -174,6 +174,7 @@ struct MacOSActions: Decodable {
     var wakeURL: ActionURL?
     var stopURL: ActionURL?
     var actions: [WakeAction]?
+    var stickyTarget: Bool?
 }
 
 /// A wake phrase that hands the dictated text to its own target: a URL opened with the text as `input=`,
