@@ -5,9 +5,12 @@ from __future__ import annotations
 
 import argparse
 import html
+import http.client
 import json
 import os
 import re
+import sys
+import urllib.request
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -18,6 +21,13 @@ LOCAL_MARKERS = {
     "research": r"\bresearch\s*[:：]|(?:調査|リサーチ)\s*[:：]|調べて",
     "draft": r"\bdraft\s*[:：]|(?:下書き|ドラフト)(?:\s*[:：]|を(?:書いて|作って))",
     "agent": r"\bagent\s*[:：]|エージェント\s*[:：]|(?:エージェント|Claude|Codex|Grok|クロード)(?:に頼|に依頼)",
+}
+JEV_CRITERIA = {
+    "task": "The speaker wants to record a concrete task or to-do.",
+    "research": "The speaker asks to look something up, investigate it, or compare findings.",
+    "draft": "The speaker wants a draft of a message or other written content.",
+    "agent": "The speaker addresses an agent and asks it to carry out work.",
+    "none": "The utterance has no clear intent or fits several categories equally well.",
 }
 
 
@@ -81,9 +91,45 @@ def markdown(value):
     return re.sub(r"([\\`*_\[\]~])", r"\\\1", escaped_html) or "—"
 
 
-def classify(entry):
+def ask_jev(key, text):
+    body = json.dumps({
+        "state": {"dictation": text},
+        "model": "jev-latest",
+        "questions": {"classification": {
+            "type": "choice",
+            "instructions": "Classify the speaker's intent in the speech-to-text output in dictation.",
+            "criteria": JEV_CRITERIA,
+        }},
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        "https://api.typesafe.ai/v1/systemone", data=body, method="POST",
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            answer = json.load(response)["answers"]["classification"]
+        choice, confidence = answer["choice"], answer["confidence"]
+        if choice in JEV_CRITERIA and type(confidence) in (int, float) and 0 <= confidence <= 1:
+            return choice, confidence
+    except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError, RecursionError):
+        pass
+    return "none", None
+
+
+def classify(entry, *, use_jev=False, min_confidence=0.9):
     matches = [category for category, marker in LOCAL_MARKERS.items() if re.search(marker, entry.text, re.IGNORECASE)]
-    return matches[0] if len(matches) == 1 else "none"
+    if len(matches) == 1:
+        return matches[0]
+    if not use_jev or entry.origin not in ("手動", "ウェイク"):
+        return "none"
+    key = os.environ.get("TYPESAFE_API_KEY") or os.environ.get("JEV_API_KEY")
+    if not key:
+        return "none"
+    choice, confidence = ask_jev(key, entry.text)
+    category = choice if confidence is not None and confidence >= min_confidence else "none"
+    score = "-" if confidence is None else str(confidence)
+    print(f"jev: classification={category} confidence={score}", file=sys.stderr)
+    return category
 
 
 def main(argv=None):
@@ -91,7 +137,12 @@ def main(argv=None):
     parser.add_argument("day", type=date.fromisoformat, metavar="YYYY-MM-DD")
     parser.add_argument("journal_dir", type=Path, nargs="?", default=default_journal_dir(),
                         help="journal directory or a single .jsonl file")
+    parser.add_argument("--jev", action="store_true", help="send unclassified manual and wake-word text to Jev")
+    parser.add_argument("--min-confidence", type=float, default=0.9,
+                        help="minimum Jev confidence from 0 to 1 (default: %(default)s)")
     args = parser.parse_args(argv)
+    if not 0 <= args.min_confidence <= 1:
+        parser.error("--min-confidence must be between 0 and 1")
 
     print(f"## {args.day}")
     print()
@@ -101,7 +152,8 @@ def main(argv=None):
             if entry is None:
                 skipped += 1
                 continue
-            print(f"- **{entry.timestamp:%H:%M:%S}** · `{classify(entry)}` · "
+            category = classify(entry, use_jev=args.jev, min_confidence=args.min_confidence)
+            print(f"- **{entry.timestamp:%H:%M:%S}** · `{category}` · "
                   f"focusApp: {markdown(entry.focus_app)} · taskchute: {markdown(entry.task_name)} "
                   f"— {markdown(entry.text)}")
     except OSError as error:

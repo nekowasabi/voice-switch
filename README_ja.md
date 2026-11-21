@@ -38,6 +38,8 @@ JSONL の各行には `id`、`timestamp`、`text`、`origin`、`endReason`、`re
 
 `python3 scripts/journal_triage.py YYYY-MM-DD [journalDir]` で、配送先が `history` の発話と配送先が未定の発話を一覧表示できる。パスを省略すると既定のジャーナルを読み、時刻・アプリ名・タスク名を表示する。`タスク:`、`調査:`、`下書き:`、`エージェント:` などの目印で発話を分類する。一致する分類がゼロか複数なら `none` と表示する。
 
+`--jev` を指定すると、ローカルの目印で分類が一つに決まらない手動・ウェイクワードの発話を Jev に送る。`TYPESAFE_API_KEY` または `JEV_API_KEY` が必要。送信するのは発話の本文だけで、自動録音や開始方法が不明な発話は端末内で処理する。`--min-confidence` の既定値は `0.9`。信頼度が下限未満の場合、Jev が `none` を返した場合、通信に失敗した場合は `none` と表示する。ジャーナルは読み取り専用。
+
 `stopWords` を単体で言うと、進行中の入力を終える。代わりに `skipWhileMicInUseBy` のアプリがマイクを使っているときは、同じ語で `stopCommand` を実行する。見本の語は `入力ストップ`。`stopWords` を書かないときは locale ごとの既定が入る。`ja-JP`（`locale` 省略時も）は `入力ストップ`、`en-US` は `stop dictation`、それ以外の locale は既定なし。自分で書いた値は `[]` も含めて上書きしない。停止ワードは、その locale の言葉で、本文に出にくい言葉を選ぶ。（macOS の既定は Mac 未検証。）見本の `stopCommand` は同じ superwhisper の録音 URL で、録音はトグルする。
 
 Windows では、本文のあとに続けた停止語を dictation が吸い込むことがある。`dictation.dedicatedStopRecognizer`（Windows だけ。見本は false）を true にすると、同じ PCM を停止語だけの別の SAPI 認識器に渡し、通常の経路が単独の停止を見つけなかったとき、その手前で入力を終える。人の声と打鍵音は未測定なので見本は false。Mac はこのキーを読んでも使わない。測定と実装は [docs/stop-word-recognizer.md](docs/stop-word-recognizer.md)。
