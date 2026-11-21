@@ -2,11 +2,16 @@
 // A bad path is logged and the platform default directory is used. Text only.
 import Foundation
 
+enum JournalDelivery: String {
+    case paste, sticky, pane, action, history
+}
+
 struct JournalNote {
     var endReason: String?
     var recordingSeconds: Double?
     var manual: Bool
     var focus: FocusApp?
+    var delivery: JournalDelivery?
 }
 
 /// The app in front when the dictation session target was chosen, not the app in front at append time.
@@ -58,7 +63,7 @@ final class DictationJournal {
         return origin.isAutomatic ? "自動" : "ウェイク"
     }
 
-    static func note(_ id: UUID, endReason: String? = nil, recordingSeconds: Double? = nil, manual: Bool? = nil, focus: FocusApp? = nil) {
+    static func note(_ id: UUID, endReason: String? = nil, recordingSeconds: Double? = nil, manual: Bool? = nil, focus: FocusApp? = nil, delivery: JournalDelivery? = nil) {
         notesLock.lock()
         defer { notesLock.unlock() }
         var existing = notes[id] ?? JournalNote(endReason: nil, recordingSeconds: nil, manual: false)
@@ -66,6 +71,7 @@ final class DictationJournal {
         if let recordingSeconds { existing.recordingSeconds = recordingSeconds }
         if let manual { existing.manual = manual }
         if let focus { existing.focus = focus }
+        if let delivery { existing.delivery = delivery }
         notes[id] = existing
     }
 
@@ -95,8 +101,8 @@ final class DictationJournal {
         return DictationJournal(target: Target(path: expanded, single: single), fallback: fallback, journalTaskFile: journalTaskFile, log: log)
     }
 
-    func record(id: UUID, at: Date, text: String, origin: WakeOrigin, endReason: String?, recordingSeconds: Double?, manual: Bool, focus: FocusApp? = nil) {
-        let stamped = Self.line(id: id, at: at, text: text, origin: Self.originLabel(origin, manual: manual), endReason: endReason, recordingSeconds: recordingSeconds, focus: focus, journalTaskFile: journalTaskFile)
+    func record(id: UUID, at: Date, text: String, origin: WakeOrigin, endReason: String?, recordingSeconds: Double?, manual: Bool, focus: FocusApp? = nil, delivery: JournalDelivery? = nil) {
+        let stamped = Self.line(id: id, at: at, text: text, origin: Self.originLabel(origin, manual: manual), endReason: endReason, recordingSeconds: recordingSeconds, focus: focus, delivery: delivery, journalTaskFile: journalTaskFile)
         lock.lock()
         defer { lock.unlock() }
         if write(target, line: stamped.text, day: stamped.day) { return }
@@ -239,7 +245,7 @@ final class DictationJournal {
         return true
     }
 
-    private static func line(id: UUID, at: Date, text: String, origin: String, endReason: String?, recordingSeconds: Double?, focus: FocusApp?, journalTaskFile: String?) -> (text: String, day: String) {
+    private static func line(id: UUID, at: Date, text: String, origin: String, endReason: String?, recordingSeconds: Double?, focus: FocusApp?, delivery: JournalDelivery?, journalTaskFile: String?) -> (text: String, day: String) {
         let timestamp = stamp(at)
         let day = String(timestamp.prefix(10))
         let seconds = recordingSeconds.map(jsonNumber) ?? "null"
@@ -249,6 +255,7 @@ final class DictationJournal {
             "\"timestamp\":\(jsonString(timestamp))",
             "\"text\":\(jsonString(text))",
             "\"origin\":\(jsonString(origin))",
+            "\"delivery\":\(delivery.map { jsonString($0.rawValue) } ?? "null")",
             "\"endReason\":\(reason)",
             "\"recordingSeconds\":\(seconds)",
             "\"schemaVersion\":\(schemaVersion)",

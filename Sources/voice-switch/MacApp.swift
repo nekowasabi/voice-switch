@@ -455,6 +455,7 @@ final class StickySession {
     let window: AXUIElement?
     let paneID: String?
     let capturedAt: Date
+    var journalDelivery: JournalDelivery { paneID == nil ? .sticky : .pane }
     /// bundleID is in macOS.stickyEnterApps.
     var enter = false
     /// The target app's bundle, drawn in the HUD instead of the mic so a sticky dictation shows where its text goes.
@@ -956,6 +957,8 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     }
     log("dictation: \(result.count) chars in \(Int(Date().timeIntervalSince(submitted) * 1000)) ms audio=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), Double(samples.count) / rate))s \(sidField(sessionID))")
     guard stillCurrent() else { return .delivered }
+    let delivery: JournalDelivery? = stickySession?.journalDelivery ?? (controlled ? .history : action != nil ? .action : nil)
+    DictationJournal.note(sessionID, delivery: delivery)
     guard DictationHistory.shared.add(id: sessionID, text: result, origin: origin, expectedGeneration: historyGeneration, policy: transcriptPolicy) else { return .delivered }
     if let stickySession {
         await deliverSticky(stickySession, text: result)
@@ -2038,8 +2041,10 @@ final class Listener {
             guard localHistoryState.withLock({ $0.generation == generation }) else { return }
             log("dictation recognition: complete id=\(takeRecognitionId()) \(d.origin.fields) \(sidField(d.sessionID))")
             let text = transcript.runs.map(\.text).joined()
+            let delivery: JournalDelivery = d.origin.isAutomatic || d.action != nil ? .history : d.sticky?.journalDelivery ?? .paste
+            DictationJournal.note(d.sessionID, delivery: delivery)
             let retained = DictationHistory.shared.add(id: d.sessionID, text: text, origin: d.origin, expectedGeneration: historyGeneration, policy: d.transcriptPolicy)
-            if retained && !d.origin.isAutomatic && d.action == nil {
+            if retained && delivery != .history {
                 if let sticky = d.sticky {
                     await deliverSticky(sticky, text: text)
                 } else {

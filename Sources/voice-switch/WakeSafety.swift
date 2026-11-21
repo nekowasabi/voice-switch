@@ -151,7 +151,7 @@ final class DictationHistory {
         lock.unlock()
         let noted = DictationJournal.take(id)
         let sink = journal ?? (self === DictationHistory.shared ? DictationJournal.active : nil)
-        sink?.record(id: id, at: created, text: text, origin: origin, endReason: endReason ?? noted.endReason, recordingSeconds: recordingSeconds ?? noted.recordingSeconds, manual: manual || noted.manual, focus: focus ?? noted.focus)
+        sink?.record(id: id, at: created, text: text, origin: origin, endReason: endReason ?? noted.endReason, recordingSeconds: recordingSeconds ?? noted.recordingSeconds, manual: manual || noted.manual, focus: focus ?? noted.focus, delivery: noted.delivery)
         onChange?()
         return true
     }

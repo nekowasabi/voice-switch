@@ -34,6 +34,8 @@
 
 `dictation.journalDir` は、履歴に入った発話のテキストを端末に残す。既定のディレクトリは macOS が `~/Library/Application Support/voice-switch/journal`、Windows が `%LOCALAPPDATA%\voice-switch\journal`。ディレクトリなら日ごとの `yyyy-MM-dd.jsonl`、パスが `.jsonl` で終われば単一ファイル。`~` と `%LOCALAPPDATA%` は `recordingsDir` と同じ展開。不正または書けないパスはログに `dictation journal:` と `using default` を残して既定のディレクトリへフォールバックする。ディレクトリは `0700`、ファイルは `0600`。削除は day（日）単位と entry（件）単位。閲覧 UI はない（no viewer）。音声は残さない。`dictation.journalTaskFile` は、外部の更新ツールが書き換える小さなタスクファイルへの任意のパスで、追記時に読んだタスクを `taskchute` に記録する。未設定や読めないとき、その行の `taskchute` は null になる。
 
+JSONL の各行には `id`、`timestamp`、`text`、`origin`、`endReason`、`recordingSeconds`、`schemaVersion`（1）、`focusApp`、`taskchute`、`delivery` が入る。`delivery` は追記時の予定先で、アプリへの貼り付けは `paste`、スティッキーで固定した入力欄は `sticky`、固定した tmux ペインは `pane`、ウェイクアクションは `action`、履歴に留める場合は `history`。追記後にペイン振り分けを行うなど、追記時に予定先が決まっていなければ `null` になる。旧行では `delivery` がないことがある。
+
 `stopWords` を単体で言うと、進行中の入力を終える。代わりに `skipWhileMicInUseBy` のアプリがマイクを使っているときは、同じ語で `stopCommand` を実行する。見本の語は `入力ストップ`。`stopWords` を書かないときは locale ごとの既定が入る。`ja-JP`（`locale` 省略時も）は `入力ストップ`、`en-US` は `stop dictation`、それ以外の locale は既定なし。自分で書いた値は `[]` も含めて上書きしない。停止ワードは、その locale の言葉で、本文に出にくい言葉を選ぶ。（macOS の既定は Mac 未検証。）見本の `stopCommand` は同じ superwhisper の録音 URL で、録音はトグルする。
 
 Windows では、本文のあとに続けた停止語を dictation が吸い込むことがある。`dictation.dedicatedStopRecognizer`（Windows だけ。見本は false）を true にすると、同じ PCM を停止語だけの別の SAPI 認識器に渡し、通常の経路が単独の停止を見つけなかったとき、その手前で入力を終える。人の声と打鍵音は未測定なので見本は false。Mac はこのキーを読んでも使わない。測定と実装は [docs/stop-word-recognizer.md](docs/stop-word-recognizer.md)。

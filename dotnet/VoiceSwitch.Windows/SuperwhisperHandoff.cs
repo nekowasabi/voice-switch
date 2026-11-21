@@ -186,6 +186,10 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
 
         TryDelete(wavPath);
         cancellation.ThrowIfCancellationRequested();
+        JournalDelivery? delivery = controlled ? JournalDelivery.History
+            : audio.Action is not null ? JournalDelivery.Action
+            : onTranscribed is null ? JournalDelivery.Paste : null;
+        JournalNotes.Note(audio.SessionId, delivery: delivery);
         if (!DictationHistory.Shared.Add(audio.SessionId, text, audio.Wake, historyGeneration, audio.TranscriptPolicy))
             return new HandoffResult(HandoffStatus.RecordedLocally, audio.SessionId, null, "transcript discarded");
         if (controlled)
