@@ -957,7 +957,7 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     }
     log("dictation: \(result.count) chars in \(Int(Date().timeIntervalSince(submitted) * 1000)) ms audio=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), Double(samples.count) / rate))s \(sidField(sessionID))")
     guard stillCurrent() else { return .delivered }
-    let delivery: JournalDelivery? = stickySession?.journalDelivery ?? (controlled ? .history : action != nil ? .action : nil)
+    let delivery: JournalDelivery? = stickySession?.journalDelivery ?? (controlled ? .history : action != nil ? .action : dictationMayRouteToPane(result) ? nil : .paste)
     DictationJournal.note(sessionID, delivery: delivery)
     guard DictationHistory.shared.add(id: sessionID, text: result, origin: origin, expectedGeneration: historyGeneration, policy: transcriptPolicy) else { return .delivered }
     if let stickySession {

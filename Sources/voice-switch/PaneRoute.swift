@@ -574,6 +574,13 @@ func scanLog(_ panes: [PaneLabel], matchKey: String) -> String {
 
 /// One log line per dictation, e.g. `tmux: hits=2 jev=%2@0.87 -> send %2 (jev narrowed)`.
 /// Returns the same RouteResult Windows `TmuxPaneRouter.RouteAsync` does (disposition for Decide, body for SendFailed paste).
+/// False when no tmux pane matches locally. Then routeDictation never sends to a pane (decideRoute case 0), so the
+/// journal can record superwhisper's paste before DictationHistory.add. True leaves the route to routeDictation.
+func dictationMayRouteToPane(_ text: String) -> Bool {
+    guard let panes = fetchPanes() else { return false }
+    return !matchingPanes(text, panes, agents: discoverAgentNames()).isEmpty
+}
+
 func routeDictation(_ text: String) async -> RouteResult {
     guard let panes = fetchPanes() else { return .notRouted }
     let agents = discoverAgentNames()
