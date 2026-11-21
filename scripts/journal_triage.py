@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""List journal entries whose delivery stayed in history or was undecided."""
+"""List and classify journal entries whose delivery stayed in history or was undecided."""
 
 from __future__ import annotations
 
@@ -11,6 +11,14 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
+
+
+LOCAL_MARKERS = {
+    "task": r"\b(?:task|todo)\s*[:：]|(?:タスク|やること)\s*[:：]|タスクに(?:追加|登録)",
+    "research": r"\bresearch\s*[:：]|(?:調査|リサーチ)\s*[:：]|調べて",
+    "draft": r"\bdraft\s*[:：]|(?:下書き|ドラフト)(?:\s*[:：]|を(?:書いて|作って))",
+    "agent": r"\bagent\s*[:：]|エージェント\s*[:：]|(?:エージェント|Claude|Codex|Grok|クロード)(?:に頼|に依頼)",
+}
 
 
 @dataclass(frozen=True)
@@ -73,6 +81,11 @@ def markdown(value):
     return re.sub(r"([\\`*_\[\]~])", r"\\\1", escaped_html) or "—"
 
 
+def classify(entry):
+    matches = [category for category, marker in LOCAL_MARKERS.items() if re.search(marker, entry.text, re.IGNORECASE)]
+    return matches[0] if len(matches) == 1 else "none"
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("day", type=date.fromisoformat, metavar="YYYY-MM-DD")
@@ -88,7 +101,7 @@ def main(argv=None):
             if entry is None:
                 skipped += 1
                 continue
-            print(f"- **{entry.timestamp:%H:%M:%S}** · "
+            print(f"- **{entry.timestamp:%H:%M:%S}** · `{classify(entry)}` · "
                   f"focusApp: {markdown(entry.focus_app)} · taskchute: {markdown(entry.task_name)} "
                   f"— {markdown(entry.text)}")
     except OSError as error:
