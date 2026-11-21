@@ -74,4 +74,4 @@ Read every TLC result, pass or fail, with the `/statechart` skill: a violation a
 | `tests/macos/StickyMode/main.swift` | `stickyStep`, `stickyMayPaste`, `stickyMayEnter`, `stickyAdvanceAge`, `stickyEnabled` in Sources/voice-switch/StickyMode.swift |
 | `verify.sh path` | the PATH the running VoiceSwitch.app inherited |
 
-Sync: confirmed against the working tree of `feat/sticky-mode` on top of commit `15a38d6`, with the uncommitted sticky changes of 2026-11-21 (dedicated wake words, front-app checks, paste-buffer, process-ancestry tmux lookup). When those changes are committed, rerun `verify.sh drive` and replace this line with that commit. Move the sync commit forward only after confirming that the model table and `anchors.tsv` still describe the code at the new commit.
+Sync: `464db40` on `feat/sticky-mode` (verify.sh drive passed there on 2026-11-21). Move this forward only after confirming that the model table and `anchors.tsv` still describe the code at the new commit.
