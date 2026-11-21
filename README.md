@@ -154,7 +154,7 @@ Not hand-tested: the Swift side was not compiled here, so the Mac build and a li
 
 ## Sticky paste (macOS only, opt-in)
 
-`macOS.stickyTarget` set to `true` arms wake-word dictations only. The field or tmux pane frontmost at dictation start is remembered, and the text is pasted there with Return even if you switched apps, then focus returns to the app that was frontmost when delivery started. The `スティッキー貼り付け` menu item toggles the same flag and wins over the config. Default is off. Secure fields are refused, the target expires after 3 minutes, and text that cannot be pasted is left on the clipboard.
+`macOS.stickyTarget` set to `true` arms dictations started with one of `macOS.stickyWakeWords`; the default wake words keep pasting into the frontmost app. The field or tmux pane frontmost at dictation start is remembered, and the text is pasted there even if you switched apps. Return follows only for apps listed in `macOS.stickyEnterApps` (bundle IDs; a tmux pane uses its terminal's, e.g. `com.googlecode.iterm2`). The paste waits until the target is frontmost and is dropped to the clipboard if it is not, then focus returns to the app that was frontmost when delivery started. The `スティッキー貼り付け` menu item toggles the same flag and wins over the config. Default is off. Secure fields are refused, the target expires after 3 minutes, and text that cannot be pasted is left on the clipboard.
 
 ## macrowhisper integration
 

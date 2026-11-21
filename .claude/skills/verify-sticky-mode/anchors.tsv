@@ -1,0 +1,12 @@
+CaptureTmux	if kind != .secure, let pane = stickyTmuxPane(terminalPID: pid) {
+CaptureTmuxClients	executable: tmuxExecutable, args: ["list-clients", "-F", "#{client_pid} #{client_activity} #{pane_id}"]
+CaptureLog	log("sticky: captured kind=\(kind) app=\(bundle ?? "-") pane=\(paneID ?? "-") enter=\(session.enter)")
+TmuxPaste	stickyTmux(["paste-buffer", "-p", "-d", "-b", buffer, "-t", id])
+TmuxEnter	if !session.enter || stickyTmux(["send-keys", "-t", pane, "Enter"]) {
+Wait	guard await stickyFrontIs(session.pid), stickyFocusIs(session.pid, element) else {
+StillTarget	NSWorkspace.shared.frontmostApplication?.processIdentifier == session.pid && !IsSecureEventInputEnabled()
+Post	guard stillTarget(), postKey(0x09, flags: .maskCommand) else {
+Enter	} else if stillTarget(), postKey(0x24, flags: []) {
+EnterGate	session.enter = bundle.map { (mac?.stickyEnterApps ?? []).contains($0) } ?? false
+SecureCheck	if secureNow {
+TmuxPath	let tmuxExecutable: String = {

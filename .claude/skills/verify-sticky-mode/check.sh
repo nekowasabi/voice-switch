@@ -1,6 +1,6 @@
 #!/bin/sh
-# Model-check StickyMode.tla with the pinned TLC used by verify-mic-fallback.
-# Usage: check.sh [Model.tla] [Config.cfg] (defaults: StickyMode.tla and StickyMode.cfg beside this script).
+# Model-check StickyDelivery.tla with the pinned TLC (the same jar as verify-mic-fallback).
+# Usage: check.sh [Config.cfg]   (default: StickyDelivery.cfg beside this script)
 set -eu
 dir=$(cd "$(dirname "$0")" && pwd)
 ver=v1.7.4
@@ -13,10 +13,9 @@ fi
 shasum -a 256 -c - <<EOF >/dev/null
 $sha  $jar
 EOF
-spec=${1:-$dir/StickyMode.tla}
-cfg=${2:-$dir/StickyMode.cfg}
+cfg=${1:-$dir/StickyDelivery.cfg}
 work=$(mktemp -d)
-cp "$spec" "$work/StickyMode.tla"
-cp "$cfg" "$work/StickyMode.cfg"
+cp "$dir/StickyDelivery.tla" "$work/StickyDelivery.tla"
+cp "$cfg" "$work/StickyDelivery.cfg"
 cd "$work"
-exec java -XX:+UseParallelGC -cp "$jar" tlc2.TLC -workers auto -config StickyMode.cfg StickyMode.tla
+exec java -XX:+UseParallelGC -cp "$jar" tlc2.TLC -workers auto -config StickyDelivery.cfg StickyDelivery.tla

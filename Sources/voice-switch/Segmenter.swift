@@ -158,17 +158,23 @@ struct Segmenter {
 struct WakeSet {
     var action: WakeAction?
     var words: [String]
+    /// macOS.stickyWakeWords: a default dictation that remembers its target.
+    var sticky = false
 }
 
 /// The default set first, then each action in config order.
 func wakeSets(_ cfg: Config) -> [WakeSet] {
-    [WakeSet(action: nil, words: cfg.wakeWords)] + (cfg.macOS?.actions ?? []).map { WakeSet(action: $0, words: $0.wakeWords) }
+    let sticky = cfg.macOS?.stickyWakeWords ?? []
+    return [WakeSet(action: nil, words: cfg.wakeWords)]
+        + (sticky.isEmpty ? [] : [WakeSet(action: nil, words: sticky, sticky: true)])
+        + (cfg.macOS?.actions ?? []).map { WakeSet(action: $0, words: $0.wakeWords) }
 }
 
 /// The set an utterance wakes; start nil is a bare wake word that waits for the body.
 struct WakeVerdict {
     var action: WakeAction?
     var start: (cutAt: Double, rest: String)?
+    var sticky = false
 }
 
 /// The one wake judgment for probes (closed false, tail silence so far) and whole utterances (closed true).
@@ -176,7 +182,7 @@ struct WakeVerdict {
 func wakeVerdict(_ tr: Transcript, sets: [WakeSet], tailSilentFrames: Int, closed: Bool) -> WakeVerdict? {
     let all = sets.flatMap(\.words)
     let text = tr.text
-    let bare = sets.first { $0.words.map(normalize).contains(text) }.map { WakeVerdict(action: $0.action) }
+    let bare = sets.first { $0.words.map(normalize).contains(text) }.map { WakeVerdict(action: $0.action, sticky: $0.sticky) }
     // "音声入" or "音声" beside "音声入力" may be mid-word: only a bare wake word, after the prefix gap.
     if all.map(normalize).contains(where: { $0.count > text.count && $0.hasPrefix(text) }) {
         return closed || tailSilentFrames >= Segmenter.prefixGapFrames ? bare : nil
@@ -184,7 +190,7 @@ func wakeVerdict(_ tr: Transcript, sets: [WakeSet], tailSilentFrames: Int, close
     // Checked before any leading match, so "音声メモ" is the 音声メモ action and never 音声 with body メモ.
     if let bare { return closed || tailSilentFrames > 0 ? bare : nil }
     for set in sets {
-        if let start = dictationStart(tr, wakeWords: set.words, longerWords: all) { return WakeVerdict(action: set.action, start: start) }
+        if let start = dictationStart(tr, wakeWords: set.words, longerWords: all) { return WakeVerdict(action: set.action, start: start, sticky: set.sticky) }
     }
     return nil
 }
@@ -211,6 +217,14 @@ func vadSelftest() {
           abs(transcribeDeadlineSeconds(audioSeconds: 0.5) - 20.5) < 0.001,
           transcribeDeadlineSeconds(audioSeconds: Double(16000) / rate) == 21 else {
         print("vad-selftest: FAILED (transcribe deadline formula)")
+        exit(1)
+    }
+    var stickyCfg = Config(wakeWords: ["音声入力"], command: "true")
+    stickyCfg.macOS = MacOSActions(stickyWakeWords: ["固定入力"])
+    let said = { (s: String) in Transcript(runs: s.map { (text: String($0), start: nil, end: nil) }) }
+    guard wakeVerdict(said("固定入力"), sets: wakeSets(stickyCfg), tailSilentFrames: 1, closed: true)?.sticky == true,
+          wakeVerdict(said("音声入力"), sets: wakeSets(stickyCfg), tailSilentFrames: 1, closed: true)?.sticky == false else {
+        print("vad-selftest: FAILED (sticky wake word)")
         exit(1)
     }
     let cfg = Config(wakeWords: ["test"], command: "true",

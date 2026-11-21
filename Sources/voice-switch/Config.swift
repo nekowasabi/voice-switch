@@ -175,6 +175,10 @@ struct MacOSActions: Decodable {
     var stopURL: ActionURL?
     var actions: [WakeAction]?
     var stickyTarget: Bool?
+    /// Wake words that start a sticky dictation. The default wake words keep pasting into the frontmost app.
+    var stickyWakeWords: [String]?
+    /// Bundle IDs that get Return after a sticky paste (a tmux pane uses its terminal's). Absent: paste only.
+    var stickyEnterApps: [String]?
 }
 
 /// A wake phrase that hands the dictated text to its own target: a URL opened with the text as `input=`,

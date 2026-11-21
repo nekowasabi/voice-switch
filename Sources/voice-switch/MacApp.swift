@@ -455,6 +455,10 @@ final class StickySession {
     let window: AXUIElement?
     let paneID: String?
     let capturedAt: Date
+    /// bundleID is in macOS.stickyEnterApps.
+    var enter = false
+    /// The target app's bundle, drawn in the HUD instead of the mic so a sticky dictation shows where its text goes.
+    var appPath: String?
     init(state: StickyState, pid: pid_t, bundleID: String?, element: AXUIElement?, window: AXUIElement?, paneID: String?, capturedAt: Date) {
         self.state = state
         self.pid = pid
@@ -491,46 +495,96 @@ func runProcessCapped(executable: String, args: [String], capMs: Int) -> String?
     return text
 }
 
-func stickyTTY(bundleID: String) -> String? {
-    switch bundleID {
-    case "com.googlecode.iterm2":
-        return runProcessCapped(executable: "/usr/bin/osascript", args: ["-e", "tell application \"iTerm2\" to get tty of current session of current window"], capMs: 400)
-    case "com.apple.Terminal":
-        return runProcessCapped(executable: "/usr/bin/osascript", args: ["-e", "tell application \"Terminal\" to get tty of front window"], capMs: 400)
-    default:
-        return nil
-    }
+func parentPID(_ pid: pid_t) -> pid_t? {
+    var info = kinfo_proc()
+    var size = MemoryLayout<kinfo_proc>.stride
+    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+    guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }
+    return info.kp_eproc.e_ppid
 }
 
-func stickyTmuxPane(tty: String) -> String? {
-    guard let out = runProcessCapped(executable: "/usr/bin/env", args: ["tmux", "list-panes", "-a", "-F", "#{pane_id} #{pane_tty}"], capMs: 400) else { return nil }
-    let want = tty.trimmingCharacters(in: .whitespacesAndNewlines)
+func descends(_ pid: pid_t, from ancestor: pid_t) -> Bool {
+    var p = pid
+    for _ in 0..<32 {
+        if p == ancestor { return true }
+        guard p > 1, let next = parentPID(p) else { return false }
+        p = next
+    }
+    return false
+}
+
+/// The pane shown by the tmux client running under the terminal app, found by process ancestry so any terminal
+/// works (Ghostty and WezTerm have no tty AppleScript; iTerm's session tty is the client's, never a pane's).
+// ponytail: several clients under one app (several windows) pick the one typed in last; a window without tmux beside
+// one with tmux still picks the tmux one. Match the focused window title if that shows up.
+func stickyTmuxPane(terminalPID: pid_t) -> String? {
+    guard let out = runProcessCapped(executable: tmuxExecutable, args: ["list-clients", "-F", "#{client_pid} #{client_activity} #{pane_id}"], capMs: 400) else { return nil }
+    var best: (activity: Int, pane: String)?
     for line in out.split(whereSeparator: \.isNewline) {
-        let parts = line.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true).map(String.init)
-        guard parts.count == 2 else { continue }
-        if parts[1] == want, isPaneID(parts[0]) { return parts[0] }
+        let parts = line.split(separator: " ").map(String.init)
+        guard parts.count == 3, let pid = pid_t(parts[0]), let activity = Int(parts[1]), isPaneID(parts[2]),
+            descends(pid, from: terminalPID)
+        else { continue }
+        if best == nil || activity > best!.activity { best = (activity, parts[2]) }
     }
-    return nil
+    return best?.pane
 }
 
-func stickySendKeysEnter(_ id: String) -> Bool {
+/// argv only, never a shell. stdin feeds load-buffer.
+func stickyTmux(_ args: [String], stdin: String? = nil) -> Bool {
     let p = Process()
-    p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    p.arguments = ["tmux", "send-keys", "-t", id, "Enter"]
+    p.executableURL = URL(fileURLWithPath: tmuxExecutable)
+    p.arguments = args
+    let input = Pipe()
+    if stdin != nil { p.standardInput = input }
     do { try p.run() } catch {
-        log("sticky: send-keys enter failed to start")
+        log("sticky: tmux \(args[0]) failed to start")
         return false
+    }
+    if let stdin {
+        input.fileHandleForWriting.write(Data(stdin.utf8))
+        try? input.fileHandleForWriting.close()
     }
     p.waitUntilExit()
     if p.terminationStatus != 0 {
-        log("sticky: send-keys enter exited \(p.terminationStatus)")
+        log("sticky: tmux \(args[0]) exited \(p.terminationStatus)")
         return false
     }
     return true
 }
 
-@MainActor func captureStickyTarget(configFlag: Bool?) -> StickySession? {
-    guard stickyEnabled(configFlag: configFlag, override: stickyTargetOverride()) else { return nil }
+/// One paste-buffer -p: tmux adds the bracketed-paste marks only when the pane asked for them, and a failure cannot
+/// leave an open mark behind.
+func stickyPasteToPane(_ id: String, _ text: String) -> Bool {
+    let buffer = "voice-switch-sticky"
+    return stickyTmux(["load-buffer", "-b", buffer, "-"], stdin: text)
+        && stickyTmux(["paste-buffer", "-p", "-d", "-b", buffer, "-t", id])
+}
+
+/// An app keeps its focused element in the background, so this alone does not say where CGEvent lands.
+func stickyFocusIs(_ pid: pid_t, _ element: AXUIElement) -> Bool {
+    let appEl = AXUIElementCreateApplication(pid)
+    var focused: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(appEl, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+        let focused, CFGetTypeID(focused) == AXUIElementGetTypeID()
+    else { return false }
+    return CFEqual(focused as! AXUIElement, element)
+}
+
+/// activate() can return before, or without, the app coming to the front (macOS 14 cooperative activation).
+@MainActor func stickyFrontIs(_ pid: pid_t) async -> Bool {
+    for _ in 0..<10 {
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid { return true }
+        try? await Task.sleep(nanoseconds: 50_000_000)
+    }
+    return false
+}
+
+@MainActor func captureStickyTarget(_ mac: MacOSActions?) -> StickySession? {
+    guard stickyEnabled(configFlag: mac?.stickyTarget, override: stickyTargetOverride()) else {
+        log("sticky: wake word heard while sticky is off")
+        return nil
+    }
     guard let front = NSWorkspace.shared.frontmostApplication else {
         let state = stickyStep(StickyState.initial(on: true), .start(.noField))
         return StickySession(state: state, pid: -1, bundleID: nil, element: nil, window: nil, paneID: nil, capturedAt: Date())
@@ -577,18 +631,19 @@ func stickySendKeysEnter(_ id: String) -> Bool {
         }
     }
     var paneID: String?
-    if kind == .field, let bundle,
-        ["com.googlecode.iterm2", "com.apple.Terminal", "dev.warp.Warp-Stable", "com.mitchellh.ghostty"].contains(bundle)
-    {
-        if let tty = stickyTTY(bundleID: bundle), let pane = stickyTmuxPane(tty: tty) {
-            kind = .tmux
-            paneID = pane
-            element = nil
-            window = nil
-        }
+    // A terminal's AX text area is the same element for every tmux pane, so a field paste would follow the user.
+    if kind != .secure, let pane = stickyTmuxPane(terminalPID: pid) {
+        kind = .tmux
+        paneID = pane
+        element = nil
+        window = nil
     }
     let state = stickyStep(StickyState.initial(on: true), .start(kind))
-    return StickySession(state: state, pid: pid, bundleID: bundle, element: element, window: window, paneID: paneID, capturedAt: Date())
+    let session = StickySession(state: state, pid: pid, bundleID: bundle, element: element, window: window, paneID: paneID, capturedAt: Date())
+    session.enter = bundle.map { (mac?.stickyEnterApps ?? []).contains($0) } ?? false
+    session.appPath = front.bundleURL?.path
+    log("sticky: captured kind=\(kind) app=\(bundle ?? "-") pane=\(paneID ?? "-") enter=\(session.enter)")
+    return session
 }
 
 func stickyFallback(_ session: StickySession, text: String, reason: String) {
@@ -659,20 +714,22 @@ func stickyFallback(_ session: StickySession, text: String, reason: String) {
         return
     }
     if session.state.kind == .tmux, let pane = session.paneID {
-        let okBracket = sendKeysToPane(pane, "\u{1B}[200~")
-        let okBody = okBracket && sendKeysToPane(pane, text)
-        let okEnd = okBody && sendKeysToPane(pane, "\u{1B}[201~")
-        let okEnter = okEnd && stickySendKeysEnter(pane)
-        if okEnter {
-            session.state = stickyStep(session.state, .pasteOk)
-            if stickyMayEnter(session.state) {
-                session.state = stickyStep(session.state, .enterOk)
-            }
-            log("sticky: tmux chars=\(chars)")
+        guard stickyPasteToPane(pane, text) else {
+            session.state = stickyStep(session.state, .pasteFail)
+            stickyFallback(session, text: text, reason: "tmux-send-failed")
             return
         }
-        session.state = stickyStep(session.state, .pasteFail)
-        stickyFallback(session, text: text, reason: "tmux-send-failed")
+        session.state = stickyStep(session.state, .pasteOk)
+        if stickyMayEnter(session.state) {
+            if !session.enter || stickyTmux(["send-keys", "-t", pane, "Enter"]) {
+                // The model has no paste-only end: enterOk without the key ends delivery the same way.
+                session.state = stickyStep(session.state, .enterOk)
+            } else {
+                // Already pasted, so the clipboard copy would only invite a second paste.
+                session.state = stickyStep(session.state, .enterFail)
+            }
+        }
+        log("sticky: tmux chars=\(chars) enter=\(session.enter)")
         return
     }
     guard session.pid != -1,
@@ -689,20 +746,17 @@ func stickyFallback(_ session: StickySession, text: String, reason: String) {
         AXUIElementPerformAction(win, kAXRaiseAction as CFString)
     }
     AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-    let appEl = AXUIElementCreateApplication(session.pid)
-    var focused: CFTypeRef?
-    var same = false
-    if AXUIElementCopyAttributeValue(appEl, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
-        let focused, CFGetTypeID(focused) == AXUIElementGetTypeID()
-    {
-        same = CFEqual(focused as! AXUIElement, element)
+    func backToUser() {
+        if let back = frontBefore, back.processIdentifier != session.pid, !back.isTerminated { _ = back.activate() }
     }
-    if !same {
+    func refuse(_ reason: String) {
         session.state = stickyStep(session.state, .pasteFail)
-        stickyFallback(session, text: text, reason: "focus-mismatch")
-        if let back = frontBefore, back.processIdentifier != session.pid, !back.isTerminated {
-            _ = back.activate()
-        }
+        stickyFallback(session, text: text, reason: reason)
+        backToUser()
+    }
+    // CGEvent goes to whatever is frontmost, so the target must be front, not only focused inside its own app.
+    guard await stickyFrontIs(session.pid), stickyFocusIs(session.pid, element) else {
+        refuse("focus-mismatch")
         return
     }
     let pb = NSPasteboard.general
@@ -722,53 +776,55 @@ func stickyFallback(_ session: StickySession, text: String, reason: String) {
         snapshot.append(values)
     }
     if !restorable {
-        session.state = stickyStep(session.state, .pasteFail)
-        stickyFallback(session, text: text, reason: "clipboard-snapshot")
-        if let back = frontBefore, back.processIdentifier != session.pid, !back.isTerminated {
-            _ = back.activate()
-        }
+        refuse("clipboard-snapshot")
         return
     }
     pb.clearContents()
     guard pb.setString(text, forType: .string) else {
-        session.state = stickyStep(session.state, .pasteFail)
-        stickyFallback(session, text: text, reason: "clipboard-set")
-        if let back = frontBefore, back.processIdentifier != session.pid, !back.isTerminated {
-            _ = back.activate()
-        }
+        refuse("clipboard-set")
         return
     }
     let owned = pb.changeCount
-    func postKey(_ key: Int64, flags: CGEventFlags) {
+    func postKey(_ key: Int64, flags: CGEventFlags) -> Bool {
         guard let source = CGEventSource(stateID: .hidSystemState),
             let down = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(key), keyDown: true),
             let up = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(key), keyDown: false)
-        else { return }
+        else { return false }
         down.flags = flags
         up.flags = flags
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
+        return true
     }
-    postKey(0x09, flags: .maskCommand)
+    // Rechecked at each key: the user can switch apps or land in a secure field between the steps.
+    func stillTarget() -> Bool {
+        NSWorkspace.shared.frontmostApplication?.processIdentifier == session.pid && !IsSecureEventInputEnabled()
+            && stickyFocusIs(session.pid, element)
+    }
+    guard stillTarget(), postKey(0x09, flags: .maskCommand) else {
+        refuse("front-changed")
+        return
+    }
     try? await Task.sleep(nanoseconds: 80_000_000)
-    if session.element != nil {
-        var probe: CFTypeRef?
-        if let el = session.element,
-            AXUIElementCopyAttributeValue(el, kAXRoleAttribute as CFString, &probe) == .invalidUIElement
-        {
-            session.state = stickyStep(session.state, .pasteOk)
-            session.state = stickyStep(session.state, .enterFail)
-            log("sticky: field chars=\(chars) reason=element-gone")
-            if let back = frontBefore, back.processIdentifier != session.pid, !back.isTerminated {
-                _ = back.activate()
-            }
-            return
-        }
+    var probe: CFTypeRef?
+    if AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &probe) == .invalidUIElement {
+        session.state = stickyStep(session.state, .pasteOk)
+        session.state = stickyStep(session.state, .enterFail)
+        log("sticky: field chars=\(chars) reason=element-gone")
+        backToUser()
+        return
     }
     session.state = stickyStep(session.state, .pasteOk)
     if stickyMayEnter(session.state) {
-        postKey(0x24, flags: [])
-        session.state = stickyStep(session.state, .enterOk)
+        if !session.enter {
+            // The model has no paste-only end: enterOk without the key ends delivery the same way.
+            session.state = stickyStep(session.state, .enterOk)
+        } else if stillTarget(), postKey(0x24, flags: []) {
+            session.state = stickyStep(session.state, .enterOk)
+        } else {
+            session.state = stickyStep(session.state, .enterFail)
+            log("sticky: field chars=\(chars) reason=enter-front-changed")
+        }
     }
     if session.state.phase == .delivered {
         let items = snapshot.map { values -> NSPasteboardItem in
@@ -785,7 +841,7 @@ func stickyFallback(_ session: StickySession, text: String, reason: String) {
             }
         }
     }
-    log("sticky: field chars=\(chars)")
+    log("sticky: field chars=\(chars) enter=\(session.enter)")
     if session.state.phase == .delivered, session.state.focus == .user, let back = frontBefore, !back.isTerminated {
         if !back.activate() {
             log("sticky: focus return failed")
@@ -1552,7 +1608,7 @@ final class Listener {
                     // later cut lagged the HUD by the 0.5 s wait, and a stop that ended another way after .stopping played none.
                     if phase == .stopping || (phase == .ended && shown != .stopping) { playStopSound() }
                     shown = phase
-                    phaseCont.yield((phase, dictation?.action?.icon))
+                    phaseCont.yield((phase, dictation?.action?.icon ?? dictation?.sticky?.appPath))
                 }
             }
             if f.isEmpty { seg = Segmenter(cfg: config.cfg); silero = SileroStream(); dictation = nil; followupUntil = 0; recent = []; speechFrames = 0; Hotkeys.end(); continue }
@@ -1782,12 +1838,12 @@ final class Listener {
                 if config.cfg.dictation?.noWakeWord?.enabled != true { log("early: \(tr.text)\(earlyAction.map { " action=\($0.name)" } ?? "")  [buf \(buf.count * 1000 / Int(rate)) ms, stt \(stt) ms]") }
                 seg.reset()
                 if let start {
-                    let stickyCapture: StickySession? = earlyAction == nil ? await MainActor.run { captureStickyTarget(configFlag: config.cfg.macOS?.stickyTarget) } : nil
+                    let stickyCapture: StickySession? = early.sticky ? await MainActor.run { captureStickyTarget(config.cfg.macOS) } : nil
                     dictation = Dictation(samples: trimmed(buf, cutAt: start.cutAt), generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: true, action: earlyAction, sticky: stickyCapture)
                     log("dictation started early (cut at \(Int(start.cutAt * 1000)) ms)\(earlyAction.map { " action=\($0.name)" } ?? "")")
                     Hotkeys.begin()
                 } else if config.cfg.dictation != nil || earlyAction != nil {
-                    let stickyCapture: StickySession? = earlyAction == nil ? await MainActor.run { captureStickyTarget(configFlag: config.cfg.macOS?.stickyTarget) } : nil
+                    let stickyCapture: StickySession? = early.sticky ? await MainActor.run { captureStickyTarget(config.cfg.macOS) } : nil
                     dictation = Dictation(samples: [], generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: false, action: earlyAction, sticky: stickyCapture)
                     if earlyAction != nil, UserDefaults.standard.bool(forKey: soundKey) {
                         actionWakeChime?.play()
@@ -1899,11 +1955,11 @@ final class Listener {
                 log("dictation skipped: \(id) is excluded"); continue
             }
             if let start {
-                let stickyCapture: StickySession? = await MainActor.run { captureStickyTarget(configFlag: config.cfg.macOS?.stickyTarget) }
+                let stickyCapture: StickySession? = verdict?.sticky == true ? await MainActor.run { captureStickyTarget(config.cfg.macOS) } : nil
                 dictation = Dictation(samples: trimmed(u, cutAt: start.cutAt), generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: true, sticky: stickyCapture)
                 log("dictation started (cut at \(Int(start.cutAt * 1000)) ms)")
             } else {
-                let stickyCapture: StickySession? = await MainActor.run { captureStickyTarget(configFlag: config.cfg.macOS?.stickyTarget) }
+                let stickyCapture: StickySession? = verdict?.sticky == true ? await MainActor.run { captureStickyTarget(config.cfg.macOS) } : nil
                 dictation = Dictation(samples: [], generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: false, sticky: stickyCapture)
                 // Only here: in a one-breath dictation the user is already talking and the sound would be recorded.
                 if UserDefaults.standard.bool(forKey: soundKey) {
@@ -2073,8 +2129,8 @@ final class Listener {
 
 }
 
-/// First bundle ID in the list whose process currently has audio input running, via CoreAudio's
-/// per-process objects. superwhisper keeps input closed while idle and opens it only while recording.
+/// First bundle ID in the list whose process is reading an input device, via CoreAudio's per-process objects.
+/// superwhisper keeps input closed while idle and opens it only while recording.
 func micInUse(by bundleIDs: [String], failClosed: Bool = false) -> String? {
     guard !bundleIDs.isEmpty else { return nil }
     func address(_ sel: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
@@ -2103,7 +2159,17 @@ func micInUse(by bundleIDs: [String], failClosed: Bool = false) -> String? {
             if failClosed { return "microphone process unavailable" }
             continue
         }
-        if bundleIDs.contains(id) { return id }
+        guard bundleIDs.contains(id) else { continue }
+        // superwhisper 3.4's Muffle keeps its own audio tap running after a recording ends, so IsRunningInput stays 1
+        // with no input device until the app quits (2026-11-21). Only a process with an input device holds the mic.
+        var devicesAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioProcessPropertyDevices, mScope: kAudioObjectPropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
+        var devicesSize: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(proc, &devicesAddr, 0, nil, &devicesSize) == noErr else {
+            if failClosed { return "microphone status unavailable" }
+            continue
+        }
+        if devicesSize > 0 { return id }
     }
     return nil
 }
@@ -2391,7 +2457,8 @@ final class HUD {
         deliver(.saved)
     }
 
-    /// icon: the waking action's `icon`, drawn in place of the mic while .waiting; nil keeps the mic.
+    /// icon: the waking action's `icon`, or a sticky dictation's target app, drawn in place of the mic while .waiting;
+    /// nil keeps the mic.
     func show(_ phase: Listener.Phase, icon: String? = nil) {
         self.phase = phase
         // Cleared on every other phase, so an icon left from the last action never shows on a later dictation.
