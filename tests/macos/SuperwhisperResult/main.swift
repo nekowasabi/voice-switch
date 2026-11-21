@@ -32,6 +32,7 @@ func run(_ name: String, waitForLLM: Bool, steps: [(ms: UInt64, json: String)]) 
 
 let placeholder = #"{"result":"","processingTime":0,"duration":0}"#
 let transcribed = #"{"result":"ああなるほど。","processingTime":1006,"duration":6261}"#
+let transcribedPending = #"{"result":"ああなるほど。","processingTime":1006,"duration":6261,"languageModelKey":"claude-sonnet-5-5"}"#
 let polished = #"{"result":"ああなるほど。","processingTime":1006,"duration":6261,"llmResult":"なるほど。","languageModelProcessingTime":1398}"#
 let heardNothing = #"{"result":"","processingTime":18,"duration":3000}"#
 
@@ -40,8 +41,23 @@ Task {
           "the placeholder write is not a finished run; the language model result is awaited")
     check(await run("plain", waitForLLM: false, steps: [(0, placeholder), (700, transcribed)]) == "ああなるほど。",
           "without a language model the transcribed result is final")
+    check(await run("llm-no-switch", waitForLLM: false, steps: [(0, placeholder), (700, transcribedPending), (1400, polished)]) == "なるほど。",
+          "a run whose language model is still to write is awaited even when voice-switch did not switch modes")
     check(await run("silent", waitForLLM: true, steps: [(0, placeholder), (500, heardNothing)]) == "",
           "a filled duration with an empty result is a run that heard no words")
+    let newest = "\(root)/newest"
+    try! FileManager.default.createDirectory(atPath: "\(newest)/100", withIntermediateDirectories: true)
+    try! #"{"result":"古い。","processingTime":900,"duration":3000,"llmResult":"古い。","languageModelProcessingTime":1200}"#
+        .write(toFile: "\(newest)/100/meta.json", atomically: true, encoding: .utf8)
+    try! FileManager.default.createDirectory(atPath: "\(newest)/101", withIntermediateDirectories: true)
+    try! transcribedPending.write(toFile: "\(newest)/101/meta.json", atomically: true, encoding: .utf8)
+    let polisher = Task {
+        try? await Task.sleep(nanoseconds: 700_000_000)
+        try! polished.write(toFile: "\(newest)/101/meta.json", atomically: true, encoding: .utf8)
+    }
+    let newestText = await awaitResult(in: newest, since: 100, waitForLLM: false)
+    polisher.cancel()
+    check(newestText == "なるほど。", "while the newest run waits for its language model, an older finished run is not taken")
     let now = Int(Date().timeIntervalSince1970)
     let pending = "\(root)/pending"
     let late = "\(pending)/\(now - 40)"

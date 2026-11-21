@@ -97,15 +97,19 @@ func awaitResult(in dir: String, since: Int, excluding previousRuns: Set<String>
     var early: (id: String, text: String)?
     var seen: Set<String> = []
     for _ in 0 ..< 300 {
-        for (name, _, run) in superwhisperRuns(in: dir, since: since, excluding: previousRuns) {
+        runs: for (name, meta, run) in superwhisperRuns(in: dir, since: since, excluding: previousRuns) {
             if seen.insert(name).inserted { onRun("started id=\(name)") }
             switch run {
             case .unjudged: continue
             case .heardNothing: onRun("result id=\(name) kind=heardNothing"); return ""
             case let .polished(text): onRun("result id=\(name) kind=polished"); return text
             case let .transcribed(text):
-                guard waitForLLM else { onRun("result id=\(name) kind=transcribed"); return text }
+                // Superwhisper pastes only at the language model's write; a run that can still paste is not
+                // done, whichever mode the dictation ran in. (Waiting used to need a temporary mode switch.)
+                guard waitForLLM || run.inFlight(meta: meta) else { onRun("result id=\(name) kind=transcribed"); return text }
+                // The newest judged run is ours; an older finished run must not stand in while it waits.
                 early = (name, text)
+                break runs
             }
         }
         try? await Task.sleep(for: .milliseconds(100))
