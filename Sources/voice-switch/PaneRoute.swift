@@ -66,8 +66,8 @@ func matchingPanes(_ utterance: String, _ panes: [PaneLabel], agents: [String: [
 /// called only after list-panes has already succeeded.
 func tmuxSocketPath() -> String? {
     let p = Process()
-    p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    p.arguments = ["tmux", "display-message", "-p", "#{socket_path}"]
+    p.executableURL = URL(fileURLWithPath: tmuxExecutable)
+    p.arguments = ["display-message", "-p", "#{socket_path}"]
     let out = Pipe()
     p.standardOutput = out
     p.standardError = Pipe()
@@ -137,8 +137,8 @@ func discoverAgentNames() -> [String: [String]] {
 /// Does not start a tmux server. Failure or no server returns nil and sends nothing.
 func fetchPanes() -> [PaneLabel]? {
     let p = Process()
-    p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    p.arguments = ["tmux", "list-panes", "-a", "-F",
+    p.executableURL = URL(fileURLWithPath: tmuxExecutable)
+    p.arguments = ["list-panes", "-a", "-F",
                    "#{pane_id}\t#{window_name}\t#{pane_title}\t#{pane_current_command}"]
     let out = Pipe()
     let err = Pipe()
@@ -517,10 +517,19 @@ func routeDisposition(pane: String?, suppressFallback: Bool, sent: Bool, body: S
 }
 
 /// Waits for tmux send-keys. false when start fails or exit status is non-zero.
+/// An app opened from Finder or `open` inherits launchd's PATH (/usr/bin:/bin:/usr/sbin:/sbin), which has no Homebrew
+/// tmux, so `/usr/bin/env tmux` failed and sticky capture fell back to the AX field (2026-11-21, finding F1 in
+/// verify-sticky-mode). Resolved once from PATH, then the usual install locations.
+let tmuxExecutable: String = {
+    let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
+    let dirs = path.split(separator: ":").map(String.init) + ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"]
+    return dirs.map { $0 + "/tmux" }.first { FileManager.default.isExecutableFile(atPath: $0) } ?? "/opt/homebrew/bin/tmux"
+}()
+
 func sendKeysToPane(_ id: String, _ body: String) -> Bool {
     let p = Process()
-    p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    p.arguments = ["tmux", "send-keys", "-t", id, "-l", "--", body]
+    p.executableURL = URL(fileURLWithPath: tmuxExecutable)
+    p.arguments = ["send-keys", "-t", id, "-l", "--", body]
     do { try p.run() } catch {
         log("tmux: send-keys failed to start: \(error)")
         return false

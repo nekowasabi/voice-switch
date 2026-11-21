@@ -152,6 +152,10 @@ The 0.8 floor comes from `scripts/pane_jev_probe.py`, 8 utterances against a fix
 
 Not hand-tested: the Swift side was not compiled here, so the Mac build and a live Mac dictation are not claimed. On Windows, `wsl.exe` reaching tmux, Japanese text surviving the `wsl.exe` round trip in both directions, and a live dictation landing in a WSL pane were not run. `make win-test` covers the C# logic on WSL; the proof script covers the rule without Jev.
 
+## Sticky paste (macOS only, opt-in)
+
+`macOS.stickyTarget` set to `true` arms dictations started with one of `macOS.stickyWakeWords`; the default wake words keep pasting into the frontmost app. The field or tmux pane frontmost at dictation start is remembered, and the text is pasted there even if you switched apps. Return follows only for apps listed in `macOS.stickyEnterApps` (bundle IDs; a tmux pane uses its terminal's, e.g. `com.googlecode.iterm2`). The paste waits until the target is frontmost and is dropped to the clipboard if it is not, then focus returns to the app that was frontmost when delivery started. The `スティッキー貼り付け` menu item toggles the same flag and wins over the config. Default is off. Secure fields are refused, the target expires after 3 minutes, and text that cannot be pasted is left on the clipboard.
+
 ## macrowhisper integration
 
 [macrowhisper](https://github.com/ognistik/macrowhisper) watches Superwhisper recordings and runs insert/URL/Shortcut/shell/AppleScript actions. voice-switch does **not** reimplement that; it calls the same public CLI the [Alfred workflow](https://github.com/ognistik/macrowhisper/tree/main/alfred) uses before starting Superwhisper.

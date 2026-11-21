@@ -438,7 +438,418 @@ func macPasteSafety(target: NSRunningApplication, lastInput: TimeInterval) -> Pa
 /// notDispatched means the caller should fall back to local history; noResult means superwhisper returned no words.
 enum HandoffOutcome { case notDispatched, noResult, delivered }
 
-func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplication?, action: WakeAction?, origin: WakeOrigin = WakeOrigin(rule: .strict, inputIdleSeconds: nil), sessionID: UUID = UUID(), transcriptPolicy: AutomaticTranscriptPolicy = .disabled, stillCurrent: () -> Bool = { true }) async -> HandoffOutcome {
+// MARK: sticky target
+
+let stickyTargetKey = "stickyTarget"
+
+func stickyTargetOverride() -> Bool? {
+    guard UserDefaults.standard.object(forKey: stickyTargetKey) != nil else { return nil }
+    return UserDefaults.standard.bool(forKey: stickyTargetKey)
+}
+
+final class StickySession {
+    var state: StickyState
+    let pid: pid_t
+    let bundleID: String?
+    let element: AXUIElement?
+    let window: AXUIElement?
+    let paneID: String?
+    let capturedAt: Date
+    /// bundleID is in macOS.stickyEnterApps.
+    var enter = false
+    /// The target app's bundle, drawn in the HUD instead of the mic so a sticky dictation shows where its text goes.
+    var appPath: String?
+    init(state: StickyState, pid: pid_t, bundleID: String?, element: AXUIElement?, window: AXUIElement?, paneID: String?, capturedAt: Date) {
+        self.state = state
+        self.pid = pid
+        self.bundleID = bundleID
+        self.element = element
+        self.window = window
+        self.paneID = paneID
+        self.capturedAt = capturedAt
+    }
+}
+
+func runProcessCapped(executable: String, args: [String], capMs: Int) -> String? {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: executable)
+    p.arguments = args
+    let out = Pipe()
+    p.standardOutput = out
+    p.standardError = Pipe()
+    do { try p.run() } catch { return nil }
+    let deadline = Date().addingTimeInterval(Double(capMs) / 1000)
+    while p.isRunning, Date() < deadline {
+        Thread.sleep(forTimeInterval: 0.01)
+    }
+    if p.isRunning {
+        p.terminate()
+        return nil
+    }
+    p.waitUntilExit()
+    guard p.terminationStatus == 0,
+        let text = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+        !text.isEmpty
+    else { return nil }
+    return text
+}
+
+func parentPID(_ pid: pid_t) -> pid_t? {
+    var info = kinfo_proc()
+    var size = MemoryLayout<kinfo_proc>.stride
+    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+    guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }
+    return info.kp_eproc.e_ppid
+}
+
+func descends(_ pid: pid_t, from ancestor: pid_t) -> Bool {
+    var p = pid
+    for _ in 0..<32 {
+        if p == ancestor { return true }
+        guard p > 1, let next = parentPID(p) else { return false }
+        p = next
+    }
+    return false
+}
+
+/// The pane shown by the tmux client running under the terminal app, found by process ancestry so any terminal
+/// works (Ghostty and WezTerm have no tty AppleScript; iTerm's session tty is the client's, never a pane's).
+// ponytail: several clients under one app (several windows) pick the one typed in last; a window without tmux beside
+// one with tmux still picks the tmux one. Match the focused window title if that shows up.
+func stickyTmuxPane(terminalPID: pid_t) -> String? {
+    guard let out = runProcessCapped(executable: tmuxExecutable, args: ["list-clients", "-F", "#{client_pid} #{client_activity} #{pane_id}"], capMs: 400) else { return nil }
+    var best: (activity: Int, pane: String)?
+    for line in out.split(whereSeparator: \.isNewline) {
+        let parts = line.split(separator: " ").map(String.init)
+        guard parts.count == 3, let pid = pid_t(parts[0]), let activity = Int(parts[1]), isPaneID(parts[2]),
+            descends(pid, from: terminalPID)
+        else { continue }
+        if best == nil || activity > best!.activity { best = (activity, parts[2]) }
+    }
+    return best?.pane
+}
+
+/// argv only, never a shell. stdin feeds load-buffer.
+func stickyTmux(_ args: [String], stdin: String? = nil) -> Bool {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: tmuxExecutable)
+    p.arguments = args
+    let input = Pipe()
+    if stdin != nil { p.standardInput = input }
+    do { try p.run() } catch {
+        log("sticky: tmux \(args[0]) failed to start")
+        return false
+    }
+    if let stdin {
+        input.fileHandleForWriting.write(Data(stdin.utf8))
+        try? input.fileHandleForWriting.close()
+    }
+    p.waitUntilExit()
+    if p.terminationStatus != 0 {
+        log("sticky: tmux \(args[0]) exited \(p.terminationStatus)")
+        return false
+    }
+    return true
+}
+
+/// One paste-buffer -p: tmux adds the bracketed-paste marks only when the pane asked for them, and a failure cannot
+/// leave an open mark behind.
+func stickyPasteToPane(_ id: String, _ text: String) -> Bool {
+    let buffer = "voice-switch-sticky"
+    return stickyTmux(["load-buffer", "-b", buffer, "-"], stdin: text)
+        && stickyTmux(["paste-buffer", "-p", "-d", "-b", buffer, "-t", id])
+}
+
+/// An app keeps its focused element in the background, so this alone does not say where CGEvent lands.
+func stickyFocusIs(_ pid: pid_t, _ element: AXUIElement) -> Bool {
+    let appEl = AXUIElementCreateApplication(pid)
+    var focused: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(appEl, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+        let focused, CFGetTypeID(focused) == AXUIElementGetTypeID()
+    else { return false }
+    return CFEqual(focused as! AXUIElement, element)
+}
+
+/// activate() can return before, or without, the app coming to the front (macOS 14 cooperative activation).
+@MainActor func stickyFrontIs(_ pid: pid_t) async -> Bool {
+    for _ in 0..<10 {
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid { return true }
+        try? await Task.sleep(nanoseconds: 50_000_000)
+    }
+    return false
+}
+
+@MainActor func captureStickyTarget(_ mac: MacOSActions?) -> StickySession? {
+    guard stickyEnabled(configFlag: mac?.stickyTarget, override: stickyTargetOverride()) else {
+        log("sticky: wake word heard while sticky is off")
+        return nil
+    }
+    guard let front = NSWorkspace.shared.frontmostApplication else {
+        let state = stickyStep(StickyState.initial(on: true), .start(.noField))
+        return StickySession(state: state, pid: -1, bundleID: nil, element: nil, window: nil, paneID: nil, capturedAt: Date())
+    }
+    let pid = front.processIdentifier
+    let bundle = front.bundleIdentifier
+    var kind: StickyKind = .noField
+    var element: AXUIElement?
+    var window: AXUIElement?
+    if !AXIsProcessTrusted() {
+        log("sticky: accessibility not trusted, no field")
+        kind = .noField
+    } else {
+        let appEl = AXUIElementCreateApplication(pid)
+        var focused: CFTypeRef?
+        let focusErr = AXUIElementCopyAttributeValue(appEl, kAXFocusedUIElementAttribute as CFString, &focused)
+        if focusErr == .success, let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() {
+            let el = focused as! AXUIElement
+            var subrole: CFTypeRef?
+            let subErr = AXUIElementCopyAttributeValue(el, kAXSubroleAttribute as CFString, &subrole)
+            let secureSubrole = subErr == .success && (subrole as? String) == "AXSecureTextField"
+            if IsSecureEventInputEnabled() || secureSubrole {
+                kind = .secure
+                element = el
+            } else {
+                var role: CFTypeRef?
+                let roleErr = AXUIElementCopyAttributeValue(el, kAXRoleAttribute as CFString, &role)
+                if roleErr == .success, let r = role as? String, r == "AXTextField" || r == "AXTextArea" {
+                    kind = .field
+                    element = el
+                    var win: CFTypeRef?
+                    if AXUIElementCopyAttributeValue(el, kAXWindowAttribute as CFString, &win) == .success,
+                        let win, CFGetTypeID(win) == AXUIElementGetTypeID()
+                    {
+                        window = win as! AXUIElement
+                    }
+                } else {
+                    kind = .noField
+                }
+            }
+        } else {
+            kind = .noField
+            if IsSecureEventInputEnabled() { kind = .secure }
+        }
+    }
+    var paneID: String?
+    // A terminal's AX text area is the same element for every tmux pane, so a field paste would follow the user.
+    if kind != .secure, let pane = stickyTmuxPane(terminalPID: pid) {
+        kind = .tmux
+        paneID = pane
+        element = nil
+        window = nil
+    }
+    let state = stickyStep(StickyState.initial(on: true), .start(kind))
+    let session = StickySession(state: state, pid: pid, bundleID: bundle, element: element, window: window, paneID: paneID, capturedAt: Date())
+    session.enter = bundle.map { (mac?.stickyEnterApps ?? []).contains($0) } ?? false
+    session.appPath = front.bundleURL?.path
+    log("sticky: captured kind=\(kind) app=\(bundle ?? "-") pane=\(paneID ?? "-") enter=\(session.enter)")
+    return session
+}
+
+func stickyFallback(_ session: StickySession, text: String, reason: String) {
+    if session.state.phase == .delivering {
+        session.state = stickyStep(session.state, .pasteFail)
+    }
+    let pb = NSPasteboard.general
+    pb.clearContents()
+    _ = pb.setString(text, forType: .string)
+    log("sticky: fallback chars=\(text.count) reason=\(reason)")
+}
+
+@MainActor func deliverSticky(_ session: StickySession, text: String) async {
+    let chars = text.count
+    if text.isEmpty {
+        session.state = stickyStep(session.state, .stop(false))
+        log("sticky: empty chars=0")
+        return
+    }
+    let elapsed = Int(Date().timeIntervalSince(session.capturedAt))
+    session.state = stickyAdvanceAge(session.state, max(0, elapsed))
+    var gone = false
+    if session.pid != -1 {
+        if let app = NSRunningApplication(processIdentifier: session.pid) {
+            if app.isTerminated { gone = true }
+        } else {
+            gone = true
+        }
+    }
+    if !gone, let el = session.element {
+        var probe: CFTypeRef?
+        if AXUIElementCopyAttributeValue(el, kAXRoleAttribute as CFString, &probe) == .invalidUIElement {
+            gone = true
+        }
+    }
+    if !gone, let win = session.window {
+        var probe: CFTypeRef?
+        if AXUIElementCopyAttributeValue(win, kAXRoleAttribute as CFString, &probe) == .invalidUIElement {
+            gone = true
+        }
+    }
+    if gone {
+        session.state = stickyStep(session.state, .targetGone)
+    }
+    let frontBefore = NSWorkspace.shared.frontmostApplication
+    if let frontBefore, frontBefore.processIdentifier != session.pid {
+        session.state = stickyStep(session.state, .switchApp)
+    }
+    var secureNow = IsSecureEventInputEnabled()
+    if !secureNow, let el = session.element {
+        var subrole: CFTypeRef?
+        if AXUIElementCopyAttributeValue(el, kAXSubroleAttribute as CFString, &subrole) == .success,
+            (subrole as? String) == "AXSecureTextField"
+        {
+            secureNow = true
+        }
+    }
+    session.state = stickyStep(session.state, .stop(true))
+    if secureNow {
+        if session.state.phase == .delivering {
+            session.state = stickyStep(session.state, .pasteFail)
+        }
+        stickyFallback(session, text: text, reason: "secure")
+        return
+    }
+    guard stickyMayPaste(session.state) else {
+        stickyFallback(session, text: text, reason: "not-pasteable")
+        return
+    }
+    if session.state.kind == .tmux, let pane = session.paneID {
+        guard stickyPasteToPane(pane, text) else {
+            session.state = stickyStep(session.state, .pasteFail)
+            stickyFallback(session, text: text, reason: "tmux-send-failed")
+            return
+        }
+        session.state = stickyStep(session.state, .pasteOk)
+        if stickyMayEnter(session.state) {
+            if !session.enter || stickyTmux(["send-keys", "-t", pane, "Enter"]) {
+                // The model has no paste-only end: enterOk without the key ends delivery the same way.
+                session.state = stickyStep(session.state, .enterOk)
+            } else {
+                // Already pasted, so the clipboard copy would only invite a second paste.
+                session.state = stickyStep(session.state, .enterFail)
+            }
+        }
+        log("sticky: tmux chars=\(chars) enter=\(session.enter)")
+        return
+    }
+    guard session.pid != -1,
+        let target = NSRunningApplication(processIdentifier: session.pid),
+        !target.isTerminated,
+        let element = session.element
+    else {
+        session.state = stickyStep(session.state, .pasteFail)
+        stickyFallback(session, text: text, reason: "target-gone")
+        return
+    }
+    _ = target.activate()
+    if let win = session.window {
+        AXUIElementPerformAction(win, kAXRaiseAction as CFString)
+    }
+    AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+    func backToUser() {
+        if let back = frontBefore, back.processIdentifier != session.pid, !back.isTerminated { _ = back.activate() }
+    }
+    func refuse(_ reason: String) {
+        session.state = stickyStep(session.state, .pasteFail)
+        stickyFallback(session, text: text, reason: reason)
+        backToUser()
+    }
+    // CGEvent goes to whatever is frontmost, so the target must be front, not only focused inside its own app.
+    guard await stickyFrontIs(session.pid), stickyFocusIs(session.pid, element) else {
+        refuse("focus-mismatch")
+        return
+    }
+    let pb = NSPasteboard.general
+    let previous = pb.pasteboardItems ?? []
+    var snapshot: [[NSPasteboard.PasteboardType: Data]] = []
+    var bytes = 0
+    var restorable = true
+    for item in previous {
+        var values: [NSPasteboard.PasteboardType: Data] = [:]
+        for type in item.types {
+            guard let data = item.data(forType: type) else { restorable = false; break }
+            bytes += data.count
+            if bytes > 8 * 1024 * 1024 { restorable = false; break }
+            values[type] = data
+        }
+        if !restorable { break }
+        snapshot.append(values)
+    }
+    if !restorable {
+        refuse("clipboard-snapshot")
+        return
+    }
+    pb.clearContents()
+    guard pb.setString(text, forType: .string) else {
+        refuse("clipboard-set")
+        return
+    }
+    let owned = pb.changeCount
+    func postKey(_ key: Int64, flags: CGEventFlags) -> Bool {
+        guard let source = CGEventSource(stateID: .hidSystemState),
+            let down = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(key), keyDown: true),
+            let up = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(key), keyDown: false)
+        else { return false }
+        down.flags = flags
+        up.flags = flags
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
+        return true
+    }
+    // Rechecked at each key: the user can switch apps or land in a secure field between the steps.
+    func stillTarget() -> Bool {
+        NSWorkspace.shared.frontmostApplication?.processIdentifier == session.pid && !IsSecureEventInputEnabled()
+            && stickyFocusIs(session.pid, element)
+    }
+    guard stillTarget(), postKey(0x09, flags: .maskCommand) else {
+        refuse("front-changed")
+        return
+    }
+    try? await Task.sleep(nanoseconds: 80_000_000)
+    var probe: CFTypeRef?
+    if AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &probe) == .invalidUIElement {
+        session.state = stickyStep(session.state, .pasteOk)
+        session.state = stickyStep(session.state, .enterFail)
+        log("sticky: field chars=\(chars) reason=element-gone")
+        backToUser()
+        return
+    }
+    session.state = stickyStep(session.state, .pasteOk)
+    if stickyMayEnter(session.state) {
+        if !session.enter {
+            // The model has no paste-only end: enterOk without the key ends delivery the same way.
+            session.state = stickyStep(session.state, .enterOk)
+        } else if stillTarget(), postKey(0x24, flags: []) {
+            session.state = stickyStep(session.state, .enterOk)
+        } else {
+            session.state = stickyStep(session.state, .enterFail)
+            log("sticky: field chars=\(chars) reason=enter-front-changed")
+        }
+    }
+    if session.state.phase == .delivered {
+        let items = snapshot.map { values -> NSPasteboardItem in
+            let item = NSPasteboardItem()
+            for (type, data) in values { item.setData(data, forType: type) }
+            return item
+        }
+        let capturedOwned = owned
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            if pb.changeCount == capturedOwned {
+                pb.clearContents()
+                if !items.isEmpty { pb.writeObjects(items) }
+            }
+        }
+    }
+    log("sticky: field chars=\(chars) enter=\(session.enter)")
+    if session.state.phase == .delivered, session.state.focus == .user, let back = frontBefore, !back.isTerminated {
+        if !back.activate() {
+            log("sticky: focus return failed")
+        }
+    }
+}
+
+func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplication?, action: WakeAction?, origin: WakeOrigin = WakeOrigin(rule: .strict, inputIdleSeconds: nil), sessionID: UUID = UUID(), transcriptPolicy: AutomaticTranscriptPolicy = .disabled, stillCurrent: () -> Bool = { true }, sticky: StickySession? = nil) async -> HandoffOutcome {
     if DictationHistory.shared.select(sessionID) != nil { return .delivered }
     guard let ownership = await acquireModeOwnership() else {
         log("superwhisper handoff: not dispatched, mode lock not acquired within 45 s \(sidField(sessionID))"); return .notDispatched
@@ -460,15 +871,33 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     let submitted = Date()
     // Nobody asked for an automatic recording, so it may only enter a mode verified not to paste.
     let controlled = origin.isAutomatic
+    let stickySession = sticky
     let wantedMode = controlled ? cfg.superwhisperMode : action == nil ? nil : action?.superwhisperMode ?? cfg.superwhisperMode
-    if controlled {
+    let enteredMode = stickySession != nil ? cfg.superwhisperMode : wantedMode
+    if stickySession != nil {
+        guard superwhisperAutoPasteDisabled(enteredMode, modeJsons: readSuperwhisperModeJsons()) else {
+            log("superwhisper handoff: not dispatched, sticky mode \(enteredMode ?? "-") missing or has auto-paste on \(sidField(sessionID))"); return .notDispatched
+        }
+    } else if controlled {
         guard superwhisperAutoPasteDisabled(wantedMode, modeJsons: readSuperwhisperModeJsons()) else {
             log("superwhisper handoff: not dispatched, mode \(wantedMode ?? "-") missing or has auto-paste on \(sidField(sessionID))"); return .notDispatched
         }
     }
-    if !controlled, action == nil, let mode = cfg.pasteMode { await selectPasteMode(mode) }
-    let (modeRequested, previousMode) = await enterSuperwhisperMode(wantedMode, target: target)
-    if controlled {
+    if stickySession == nil, !controlled, action == nil, let mode = cfg.pasteMode { await selectPasteMode(mode) }
+    let entered: (requested: Bool, previous: String?)
+    if stickySession == nil {
+        entered = await enterSuperwhisperMode(wantedMode, target: target)
+    } else {
+        entered = await enterSuperwhisperMode(enteredMode, target: target)
+    }
+    let (modeRequested, previousMode) = entered
+    if stickySession != nil {
+        guard modeRequested, superwhisperAutoPasteDisabled(enteredMode, modeJsons: readSuperwhisperModeJsons()) else {
+            log("superwhisper handoff: not dispatched, sticky mode \(enteredMode ?? "-") not entered (requested=\(modeRequested)) or has auto-paste on \(sidField(sessionID))")
+            _ = await recoverSuperwhisperMode(target: target)
+            return .notDispatched
+        }
+    } else if controlled {
         guard modeRequested, superwhisperAutoPasteDisabled(wantedMode, modeJsons: readSuperwhisperModeJsons()) else {
             log("superwhisper handoff: not dispatched, mode \(wantedMode ?? "-") not entered (requested=\(modeRequested)) or has auto-paste on \(sidField(sessionID))")
             _ = await recoverSuperwhisperMode(target: target)
@@ -495,16 +924,18 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
         p.arguments = ["-g", "-a", "superwhisper", wav.path]
         // Exit 0 means LaunchServices accepted the file, not that superwhisper ran; the run lines from awaitResult say that.
         p.terminationHandler = { log("superwhisper handoff: open exited status=\($0.terminationStatus) \(sidField(sessionID))") }
-        log("superwhisper handoff: open audio=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), Double(trimmedForHandoff.count) / rate))s mode=\(wantedMode ?? "active") \(sidField(sessionID))")
+        log("superwhisper handoff: open audio=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), Double(trimmedForHandoff.count) / rate))s mode=\(enteredMode ?? "active") \(sidField(sessionID))")
         try p.run()
         launched = true
         // Opening a file brings superwhisper to the front despite -g, and it skips auto-paste when it is
         // still frontmost at the end, so hand focus back to where the user was dictating.
-        for _ in 0 ..< 20 {
-            try? await Task.sleep(nanoseconds: 100_000_000)
-            await restoreFocusIfSuperwhisper(target)
+        if stickySession == nil {
+            for _ in 0 ..< 20 {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                await restoreFocusIfSuperwhisper(target)
+            }
         }
-        let waitForLLM = previousMode != nil && superwhisperModeUsesLLM(wantedMode, modeJsons: readSuperwhisperModeJsons())
+        let waitForLLM = previousMode != nil && superwhisperModeUsesLLM(enteredMode, modeJsons: readSuperwhisperModeJsons())
         result = await awaitResult(in: recordings, since: Int(submitted.timeIntervalSince1970) - 2, excluding: previousRuns, waitForLLM: waitForLLM,
                                    onRun: { log("superwhisper run: \($0) after \(Int(Date().timeIntervalSince(submitted) * 1000)) ms \(sidField(sessionID))") })
     } catch {
@@ -514,7 +945,7 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     // recovery state stays, and the next handoff or launch restores it once nothing is in flight.
     if previousMode != nil {
         if result != nil || !launched { _ = await recoverSuperwhisperMode(target: target) }
-        else { log("superwhisper mode: kept \(wantedMode ?? "") until the run finishes \(sidField(sessionID))") }
+        else { log("superwhisper mode: kept \(enteredMode ?? "") until the run finishes \(sidField(sessionID))") }
     }
     guard launched else { return .notDispatched }
     guard let result else {
@@ -526,6 +957,10 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     log("dictation: \(result.count) chars in \(Int(Date().timeIntervalSince(submitted) * 1000)) ms audio=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), Double(samples.count) / rate))s \(sidField(sessionID))")
     guard stillCurrent() else { return .delivered }
     guard DictationHistory.shared.add(id: sessionID, text: result, origin: origin, expectedGeneration: historyGeneration, policy: transcriptPolicy) else { return .delivered }
+    if let stickySession {
+        await deliverSticky(stickySession, text: result)
+        return .delivered
+    }
     if controlled { return .delivered }
     if let action {
         switch action.delivery {
@@ -1076,8 +1511,9 @@ final class Listener {
         var stopCheckedSamples = 0
         /// The newest stop check ended on a stop word too recent to stop on; the HUD shows the stop already.
         var stopHeard = false
+        var sticky: StickySession? = nil
         init(samples: [Float], generation: Int, transcriptPolicy: AutomaticTranscriptPolicy, silentFrames: Int, heardSpeech: Bool, action: WakeAction? = nil,
-             origin: WakeOrigin = WakeOrigin(rule: .strict, inputIdleSeconds: MacInputActivity.idleSeconds())) {
+             origin: WakeOrigin = WakeOrigin(rule: .strict, inputIdleSeconds: MacInputActivity.idleSeconds()), sticky: StickySession? = nil) {
             self.samples = samples
             self.captureGeneration = generation
             self.silentFrames = silentFrames
@@ -1085,6 +1521,7 @@ final class Listener {
             self.action = action
             self.origin = origin
             self.transcriptPolicy = transcriptPolicy
+            self.sticky = sticky
             confirmed = !origin.isAutomatic
         }
     }
@@ -1171,7 +1608,7 @@ final class Listener {
                     // later cut lagged the HUD by the 0.5 s wait, and a stop that ended another way after .stopping played none.
                     if phase == .stopping || (phase == .ended && shown != .stopping) { playStopSound() }
                     shown = phase
-                    phaseCont.yield((phase, dictation?.action?.icon))
+                    phaseCont.yield((phase, dictation?.action?.icon ?? dictation?.sticky?.appPath))
                 }
             }
             if f.isEmpty { seg = Segmenter(cfg: config.cfg); silero = SileroStream(); dictation = nil; followupUntil = 0; recent = []; speechFrames = 0; Hotkeys.end(); continue }
@@ -1401,11 +1838,13 @@ final class Listener {
                 if config.cfg.dictation?.noWakeWord?.enabled != true { log("early: \(tr.text)\(earlyAction.map { " action=\($0.name)" } ?? "")  [buf \(buf.count * 1000 / Int(rate)) ms, stt \(stt) ms]") }
                 seg.reset()
                 if let start {
-                    dictation = Dictation(samples: trimmed(buf, cutAt: start.cutAt), generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: true, action: earlyAction)
+                    let stickyCapture: StickySession? = early.sticky ? await MainActor.run { captureStickyTarget(config.cfg.macOS) } : nil
+                    dictation = Dictation(samples: trimmed(buf, cutAt: start.cutAt), generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: true, action: earlyAction, sticky: stickyCapture)
                     log("dictation started early (cut at \(Int(start.cutAt * 1000)) ms)\(earlyAction.map { " action=\($0.name)" } ?? "")")
                     Hotkeys.begin()
                 } else if config.cfg.dictation != nil || earlyAction != nil {
-                    dictation = Dictation(samples: [], generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: false, action: earlyAction)
+                    let stickyCapture: StickySession? = early.sticky ? await MainActor.run { captureStickyTarget(config.cfg.macOS) } : nil
+                    dictation = Dictation(samples: [], generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: false, action: earlyAction, sticky: stickyCapture)
                     if earlyAction != nil, UserDefaults.standard.bool(forKey: soundKey) {
                         actionWakeChime?.play()
                         dictation?.deafFrames = frames(ms: 600)
@@ -1516,10 +1955,12 @@ final class Listener {
                 log("dictation skipped: \(id) is excluded"); continue
             }
             if let start {
-                dictation = Dictation(samples: trimmed(u, cutAt: start.cutAt), generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: true)
+                let stickyCapture: StickySession? = verdict?.sticky == true ? await MainActor.run { captureStickyTarget(config.cfg.macOS) } : nil
+                dictation = Dictation(samples: trimmed(u, cutAt: start.cutAt), generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: true, sticky: stickyCapture)
                 log("dictation started (cut at \(Int(start.cutAt * 1000)) ms)")
             } else {
-                dictation = Dictation(samples: [], generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: false)
+                let stickyCapture: StickySession? = verdict?.sticky == true ? await MainActor.run { captureStickyTarget(config.cfg.macOS) } : nil
+                dictation = Dictation(samples: [], generation: generation, transcriptPolicy: AutomaticTranscriptPolicy(config.cfg.dictation?.noWakeWord), silentFrames: 0, heardSpeech: false, sticky: stickyCapture)
                 // Only here: in a one-breath dictation the user is already talking and the sound would be recorded.
                 if UserDefaults.standard.bool(forKey: soundKey) {
                     NSSound(named: "Tink")?.play()
@@ -1599,7 +2040,11 @@ final class Listener {
             let text = transcript.runs.map(\.text).joined()
             let retained = DictationHistory.shared.add(id: d.sessionID, text: text, origin: d.origin, expectedGeneration: historyGeneration, policy: d.transcriptPolicy)
             if retained && !d.origin.isAutomatic && d.action == nil {
-                _ = await MainActor.run { pasteDictation(text, target: d.target) }
+                if let sticky = d.sticky {
+                    await deliverSticky(sticky, text: text)
+                } else {
+                    _ = await MainActor.run { pasteDictation(text, target: d.target) }
+                }
             }
         } catch { log("local history transcription failed") }
     }
@@ -1675,16 +2120,17 @@ final class Listener {
             d.samples = SpeakerGate.withoutOtherSpeakers(d.samples, cfg: config.cfg)
             reportDelivery(.processing)
             let outcome = await handoff(d.samples, cfg: cfg, target: d.target,
-                                        action: d.action, origin: d.origin, sessionID: d.sessionID, transcriptPolicy: d.transcriptPolicy)
+                                        action: d.action, origin: d.origin, sessionID: d.sessionID, transcriptPolicy: d.transcriptPolicy, sticky: d.sticky)
             if outcome == .notDispatched { await storeLocal(d) }
-            reportDelivery(outcome == .noResult ? .failed : .done)
+            let fellBack = d.sticky?.state.phase == .fellBack
+            reportDelivery(outcome == .noResult || fellBack ? .failed : .done)
         }
     }
 
 }
 
-/// First bundle ID in the list whose process currently has audio input running, via CoreAudio's
-/// per-process objects. superwhisper keeps input closed while idle and opens it only while recording.
+/// First bundle ID in the list whose process is reading an input device, via CoreAudio's per-process objects.
+/// superwhisper keeps input closed while idle and opens it only while recording.
 func micInUse(by bundleIDs: [String], failClosed: Bool = false) -> String? {
     guard !bundleIDs.isEmpty else { return nil }
     func address(_ sel: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
@@ -1713,7 +2159,17 @@ func micInUse(by bundleIDs: [String], failClosed: Bool = false) -> String? {
             if failClosed { return "microphone process unavailable" }
             continue
         }
-        if bundleIDs.contains(id) { return id }
+        guard bundleIDs.contains(id) else { continue }
+        // superwhisper 3.4's Muffle keeps its own audio tap running after a recording ends, so IsRunningInput stays 1
+        // with no input device until the app quits (2026-11-21). Only a process with an input device holds the mic.
+        var devicesAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioProcessPropertyDevices, mScope: kAudioObjectPropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
+        var devicesSize: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(proc, &devicesAddr, 0, nil, &devicesSize) == noErr else {
+            if failClosed { return "microphone status unavailable" }
+            continue
+        }
+        if devicesSize > 0 { return id }
     }
     return nil
 }
@@ -2001,7 +2457,8 @@ final class HUD {
         deliver(.saved)
     }
 
-    /// icon: the waking action's `icon`, drawn in place of the mic while .waiting; nil keeps the mic.
+    /// icon: the waking action's `icon`, or a sticky dictation's target app, drawn in place of the mic while .waiting;
+    /// nil keeps the mic.
     func show(_ phase: Listener.Phase, icon: String? = nil) {
         self.phase = phase
         // Cleared on every other phase, so an icon left from the last action never shows on a later dictation.
@@ -2098,6 +2555,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let toggle = NSMenuItem(title: "一時停止", action: #selector(togglePause), keyEquivalent: "p")
     let login = NSMenuItem(title: "ログイン時に起動", action: #selector(toggleLogin), keyEquivalent: "")
     let sound = NSMenuItem(title: "効果音", action: #selector(toggleSound), keyEquivalent: "")
+    let sticky = NSMenuItem(title: "スティッキー貼り付け", action: #selector(toggleSticky), keyEquivalent: "")
     let micMenu = NSMenu()
     let hud = HUD()
     private var listeningPolicy = ListeningPolicy()
@@ -2119,6 +2577,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(NSMenuItem(title: "設定ファイルを開く", action: #selector(openConfig), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "ログを開く", action: #selector(openLog), keyEquivalent: "l"))
         menu.addItem(sound)
+        menu.addItem(sticky)
         menu.addItem(login)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
@@ -2222,6 +2681,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         toggle.isEnabled = captureReady
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         sound.state = UserDefaults.standard.bool(forKey: soundKey) ? .on : .off
+        let override = stickyTargetOverride()
+        let configFlag = listener?.config.cfg.macOS?.stickyTarget
+        sticky.state = stickyEnabled(configFlag: configFlag, override: override) ? .on : .off
+    }
+
+    @objc func toggleSticky() {
+        let override = stickyTargetOverride()
+        let configFlag = listener?.config.cfg.macOS?.stickyTarget
+        let current = stickyEnabled(configFlag: configFlag, override: override)
+        UserDefaults.standard.set(!current, forKey: stickyTargetKey)
+        refresh()
     }
 
     @objc func showHistory() { HistoryPanel.shared.show() }
