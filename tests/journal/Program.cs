@@ -1115,9 +1115,11 @@ static void SwiftHarness(string repo, string scratch)
         RedirectStandardOutput = true,
         RedirectStandardError = true,
     };
+    compile.ArgumentList.Add("-module-name");
+    compile.ArgumentList.Add("voice_switch");
     compile.ArgumentList.Add("-module-cache-path");
     compile.ArgumentList.Add(Path.Combine(work, "module-cache"));
-    foreach (var file in new[] { "SecretLog.swift", "Config.swift", "Platform.swift", "DictationJournal.swift", "WakeSafety.swift" })
+    foreach (var file in new[] { "SecretLog.swift", "Config.swift", "Platform.swift", "DictationJournal.swift", "WakeSafety.swift", "Transcript.swift" })
         compile.ArgumentList.Add(Path.Combine(repo, "Sources/voice-switch", file));
     compile.ArgumentList.Add(Path.Combine(repo, "tests/journal/main.swift"));
     compile.ArgumentList.Add("-o");
