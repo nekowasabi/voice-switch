@@ -12,6 +12,8 @@ let dayB = dayA.addingTimeInterval(2 * 86400)
 // R: record on day A. S: record on day B. F: a crash leaves a cut line at the end of the last written file.
 // B: the configured location breaks (its parent becomes a file). U: it is repaired. D: deleteEntry(oldest live id).
 let alphabet: [Character] = ["R", "S", "F", "B", "U", "D"]
+// Each record takes the next delivery in turn, so every value and null reach disk in every order (J3 reads it back).
+let deliveries: [JournalDelivery?] = [.paste, .sticky, .pane, .action, .history, nil]
 
 struct Failure: Error { let id: String; let message: String }
 
@@ -38,7 +40,7 @@ func runOne(_ seq: [Character], single: Bool, base: String) throws {
     let configured = single ? cfgRoot + "/j.jsonl" : cfgRoot + "/journal"
     var logs: [String] = []
     let journal = DictationJournal.open(configured, fallback: fallback) { logs.append($0) }
-    var alive: [(UUID, String)] = []
+    var alive: [(id: UUID, text: String, delivery: String?)] = []
     var fragments: Set<String> = []
     var lastFile: String? = nil
     var broken = false
@@ -61,8 +63,9 @@ func runOne(_ seq: [Character], single: Bool, base: String) throws {
             let id = UUID()
             let text = "発話\(n) \"q\"\n改行"
             let at = (op == "R" ? dayA : dayB).addingTimeInterval(Double(n))
-            journal.record(id: id, at: at, text: text, origin: origin, endReason: "Silence", recordingSeconds: 1, manual: false)
-            alive.append((id, text))
+            let delivery = deliveries[n % deliveries.count]
+            journal.record(id: id, at: at, text: text, origin: origin, endReason: "Silence", recordingSeconds: 1, manual: false, delivery: delivery)
+            alive.append((id, text, delivery?.rawValue))
             let token = "\"id\":\"\(id.uuidString.lowercased())\""
             lastFile = scan(dirs()).first { String(data: $0.value, encoding: .utf8)?.contains(token) == true }?.key
             if let lf = lastFile, lf.hasPrefix(fallback), !logs.contains(where: { $0.contains("using default") }) {
@@ -84,7 +87,7 @@ func runOne(_ seq: [Character], single: Bool, base: String) throws {
         case "U":
             if broken { try fm.removeItem(atPath: cfgRoot); try fm.moveItem(atPath: away, toPath: cfgRoot); broken = false }
         case "D":
-            if let (id, _) = alive.first, journal.deleteEntry(id) { alive.removeFirst() }
+            if let first = alive.first, journal.deleteEntry(first.id) { alive.removeFirst() }
         default: break
         }
         let after = scan(dirs())
@@ -95,7 +98,7 @@ func runOne(_ seq: [Character], single: Bool, base: String) throws {
                 if !new.starts(with: old) { throw fail("J2", step, "\(path.dropFirst(base.count)) lost or changed earlier bytes") }
             }
         }
-        // J1 + J3: every live record is on disk exactly once with its text; every other piece is an injected fragment.
+        // J1 + J3: every live record is on disk exactly once with its text and delivery; every other piece is an injected fragment.
         var counts: [String: Int] = [:]
         for (path, data) in after {
             guard let text = String(data: data, encoding: .utf8) else { throw fail("J3", step, "\(path) is not UTF-8") }
@@ -108,14 +111,17 @@ func runOne(_ seq: [Character], single: Bool, base: String) throws {
                     throw fail("J3", step, "\(path.dropFirst(base.count)) line \(i + 1) is neither a whole record nor a cut fragment: \(piece.prefix(60))")
                 }
                 counts[id, default: 0] += 1
-                if let want = alive.first(where: { $0.0.uuidString.lowercased() == id })?.1, obj["text"] as? String != want {
-                    throw fail("J3", step, "record \(id.prefix(8)) text changed")
+                if let want = alive.first(where: { $0.id.uuidString.lowercased() == id }) {
+                    if obj["text"] as? String != want.text { throw fail("J3", step, "record \(id.prefix(8)) text changed") }
+                    let stored = obj["delivery"]
+                    let same = want.delivery.map { stored as? String == $0 } ?? (stored is NSNull)
+                    if !same { throw fail("J3", step, "record \(id.prefix(8)) delivery is \(stored.map { "\($0)" } ?? "absent") (want \(want.delivery ?? "null"))") }
                 }
             }
         }
-        for (id, _) in alive {
-            let c = counts[id.uuidString.lowercased()] ?? 0
-            if c != 1 { throw fail("J1", step, "record \(id.uuidString.prefix(8)) is on disk \(c) times (want 1)") }
+        for record in alive {
+            let c = counts[record.id.uuidString.lowercased()] ?? 0
+            if c != 1 { throw fail("J1", step, "record \(record.id.uuidString.prefix(8)) is on disk \(c) times (want 1)") }
         }
     }
 }
