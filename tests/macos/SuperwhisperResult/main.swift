@@ -45,6 +45,19 @@ Task {
           "a run whose language model is still to write is awaited even when voice-switch did not switch modes")
     check(await run("silent", waitForLLM: true, steps: [(0, placeholder), (500, heardNothing)]) == "",
           "a filled duration with an empty result is a run that heard no words")
+    let newest = "\(root)/newest"
+    try! FileManager.default.createDirectory(atPath: "\(newest)/100", withIntermediateDirectories: true)
+    try! #"{"result":"古い。","processingTime":900,"duration":3000,"llmResult":"古い。","languageModelProcessingTime":1200}"#
+        .write(toFile: "\(newest)/100/meta.json", atomically: true, encoding: .utf8)
+    try! FileManager.default.createDirectory(atPath: "\(newest)/101", withIntermediateDirectories: true)
+    try! transcribedPending.write(toFile: "\(newest)/101/meta.json", atomically: true, encoding: .utf8)
+    let polisher = Task {
+        try? await Task.sleep(nanoseconds: 700_000_000)
+        try! polished.write(toFile: "\(newest)/101/meta.json", atomically: true, encoding: .utf8)
+    }
+    let newestText = await awaitResult(in: newest, since: 100, waitForLLM: false)
+    polisher.cancel()
+    check(newestText == "なるほど。", "while the newest run waits for its language model, an older finished run is not taken")
     let now = Int(Date().timeIntervalSince1970)
     let pending = "\(root)/pending"
     let late = "\(pending)/\(now - 40)"
