@@ -105,6 +105,23 @@ let gone = !FileManager.default.fileExists(atPath: dayDir + "/" + day + ".jsonl"
 if removed == 1 && gone && dayJournal.deleteDay("1999-01-01") == 0 { pass("delete-day") }
 else { fail("delete-day", "removed \(removed) gone \(gone)") }
 
+// The handoff notes the intended destination before DictationHistory.add; add must carry it into the row once.
+let deliveryDir = scratch + "/delivery"
+let deliveryHistory = DictationHistory()
+deliveryHistory.journal = DictationJournal.open(deliveryDir, fallback: scratch + "/delivery-fb") { _ in }
+let deliveryWant: [(JournalDelivery?, Any)] = [(.paste, "paste"), (.sticky, "sticky"), (.pane, "pane"), (.action, "action"), (.history, "history"), (nil, NSNull())]
+for (noted, _) in deliveryWant {
+    let id = UUID()
+    if let noted { DictationJournal.note(id, delivery: noted) }
+    DictationJournal.note(id, endReason: "Silence")
+    _ = deliveryHistory.add(id: id, text: "d", origin: origin)
+}
+let deliveryRows = ((try? String(contentsOfFile: deliveryDir + "/" + day + ".jsonl", encoding: .utf8)) ?? "")
+    .split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+let deliveryGot = deliveryRows.map { "\($0["delivery"] ?? "missing")" }
+let deliveryExpected = deliveryWant.map { "\($0.1)" }
+if deliveryGot == deliveryExpected { pass("delivery-note") } else { fail("delivery-note", "\(deliveryGot) want \(deliveryExpected)") }
+
 let custom = scratch + "/reload-custom"
 let other = scratch + "/reload-other"
 let configPath = scratch + "/config.json"

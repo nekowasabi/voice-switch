@@ -296,7 +296,7 @@ Run("fields", () =>
     Expect(raw.Count(b => b == (byte)'\n') == 1, "quote or newline broke the physical line");
     var doc = Line(file);
     var names = doc.EnumerateObject().Select(property => property.Name).ToArray();
-    Expect(names.SequenceEqual(new[] { "id", "timestamp", "text", "origin", "endReason", "recordingSeconds", "schemaVersion", "focusApp", "taskchute" }), "keys " + string.Join(",", names));
+    Expect(names.SequenceEqual(new[] { "id", "timestamp", "text", "origin", "delivery", "endReason", "recordingSeconds", "schemaVersion", "focusApp", "taskchute" }), "keys " + string.Join(",", names));
     Expect(doc.GetProperty("id").GetString() == id.ToString("D"), "id");
     var timestamp = doc.GetProperty("timestamp").GetString() ?? "";
     Expect(Regex.IsMatch(timestamp, @"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$"), "timestamp " + timestamp);
@@ -306,6 +306,7 @@ Run("fields", () =>
     Expect(doc.GetProperty("schemaVersion").ValueKind == JsonValueKind.Number && doc.GetProperty("schemaVersion").GetInt32() == 1, "schemaVersion");
     Expect(doc.GetProperty("focusApp").ValueKind == JsonValueKind.Null, "focusApp not null without a focus");
     Expect(doc.GetProperty("taskchute").ValueKind == JsonValueKind.Null, "taskchute not null without a task file");
+    Expect(doc.GetProperty("delivery").ValueKind == JsonValueKind.Null, "delivery not null without a note");
     var bare = CaseDir("fields-null");
     Add(History(JournalAt(bare)), "bare");
     var nulls = Line(Directory.GetFiles(bare, "*.jsonl").Single());
@@ -822,6 +823,33 @@ Run("focus-app-at-start", () =>
     }
 });
 
+Run("delivery-noted", () =>
+{
+    // The handoff notes the intended destination before DictationHistory.Add; the row carries it, Mac's spelling.
+    var dir = CaseDir("delivery-noted");
+    var history = History(JournalAt(dir));
+    var want = new (JournalDelivery? Noted, string? Row)[]
+    {
+        (JournalDelivery.Paste, "paste"), (JournalDelivery.Sticky, "sticky"), (JournalDelivery.Pane, "pane"),
+        (JournalDelivery.Action, "action"), (JournalDelivery.History, "history"), (null, null),
+    };
+    foreach (var (noted, _) in want)
+    {
+        var id = Guid.NewGuid();
+        if (noted is { } d) JournalNotes.Note(id, delivery: d);
+        JournalNotes.Note(id, endReason: "Silence");
+        Expect(history.Add(id, "d", new WakeOrigin(WakeRule.Strict, null)), "add failed");
+    }
+    var rows = ReadText(Directory.GetFiles(dir, "*.jsonl").Single()).Split('\n', StringSplitOptions.RemoveEmptyEntries)
+        .Select(line => JsonDocument.Parse(line).RootElement.GetProperty("delivery")).ToArray();
+    Expect(rows.Length == want.Length, "rows " + rows.Length);
+    for (var i = 0; i < want.Length && i < rows.Length; i++)
+    {
+        var got = rows[i].ValueKind == JsonValueKind.Null ? null : rows[i].GetString();
+        Expect(got == want[i].Row, "delivery " + (got ?? "null") + " want " + (want[i].Row ?? "null"));
+    }
+});
+
 Run("focus-wired-at-start", () =>
 {
     var mac = Source("Sources/voice-switch/MacApp.swift");
@@ -1142,7 +1170,8 @@ static void SwiftHarness(string repo, string scratch)
     Console.Write(stdout);
     if (stderr.Length > 0) Console.Error.Write(stderr);
     if (ran.ExitCode != 0) throw new InvalidOperationException("swift harness exit " + ran.ExitCode);
-    foreach (var id in new[] { "expand-tilde", "expand-localappdata", "append-only", "invalid-fallback", "unwritable-fallback", "perms-unix", "delete-day", "delete-entry", "reload-keeps-config" })
+    // expand-localappdata is checked by the C# side above; tests/journal/main.swift prints no line for it.
+    foreach (var id in new[] { "expand-tilde", "append-only", "delivery-note", "invalid-fallback", "unwritable-fallback", "perms-unix", "delete-day", "delete-entry", "reload-keeps-config" })
     {
         if (!stdout.Contains("PASS " + id, StringComparison.Ordinal))
             throw new InvalidOperationException("swift harness missing PASS " + id);
