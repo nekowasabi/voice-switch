@@ -42,8 +42,9 @@
     "enabled": true,
     "routes": {
       "look_up":         {"url": "grokbot://prompt?text={text}"},
-      "self_task":       {"command": "rtm add"},
-      "computer_change": {"command": "claude-queue add", "auto": false}
+      "self_task":       {"command": "scripts/changelogmemo-add task"},
+      "write_text":      {"command": "scripts/changelogmemo-add draft"},
+      "computer_change": {"command": "<エージェントへ依頼するコマンド>", "auto": false}
     }
   }
 }
@@ -72,7 +73,7 @@
 
 ### CLI の役目
 
-`scripts/journal_triage.py` は、改善ループの道具として残す。担当は、まとめての見直し（`review`）、精度の計測（`eval`）、しきい値の調整（`tune`）、問いの比較（`eval --candidate`）。実行はしない。保守する人向けで、利用者は使わなくてよい。
+`scripts/journal_triage.py` は、AI エージェントが呼ぶための入口にする（2026-11-21 決定）。担当は、まとめての見直し（`review`）、精度の計測（`eval`）、しきい値の調整（`tune`）、問いの比較（`eval --candidate`）。出力は機械が読める JSON を既定にし、人向けの表示は `--format text` で出す。実行はしない。利用者は使わなくてよい。
 
 ## 守る規則（検証項目の候補）
 
@@ -93,11 +94,15 @@ E1〜E3 は順番の問題なので、TLA+ でモデルを作り、壊し版で�
 4. 自動の印を有効にする。
 5. Windows に移す。共通見本で Swift と同じ結果を確かめる。
 
-## 決めること
+## 決めたこと（2026-11-21）
 
-1. この形（提案画面が主、自動は実行先ごとの印、CLI は改善専用）でよいか。
-2. 種類ごとの実行先。look_up、self_task、write_text、computer_change のそれぞれを、何で実行するか（例: Grok Bot、タスク管理、エージェントへの依頼）。
-3. Mac を先に作り、Windows はあとで移すか。
+1. 形は、提案画面が主、自動は実行先ごとの印。CLI は AI エージェントが呼ぶ入口にする。
+2. 自分の作業（self_task）と下書き（write_text）の実行先は changelogmemo（`CHANGELOG_FILE`、無ければ `~/repos/changelog/changelogmemo`）。changelog スキルと同じ書式で、先頭に 1 項目を足す。調べもの（look_up）と PC への変更（computer_change）の実行先は未定。
+3. Mac を先に作る。Windows はあとで移す。
+
+## 未決
+
+- changelogmemo は先頭に足すファイルで、changelog スキルも同じファイルに書く。書き手が 2 つになるので、書き込みが重なったときに片方の項目が消えないようにする（ロックか、書く直前に読み直して足す）。
 
 ## 範囲外
 
