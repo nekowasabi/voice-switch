@@ -228,6 +228,30 @@ class Reading(unittest.TestCase):
                 stdout, _, _ = run([DAY])
             self.assertEqual(len(items(stdout)), 1)
 
+    def test_subfolders_are_merged_in_time_order_with_labels(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, stamp in (("wsl", "2026-11-21T11:00:00+09:00"), ("private", "2026-11-21T10:00:00+09:00")):
+                (Path(tmp) / name).mkdir()
+                (Path(tmp) / name / f"{DAY}.jsonl").write_text(row(TEXTS[0], "ウェイク", "history", stamp) + "\n", encoding="utf-8")
+            stdout, _, _ = run([DAY, tmp])
+            listed = items(stdout)
+            self.assertEqual(len(listed), 2)
+            self.assertIn("10:00:00** · private · ", listed[0])
+            self.assertIn("11:00:00** · wsl · ", listed[1])
+
+    def test_default_is_the_parent_of_the_configured_journal_dir(self):
+        with tempfile.TemporaryDirectory() as home:
+            root = Path(home) / "storage/voice-switch"
+            for name in ("private", "wsl"):
+                (root / name).mkdir(parents=True)
+                (root / name / f"{DAY}.jsonl").write_text(row(TEXTS[0], "ウェイク", "history") + "\n", encoding="utf-8")
+            config = Path(home) / ".config/voice-switch/config.json"
+            config.parent.mkdir(parents=True)
+            config.write_text(json.dumps({"dictation": {"journalDir": "~/storage/voice-switch/private"}}), encoding="utf-8")
+            with mock.patch.dict(os.environ, {"HOME": home, "USERPROFILE": home}):
+                stdout, _, _ = run([DAY])
+            self.assertEqual(len(items(stdout)), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

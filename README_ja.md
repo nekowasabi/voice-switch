@@ -36,7 +36,7 @@
 
 JSONL の各行には `id`、`timestamp`、`text`、`origin`、`endReason`、`recordingSeconds`、`schemaVersion`（1）、`focusApp`、`taskchute`、`delivery` が入る。`delivery` は追記時の予定先で、アプリへの貼り付けは `paste`、スティッキーで固定した入力欄は `sticky`、固定した tmux ペインは `pane`、ウェイクアクションは `action`、履歴に留める場合は `history`。追記後にペイン振り分けを行うなど、追記時に予定先が決まっていなければ `null` になる。旧行では `delivery` がないことがある。
 
-`python3 scripts/journal_triage.py YYYY-MM-DD [journalDir]` で、配送先が `history` の発話と配送先が未定の発話を一覧表示できる。パスを省略すると既定のジャーナルを読み、時刻・アプリ名・タスク名を表示する。`タスク:`、`調査:`、`下書き:`、`エージェント:` などの目印で発話を分類する。一致する分類がゼロか複数なら `none` と表示する。
+`python3 scripts/journal_triage.py YYYY-MM-DD [journalDir]` で、配送先が `history` の発話と配送先が未定の発話を一覧表示できる。パスを省略すると、`~/.config/voice-switch/config.json` の `dictation.journalDir` の親フォルダを読む。そこに端末ごとのフォルダ（例: `private`、`wsl`）があれば、まとめて一覧にする。設定が無ければ既定のジャーナルを読む。フォルダを渡したときも同じで、その日のファイルを直下と 1 段下のフォルダから読み、時刻順に並べてフォルダ名を付ける。各行には時刻・アプリ名・タスク名を表示する。`タスク:`、`調査:`、`下書き:`、`エージェント:` などの目印で発話を分類する。一致する分類がゼロか複数なら `none` と表示する。
 
 `--jev` を指定すると、ローカルの目印で分類が一つに決まらない手動・ウェイクワードの発話を Jev に送る。`TYPESAFE_API_KEY` または `JEV_API_KEY` が必要。送信するのは発話の本文だけで、自動録音や開始方法が不明な発話は端末内で処理する。`--min-confidence` の既定値は `0.9`。信頼度が下限未満の場合、Jev が `none` を返した場合、通信に失敗した場合は `none` と表示する。ジャーナルは読み取り専用。
 

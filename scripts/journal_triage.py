@@ -38,6 +38,7 @@ class Utterance:
     origin: str | None
     focus_app: str | None
     task_name: str | None
+    source: str | None = None
 
 
 def default_journal_dir():
@@ -48,12 +49,36 @@ def default_journal_dir():
     return local / "voice-switch" / "journal"
 
 
+def configured_root():
+    """The parent of config.json's journalDir: each machine writes its own subfolder there (private, wsl, ...)."""
+    try:
+        config = json.loads((Path.home() / ".config" / "voice-switch" / "config.json").read_text(encoding="utf-8"))
+        configured = config["dictation"]["journalDir"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return default_journal_dir()
+    if not isinstance(configured, str) or not configured.strip():
+        return default_journal_dir()
+    path = Path(os.path.expandvars(configured.strip())).expanduser()
+    return path if path.suffix.lower() == ".jsonl" else path.parent
+
+
+def journal_sources(path):
+    """A .jsonl file, or a folder and each folder one level below it, labeled by that folder's name."""
+    if path.suffix.lower() == ".jsonl":
+        return [(None, path)]
+    try:
+        children = sorted(child for child in path.iterdir() if child.is_dir())
+    except FileNotFoundError:
+        children = []
+    return [(None, path)] + [(child.name, child) for child in children]
+
+
 def display_name(metadata):
     name = metadata.get("name") if isinstance(metadata, dict) else None
     return name if isinstance(name, str) else None
 
 
-def journal_rows(path, day):
+def journal_rows(path, day, label=None):
     single_file = path.suffix.lower() == ".jsonl"
     source = path if single_file else path / f"{day}.jsonl"
     try:
@@ -81,7 +106,7 @@ def journal_rows(path, day):
                 origin = row.get("origin")
                 yield Utterance(
                     timestamp, text, origin if isinstance(origin, str) else None,
-                    display_name(row.get("focusApp")), display_name(row.get("taskchute")),
+                    display_name(row.get("focusApp")), display_name(row.get("taskchute")), label,
                 )
 
 
@@ -135,8 +160,9 @@ def classify(entry, *, use_jev=False, min_confidence=0.9):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("day", type=date.fromisoformat, metavar="YYYY-MM-DD")
-    parser.add_argument("journal_dir", type=Path, nargs="?", default=default_journal_dir(),
-                        help="journal directory or a single .jsonl file")
+    parser.add_argument("journal_dir", type=Path, nargs="?", default=None,
+                        help="journal directory (its subfolders are read too) or a single .jsonl file; "
+                             "default: the parent of config.json's dictation.journalDir")
     parser.add_argument("--jev", action="store_true", help="send unclassified manual and wake-word text to Jev")
     parser.add_argument("--min-confidence", type=float, default=0.9,
                         help="minimum Jev confidence from 0 to 1 (default: %(default)s)")
@@ -147,13 +173,20 @@ def main(argv=None):
     print(f"## {args.day}")
     print()
     skipped = 0
+    root = (args.journal_dir or configured_root()).expanduser()
+    entries = []
     try:
-        for entry in journal_rows(args.journal_dir.expanduser(), args.day):
-            if entry is None:
-                skipped += 1
-                continue
+        for label, source in journal_sources(root):
+            for entry in journal_rows(source, args.day, label):
+                if entry is None:
+                    skipped += 1
+                else:
+                    entries.append(entry)
+        entries.sort(key=lambda entry: entry.timestamp)
+        for entry in entries:
             category = classify(entry, use_jev=args.jev, min_confidence=args.min_confidence)
-            print(f"- **{entry.timestamp:%H:%M:%S}** · `{category}` · "
+            where = f"{markdown(entry.source)} · " if entry.source else ""
+            print(f"- **{entry.timestamp:%H:%M:%S}** · {where}`{category}` · "
                   f"focusApp: {markdown(entry.focus_app)} · taskchute: {markdown(entry.task_name)} "
                   f"— {markdown(entry.text)}")
     except OSError as error:
