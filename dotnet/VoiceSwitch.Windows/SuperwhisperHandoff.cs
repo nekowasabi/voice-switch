@@ -158,7 +158,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
                 }
             }
 
-            if (text is null && waitForLlm) text = FindResult(recordingsDir, since, previousRuns);
+            if (text is null) text = FindResult(recordingsDir, since, previousRuns, acceptPending: true);
 
             if (text is not null)
             {
@@ -540,7 +540,7 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
     // Superwhisper writes one <unix-seconds>/meta.json per run; the newest run at or after `since` is ours.
     // waitForLlm: it writes `result` first and `llmResult` after its language model, and pastes per the mode active at that
     // second write, so a temporary mode must stay until then (restoring at the first write pasted automatic recordings).
-    internal static string? FindResult(string recordingsDir, long sinceUnixSeconds, IReadOnlySet<string>? previousRuns = null, bool waitForLlm = false)
+    internal static string? FindResult(string recordingsDir, long sinceUnixSeconds, IReadOnlySet<string>? previousRuns = null, bool waitForLlm = false, bool acceptPending = false)
     {
         foreach (var meta in ReadRuns(recordingsDir, sinceUnixSeconds, previousRuns))
         {
@@ -550,7 +550,12 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
                     && value.ValueKind == JsonValueKind.String
                     && value.GetString() is { Length: > 0 } text)
                 {
-                    if (key == "result" && waitForLlm && !meta.TryGetProperty("languageModelProcessingTime", out _)) return null;
+                    // Superwhisper pastes only at the language model's write; a transcribed run whose language
+                    // model is still to run is not a result yet, whichever mode the dictation ran in. (Waiting
+                    // used to need a temporary mode switch.) acceptPending is the timed-out caller's fallback
+                    // to the raw text, so it skips this wait.
+                    var pending = SuperwhisperRuns.Classify(meta) == SuperwhisperRun.Transcribed && SuperwhisperRuns.InFlight(meta);
+                    if (key == "result" && !acceptPending && (waitForLlm || pending) && !meta.TryGetProperty("languageModelProcessingTime", out _)) return null;
                     return text;
                 }
             }

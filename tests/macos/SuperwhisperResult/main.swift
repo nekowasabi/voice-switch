@@ -32,6 +32,7 @@ func run(_ name: String, waitForLLM: Bool, steps: [(ms: UInt64, json: String)]) 
 
 let placeholder = #"{"result":"","processingTime":0,"duration":0}"#
 let transcribed = #"{"result":"ああなるほど。","processingTime":1006,"duration":6261}"#
+let transcribedPending = #"{"result":"ああなるほど。","processingTime":1006,"duration":6261,"languageModelKey":"claude-sonnet-5-5"}"#
 let polished = #"{"result":"ああなるほど。","processingTime":1006,"duration":6261,"llmResult":"なるほど。","languageModelProcessingTime":1398}"#
 let heardNothing = #"{"result":"","processingTime":18,"duration":3000}"#
 
@@ -40,6 +41,8 @@ Task {
           "the placeholder write is not a finished run; the language model result is awaited")
     check(await run("plain", waitForLLM: false, steps: [(0, placeholder), (700, transcribed)]) == "ああなるほど。",
           "without a language model the transcribed result is final")
+    check(await run("llm-no-switch", waitForLLM: false, steps: [(0, placeholder), (700, transcribedPending), (1400, polished)]) == "なるほど。",
+          "a run whose language model is still to write is awaited even when voice-switch did not switch modes")
     check(await run("silent", waitForLLM: true, steps: [(0, placeholder), (500, heardNothing)]) == "",
           "a filled duration with an empty result is a run that heard no words")
     let now = Int(Date().timeIntervalSince1970)
