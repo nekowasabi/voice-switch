@@ -141,17 +141,19 @@ def ask_jev(key, text):
     return "none", None
 
 
-def classify(entry, *, use_jev=False, min_confidence=0.9):
-    matches = [category for category, marker in LOCAL_MARKERS.items() if re.search(marker, entry.text, re.IGNORECASE)]
-    if len(matches) == 1:
-        return matches[0]
-    if not use_jev or entry.origin not in ("手動", "ウェイク"):
-        return "none"
+def local_category(text):
+    matches = [category for category, marker in LOCAL_MARKERS.items() if re.search(marker, text, re.IGNORECASE)]
+    return matches[0] if len(matches) == 1 else "none"
+
+
+def classify(entry, *, use_jev=True, min_confidence=0.9):
+    # Monologues and memos change tone, so fixed markers misread them: Jev reads every entry, automatic ones too,
+    # and the markers only stand in when Jev is off, has no key, fails, or is unsure.
     key = os.environ.get("TYPESAFE_API_KEY") or os.environ.get("JEV_API_KEY")
-    if not key:
-        return "none"
+    if not use_jev or not key:
+        return local_category(entry.text)
     choice, confidence = ask_jev(key, entry.text)
-    category = choice if confidence is not None and confidence >= min_confidence else "none"
+    category = choice if confidence is not None and confidence >= min_confidence else local_category(entry.text)
     score = "-" if confidence is None else str(confidence)
     print(f"jev: classification={category} confidence={score}", file=sys.stderr)
     return category
@@ -163,7 +165,8 @@ def main(argv=None):
     parser.add_argument("journal_dir", type=Path, nargs="?", default=None,
                         help="journal directory (its subfolders are read too) or a single .jsonl file; "
                              "default: the parent of config.json's dictation.journalDir")
-    parser.add_argument("--jev", action="store_true", help="send unclassified manual and wake-word text to Jev")
+    parser.add_argument("--no-jev", action="store_true",
+                        help="classify with the local markers only; by default each listed text goes to Jev when a key is set")
     parser.add_argument("--min-confidence", type=float, default=0.9,
                         help="minimum Jev confidence from 0 to 1 (default: %(default)s)")
     args = parser.parse_args(argv)
@@ -184,7 +187,7 @@ def main(argv=None):
                     entries.append(entry)
         entries.sort(key=lambda entry: entry.timestamp)
         for entry in entries:
-            category = classify(entry, use_jev=args.jev, min_confidence=args.min_confidence)
+            category = classify(entry, use_jev=not args.no_jev, min_confidence=args.min_confidence)
             where = f"{markdown(entry.source)} · " if entry.source else ""
             print(f"- **{entry.timestamp:%H:%M:%S}** · {where}`{category}` · "
                   f"focusApp: {markdown(entry.focus_app)} · taskchute: {markdown(entry.task_name)} "

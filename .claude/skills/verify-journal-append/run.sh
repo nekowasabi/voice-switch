@@ -62,12 +62,14 @@ no-newline-repair|J3|Sources/voice-switch/DictationJournal.swift|if last?.first 
 no-fallback-write|J1|Sources/voice-switch/DictationJournal.swift|if write(next, line: stamped.text, day: stamped.day) {|if false {
 silent-fallback|J4|Sources/voice-switch/DictationJournal.swift|log("dictation journal: \(error); using default \(fallback)")|_ = error
 delivery-dropped|J3|Sources/voice-switch/DictationJournal.swift|"\"delivery\":\(delivery.map { jsonString($0.rawValue) } ?? "null")",|"\"delivery\":null",
-jev-without-flag|T1|scripts/journal_triage.py|if not use_jev or entry.origin|if entry.origin
-key-is-consent|T1|scripts/journal_triage.py|if not use_jev or entry.origin|if not (use_jev or os.environ.get("TYPESAFE_API_KEY")) or entry.origin
-send-automatic|T2|scripts/journal_triage.py|entry.origin not in ("手動", "ウェイク")|entry.origin not in ("手動", "ウェイク", "自動")
+jev-despite-no-jev|T1|scripts/journal_triage.py|if not use_jev or not key:|if not key:
+send-without-key|T1|scripts/journal_triage.py|if not use_jev or not key:|if not use_jev:
+skip-automatic|T2|scripts/journal_triage.py|if not use_jev or not key:|if not use_jev or not key or entry.origin == "自動":
+markers-before-jev|T2|scripts/journal_triage.py|if not use_jev or not key:|if not use_jev or not key or local_category(entry.text) != "none":
+unsure-jev-becomes-none|T4|scripts/journal_triage.py|confidence >= min_confidence else local_category(entry.text)|confidence >= min_confidence else "none"
 send-context|T3|scripts/journal_triage.py|ask_jev(key, entry.text)|ask_jev(key, f"{entry.text} {entry.focus_app} {entry.task_name}")
 pane-floor|T4|scripts/journal_triage.py|confidence >= min_confidence|confidence >= 0.8
-two-hits-pick-first|T4|scripts/journal_triage.py|if len(matches) == 1:|if len(matches) >= 1:
+two-hits-pick-first|T4|scripts/journal_triage.py|if len(matches) == 1 else|if len(matches) >= 1 else
 log-text|T5|scripts/journal_triage.py|confidence={score}", file=sys.stderr)|confidence={score} text={entry.text}", file=sys.stderr)
 list-pasted|T6|scripts/journal_triage.py|row.get("delivery") in (None, "history")|row.get("delivery") in (None, "history", "paste")
 EOF

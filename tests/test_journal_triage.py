@@ -1,13 +1,14 @@
 """Exhaustive behavior test for scripts/journal_triage.py.
 
-Every combination of origin x delivery x local marker matches x --jev x API key x --min-confidence x Jev answer
+Every combination of origin x delivery x local marker matches x --no-jev x API key x --min-confidence x Jev answer
 runs through main() with HTTP replaced. The expected result comes from the rules in the task, not from the script:
-listed when delivery is history, null or absent; one local match wins without Jev; Jev only with --jev, a key, an
-origin of 手動 or ウェイク, and zero or several local matches; only the text is sent; below the floor, none, or an
-error becomes none; the log never carries the text.
+listed when delivery is history, null or absent; each listed text goes to Jev once unless --no-jev or no key, whatever
+its origin (monologues are what Jev is for); only the text is sent; a Jev answer at or above the floor wins, none
+included; otherwise one local match, else none; the log never carries the text.
 Failure messages start with the rule id the verify-journal-append skill uses:
-T1 no request without --jev and a key, and no real connection ever; T2 no request for an origin other than 手動 / ウェイク;
-T3 a request carries only the text; T4 the category (one local hit, the floor, none, errors);
+T1 no request with --no-jev or without a key, and no real connection ever; T2 exactly one request per listed row
+otherwise, automatic ones included; T3 a request carries only the text; T4 the category (Jev above the floor first,
+then one local hit, else none);
 T5 the log carries no text, focusApp or taskchute; T6 which rows are listed, with time and context, journal untouched.
 
 JOURNAL_TRIAGE points the test at another copy of the script (run.sh mutants uses it).
@@ -40,7 +41,6 @@ TASK = "TaskSentinelName"
 # Texts by how many local markers they hit; the 1-hit text is a task. Each carries a token the log must never show.
 TEXTS = {0: "今日はいい天気ですね QZX0", 1: "タスク: 牛乳を買う QZX1", 2: "タスク: 新しいマイクを調べて QZX2"}
 ORIGINS = ["手動", "ウェイク", "自動", None, "不明"]
-SENDABLE = {"手動", "ウェイク"}
 DELIVERIES = ["<absent>", None, "paste", "sticky", "pane", "action", "history"]
 LISTED = {"<absent>", None, "history"}
 FLOORS = [None, 0.5]
@@ -128,15 +128,15 @@ class ExhaustiveTriage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "j.jsonl"
             cases = 0
-            for origin, delivery, hits, jev, key, floor, (name, answer, meant, conf) in itertools.product(
+            for origin, delivery, hits, no_jev, key, floor, (name, answer, meant, conf) in itertools.product(
                     ORIGINS, DELIVERIES, TEXTS, [False, True], [None, "k-sentinel"], FLOORS, ANSWERS):
                 cases += 1
                 text = TEXTS[hits]
                 path.write_text(row(text, origin, delivery) + "\n", encoding="utf-8")
                 before = path.read_bytes()
-                argv = [DAY, str(path)] + (["--jev"] if jev else []) + ([] if floor is None else ["--min-confidence", str(floor)])
+                argv = [DAY, str(path)] + (["--no-jev"] if no_jev else []) + ([] if floor is None else ["--min-confidence", str(floor)])
                 stdout, stderr, net = run(argv, answer, key)
-                where = f"origin={origin} delivery={delivery} hits={hits} jev={jev} key={bool(key)} floor={floor} answer={name}"
+                where = f"origin={origin} delivery={delivery} hits={hits} no_jev={no_jev} key={bool(key)} floor={floor} answer={name}"
 
                 self.assertEqual(path.read_bytes(), before, "T6 journal changed " + where)
                 self.assertEqual(net.connects, 0, "T1 real connection " + where)
@@ -151,16 +151,11 @@ class ExhaustiveTriage(unittest.TestCase):
                 self.assertIn(FOCUS, line, "T6 focusApp " + where)
                 self.assertIn(TASK, line, "T6 taskchute " + where)
 
-                send = jev and key is not None and origin in SENDABLE and hits != 1
-                rule = "T1" if not jev or key is None else "T2" if origin not in SENDABLE else "T4"
-                self.assertEqual(len(net.requests), 1 if send else 0, f"{rule} requests " + where)
-                if hits == 1:
-                    want = "task"
-                elif not send:
-                    want = "none"
-                else:
-                    floor_value = 0.9 if floor is None else floor
-                    want = meant if meant is not None and conf >= floor_value else "none"
+                send = not no_jev and key is not None
+                self.assertEqual(len(net.requests), 1 if send else 0, f"{'T2' if send else 'T1'} requests " + where)
+                local = "task" if hits == 1 else "none"
+                floor_value = 0.9 if floor is None else floor
+                want = meant if send and meant is not None and conf >= floor_value else local
                 self.assertEqual(category(line), want, "T4 category " + where)
 
                 if send:
@@ -180,15 +175,16 @@ class ExhaustiveTriage(unittest.TestCase):
 class Reading(unittest.TestCase):
     def test_each_local_category_wins_alone(self):
         # The exhaustive test's one-hit text is a task; one text per other category keeps their markers honest.
+        # With --no-jev the markers decide alone.
         texts = {"task": "やること: 部屋の掃除", "research": "新しいマイクを調べて", "draft": "下書きを書いて お礼のメール",
                  "agent": "クロードに依頼 テストの追加", "none": "今日はいい天気ですね"}
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "j.jsonl"
             for want, text in texts.items():
                 path.write_text(row(text, "ウェイク", "history") + "\n", encoding="utf-8")
-                stdout, _, net = run([DAY, str(path), "--jev"], {"choice": "none", "confidence": 0.99}, "k")
+                stdout, _, net = run([DAY, str(path), "--no-jev"], {"choice": "none", "confidence": 0.99}, "k")
                 self.assertEqual(category(items(stdout)[0]), want, "T4 local " + text)
-                self.assertEqual(len(net.requests), 1 if want == "none" else 0, "T4 requests " + text)
+                self.assertEqual(len(net.requests), 0, "T1 requests " + text)
 
     def test_broken_rows_are_skipped_and_counted(self):
         with tempfile.TemporaryDirectory() as tmp:

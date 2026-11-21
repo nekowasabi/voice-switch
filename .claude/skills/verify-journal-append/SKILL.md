@@ -1,6 +1,6 @@
 ---
 name: verify-journal-append
-description: Bounded-exhaustive check (real Swift code, every order of up to 4 steps) that the macOS dictation journal keeps every utterance DictationHistory accepted exactly once on disk, never rewrites bytes already written, keeps each line a whole JSON record even after a crash cut a line, keeps each record's delivery value, and logs a line whenever it falls back to the default directory; plus an exhaustive check (real script, every input combination, HTTP replaced) that scripts/journal_triage.py lists the right rows and asks Jev only with --jev, never for automatic utterances, and with the text alone. Use when a change touches DictationJournal.open / record / write / appendLine / deleteEntry / filter / noteFailure / line in Sources/voice-switch/DictationJournal.swift, DictationHistory.add in Sources/voice-switch/WakeSafety.swift, or scripts/journal_triage.py, and before claiming a journal bug fixed.
+description: Bounded-exhaustive check (real Swift code, every order of up to 4 steps) that the macOS dictation journal keeps every utterance DictationHistory accepted exactly once on disk, never rewrites bytes already written, keeps each line a whole JSON record even after a crash cut a line, keeps each record's delivery value, and logs a line whenever it falls back to the default directory; plus an exhaustive check (real script, every input combination, HTTP replaced) that scripts/journal_triage.py lists the right rows, sends each listed text (automatic ones too) to Jev once unless --no-jev or no key, sends the text alone, and takes Jev's answer above the floor before the local markers. Use when a change touches DictationJournal.open / record / write / appendLine / deleteEntry / filter / noteFailure / line in Sources/voice-switch/DictationJournal.swift, DictationHistory.add in Sources/voice-switch/WakeSafety.swift, or scripts/journal_triage.py, and before claiming a journal bug fixed.
 ---
 
 # verify-journal-append
@@ -8,7 +8,7 @@ description: Bounded-exhaustive check (real Swift code, every order of up to 4 s
 ## The promise and the harm
 
 - Promise: every utterance that `DictationHistory.add` accepts is written to the journal exactly once with its intended `delivery`, and nothing already on disk is lost.
-- Promise (README_ja.md:204): text from an automatic session (`origin` 自動) never leaves the device. `scripts/journal_triage.py` sends nothing without `--jev`, and with it sends only the text of a 手動 or ウェイク utterance that the local markers could not settle.
+- Promise of the triage script: it reads the journal only, and sends nothing but the utterance text. With an API key and without `--no-jev`, every listed text goes to Jev, automatic monologues included, because their tone shifts and fixed markers misread them (the user's decision, 2026-11-21). The app's own live path still never hands automatic text to Jev (README_ja.md:210); this script is a separate tool the user runs.
 - Harm when it breaks: dictations vanish from the device. Issue #49 exists so that nothing is lost; #50 (digest, triage) reads only what this path wrote.
 - Found at c901865: `appendLine` opened the file with `FileHandle(forWritingTo:)` and read its last byte, which fails with EBADF on a non-empty file. The first line of a day was written, the second fell back to the default directory and failed there too. Real journals held one line per day.
 
@@ -16,7 +16,7 @@ description: Bounded-exhaustive check (real Swift code, every order of up to 4 s
 
 1. **observe** — the symptom on the real target. `bash .claude/skills/verify-journal-append/run.sh observe [journal-dir]` prints line counts per day file (never the text). Default dir: `~/Library/Application Support/voice-switch/journal`. After the rebuilt app ran on a day with several dictations, that day must show more than one line. Until someone has seen that, the fix is unverified on the real app, whatever item 2 says.
 2. **check** — `bash .claude/skills/verify-journal-append/run.sh check [length]` (default length 4: 2 592 sequences, about 10 s; length 5 is about 6× longer; then the triage test, 16 800 combinations, about 9 s). Exit 0 and `PASS J1`..`PASS J4`, `PASS T1`..`PASS T6` is a pass.
-3. **mutants** — `bash .claude/skills/verify-journal-append/run.sh mutants` (13 mutants, about 1 min). Each mutant breaks one guard in a copy of the Swift sources or of the script and must print `CAUGHT`. A `MISSED` line means the check went blind. An `anchor missing` line means the guarded code changed: update the mutant table in run.sh before trusting item 2.
+3. **mutants** — `bash .claude/skills/verify-journal-append/run.sh mutants` (15 mutants, about 1 min). Each mutant breaks one guard in a copy of the Swift sources or of the script and must print `CAUGHT`. A `MISSED` line means the check went blind. An `anchor missing` line means the guarded code changed: update the mutant table in run.sh before trusting item 2.
 
 Needs `swiftc` (Xcode or Command Line Tools) and `python3` (standard library only). Nothing is written outside `${TMPDIR}/verify-journal-append` and the test's own temp directories. The triage check never opens a socket: `urlopen` is replaced, and `socket.connect` is blocked and counted.
 
@@ -40,14 +40,14 @@ Needs `swiftc` (Xcode or Command Line Tools) and `python3` (standard library onl
 
 ## The triage check (T1-T6)
 
-`tests/test_journal_triage.py` runs `journal_triage.main` once per combination of origin (手動, ウェイク, 自動, absent, unknown) × delivery (absent, null, paste, sticky, pane, action, history) × local marker hits (0, 1, 2) × `--jev` × API key set × `--min-confidence` (default, 0.5) × Jev answer (0.95, 0.9, 0.85, 0.6, 0.4, none, unknown choice, bad confidence, URLError, not JSON). The expected result comes from the rules, not from the script. `JOURNAL_TRIAGE=<path>` points it at a copy, which is how the script mutants run.
+`tests/test_journal_triage.py` runs `journal_triage.main` once per combination of origin (手動, ウェイク, 自動, absent, unknown) × delivery (absent, null, paste, sticky, pane, action, history) × local marker hits (0, 1, 2) × `--no-jev` × API key set × `--min-confidence` (default, 0.5) × Jev answer (0.95, 0.9, 0.85, 0.6, 0.4, none, unknown choice, bad confidence, URLError, not JSON). The expected result comes from the rules, not from the script. `JOURNAL_TRIAGE=<path>` points it at a copy, which is how the script mutants run.
 
 | Rule | Plain sentence |
 |---|---|
-| T1 | no Jev request without `--jev`, even with an API key set; no real connection ever |
-| T2 | no Jev request for an origin other than 手動 or ウェイク (自動 and unknown are never sent) |
+| T1 | no Jev request with `--no-jev` or without an API key; no real connection ever |
+| T2 | otherwise exactly one Jev request per listed row, whatever its origin (自動 included) and its local markers |
 | T3 | a request is a POST to api.typesafe.ai whose `state` is `{"dictation": text}`; focusApp, taskchute, timestamp and endReason are not in the body or headers |
-| T4 | one local hit wins without Jev; zero or two hits ask Jev; below the floor (default 0.9), none, or any error gives none |
+| T4 | a Jev answer at or above the floor (default 0.9) wins, `none` included; below the floor, any error, or no request: one local hit, else none |
 | T5 | stderr carries no text, focusApp or taskchute |
 | T6 | only delivery history, null or absent is listed, with time, focusApp.name and taskchute.name; the journal bytes do not change; broken rows are skipped and counted |
 
