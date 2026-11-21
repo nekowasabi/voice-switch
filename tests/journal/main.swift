@@ -27,9 +27,7 @@ let apple = NSString(string: "~/Documents/voice-switch/journal").expandingTildeI
 if tilde == apple && tilde.hasSuffix("Documents/voice-switch/journal") { pass("expand-tilde") }
 else { fail("expand-tilde", tilde) }
 
-let platform = (try? String(contentsOfFile: repo + "/Sources/voice-switch/Platform.swift", encoding: .utf8)) ?? ""
-if platform.contains("LOCALAPPDATA") && platform.contains("%\\(key)%") { pass("expand-localappdata") }
-else { fail("expand-localappdata", "Windows %VAR% replacement missing") }
+// expand-localappdata is checked by the C# harness. The Swift build is macOS-only since 9bfc99e and has no %VAR% expansion.
 
 let appendDir = scratch + "/append"
 var appendLogs: [String] = []
@@ -78,7 +76,7 @@ try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: 0o755)
 let permDir = permRoot + "/journal"
 let perms = DictationJournal.open(permDir, fallback: scratch + "/perm-fb") { _ in }
 record(perms, "mode")
-let permFile = FileManager.default.contentsOfDirectory(atPath: permDir).first { $0.hasSuffix(".jsonl") } ?? ""
+let permFile = (try? FileManager.default.contentsOfDirectory(atPath: permDir))?.first { $0.hasSuffix(".jsonl") } ?? ""
 if mode(permDir) == 0o700 && mode(permDir + "/" + permFile) == 0o600 && mode(permRoot) == 0o755 { pass("perms-unix") }
 else { fail("perms-unix", "dir \(mode(permDir)) file \(mode(permDir + "/" + permFile)) root \(mode(permRoot))") }
 
@@ -89,7 +87,7 @@ let drop = UUID()
 record(deleter, "keep", id: keep)
 record(deleter, "drop", id: drop)
 let deleteFile = deleteDir + "/" + day + ".jsonl"
-let keepLine = String(data: Data(contentsOf: URL(fileURLWithPath: deleteFile)), encoding: .utf8)?
+let keepLine = (try? Data(contentsOf: URL(fileURLWithPath: deleteFile))).flatMap { String(data: $0, encoding: .utf8) }?
     .split(separator: "\n", omittingEmptySubsequences: false)
     .first { $0.contains(keep.uuidString.lowercased()) }
     .map(String.init) ?? ""

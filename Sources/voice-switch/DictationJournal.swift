@@ -186,7 +186,8 @@ final class DictationJournal {
                 throw JournalWriteError("create failed")
             }
         }
-        let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: file))
+        // forUpdating, not forWritingTo: the newline check below reads the last byte, and a write-only handle fails that read with EBADF.
+        let handle = try FileHandle(forUpdating: URL(fileURLWithPath: file))
         defer { try? handle.close() }
         let end = try handle.seekToEnd()
         if end > 0 {
