@@ -178,6 +178,18 @@ class ExhaustiveTriage(unittest.TestCase):
 
 
 class Reading(unittest.TestCase):
+    def test_each_local_category_wins_alone(self):
+        # The exhaustive test's one-hit text is a task; one text per other category keeps their markers honest.
+        texts = {"task": "やること: 部屋の掃除", "research": "新しいマイクを調べて", "draft": "下書きを書いて お礼のメール",
+                 "agent": "クロードに依頼 テストの追加", "none": "今日はいい天気ですね"}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "j.jsonl"
+            for want, text in texts.items():
+                path.write_text(row(text, "ウェイク", "history") + "\n", encoding="utf-8")
+                stdout, _, net = run([DAY, str(path), "--jev"], {"choice": "none", "confidence": 0.99}, "k")
+                self.assertEqual(category(items(stdout)[0]), want, "T4 local " + text)
+                self.assertEqual(len(net.requests), 1 if want == "none" else 0, "T4 requests " + text)
+
     def test_broken_rows_are_skipped_and_counted(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "j.jsonl"
