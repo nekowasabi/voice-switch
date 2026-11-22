@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Send the classifier questions (and their variants) to Jev for a few utterances, to see which band each answer lands in.
+"""Send the classifier questions to Jev for a few utterances, to see which band each answer lands in.
 
 Reads the listed journal rows for the given days plus invented control sentences. --dry-run prints what would be sent.
 Each request and response is saved under --out so any case can be rerun. Live requests use a key from the environment.
@@ -11,7 +11,7 @@ import json
 import os
 import sys
 import urllib.request
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -24,20 +24,6 @@ CONTROLS = [
     ("牛乳を買っておかないと", "action:self_task"),
     ("このスクリプトで祝日も数えられるようにして", "action:computer_change"),
 ]
-
-
-def state(entry, earlier):
-    out = {"utterance": {"text": entry.text, "started": entry.origin or "不明"}}
-    context = {k: v for k, v in (("app", entry.focus_app), ("task", entry.task_name),
-                                 ("time", entry.timestamp.strftime("%H:%M"))) if v}
-    if context:
-        out["context"] = context
-    previous = [{"text": e.text, "seconds_before": int((entry.timestamp - e.timestamp).total_seconds())}
-                for e in earlier
-                if e.source == entry.source and timedelta(0) < entry.timestamp - e.timestamp <= timedelta(seconds=60)][-2:]
-    if previous:
-        out["previous"] = previous
-    return out
 
 
 def ask(key, body):
@@ -58,9 +44,15 @@ def main(argv=None):
 
     cases = []
     for day in args.days:
-        entries = [e for label, source in triage.journal_sources(root) for e in triage.journal_rows(source, day, label) if e]
-        entries.sort(key=lambda e: e.timestamp)
-        cases += [(f"{e.source or '-'} {e.timestamp:%m-%d %H:%M:%S}", state(e, entries[:i]), None) for i, e in enumerate(entries)]
+        daily = []
+        for device, sources in triage.sources_by_device(root, triage.configured_device()).items():
+            entries = [e for source in sources for e in triage.journal_rows(source, day) if e]
+            history, instants = triage.context_history(sources, day, entries)
+            for entry in entries:
+                previous = triage.prior_entries(entry, history, instants)
+                daily.append((entry, device, triage.request_state(entry, previous)))
+        daily.sort(key=lambda item: item[0].instant)
+        cases += [(f"{device} {e.timestamp:%m-%d %H:%M:%S}", state, None) for e, device, state in daily]
     cases += [(f"control {i + 1}", {"utterance": {"text": text, "started": "自動"}}, want) for i, (text, want) in enumerate(CONTROLS)]
 
     key = None if args.dry_run else os.environ.get("TYPESAFE_API_KEY") or os.environ.get("JEV_API_KEY")
