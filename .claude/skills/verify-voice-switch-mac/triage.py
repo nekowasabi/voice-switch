@@ -181,6 +181,15 @@ def sure_and_cancel():
     check("(c) a request cancelled in まもなく送る is never sent, even after its grace period",
           hist == ["pending", "dismissed"] and not [l for l in h.lines("starts.txt") if "cancel-1" in l],
           r["triage"] + [f"proposals.jsonl stages for it: {hist}, starts.txt 'cancel-1' lines: {len([l for l in h.lines('starts.txt') if 'cancel-1' in l])}"])
+    labels = h.dir / "storage/.triage/labels/private-app.jsonl"
+    rows = [json.loads(l) for l in labels.read_text().splitlines()] if labels.exists() else []
+    by_text = {x["id"]: x["text"] for x in h.proposals().values()}
+    got = sorted((by_text.get(r["id"], "?")[:7], r.get("outcome"), r.get("target")[0]) for r in rows)
+    want = sorted([(f"warm-{i}", "memo", "action:self_task") for i in range(5)] + [("cancel-", "drop", "thought")])
+    check("(o) every 送る and 送らない writes one label with its outcome and day; a send nobody touched writes none",
+          [(t[:6], o, g) for t, o, g in got] == [(t[:6], o, g) for t, o, g in want]
+          and all(r.get("day") == time.strftime("%Y-%m-%d") and r.get("answers") for r in rows),
+          [f"labels: {got}"])
 
 
 def restart():

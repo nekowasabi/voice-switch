@@ -55,6 +55,10 @@ struct TriageFiles {
         let question_hash: String?
         let device: String
         let timestamp: String
+        /// Where the user said the row should go ("drop", "memo", "route:<kind>"), for scripts/triage_gate_eval.py,
+        /// and the journal day of the utterance, so the script can find its row.
+        let outcome: String?
+        let day: String?
     }
 
     let proposals: URL
@@ -107,10 +111,15 @@ struct TriageFiles {
         try append(proposal, to: proposals)
     }
 
-    func label(_ proposal: TriageProposal, kind: TriageKind) throws {
-        let row = Label(id: proposal.id, target: ["action:\(kind.rawValue)"], observed: proposal.destinations,
+    /// kind nil: the user dismissed the row, so it was not a request to carry out (target "thought", outcome "drop").
+    func label(_ proposal: TriageProposal, kind: TriageKind?) throws {
+        let outcome = kind.map { $0 == .selfTask || $0 == .writeText ? "memo" : "route:\($0.rawValue)" } ?? "drop"
+        let day = DateFormatter()
+        day.locale = Locale(identifier: "en_US_POSIX")
+        day.dateFormat = "yyyy-MM-dd"
+        let row = Label(id: proposal.id, target: [kind.map { "action:\($0.rawValue)" } ?? "thought"], observed: proposal.destinations,
                         answers: proposal.answers, question_hash: proposal.questionHash, device: device,
-                        timestamp: Date().formatted(.iso8601))
+                        timestamp: Date().formatted(.iso8601), outcome: outcome, day: day.string(from: proposal.createdAt))
         try append(row, to: directory.appendingPathComponent("labels/\(device)-app.jsonl"))
     }
 

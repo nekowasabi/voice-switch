@@ -125,7 +125,10 @@ final class TriageService {
         onChange?()
     }
 
-    func dismiss(_ id: String) { _ = apply(.dismiss(id)) }
+    func dismiss(_ id: String) {
+        guard let proposal = proposals[id], apply(.dismiss(id)) else { return }
+        saveLabel(proposal, kind: nil)  // 送らない: the commonest label, "this was not a request to carry out"
+    }
 
     func confirmDone(_ id: String) {
         guard var proposal = proposals[id] else { return }
@@ -147,7 +150,8 @@ final class TriageService {
         let event: TriageExecution.Event = proposal.kind == kind
             ? .sendNow(id, kind, routeIndex: index) : .fix(id, kind, routeIndex: index)
         select(destination, kind: kind, index: index, for: &proposal)
-        if apply(event, updated: proposal), chosen != nil { saveLabel(proposal, kind: kind) }
+        // Every press is a label: a chosen kind corrects the classifier, the shown one confirms it.
+        if apply(event, updated: proposal) { saveLabel(proposal, kind: kind) }
     }
 
     func switchDestination(_ id: String, to index: Int) {
@@ -166,7 +170,7 @@ final class TriageService {
         saveLabel(proposal, kind: kind)
     }
 
-    private func saveLabel(_ proposal: TriageProposal, kind: TriageKind) {
+    private func saveLabel(_ proposal: TriageProposal, kind: TriageKind?) {
         do { try files.label(proposal, kind: kind) }
         catch { log("triage: \(proposal.id) label write failed") }
     }

@@ -363,29 +363,34 @@ def classify_day(journal, day, thresholds, *, use_jev, include_context):
 OTHER_ASSISTANT = re.compile(r"^\s*(?:アレクサ|alexa|ok[、,]?\s*(?:グーグル|google)|hey\s*siri|ヘイ\s*シリ)", re.IGNORECASE)
 
 
-def gate(text, destinations, answers, origin=None):
-    """What the app lets leave the journal (TriageClassifier.sessionTalk / worthKeeping): "session" for talk to the
-    work session on screen or another voice assistant, "memo" for a note worth keeping, else None."""
+# The app's lines (TriageClassifier.sessionTalk / maybeSessionTalk / worthKeeping). triage_gate_eval.py --sweep tries others.
+GATE_LINES = {"session": 0.7, "review": 0.3, "keep": 0.7, "keep_automatic": 0.8}
+
+
+def gate(text, destinations, answers, origin=None, lines=GATE_LINES):
+    """What the app lets leave the journal: "session" for talk to the work session on screen or another voice
+    assistant, "memo" for a note worth keeping, else None."""
     if destinations == ["filler"] or answers is None:
         return None
-    if answers.get("needs_local", 0) >= 0.7 or OTHER_ASSISTANT.search(text):
-        return "memo" if answers.get("keep_note", 0) >= 0.8 else "session"  # a note said to the session is still a note
-    return "memo" if answers.get("keep_note", 0) >= (0.8 if origin == "自動" else 0.7) else None
+    keep = answers.get("keep_note", 0)
+    if answers.get("needs_local", 0) >= lines["session"] or OTHER_ASSISTANT.search(text):
+        return "memo" if keep >= lines["keep_automatic"] else "session"  # a note said to the session is still a note
+    return "memo" if keep >= (lines["keep_automatic"] if origin == "自動" else lines["keep"]) else None
 
 
-def outcome(text, destinations, answers, origin=None):
+def outcome(text, destinations, answers, origin=None, lines=GATE_LINES):
     """Where the app sends a row: "drop" (journal only), "memo", "review", or "route:<kind>" (TriageService.classify).
     Not here: the app's extra check for a heavy route or an automatic bot request, which can still move a route to review."""
     if destinations == ["filler"]:
         return "drop"
-    kept = gate(text, destinations, answers, origin)
-    if answers and (answers.get("needs_local", 0) >= 0.7 or OTHER_ASSISTANT.search(text)):
+    kept = gate(text, destinations, answers, origin, lines)
+    if answers and (answers.get("needs_local", 0) >= lines["session"] or OTHER_ASSISTANT.search(text)):
         return "memo" if kept == "memo" else "drop"  # never a bot route
     kinds = [d.removeprefix("action:") for d in destinations if d.startswith("action:")]
     if len(kinds) == 1:
         if kinds[0] in ("self_task", "write_text"):
             return "memo"
-        if kinds[0] in ("look_up", "delegate") and (answers or {}).get("needs_local", 0) >= 0.3:
+        if kinds[0] in ("look_up", "delegate") and (answers or {}).get("needs_local", 0) >= lines["review"]:
             return "review"
         return f"route:{kinds[0]}"
     if len(kinds) > 1 or (destinations == ["unjudged:kind"] and kept != "memo"):
