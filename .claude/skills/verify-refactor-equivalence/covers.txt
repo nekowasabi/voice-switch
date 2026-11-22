@@ -4,6 +4,7 @@ Sources/voice-switch/DictationJournal.swift
 Sources/voice-switch/LatestRecognition.swift
 Sources/voice-switch/ListeningPolicy.swift
 Sources/voice-switch/MacApp.swift
+Sources/voice-switch/MacDictationSession.swift
 Sources/voice-switch/MacWakeUI.swift
 Sources/voice-switch/Macrowhisper.swift
 Sources/voice-switch/PaneRoute.swift

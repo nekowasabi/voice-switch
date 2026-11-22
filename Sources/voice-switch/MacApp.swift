@@ -1592,8 +1592,7 @@ final class Listener {
         var silero = SileroStream()
         var dictation: Dictation?
         var shown = Phase.idle
-        var clock = 0
-        var followupUntil = 0
+        var session = MacDictationSession()
         var recent: [Float] = []
         var speechFrames = 0
         var gapFrames = 0
@@ -1621,9 +1620,7 @@ final class Listener {
         var stopJob: (session: UUID, generation: Int)?
         var stopFrames = 0
         func submitAndArm(_ d: Dictation, cfg: DictationConfig, reason: String) {
-            if !d.origin.isAutomatic && d.action == nil, let options = cfg.noWakeWord, options.followup == true, options.valid {
-                followupUntil = clock + Int(rate) * (options.followupMs ?? 8000) / 1000
-            }
+            session.armFollowup(isAutomatic: d.origin.isAutomatic, hasAction: d.action != nil, options: cfg.noWakeWord)
             recent.removeAll(); speechFrames = 0
             submit(d, cfg: cfg, reason: reason)
         }
@@ -1631,7 +1628,7 @@ final class Listener {
         for await frame in stream {
             let currentGeneration = localHistoryState.withLock { $0.generation }
             if activeGeneration != currentGeneration {
-                seg = Segmenter(cfg: config.cfg); silero = SileroStream(); dictation = nil; followupUntil = 0
+                seg = Segmenter(cfg: config.cfg); silero = SileroStream(); dictation = nil; session.clearFollowup()
                 recent = []; speechFrames = 0; Hotkeys.end()
                 activeGeneration = currentGeneration
                 phaseCont.yield((.idle, nil))
@@ -1639,7 +1636,7 @@ final class Listener {
             guard frame.generation == currentGeneration else { continue }
             let f = frame.samples
             let generation = frame.generation
-            clock += f.count
+            session.advance(sampleCount: f.count)
             // Set where the user ended it on purpose (stop word or superwhisper's shortcut), so the HUD confirms it.
             var endedByUser = false
             // Derived from `dictation` after every frame (defer covers each `continue`) instead of at each place that sets it.
@@ -1648,7 +1645,7 @@ final class Listener {
                 // so a noise that blips the detector never lights the pill.
                 let phase: Phase = endedByUser ? .ended
                     : dictation.map { $0.heardSpeech && !$0.confirmed ? .idle : $0.stopHeard ? .stopping : !$0.heardSpeech ? .waiting : .recording }
-                    ?? (clock < followupUntil && config.cfg.dictation?.noWakeWord?.followup == true ? .followup : .idle)
+                    ?? (session.inFollowupWindow && config.cfg.dictation?.noWakeWord?.followup == true ? .followup : .idle)
                 // .ended hides itself after a moment; the idle that follows it is not a change.
                 if phase != shown, !(shown == .ended && phase == .idle) {
                     // The stop sound goes with the stop glyph, which .stopping shows as soon as the word is heard. Playing it on the
@@ -1658,7 +1655,7 @@ final class Listener {
                     phaseCont.yield((phase, dictation?.action?.icon ?? dictation?.sticky?.appPath))
                 }
             }
-            if f.isEmpty { seg = Segmenter(cfg: config.cfg); silero = SileroStream(); dictation = nil; followupUntil = 0; recent = []; speechFrames = 0; Hotkeys.end(); continue }
+            if f.isEmpty { seg = Segmenter(cfg: config.cfg); silero = SileroStream(); dictation = nil; session.clearFollowup(); recent = []; speechFrames = 0; Hotkeys.end(); continue }
             seg.adaptFloor = dictation == nil
             let hal = voiceBeingHeard()
             let event = seg.push(f, voice: hal)
@@ -1687,7 +1684,7 @@ final class Listener {
                 let key = Hotkeys.take()
                 if key == .cancel {
                     dictation = nil; recent.removeAll(); speechFrames = 0; Hotkeys.end()
-                    followupUntil = 0
+                    session.clearFollowup()
                     log("dictation cancelled \(sidField(d.sessionID))"); continue
                 }
                 d.samples += f
@@ -1787,7 +1784,7 @@ final class Listener {
                 if gapFrames > frames(ms: config.cfg.hangoverMs ?? 300) {
                     if !phraseOutcome.isEmpty { endPhrase(phraseOutcome) }
                     // ponytail: one held phrase for 5 s; a third sentence before the gate opens drops the first.
-                    if phraseHeldByVoice { heldPhrase = (recent, clock + Int(rate) * 5) }
+                    if phraseHeldByVoice { heldPhrase = (recent, session.clock + Int(rate) * 5) }
                     speechFrames = 0; phraseHeldByVoice = false
                 }
             }
@@ -1832,7 +1829,7 @@ final class Listener {
             let longEnough = speechFrames >= frames(ms: config.cfg.minSpeechMs ?? 300)
             let modeSet = !(config.cfg.dictation?.superwhisperMode ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             let idle = speaking && longEnough && modeSet ? MacInputActivity.idleSeconds() : nil
-            let origin = idle.flatMap { NoWakePolicy.onSpeech(options, idleSeconds: $0, inFollowupWindow: clock < followupUntil) }
+            let origin = idle.flatMap { NoWakePolicy.onSpeech(options, idleSeconds: $0, inFollowupWindow: session.inFollowupWindow) }
             if speaking {
                 phraseOutcome = !longEnough ? "shorter than minSpeechMs" : !modeSet ? "superwhisperMode unset"
                     : idle == nil ? "input idle unavailable" : origin == nil ? "NoWakePolicy.onSpeech nil" : "allowed but no audio"
@@ -1846,7 +1843,7 @@ final class Listener {
                     phraseOutcome = "automatic wake blocked: \(lastAutomaticBlock ?? "-")"
                 } else {
                     // The whole phrase with its preroll, even when it overlaps typing, after a phrase the gate held back.
-                    let held = heldPhrase.flatMap { clock < $0.until ? $0.samples : nil } ?? []
+                    let held = heldPhrase.flatMap { session.clock < $0.until ? $0.samples : nil } ?? []
                     heldPhrase = nil; phraseHeldByVoice = false
                     if !held.isEmpty { log("dictation session: automatic keeps \(held.count * 1000 / Int(rate)) ms held for voice activity") }
                     let samples = held + recent

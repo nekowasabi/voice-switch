@@ -20,7 +20,7 @@ Users saw the mic HUD flash again and again with nobody talking to the app (2026
 
 **A 案を採用済み。macOS は 198 状態、Windows は 194 状態を探索し、両性質を満たした**（2026-10-31 に再実行、終了コードはともに 0）。修正した点滅経路は次の 2 つ。
 
-1. **待機中のフレーズ。** 雑音で `speechFrames > 0` と `phraseHAL > 0` になっても、`dictation == nil` なら `.idle`（既存の追従待機条件を満たす場合は `.followup`）。旧規則の `.hearing` は削除した。
+1. **待機中のフレーズ。** 雑音で `speechFrames > 0` と `phraseHAL > 0` になっても、`dictation == nil` なら `.idle`（`MacDictationSession.inFollowupWindow` と設定が追従待機を許す場合は `.followup`）。旧規則の `.hearing` は削除した。
 2. **発声直後の自動セッション。** `voiceRecentlyActive()` により物音でセッションが開く経路は残るが、本文を聞いた自動セッションは `confirmed == false` の間 `.idle`。確認後は従来の `.recording` / `.stopping` になる。ウェイクワードとアクションの本文待ちは `.waiting` を保つ。
 
 Windows holds both properties because `PublishPhase` shows an active automatic session only once `Confirmed(session)` (agreed words, `CheckWords`), and an idle phrase is `DictationPhase.Idle`.
@@ -82,7 +82,7 @@ Windows で一致認識器がない場合は `Confirmed(session)` が自動セ�
 
 ## Does my change touch this?
 
-Run `git diff cf89a2f -- Sources/voice-switch/MacApp.swift dotnet/VoiceSwitch.Windows/DictationRuntime.cs` from the repo root and look for: the phase `defer` and `HUD.render`'s phase table, `voiceRecentlyActive` / `automaticWakeBlock` / `minVoiceSeconds` / `watchVoiceActivity`, the idle path's `speechFrames` / `phraseHAL` / automatic opening, `Dictation.confirmed` / `wordCheck`, or Windows `PublishPhase` / `Confirmed` / `CheckWords`. Any of these needs the matching model part updated before trusting the result.
+Run `git diff cf89a2f -- Sources/voice-switch/MacApp.swift Sources/voice-switch/MacDictationSession.swift dotnet/VoiceSwitch.Windows/DictationRuntime.cs` from the repo root and look for: the phase `defer` and `HUD.render`'s phase table, `voiceRecentlyActive` / `automaticWakeBlock` / `minVoiceSeconds` / `watchVoiceActivity`, the idle path's `speechFrames` / `phraseHAL` / automatic opening, `Dictation.confirmed` / `wordCheck`, or Windows `PublishPhase` / `Confirmed` / `CheckWords`. Any of these needs the matching model part updated before trusting the result.
 
 ## When it fails
 

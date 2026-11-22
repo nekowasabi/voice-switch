@@ -6,6 +6,7 @@ let coreSources = [
     "DictationJournal.swift",
     "LatestRecognition.swift",
     "ListeningPolicy.swift",
+    "MacDictationSession.swift",
     "Macrowhisper.swift",
     "PaneRoute.swift",
     "Platform.swift",
