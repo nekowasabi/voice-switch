@@ -41,7 +41,7 @@ def main() -> int:
     check_allowed_capability_gaps(result, repo, contract)
     check_static_call_chains(result, repo)
     check_dictation_test_markers(result, repo)
-    check_config_fields(result, repo)
+    check_config_fields(result, repo, contract)
     check_example_config_fields(result, contract)
     check_cli_contract(result, repo, contract, cli_fixture)
     if args.static_only:
@@ -651,7 +651,7 @@ def extract_braced_body(source: str, signature_pattern: str, after: str | None =
     return source[start : pos - 1]
 
 
-def check_config_fields(result: Result, repo: SourceTree) -> None:
+def check_config_fields(result: Result, repo: SourceTree, contract: dict) -> None:
     swift = repo.code("Sources/voice-switch/Config.swift")
     cs = repo.code("dotnet/VoiceSwitch.Windows.Core/VoiceSwitchConfig.cs")
     swift_config = extract_swift_struct_fields(swift, "Config")
@@ -668,8 +668,21 @@ def check_config_fields(result: Result, repo: SourceTree) -> None:
         result.fail("Windows URL action config is missing")
     cs_config.discard("windows")
     result.note("VoiceSwitchConfig.Windows is intentionally Windows-only; macOS reads its actions from macOS.actions.")
-    compare_sets(result, "Config fields", swift_config, cs_config)
-    compare_sets(result, "DictationConfig fields", swift_dictation, cs_dictation)
+    mac_fields = swift_config | {f"dictation.{key}" for key in swift_dictation}
+    win_fields = cs_config | {f"dictation.{key}" for key in cs_dictation}
+    allowed = config_gaps(contract, "allowed_config_field_gaps")
+    missing = {(key, "windows") for key in mac_fields - win_fields}
+    missing |= {(key, "macos") for key in win_fields - mac_fields}
+    for key, platform in sorted(missing):
+        reason = allowed.get((key, platform))
+        if reason:
+            result.allow(f"config field {key} missing on {platform}: {reason}")
+        else:
+            result.fail(f"config field {key} missing on {platform} without an allowlist reason")
+    for key, platform in sorted(allowed.keys() - missing):
+        result.fail(f"config field gap {key} for {platform} has no source evidence")
+    if missing == allowed.keys() and all(allowed.values()):
+        result.ok("Config fields match between Swift and C# after declared gaps")
 
 
 def extract_swift_struct_fields(source: str, struct_name: str) -> set[str]:
@@ -723,13 +736,8 @@ def split_parameters(value: str) -> list[str]:
     return parts
 
 
-def compare_sets(result: Result, label: str, swift_fields: set[str], cs_fields: set[str]) -> None:
-    missing_in_windows = sorted(swift_fields - cs_fields)
-    missing_in_macos = sorted(cs_fields - swift_fields)
-    if missing_in_windows or missing_in_macos:
-        result.fail(f"{label} mismatch: missing in Windows={missing_in_windows}, missing in macOS={missing_in_macos}")
-    else:
-        result.ok(f"{label} match between Swift and C#")
+def config_gaps(contract: dict, section: str) -> dict[tuple[str, str], str]:
+    return {(gap["key"], gap["platform"]): gap["reason"] for gap in contract[section]}
 
 
 def check_example_config_fields(result: Result, contract: dict) -> None:
@@ -737,10 +745,8 @@ def check_example_config_fields(result: Result, contract: dict) -> None:
     win = load_example_config(ROOT / "config.example.windows.json")
     mac_keys = flatten_keys(mac)
     win_keys = flatten_keys(win)
-    allowed = {
-        (gap["key"], gap["platform"]): gap["reason"]
-        for gap in contract.get("allowed_sample_config_gaps", [])
-    }
+    sample_gaps = config_gaps(contract, "allowed_sample_config_gaps")
+    allowed = config_gaps(contract, "allowed_config_field_gaps") | sample_gaps
     for key in sorted(mac_keys & win_keys):
         result.ok(f"sample config key {key} is shared")
     for key in sorted(mac_keys - win_keys):
@@ -755,7 +761,7 @@ def check_example_config_fields(result: Result, contract: dict) -> None:
             result.allow(f"sample config {key} omitted on macos: {reason}")
         else:
             result.fail(f"sample config {key} exists only on Windows without an allowlist reason")
-    for (key, platform), _reason in sorted(allowed.items()):
+    for key, platform in sorted(sample_gaps):
         missing = platform == "windows" and key not in win_keys and key in mac_keys
         missing = missing or (platform == "macos" and key not in mac_keys and key in win_keys)
         if not missing:
@@ -1257,7 +1263,7 @@ def check_mutation_gate(result: Result, repo: SourceTree, contract: dict) -> Non
     check_runtime_call_site_mutation(result, repo)
     check_windows_selftest_segmenter_mutation(result, repo)
     check_platform_only_cli_mutation(result, repo, contract)
-    check_platform_only_config_mutation(result, repo)
+    check_platform_only_config_mutation(result, repo, contract)
     check_commented_implementation_mutation(result, repo, contract)
     check_dictation_capability_mutations(result, repo, contract)
     check_dictation_test_marker_mutation(result, repo)
@@ -1308,7 +1314,7 @@ def check_platform_only_cli_mutation(result: Result, repo: SourceTree, contract:
         result.fail("mutation gate did not fail after adding a platform-only CLI switch")
 
 
-def check_platform_only_config_mutation(result: Result, repo: SourceTree) -> None:
+def check_platform_only_config_mutation(result: Result, repo: SourceTree, contract: dict) -> None:
     target = "dotnet/VoiceSwitch.Windows.Core/VoiceSwitchConfig.cs"
     original = repo.read(target)
     mutated = original.replace("WindowsActions? Windows = null)", "WindowsActions? Windows = null,\n    string? WindowsOnly = null)", 1)
@@ -1316,8 +1322,8 @@ def check_platform_only_config_mutation(result: Result, repo: SourceTree) -> Non
         result.fail("mutation setup failed: could not add a Windows-only config member")
         return
     probe = Result()
-    check_config_fields(probe, SourceTree(ROOT, {target: mutated}))
-    if probe.failures:
+    check_config_fields(probe, SourceTree(ROOT, {target: mutated}), contract)
+    if "config field windowsOnly missing on macos without an allowlist reason" in probe.failures:
         result.ok("mutation gate fails when a platform-only config member is added without classification")
     else:
         result.fail("mutation gate did not fail after adding a platform-only config member")
