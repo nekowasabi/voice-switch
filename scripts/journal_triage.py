@@ -360,10 +360,23 @@ def classify_day(journal, day, thresholds, *, use_jev, include_context):
     return output, skipped
 
 
+OTHER_ASSISTANT = re.compile(r"^\s*(?:アレクサ|alexa|ok[、,]?\s*(?:グーグル|google)|hey\s*siri|ヘイ\s*シリ)", re.IGNORECASE)
+
+
+def gate(text, destinations, answers):
+    """What the app lets leave the journal (TriageClassifier.sessionTalk / worthKeeping): "session" for talk to the
+    work session on screen or another voice assistant, "memo" for a note worth keeping, else None."""
+    if destinations == ["filler"] or answers is None:
+        return None
+    if answers.get("needs_local", 0) >= 0.7 or OTHER_ASSISTANT.search(text):
+        return "session"
+    return "memo" if answers.get("keep_note", 0) >= 0.7 else None
+
+
 def result_row(entry, device, destinations, answers):
     return {"id": entry.id, "device": device, "timestamp": entry.timestamp.isoformat(), "text": entry.text,
             "origin": entry.origin, "app": entry.focus_app, "task": entry.task_name,
-            "destinations": destinations, "answers": answers}
+            "destinations": destinations, "answers": answers, "gate": gate(entry.text, destinations, answers)}
 
 
 def describe_row(row):
