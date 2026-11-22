@@ -156,11 +156,16 @@ struct TriageSettings: Decodable {
         }
     }
 
-    private enum CodingKeys: String, CodingKey { case enabled, graceSeconds, routes }
+    private enum CodingKeys: String, CodingKey { case enabled, graceSeconds, routes, memo }
+
+    /// Where every utterance with content goes at once, besides any request route: a thought, an unsure intent, an
+    /// unsure kind. A memo is cheap to take back, so it never waits for review (2026-11-22).
+    let memo: Route?
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled)
+        memo = try c.decodeIfPresent(Route.self, forKey: .memo)
         graceSeconds = try Self.grace(c) ?? 300
         routes = try c.decodeIfPresent([String: Candidates].self, forKey: .routes)?.mapValues(\.routes) ?? [:]
         let kinds = ["look_up", "self_task", "write_text", "computer_change", "delegate"]

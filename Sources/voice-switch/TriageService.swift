@@ -211,6 +211,10 @@ final class TriageService {
             proposal.questionHash = result.hash
             proposal.destinations = TriageClassifier.decide(result.answers, thresholds: bands)
             if result.off { proposal.destinations = [TriageClassifier.localDestination(entry.text)] }
+            // Unsure whether it is a request, or whether it has content: it is kept as a memo, not held for review.
+            if proposal.destinations == ["unjudged:intent"] || proposal.destinations == ["unjudged:content"] {
+                proposal.destinations = ["thought"]
+            }
             let kinds = proposal.destinations.compactMap { destination in
                 destination.hasPrefix("action:") ? TriageKind(rawValue: String(destination.dropFirst("action:".count))) : nil
             }
@@ -253,6 +257,7 @@ final class TriageService {
         }
         state.rows[id] = TriageExecution.Row()
         guard apply(.classify(id, verdict, verified: verified, flagged: !proposal.reasons.isEmpty), updated: proposal) else { return }
+        if verdict != .filler, verdict != .kind(.selfTask), verdict != .kind(.writeText) { memo(proposal) }
         if let action = simulation?.action {
             switch action {
             case .send: send(id, routeIndex: simulation?.routeIndex)
@@ -402,6 +407,17 @@ final class TriageService {
                                                wait: true, quiet: true) { finished.failureReason = $0 }
             finished.outcome = sent ? .sent : .failed
             _ = apply(sent ? .run(id) : .fail(id), updated: finished)
+        }
+    }
+
+    /// Appends the text to the memo route at once. No proposal row: a memo is a record, not a send to review.
+    private func memo(_ proposal: TriageProposal) {
+        guard let route = settings.memo else { return }
+        Task {
+            var reason: String?
+            let ok = await executeWakeAction(route.action, text: proposal.text, app: proposal.focusBundleID,
+                                             wait: true, quiet: true) { reason = $0 }
+            log(ok ? "triage: \(proposal.id) memo" : "triage: \(proposal.id) memo failed \(reason ?? "unknown")")
         }
     }
 

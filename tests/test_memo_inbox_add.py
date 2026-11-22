@@ -33,10 +33,12 @@ class MemoInboxAdd(unittest.TestCase):
             inbox = Path(tmp) / "inbox.jsonl"
             self.assertEqual(add("task", "牛乳を買う\n帰りに", inbox).returncode, 0)
             self.assertEqual(add("draft", "お礼のメール", inbox).returncode, 0)
+            self.assertEqual(add("thought", "この坂、思ったより長いな", inbox).returncode, 0)
             got = rows(inbox)
             self.assertEqual([(r["kind"], r["title"], r["text"]) for r in got],
-                             [("task", "自分の作業", "牛乳を買う\n帰りに"), ("draft", "下書き", "お礼のメール")])
-            self.assertEqual(len({r["id"] for r in got}), 2)
+                             [("task", "自分の作業", "牛乳を買う\n帰りに"), ("draft", "下書き", "お礼のメール"),
+                              ("thought", "考え", "この坂、思ったより長いな")])
+            self.assertEqual(len({r["id"] for r in got}), 3)
             self.assertEqual(inbox.stat().st_mode & 0o777, 0o600)
 
     def test_earlier_bytes_never_change(self):

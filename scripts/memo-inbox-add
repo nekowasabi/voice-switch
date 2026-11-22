@@ -3,7 +3,7 @@
 
 The changelog skill is the only writer of changelogmemo and pulls these lines in; this script is the only writer of
 the inbox. No file has two writers, so there is no race to handle (docs/journal-triage-execution.md).
-Usage: memo-inbox-add task|draft < dictation.txt   (inbox: VOICE_SWITCH_MEMO_INBOX, else ~/repos/changelog/voice-switch-inbox.jsonl)
+Usage: memo-inbox-add task|draft|thought < dictation.txt   (inbox: VOICE_SWITCH_MEMO_INBOX, else ~/repos/changelog/voice-switch-inbox.jsonl)
 """
 import datetime
 import json
@@ -12,12 +12,12 @@ import sys
 import uuid
 from pathlib import Path
 
-TITLES = {"task": "自分の作業", "draft": "下書き"}
+TITLES = {"task": "自分の作業", "draft": "下書き", "thought": "考え"}
 
 
 def main():
     if len(sys.argv) != 2 or sys.argv[1] not in TITLES:
-        sys.exit("usage: memo-inbox-add task|draft < dictation.txt")
+        sys.exit("usage: memo-inbox-add task|draft|thought < dictation.txt")
     text = sys.stdin.buffer.read().decode("utf-8").strip()
     if not text:
         sys.exit("memo-inbox-add: empty input")

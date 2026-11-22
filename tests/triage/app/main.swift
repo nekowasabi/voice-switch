@@ -237,6 +237,11 @@ for (name, p, history, want) in exceptionCases {
     let got = p.routeExceptions(in: history)
     if got != want { fail("exceptions: \(name): \(got), want \(want)") }
 }
+do {
+    let text = "{\"wakeWords\": [\"音声入力\"], \"command\": \"true\", \"dictation\": {\"triage\": {\"memo\": {\"command\": \"true\", \"name\": \"メモ\"}}}}"
+    try text.write(toFile: configPath, atomically: true, encoding: .utf8)
+    if try ConfigFile(path: configPath).cfg.dictation?.triage?.memo?.name != "メモ" { fail("routes: dictation.triage.memo is not read") }
+} catch { fail("routes: a config with memo does not load: \(error)") }
 // A light route (heavy: false) has no warm-up, but a 60 s repeat still holds it.
 if proposal("new", route: "memo", at: 0).routeExceptions(in: [], warmUp: false) != [] { fail("exceptions: a light route still warms up") }
 if proposal("new", route: "memo", at: 0).routeExceptions(in: [proposal("r", route: "memo", at: -30)], warmUp: false) != [repeated] {

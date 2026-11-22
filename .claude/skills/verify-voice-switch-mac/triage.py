@@ -131,7 +131,8 @@ def check(name, ok, evidence):
 
 def unsure():
     h = Home("unsure")
-    r = h.run({"answers": {q: 0.05 for q in QUESTIONS} | {"wants_action": 0.5}, "dictations": ["unsure-1 来週の分"], "seconds": 5})
+    # A request whose kind is unsure (wants_action yes, no kind yes). An unsure intent is kept as a memo instead (2026-11-22).
+    r = h.run({"answers": {q: 0.05 for q in QUESTIONS} | {"wants_action": 0.9}, "dictations": ["unsure-1 来週の分"], "seconds": 5})
     rows = list(h.proposals().values())
     check("(a) an unsure request waits in 確認が要るもの and is not sent",
           len(rows) == 1 and rows[0]["stage"] == "review" and not h.lines("starts.txt")
@@ -248,7 +249,7 @@ def destinations():
     h.config["dictation"]["triage"]["routes"]["delegate"] = [
         {"name": "A（既定の送り先）", "command": dest("dest-a"), "heavy": False, "graceSeconds": 2},
         {"name": "B（2 番目の送り先）", "command": dest("dest-b"), "heavy": False, "graceSeconds": 5},
-        {"name": "C（送ったことのない送り先）", "command": dest("dest-c"), "heavy": False, "graceSeconds": 2}]
+        {"name": "C（送ったことのない重い送り先）", "command": dest("dest-c"), "heavy": True, "graceSeconds": 2}]
     (h.dir / "config.json").write_text(json.dumps(h.config, ensure_ascii=False, indent=2))
     at = lambda name, text: h.lines(f"{name}.txt").count(text)
     rows = lambda prefix: [x for x in h.proposals().values() if x["text"].startswith(prefix)]
@@ -316,7 +317,7 @@ def destinations():
           len([l for l in r["triage"] if " pending delegate until " in l]) == 1
           and any(" exception 送り先の最初の5件" in l for l in r["triage"]) and not any(" sending" in l for l in r["triage"])
           and not h.lines("dest-c.txt") and at("dest-a", said) == 0
-          and row and row[0]["stage"] == "review" and row[0]["routeIndex"] == 2 and row[0]["reasons"] == ["送り先の最初の5件"],
+          and row and row[0]["stage"] == "review" and row[0]["routeIndex"] == 2 and row[0]["reasons"] == ["送り先の最初の5件", "重い送り先は確認が必要"],
           r["triage"] + [f"dest-c.txt lines: {len(h.lines('dest-c.txt'))}",
                          f"last line: stage {row[0]['stage'] if row else None}, routeIndex {row[0]['routeIndex'] if row else None}, "
                          f"reasons {row[0]['reasons'] if row else None}"])
