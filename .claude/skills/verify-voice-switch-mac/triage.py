@@ -351,6 +351,15 @@ def gates():
           any(" session" in l for l in r1["triage"]) and not any(" sending" in l for l in r1["triage"])
           and not h.lines("starts.txt") and "gate-1 原因を特定してください" not in memo_lines,
           r1["triage"] + [f"starts.txt lines: {len(h.lines('starts.txt'))}, memo.txt: {memo_lines}"])
+    unsure_kind = {q: 0.05 for q in QUESTIONS} | {"wants_action": 0.95, "needs_local": 0.05}
+    r4 = h.run({"answers": unsure_kind | {"keep_note": 0.9}, "dictations": ["gate-4 マルチプレクサは後で決める"], "seconds": 4})
+    r5 = h.run({"answers": unsure_kind | {"keep_note": 0.2}, "dictations": ["gate-5 あれをお願い"], "seconds": 4})
+    rows = {r["text"]: r for r in h.proposals().values()}
+    memo_lines = h.lines("memo.txt")
+    check("(m) a request of unsure kind that is worth keeping becomes one memo and is not held for review; one that is not stays in review",
+          memo_lines.count("gate-4 マルチプレクサは後で決める") == 1 and rows.get("gate-4 マルチプレクサは後で決める", {}).get("stage") != "review"
+          and rows.get("gate-5 あれをお願い", {}).get("stage") == "review" and "gate-5 あれをお願い" not in memo_lines,
+          r4["triage"] + r5["triage"] + [f"stages: {[(t[:7], r['stage']) for t, r in rows.items()]}", f"memo.txt: {memo_lines}"])
     check("(l) a thought worth keeping (keep_note 0.9) reaches the memo route once; one that is not (0.2) stays in the journal",
           memo_lines.count("gate-2 冬休みは年末に取ろう") == 1 and "gate-3 いいですね" not in memo_lines,
           r2["triage"] + r3["triage"] + [f"memo.txt: {memo_lines}"])
