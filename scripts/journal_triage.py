@@ -369,7 +369,7 @@ def gate(text, destinations, answers, origin=None):
     if destinations == ["filler"] or answers is None:
         return None
     if answers.get("needs_local", 0) >= 0.7 or OTHER_ASSISTANT.search(text):
-        return "session"
+        return "memo" if answers.get("keep_note", 0) >= 0.8 else "session"  # a note said to the session is still a note
     return "memo" if answers.get("keep_note", 0) >= (0.8 if origin == "自動" else 0.7) else None
 
 
@@ -379,8 +379,8 @@ def outcome(text, destinations, answers, origin=None):
     if destinations == ["filler"]:
         return "drop"
     kept = gate(text, destinations, answers, origin)
-    if kept == "session":
-        return "drop"
+    if answers and (answers.get("needs_local", 0) >= 0.7 or OTHER_ASSISTANT.search(text)):
+        return "memo" if kept == "memo" else "drop"  # never a bot route
     kinds = [d.removeprefix("action:") for d in destinations if d.startswith("action:")]
     if len(kinds) == 1:
         if kinds[0] in ("self_task", "write_text"):

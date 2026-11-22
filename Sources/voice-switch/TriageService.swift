@@ -224,8 +224,11 @@ final class TriageService {
             }
             let session = !result.off && proposal.destinations != ["filler"]
                 && TriageClassifier.sessionTalk(result.answers, text: entry.text)
-            keep = !session && TriageClassifier.worthKeeping(result.answers,
-                automatic: DictationJournal.originLabel(entry.origin, manual: note.manual) == "自動")
+            // Said to the session on screen but clearly meant as a note too ("…いったん使ってみて、メモ…"): kept at 0.8,
+            // still never sent to a bot. On 491 labeled utterances this added 1 right memo and no wrong one.
+            keep = session ? TriageClassifier.worthKeeping(result.answers, automatic: true)
+                : TriageClassifier.worthKeeping(result.answers,
+                    automatic: DictationJournal.originLabel(entry.origin, manual: note.manual) == "自動")
             if session {
                 verdict = .thought  // already heard by the session on screen: kept in the journal only
                 log("triage: \(id) session")

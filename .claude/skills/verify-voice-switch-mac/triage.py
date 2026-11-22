@@ -343,7 +343,7 @@ def gates():
                                                             "heavy": False, "graceSeconds": 2}
     (h.dir / "config.json").write_text(json.dumps(h.config, ensure_ascii=False, indent=2))
     thought = {q: 0.05 for q in QUESTIONS}
-    r1 = h.run({"answers": sure("look_up") | {"needs_local": 0.9, "keep_note": 0.9}, "dictations": ["gate-1 原因を特定してください"], "seconds": 6})
+    r1 = h.run({"answers": sure("look_up") | {"needs_local": 0.9, "keep_note": 0.7}, "dictations": ["gate-1 原因を特定してください"], "seconds": 6})
     r2 = h.run({"answers": thought | {"needs_local": 0.05, "keep_note": 0.9}, "dictations": ["gate-2 冬休みは年末に取ろう"], "seconds": 4})
     r3 = h.run({"answers": thought | {"needs_local": 0.05, "keep_note": 0.2}, "dictations": ["gate-3 いいですね"], "seconds": 4})
     memo_lines = h.lines("memo.txt")
