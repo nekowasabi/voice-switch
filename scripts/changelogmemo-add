@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
+from collections import Counter
+import ctypes
 import datetime
+import errno
 import fcntl
 import os
 from pathlib import Path
@@ -7,6 +10,67 @@ import re
 import stat
 import sys
 import tempfile
+import time
+
+
+def exchange(pending, path):
+    libc = ctypes.CDLL(None, use_errno=True)
+    source, destination = os.fsencode(pending), os.fsencode(path)
+    if sys.platform == "darwin":
+        result = libc.renamex_np(source, destination, ctypes.c_uint(0x00000002))  # RENAME_SWAP
+    elif sys.platform.startswith("linux") and hasattr(libc, "renameat2"):
+        result = libc.renameat2(-100, source, -100, destination, ctypes.c_uint(2))  # AT_FDCWD, RENAME_EXCHANGE
+    else:
+        raise OSError(errno.ENOTSUP, "atomic file exchange unavailable", path)
+    if result != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), path)
+
+
+def snapshot(path):
+    try:
+        with path.open("rb") as stream:
+            mode = stat.S_IMODE(os.fstat(stream.fileno()).st_mode)
+            contents = stream.read()
+    except FileNotFoundError:
+        return None, b"  takets <nolifeking00@gmail.com>", b"", 0o600
+    header, _, rest = contents.partition(b"\n")
+    if re.match(rb"^\d{4}-\d\d-\d\d  ", header):
+        return contents, header[10:], rest.removeprefix(b"\n"), mode
+    return contents, b"  takets <nolifeking00@gmail.com>", contents, mode
+
+
+def merge(current, retained, base=b""):
+    if current.endswith(retained):
+        return current
+    if retained.endswith(current):
+        return retained
+    if base and current.endswith(base) and retained.endswith(base):
+        return merge(current[:-len(base)], retained[:-len(base)]) + base
+    sections = re.compile(rb"(?m)(?=^\* )")
+    current_entries = sections.split(current)
+    retained_entries = sections.split(retained)
+    while retained_entries and current_entries and retained_entries[-1] == current_entries[-1]:
+        retained_entries.pop()
+        current_entries.pop()
+    counts = Counter(current_entries)
+    missing = []
+    for entry in retained_entries:
+        if counts[entry]:
+            counts[entry] -= 1
+        else:
+            missing.append(entry)
+    return b"".join(missing) + current
+
+
+def after_publish(path, published, raced):
+    # shortcut: A blind replacement delayed past this check needs writer cooperation.
+    deadline = time.monotonic() + (0.25 if raced else 0.025)
+    while True:
+        current = snapshot(path)
+        if current[0] != published or time.monotonic() >= deadline:
+            return current
+        time.sleep(0.001)
 
 
 def prepend(path, details, title):
@@ -17,35 +81,53 @@ def prepend(path, details, title):
     path.parent.mkdir(parents=True, exist_ok=True)
     with Path(str(path) + ".lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        previous, author, rest, mode = snapshot(path)
+        retained = entry + rest
+        raced = False
         while True:
-            try:
-                previous = path.read_bytes()
-                mode = stat.S_IMODE(path.stat().st_mode)
-            except FileNotFoundError:
-                previous, mode = b"", 0o600
-            header, _, rest = previous.partition(b"\n")
-            if re.match(rb"^\d{4}-\d\d-\d\d  ", header):
-                author = header[10:]
-                rest = rest.removeprefix(b"\n")
-            else:
-                author = b"  takets <nolifeking00@gmail.com>"
-                rest = previous
             fd, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+            pending_path = Path(name)
+            displaced = False
             try:
+                published = today + author + b"\n\n" + retained
                 with os.fdopen(fd, "wb") as pending:
                     os.fchmod(pending.fileno(), mode)
-                    pending.write(today + author + b"\n\n" + entry + rest)
+                    pending.write(published)
                     pending.flush()
                     os.fsync(pending.fileno())
+                current, current_author, current_rest, current_mode = snapshot(path)
+                if current != previous:
+                    raced = True
+                    previous, author, mode = current, current_author, current_mode
+                    retained = merge(current_rest, retained, rest)
+                    rest = current_rest
+                    continue
                 try:
-                    current = path.read_bytes()
-                except FileNotFoundError:
-                    current = b""
-                if current == previous:
-                    os.replace(name, path)
+                    if previous is None:
+                        os.link(pending_path, path)
+                    else:
+                        exchange(pending_path, path)
+                        displaced = True
+                except (FileExistsError, FileNotFoundError):
+                    raced = True
+                    current = snapshot(path)
+                else:
+                    if displaced:
+                        replaced, _, replaced_rest, _ = snapshot(pending_path)
+                        if replaced != previous:
+                            raced = True
+                            retained = merge(retained, replaced_rest, rest)
+                    current = after_publish(path, published, raced)
+                    raced = raced or current[0] != published
+                previous, author, current_rest, mode = current
+                combined = merge(current_rest, retained, rest)
+                if combined == current_rest:
                     return
+                retained = combined
+                rest = current_rest
             finally:
-                Path(name).unlink(missing_ok=True)
+                if not displaced or sys.exc_info()[0] is None:
+                    pending_path.unlink(missing_ok=True)
 
 
 def main():
