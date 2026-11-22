@@ -374,7 +374,8 @@ def gate(text, destinations, answers, origin=None):
 
 
 def outcome(text, destinations, answers, origin=None):
-    """Where the app sends a row: "drop" (journal only), "memo", "review", or "route:<kind>" (TriageService.classify)."""
+    """Where the app sends a row: "drop" (journal only), "memo", "review", or "route:<kind>" (TriageService.classify).
+    Not here: the app's extra check for a heavy route or an automatic bot request, which can still move a route to review."""
     if destinations == ["filler"]:
         return "drop"
     kept = gate(text, destinations, answers, origin)

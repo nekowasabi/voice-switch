@@ -256,6 +256,13 @@ final class TriageService {
                         verified = (probability ?? 0) >= 0.7
                         proposal.verified = verified
                         if !verified { proposal.reasons.append("重い送り先の確認不足") }
+                    } else if kind == .lookUp || kind == .delegate,
+                              DictationJournal.originLabel(entry.origin, manual: note.manual) == "自動" {
+                        // An automatic recording also hears fragments that read like a bot request ("検索して調査。"):
+                        // on 17 such labeled requests the extra check put all 5 wrong ones at 0.37 or less.
+                        let probability = await verify(kind, destination: proposal.routeName ?? kind.rawValue, context: context)
+                        log("triage: \(id) verify \(kind.rawValue) \(probability.map { String($0) } ?? "unavailable")")
+                        if (probability ?? 0) < 0.5 { proposal.reasons.append("自動録音の依頼で確認不足") }
                     }
                     proposal.reasons += proposal.routeExceptions(in: proposals.values, warmUp: route.heavy)
                     if proposal.reasons.isEmpty {

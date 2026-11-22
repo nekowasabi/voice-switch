@@ -255,8 +255,8 @@ def destinations():
     at = lambda name, text: h.lines(f"{name}.txt").count(text)
     rows = lambda prefix: [x for x in h.proposals().values() if x["text"].startswith(prefix)]
 
-    ra = h.run({"answers": sure("delegate"), "action": "send", "dictations": [f"dest-a-{i}" for i in range(5)], "seconds": 6})
-    rb = h.run({"answers": sure("delegate"), "action": "send", "routeIndex": 1, "dictations": [f"dest-b-{i}" for i in range(5)],
+    ra = h.run({"answers": sure("delegate"), "verification": 0.9, "action": "send", "dictations": [f"dest-a-{i}" for i in range(5)], "seconds": 6})
+    rb = h.run({"answers": sure("delegate"), "verification": 0.9, "action": "send", "routeIndex": 1, "dictations": [f"dest-b-{i}" for i in range(5)],
                 "seconds": 6})
     b_rows = rows("dest-b-")
     check("(g) on 確認が要るもの [B に送る] sends to the second candidate only, and proposals.jsonl records index 1 and B's name",
@@ -270,7 +270,7 @@ def destinations():
     time.sleep(61)  # rule 5: no request to the same destination within 60 s of the warm-up
 
     said = "dest-switch-1 会議室を予約して"
-    r = h.run({"answers": sure("delegate"), "action": "switch", "routeIndex": 1, "dictations": [said], "seconds": 9})
+    r = h.run({"answers": sure("delegate"), "verification": 0.9, "action": "switch", "routeIndex": 1, "dictations": [said], "seconds": 9})
     pend = [l for l in r["triage"] if " pending delegate until " in l]
     until = [time.mktime(time.strptime(re.search(r"until (\S+)Z", l).group(1), "%Y-%m-%dT%H:%M:%S")) for l in pend]
     row = rows("dest-switch-")
@@ -283,7 +283,7 @@ def destinations():
                          f"last line: routeIndex {row[0]['routeIndex'] if row else None}, stage {row[0]['stage'] if row else None}"])
 
     said = "dest-auto-1 来週の予定を登録して"
-    r = h.run({"answers": sure("delegate"), "dictations": [said], "seconds": 6})
+    r = h.run({"answers": sure("delegate"), "verification": 0.9, "dictations": [said], "seconds": 6})
     row = rows("dest-auto-")
     check("(f) a sure request nobody touches goes to the default candidate A after its grace period (B's request 10 s earlier "
           "is not a repeat for A)",
@@ -294,10 +294,10 @@ def destinations():
     time.sleep(61)
 
     said = "dest-keep-1 夕食のタスクを 19 時にして"
-    r1 = h.run({"answers": sure("delegate"), "action": "switch", "routeIndex": 1, "dictations": [said], "seconds": 20},
+    r1 = h.run({"answers": sure("delegate"), "verification": 0.9, "action": "switch", "routeIndex": 1, "dictations": [said], "seconds": 20},
                kill_when=lambda text: text.count(" pending delegate until ") >= 2)
     before = rows("dest-keep-")
-    r2 = h.run({"answers": sure("delegate"), "dictations": [], "seconds": 9})
+    r2 = h.run({"answers": sure("delegate"), "verification": 0.9, "dictations": [], "seconds": 9})
     row = rows("dest-keep-")
     check("(i) the app dies after the switch to B, inside B's grace period; on relaunch the request keeps B and goes to B only",
           r1["killed"] and not any(" sending" in l for l in r1["triage"])
@@ -312,7 +312,7 @@ def destinations():
              f"last line: routeIndex {row[0]['routeIndex'] if row else None}, stage {row[0]['stage'] if row else None}"])
 
     said = "dest-cold-1 郵便の再配達を頼んで"  # A's last send was over 60 s ago, B's was (i)
-    r = h.run({"answers": sure("delegate"), "action": "switch", "routeIndex": 2, "dictations": [said], "seconds": 6})
+    r = h.run({"answers": sure("delegate"), "verification": 0.9, "action": "switch", "routeIndex": 2, "dictations": [said], "seconds": 6})
     row = rows("dest-cold-")
     check("(j) switched to C, which has no sends yet, the request waits in 確認が要るもの for C's warm-up and is not sent",
           len([l for l in r["triage"] if " pending delegate until " in l]) == 1
@@ -360,6 +360,12 @@ def gates():
           memo_lines.count("gate-4 マルチプレクサは後で決める") == 1 and rows.get("gate-4 マルチプレクサは後で決める", {}).get("stage") != "review"
           and rows.get("gate-5 あれをお願い", {}).get("stage") == "review" and "gate-5 あれをお願い" not in memo_lines,
           r4["triage"] + r5["triage"] + [f"stages: {[(t[:7], r['stage']) for t, r in rows.items()]}", f"memo.txt: {memo_lines}"])
+    r6 = h.run({"answers": sure("look_up") | {"needs_local": 0.05}, "verification": 0.3, "dictations": ["gate-6 検索して調査。"], "seconds": 5})
+    row6 = {r["text"]: r for r in h.proposals().values()}.get("gate-6 検索して調査。", {})
+    check("(n) a light bot request from an automatic recording whose extra check says 0.3 waits in review and is not sent",
+          row6.get("stage") == "review" and "自動録音の依頼で確認不足" in (row6.get("reasons") or [])
+          and not any(" sending" in l for l in r6["triage"]),
+          r6["triage"] + [f"stage {row6.get('stage')}, reasons {row6.get('reasons')}"])
     check("(l) a thought worth keeping (keep_note 0.9) reaches the memo route once; one that is not (0.2) stays in the journal",
           memo_lines.count("gate-2 冬休みは年末に取ろう") == 1 and "gate-3 いいですね" not in memo_lines,
           r2["triage"] + r3["triage"] + [f"memo.txt: {memo_lines}"])
