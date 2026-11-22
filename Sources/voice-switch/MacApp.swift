@@ -1,6 +1,7 @@
 // macOS app: menu bar, Apple Speech, CoreAudio, CGEvent hotkeys.
 #if os(macOS)
 import AppKit
+import VoiceSwitchCore
 import Carbon
 import os
 import AVFoundation
@@ -1003,6 +1004,17 @@ func executeWakeAction(_ action: WakeAction, text: String, app: String?, wait: B
                                        wait: wait, quiet: quiet, onFailure: onFailure)
         if !quiet { log("dictation delivered: command \(action.name)") }
         return sent
+    }
+}
+
+extension TriageService {
+    convenience init(settings: TriageSettings, journalDir: String?, home: URL = FileManager.default.homeDirectoryForCurrentUser,
+                     simulation: Simulation? = nil, stopWords: [String] = []) {
+        self.init(settings: settings, journalDir: journalDir, home: home, simulation: simulation, stopWords: stopWords,
+                  questionsURL: { Bundle.module.url(forResource: "triage_questions", withExtension: "json") },
+                  runAction: { action, text, app, onFailure in
+                      await executeWakeAction(action, text: text, app: app, wait: true, quiet: true, onFailure: onFailure)
+                  })
     }
 }
 

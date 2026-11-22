@@ -34,7 +34,8 @@ cmd_drive() {
   echo "== path =="; cmd_path
   echo "== swift stickyStep =="
   out=$(mktemp)
-  swiftc "$repo/Sources/voice-switch/StickyMode.swift" "$repo/tests/macos/StickyMode/main.swift" -o "$out"
+  python3 "$repo/tests/core_sources.py" sticky "$repo/Sources/voice-switch" \
+    swiftc "$repo/tests/macos/StickyMode/main.swift" -o "$out"
   "$out" | tail -n 1
   rm -f "$out"
   echo "SKIP live Mac delivery (item 1 is done by a person; see SKILL.md)"

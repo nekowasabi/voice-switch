@@ -1,5 +1,6 @@
 #if os(macOS)
 import AppKit
+import VoiceSwitchCore
 
 private extension TriageKind {
     var title: String {

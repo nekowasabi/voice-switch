@@ -1,26 +1,31 @@
 import Foundation
 
-enum WakeRule: String, Codable { case strict, relaxedD2 = "relaxed_d2", followup, autoB = "auto_b" }
+public enum WakeRule: String, Codable { case strict, relaxedD2 = "relaxed_d2", followup, autoB = "auto_b" }
 
-struct WakeOrigin: Equatable {
-    let rule: WakeRule
-    let inputIdleSeconds: Double?
-    var isAutomatic: Bool { rule != .strict }
-    var fields: String {
+public struct WakeOrigin: Equatable {
+    public let rule: WakeRule
+    public let inputIdleSeconds: Double?
+    public init(rule: WakeRule, inputIdleSeconds: Double?) {
+        self.rule = rule
+        self.inputIdleSeconds = inputIdleSeconds
+    }
+
+    public var isAutomatic: Bool { rule != .strict }
+    public var fields: String {
         let value = inputIdleSeconds.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
         let idle = value.map { String(format: "%.3f", locale: Locale(identifier: "en_US_POSIX"), $0) } ?? "-1"
         return "rule=\(rule.rawValue) inputIdleSeconds=\(idle)"
     }
 }
 
-func sidField(_ id: UUID?) -> String {
+public func sidField(_ id: UUID?) -> String {
     guard let id else { return "sid=-" }
     return "sid=\(id.uuidString.lowercased())"
 }
 
 /// `pauseShortcut` names, the same KeyboardEvent.code form Windows DictationHotkeys.Parse reads ("Control+Shift+F7").
 /// Returns a Carbon virtual key code and Carbon modifier mask. Meta/Super/Win is Command. Pure Foundation for the parity harness.
-enum PauseShortcut {
+public enum PauseShortcut {
     private static let modifiers: [String: UInt32] = ["control": 0x1000, "ctrl": 0x1000, "shift": 0x200, "alt": 0x800,
                                                       "meta": 0x100, "super": 0x100, "win": 0x100]
     // kVK_* values; letters, digits and F-keys are not sequential on Mac.
@@ -34,7 +39,7 @@ enum PauseShortcut {
         return keys
     }()
 
-    static func parse(_ name: String) -> (keyCode: UInt32, modifiers: UInt32)? {
+    public static func parse(_ name: String) -> (keyCode: UInt32, modifiers: UInt32)? {
         let parts = name.split(separator: "+", omittingEmptySubsequences: false).map(String.init)
         var mask: UInt32 = 0
         for part in parts.dropLast() {
@@ -48,18 +53,18 @@ enum PauseShortcut {
 /// One MISS label per observed recognition, pressed via Ctrl+Shift+F8 within 10 s.
 /// Pure Foundation so the Linux parity harness can test it; the hotkey itself stays
 /// a RegisterEventHotKey (no CGEventTap, no new permissions).
-final class WakeMissLabel {
-    static let shared = WakeMissLabel()
+public final class WakeMissLabel {
+    public static let shared = WakeMissLabel()
     private let lock = NSLock()
     private var latest: (id: Int, origin: WakeOrigin, at: Date)?
 
-    func observe(id: Int, origin: WakeOrigin, at: Date = Date()) {
+    public func observe(id: Int, origin: WakeOrigin, at: Date = Date()) {
         lock.lock()
         latest = (id, origin, at)
         lock.unlock()
     }
 
-    func record(now: Date = Date()) -> String? {
+    public func record(now: Date = Date()) -> String? {
         lock.lock()
         defer { lock.unlock() }
         guard let value = latest else { return nil }
@@ -71,7 +76,7 @@ final class WakeMissLabel {
 }
 
 /// Maps Mac end-of-dictation prose reasons to Windows FinishReason names for the log.
-func finishReasonToken(_ reason: String) -> String {
+public func finishReasonToken(_ reason: String) -> String {
     switch reason {
     case "hotkey", "FinishCommand": return "FinishCommand"
     case "maxSeconds", "MaximumDuration": return "MaximumDuration"
@@ -83,16 +88,16 @@ func finishReasonToken(_ reason: String) -> String {
     }
 }
 
-struct AutomaticTranscriptPolicy: Equatable {
+public struct AutomaticTranscriptPolicy: Equatable {
     /// Whole transcripts an automatic recording is dropped for, after `token` trims it.
     var ignored: Set<String>
 
-    static let disabled = AutomaticTranscriptPolicy(ignored: [])
+    public static let disabled = AutomaticTranscriptPolicy(ignored: [])
     static let filterInterjections = AutomaticTranscriptPolicy(ignored: ["あっ", "ああ"])
 
     init(ignored: Set<String>) { self.ignored = ignored }
 
-    init(_ options: NoWakeWordConfig?) {
+    public init(_ options: NoWakeWordConfig?) {
         let listed = Set((options?.ignoredTranscripts ?? []).map(Self.token))
         ignored = options?.filterInterjections == true ? listed.union(Self.filterInterjections.ignored) : listed
     }
@@ -111,26 +116,26 @@ struct AutomaticTranscriptPolicy: Equatable {
     }
 }
 
-struct DictationHistoryEntry {
-    let id: UUID
-    let text: String
-    let origin: WakeOrigin
+public struct DictationHistoryEntry {
+    public let id: UUID
+    public let text: String
+    public let origin: WakeOrigin
     let createdAt: Date
     var delivery: JournalDelivery? = nil
 
     var eligibleForTriage: Bool { delivery == nil || delivery == .history }
 }
 
-final class DictationHistory {
-    static let shared = DictationHistory()
+public final class DictationHistory {
+    public static let shared = DictationHistory()
     private let lock = NSLock()
     private var entries: [DictationHistoryEntry] = []
     private var currentGeneration = 0
-    var generation: Int { lock.lock(); defer { lock.unlock() }; return currentGeneration }
+    public var generation: Int { lock.lock(); defer { lock.unlock() }; return currentGeneration }
     private let now: () -> Date
     private let capacity: Int
     private let retention: TimeInterval
-    var onChange: (() -> Void)?
+    public var onChange: (() -> Void)?
     var onTriageEntry: ((DictationHistoryEntry, JournalNote, String?, [DictationHistoryEntry]) -> Void)?
 
     init(now: @escaping () -> Date = Date.init, capacity: Int = 50, retention: TimeInterval = 1800) {
@@ -142,7 +147,7 @@ final class DictationHistory {
 
     var journal: DictationJournal?
     @discardableResult
-    func add(id: UUID, text: String, origin: WakeOrigin, expectedGeneration: Int? = nil, policy: AutomaticTranscriptPolicy = .disabled, endReason: String? = nil, recordingSeconds: Double? = nil, manual: Bool = false, focus: FocusApp? = nil) -> Bool {
+    public func add(id: UUID, text: String, origin: WakeOrigin, expectedGeneration: Int? = nil, policy: AutomaticTranscriptPolicy = .disabled, endReason: String? = nil, recordingSeconds: Double? = nil, manual: Bool = false, focus: FocusApp? = nil) -> Bool {
         guard text.utf16.count <= 100_000, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !policy.rejects(text, origin: origin) else { return false }
         lock.lock()
@@ -167,21 +172,21 @@ final class DictationHistory {
         return true
     }
 
-    func snapshot() -> [DictationHistoryEntry] {
+    public func snapshot() -> [DictationHistoryEntry] {
         lock.lock()
         defer { lock.unlock() }
         prune()
         return entries.reversed()
     }
 
-    func select(_ id: UUID) -> String? {
+    public func select(_ id: UUID) -> String? {
         lock.lock()
         defer { lock.unlock() }
         prune()
         return entries.first(where: { $0.id == id })?.text
     }
 
-    func clear() {
+    public func clear() {
         lock.lock()
         entries.removeAll()
         currentGeneration += 1
@@ -195,20 +200,28 @@ final class DictationHistory {
     }
 }
 
-struct PasteSafety {
+public struct PasteSafety {
     let targetFocused: Bool
     let plainTextField: Bool
     let compositionClear: Bool
     let clipboardRestorable: Bool
     let inputUnchanged: Bool
-    var allowsPaste: Bool { targetFocused && plainTextField && compositionClear && clipboardRestorable && inputUnchanged }
+    public init(targetFocused: Bool, plainTextField: Bool, compositionClear: Bool, clipboardRestorable: Bool, inputUnchanged: Bool) {
+        self.targetFocused = targetFocused
+        self.plainTextField = plainTextField
+        self.compositionClear = compositionClear
+        self.clipboardRestorable = clipboardRestorable
+        self.inputUnchanged = inputUnchanged
+    }
+
+    public var allowsPaste: Bool { targetFocused && plainTextField && compositionClear && clipboardRestorable && inputUnchanged }
 }
 
-struct NoWakeWordConfig: Decodable {
-    var followup: Bool?
+public struct NoWakeWordConfig: Decodable {
+    public var followup: Bool?
     var autoIdle: Bool?
-    var relaxedReadingDistance2: Bool?
-    var followupMs: Int?
+    public var relaxedReadingDistance2: Bool?
+    public var followupMs: Int?
     var filterInterjections: Bool?
     /// Transcripts that are never kept from an automatic recording when they are all it said, e.g. "うん".
     var ignoredTranscripts: [String]?
@@ -216,19 +229,19 @@ struct NoWakeWordConfig: Decodable {
     var minHandoffMs: Int?
     /// Silence that ends an automatic recording; `dictation.endSilenceMs` when absent. Wake-word dictation keeps
     /// `dictation.endSilenceMs`, so it can wait longer for someone thinking mid-sentence.
-    var endSilenceMs: Int?
-    var enabled: Bool { followup == true || autoIdle == true || relaxedReadingDistance2 == true }
-    var valid: Bool { (1000...30000).contains(followupMs ?? 8000) }
+    public var endSilenceMs: Int?
+    public var enabled: Bool { followup == true || autoIdle == true || relaxedReadingDistance2 == true }
+    public var valid: Bool { (1000...30000).contains(followupMs ?? 8000) }
 }
 
-enum NoWakePolicy {
+public enum NoWakePolicy {
     /// Fewest characters Apple Speech and Whisper must share before an automatic recording reaches Superwhisper.
     /// Noise and coughs make each recognizer invent its own words (Whisper "ご視聴ありがとうございました", Apple nothing),
     /// so they share none; spoken words come out the same from both. Measured 2026-10-14: coughs 0, speech 12 or more.
-    static let minAgreedCharacters = 3
+    public static let minAgreedCharacters = 3
 
     /// Length of the longest common subsequence of the two transcripts after `normalize` and width folding (３ and 3 match).
-    static func agreedCharacters(_ a: String, _ b: String) -> Int {
+    public static func agreedCharacters(_ a: String, _ b: String) -> Int {
         let x = Array(normalize(a.precomposedStringWithCompatibilityMapping))
         let y = Array(normalize(b.precomposedStringWithCompatibilityMapping))
         var row = [Int](repeating: 0, count: y.count + 1)
@@ -262,22 +275,22 @@ enum NoWakePolicy {
     }
 
     /// Characters Apple Speech and Whisper share, after filler phrases are removed from the Whisper side.
-    static func agreedWithWhisper(apple: String, whisper: String) -> Int {
+    public static func agreedWithWhisper(apple: String, whisper: String) -> Int {
         agreedCharacters(apple, whisperTextForAgreement(whisper))
     }
 
-    static func belowMinHandoff(sampleCount: Int, rate: Double, options: NoWakeWordConfig?) -> Bool {
+    public static func belowMinHandoff(sampleCount: Int, rate: Double, options: NoWakeWordConfig?) -> Bool {
         sampleCount < Int(rate) * (options?.minHandoffMs ?? 1000) / 1000
     }
 
-    static func onSpeech(_ options: NoWakeWordConfig?, idleSeconds: Double?, inFollowupWindow: Bool) -> WakeOrigin? {
+    public static func onSpeech(_ options: NoWakeWordConfig?, idleSeconds: Double?, inFollowupWindow: Bool) -> WakeOrigin? {
         guard let options, options.valid, let idleSeconds, idleSeconds.isFinite, idleSeconds >= 0 else { return nil }
         if options.followup == true && inFollowupWindow { return WakeOrigin(rule: .followup, inputIdleSeconds: idleSeconds) }
         if options.autoIdle == true { return WakeOrigin(rule: .autoB, inputIdleSeconds: idleSeconds) }
         return nil
     }
 
-    static func relaxedWake(_ text: String, readings: [String]) -> Bool {
+    public static func relaxedWake(_ text: String, readings: [String]) -> Bool {
         let heard = normalizedReading(text)
         func kanaOnly(_ value: String) -> Bool {
             !value.isEmpty && value.unicodeScalars.allSatisfy { (0x3041...0x3096).contains($0.value) || $0.value == 0x30FC }
@@ -286,7 +299,7 @@ enum NoWakePolicy {
         return readings.map(normalizedReading).contains { (5...9).contains($0.count) && kanaOnly($0) && editDistance(heard, $0) == 2 }
     }
 
-    static func normalizedReading(_ text: String) -> String {
+    public static func normalizedReading(_ text: String) -> String {
         normalize(text.applyingTransform(.hiraganaToKatakana, reverse: true) ?? text)
     }
 
@@ -304,13 +317,19 @@ enum NoWakePolicy {
     }
 }
 
-struct ModeRestore: Codable {
-    let previous: String
+public struct ModeRestore: Codable {
+    public let previous: String
     let temporary: String
-    var valid: Bool { !previous.isEmpty && !temporary.isEmpty && previous != temporary }
-    func decide(_ active: String?) -> ModeRecovery {
+
+    public init(previous: String, temporary: String) {
+        self.previous = previous
+        self.temporary = temporary
+    }
+
+    public var valid: Bool { !previous.isEmpty && !temporary.isEmpty && previous != temporary }
+    public func decide(_ active: String?) -> ModeRecovery {
         guard valid, let active else { return .unknown }
         return active == temporary ? .restore : .clear
     }
 }
-enum ModeRecovery { case unknown, restore, clear }
+public enum ModeRecovery { case unknown, restore, clear }

@@ -30,7 +30,7 @@ func canonicalAgentName(_ raw: String) -> String? {
 }
 
 /// `%` plus ASCII digits. Rejects indexes and anything else.
-func isPaneID(_ id: String) -> Bool {
+public func isPaneID(_ id: String) -> Bool {
     guard id.utf8.first == UInt8(ascii: "%") else { return false }
     let digits = id.utf8.dropFirst()
     return !digits.isEmpty && digits.allSatisfy { $0 >= UInt8(ascii: "0") && $0 <= UInt8(ascii: "9") }
@@ -513,7 +513,7 @@ func routeDisposition(pane: String?, suppressFallback: Bool, sent: Bool, body: S
 /// An app opened from Finder or `open` inherits launchd's PATH (/usr/bin:/bin:/usr/sbin:/sbin), which has no Homebrew
 /// tmux, so `/usr/bin/env tmux` failed and sticky capture fell back to the AX field (2026-11-21, finding F1 in
 /// verify-sticky-mode). Resolved once from PATH, then the usual install locations.
-let tmuxExecutable: String = {
+public let tmuxExecutable: String = {
     let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
     let dirs = path.split(separator: ":").map(String.init) + ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"]
     return dirs.map { $0 + "/tmux" }.first { FileManager.default.isExecutableFile(atPath: $0) } ?? "/opt/homebrew/bin/tmux"
@@ -569,12 +569,12 @@ func scanLog(_ panes: [PaneLabel], matchKey: String) -> String {
 /// Returns the same RouteResult Windows `TmuxPaneRouter.RouteAsync` does (disposition for Decide, body for SendFailed paste).
 /// False when no tmux pane matches locally. Then routeDictation never sends to a pane (decideRoute case 0), so the
 /// journal can record superwhisper's paste before DictationHistory.add. True leaves the route to routeDictation.
-func dictationMayRouteToPane(_ text: String) -> Bool {
+public func dictationMayRouteToPane(_ text: String) -> Bool {
     guard let panes = fetchPanes() else { return false }
     return !matchingPanes(text, panes, agents: discoverAgentNames()).isEmpty
 }
 
-func routeDictation(_ text: String) async -> RouteResult {
+public func routeDictation(_ text: String) async -> RouteResult {
     guard let panes = fetchPanes() else { return .notRouted }
     let agents = discoverAgentNames()
     let hits = matchingPanes(text, panes, agents: agents)

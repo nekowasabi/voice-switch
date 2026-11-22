@@ -2,7 +2,7 @@
 import Foundation
 import OnnxRuntimeBindings
 
-enum SpeakerGate {
+public enum SpeakerGate {
     static let modelName = "3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx"
     static let modelPath = NSHomeDirectory() + "/Library/Application Support/voice-switch/models/" + modelName
     // Measured 2026-10-16 on the user's superwhisper recordings vs FLEURS ja, CAM++ with a 5-clip mean enrollment:
@@ -25,7 +25,7 @@ enum SpeakerGate {
         NSError(domain: "voice-switch.speaker-gate", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
-    static func accepts(_ samples: [Float], cfg: Config) -> Bool {
+    public static func accepts(_ samples: [Float], cfg: Config) -> Bool {
         guard let path = cfg.speakerEnrollment else { return true }
         guard samples.count >= minSamples else {
             log("speaker gate: skipped, \(samples.count * 1000 / Int(rate)) ms is under 3000 ms")
@@ -49,7 +49,7 @@ enum SpeakerGate {
     /// The samples without each pause-delimited segment of 2 s+ that scores as another speaker; everything kept is untouched.
     /// Measured 2026-10-16 (30 own+FLEURS+own mixes, 30 own-only clips): pauses of 400 ms, 2 s segments and 0.30 removed
     /// a mean 86 % of the other voice, 0.1 % of own speech in mixes and none of the own-only clips.
-    static func withoutOtherSpeakers(_ samples: [Float], cfg: Config) -> [Float] {
+    public static func withoutOtherSpeakers(_ samples: [Float], cfg: Config) -> [Float] {
         guard let path = cfg.speakerEnrollment else { return samples }
         var stage = "enrollment"
         let cuts: [Range<Int>]
@@ -114,7 +114,7 @@ enum SpeakerGate {
     }
 
     /// Mean of the unit per-file embeddings, itself scaled to unit length.
-    static func enroll(_ output: String, _ inputs: [String]) throws {
+    public static func enroll(_ output: String, _ inputs: [String]) throws {
         guard !inputs.isEmpty else { throw invalid("no input WAV") }
         var sum = [Double]()
         for input in inputs {
@@ -226,7 +226,7 @@ enum SpeakerGate {
         return features
     }
 
-    static func readWave(_ path: String) throws -> [Float] {
+    public static func readWave(_ path: String) throws -> [Float] {
         let data = [UInt8](try Data(contentsOf: URL(fileURLWithPath: path)))
         func u16(_ i: Int) -> Int { Int(data[i]) | Int(data[i + 1]) << 8 }
         func u32(_ i: Int) -> Int { u16(i) | u16(i + 2) << 16 }

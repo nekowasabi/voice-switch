@@ -10,6 +10,7 @@ step() {
 }
 step "budget (model size)" sh tests/budget.sh
 step "verification coverage" sh tests/coverage_gate.sh
+step "swift core boundary" python3 tests/core_sources.py check
 step "python tests" python3 -m unittest discover -s tests -p 'test_*.py'
 step "swift triage (truth table, reducer, request, routes)" sh tests/triage/run.sh
 step "tla+ send path" sh .claude/skills/verify-triage-execution/check.sh design

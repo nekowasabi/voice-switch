@@ -3,20 +3,24 @@ import Foundation
 
 let punctuation = Set("、。,.!?！？「」")
 
-func normalize(_ s: String) -> String {
+public func normalize(_ s: String) -> String {
     // Recognizers capitalize Latin words ("ST") while configs are typed in lowercase.
     String(s.filter { !$0.isWhitespace && !punctuation.contains($0) }).lowercased()
 }
 
-struct Transcript {
+public struct Transcript {
     /// Runs of recognized text (about one character each for ja_JP) with seconds from the start of the audio.
-    var runs: [(text: String, start: Double?, end: Double?)]
-    var text: String { normalize(runs.map(\.text).joined()) }
+    public var runs: [(text: String, start: Double?, end: Double?)]
+    public init(runs: [(text: String, start: Double?, end: Double?)]) {
+        self.runs = runs
+    }
+
+    public var text: String { normalize(runs.map(\.text).joined()) }
 }
 
 /// Seconds into the audio where a trailing stop word starts, or nil when the transcript does not end with one.
 /// "…思っています入力ストップ" stops; "入力ストップです" does not.
-func stopWordStart(_ t: Transcript, stopWords: [String]) -> Double? {
+public func stopWordStart(_ t: Transcript, stopWords: [String]) -> Double? {
     let words = Set(stopWords.map(normalize).filter { !$0.isEmpty })
     var suffix = ""
     for (i, run) in t.runs.enumerated().reversed() {

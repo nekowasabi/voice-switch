@@ -112,11 +112,7 @@ if not shutil.which("swiftc"):
     sys.exit(1 if args.require_swift else 0)
 with tempfile.TemporaryDirectory(prefix="voice-switch-url-test-") as temp:
     binary = pathlib.Path(temp) / "url-actions"
-    subprocess.run(["swiftc", "-module-name", "voice_switch", "-module-cache-path", str(pathlib.Path(temp) / "module-cache"),
-                    str(root / "Sources/voice-switch/DictationJournal.swift"),
-                    str(root / "Sources/voice-switch/WakeSafety.swift"), str(root / "Sources/voice-switch/Transcript.swift"),
-                    str(root / "Sources/voice-switch/SecretLog.swift"),
-                    str(root / "Sources/voice-switch/Config.swift"),
-                    str(root / "Sources/voice-switch/Platform.swift"),
+    subprocess.run([sys.executable, str(root / "tests/core_sources.py"), "journal", str(root / "Sources/voice-switch"),
+                    "swiftc", "-module-name", "voice_switch", "-module-cache-path", str(pathlib.Path(temp) / "module-cache"),
                     str(root / "tests/url-actions/main.swift"), "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True)

@@ -2,18 +2,18 @@
 import Foundation
 
 // Milliseconds, so the wake-to-HUD delay (target 0.2 s) can be read from the log.
-func log(_ s: String) { print("\(Date().formatted(Date.ISO8601FormatStyle(includingFractionalSeconds: true))) \(SecretLog.redact(s))") }
+public func log(_ s: String) { print("\(Date().formatted(Date.ISO8601FormatStyle(includingFractionalSeconds: true))) \(SecretLog.redact(s))") }
 
-struct Config: Decodable {
-    var wakeWords: [String]
-    var locale: String?
+public struct Config: Decodable {
+    public var wakeWords: [String]
+    public var locale: String?
     var command: String
     /// macOS-only URL overrides; Windows continues to use command / stopCommand.
-    var macOS: MacOSActions?
+    public var macOS: MacOSActions?
     var maxSeconds: Double?
-    var hangoverMs: Int?
-    var prerollMs: Int?
-    var minSpeechMs: Int?
+    public var hangoverMs: Int?
+    public var prerollMs: Int?
+    public var minSpeechMs: Int?
     var vadRatio: Float?
     var vadMinRMS: Float?
     /// Experimental: probe the open utterance with STT every this many ms of speech (and at short internal gaps),
@@ -21,30 +21,30 @@ struct Config: Decodable {
     /// except the gap probes, which still run when macOS.actions is set.
     var earlyWakeMs: Int?
     /// Bundle IDs / process names whose microphone use blocks firing.
-    var skipWhileMicInUseBy: [String]?
+    public var skipWhileMicInUseBy: [String]?
     /// Said on their own, these end the current input.
-    var stopWords: [String]?
+    public var stopWords: [String]?
     /// Runs when a stop word is heard while a skipWhileMicInUseBy app is recording.
     var stopCommand: String?
     /// Absent turns one-breath dictation off.
-    var dictation: DictationConfig?
+    public var dictation: DictationConfig?
     /// Parsed for cross-platform config compatibility; macOS does not process this lane.
     var noiseReduction: NoiseReductionOptions?
     /// Absent disables macrowhisper CLI hooks.
-    var macrowhisper: MacrowhisperConfig?
+    public var macrowhisper: MacrowhisperConfig?
     var speakerEnrollment: String?
     var speakerThreshold: Double?
     /// Global key that toggles pause/resume, e.g. "Control+Shift+F7". Absent registers none. Read once at launch.
-    var pauseShortcut: String?
+    public var pauseShortcut: String?
     /// macOS: pause while Chrome or Edge holds the microphone (a Google Meet call) and resume when it lets go.
     /// Absent or false turns it off. Read once at launch.
-    var pauseDuringMeet: Bool?
+    public var pauseDuringMeet: Bool?
     /// macOS: pause while an input device with this exact name is connected. Absent or empty disables it.
     /// Read once at launch.
-    var pauseWhenMicrophoneConnected: String?
+    public var pauseWhenMicrophoneConnected: String?
     /// macOS: input devices to try in order, each an exact device name or UID; the first one plugged in is used,
     /// then the built-in mic. Set, it replaces the マイク menu choice and its 予備マイク list. Read once at launch.
-    var microphones: [String]?
+    public var microphones: [String]?
 
     /// Per-locale defaults, used only when stopWords is absent. An explicit value (even []) is kept.
     private static let defaultStopWords = ["ja-JP": ["入力ストップ"], "en-US": ["stop dictation"]]
@@ -57,8 +57,14 @@ struct Config: Decodable {
         stopWords = Self.defaultStopWords.first { $0.key.lowercased() == key }?.value
     }
 
-    func action(named name: String) -> WakeAction? {
+    public func action(named name: String) -> WakeAction? {
         macOS?.actions?.first { $0.name == name }
+    }
+}
+
+extension Config {
+    public init(speakerEnrollment: String) {
+        self.init(wakeWords: [], command: "", speakerEnrollment: speakerEnrollment)
     }
 }
 
@@ -70,7 +76,7 @@ struct NoiseReductionOptions: Decodable {
 /// Optional hooks into the macrowhisper CLI (https://github.com/ognistik/macrowhisper).
 /// Same surface the Alfred workflow uses: schedule / auto-return / set-active, then Superwhisper.
 /// scheduleAction and autoReturn are mutually exclusive in macrowhisper (scheduling cancels auto-return and vice versa).
-struct MacrowhisperConfig: Decodable {
+public struct MacrowhisperConfig: Decodable {
     /// Absolute path or bare name on PATH. Default: "macrowhisper".
     var bin: String?
     /// `macrowhisper --schedule-action <name>` before starting Superwhisper (one-shot for the next recording).
@@ -85,38 +91,40 @@ struct MacrowhisperConfig: Decodable {
     var onDictationHandoff: Bool?
 }
 
-struct DictationConfig: Decodable {
-    var recordingsDir: String?
-    var endSilenceMs: Int?
-    var maxSeconds: Double?
-    var excludeBundleIDs: [String]?
+public struct DictationConfig: Decodable {
+    public var recordingsDir: String?
+    public var endSilenceMs: Int?
+    public var maxSeconds: Double?
+    public var excludeBundleIDs: [String]?
     /// How long a lone wake word waits for the text before giving up.
-    var startTimeoutMs: Int?
+    public var startTimeoutMs: Int?
     /// Windows only (executable names); one config file can serve both platforms, and macOS ignores it.
     var excludeProcessNames: [String]?
     /// Superwhisper mode key or display name for voice-switch dictations (Mac + Windows).
     /// Unset keeps auto-paste behavior; set switches mode around handoff and pastes when not routed.
-    var superwhisperMode: String?
+    public var superwhisperMode: String?
     /// macOS: superwhisper mode key or display name that wake-word dictations paste in (auto-paste on). voice-switch
     /// selects it at launch and before each wake-word handoff, since superwhisper was seen running the first recording
     /// after a relaunch in another mode (2026-10-28). Unset keeps superwhisper's active mode.
-    var pasteMode: String?
-    var noWakeWord: NoWakeWordConfig?
+    public var pasteMode: String?
+    public var noWakeWord: NoWakeWordConfig?
     /// Windows only. A second SAPI engine hears a stop word after body text.
     /// macOS decodes the key and does not use it. Apple Speech is not covered. Absent stays off.
     var dedicatedStopRecognizer: Bool? = nil
     /// Keep speaker playback from starting an automatic recording (Mac + Windows). Windows cancels it before the VAD;
     /// macOS keeps the raw mic and requires HAL voice activity detection. Absent means on; false turns it off.
-    var echoCancellation: Bool? = nil
+    public var echoCancellation: Bool? = nil
     /// Folder of daily `yyyy-MM-dd.jsonl` files, or one file when the path ends in `.jsonl`.
     /// Absent uses the platform default. An unusable path is logged and the default is used.
-    var journalDir: String? = nil
+    public var journalDir: String? = nil
     /// Optional task file an external updater refreshes; the task read at append time, or null.
-    var journalTaskFile: String? = nil
-    var triage: TriageSettings? = nil
+    public var journalTaskFile: String? = nil
+    public var triage: TriageSettings? = nil
+
+    public init() {}
 }
 
-struct TriageSettings: Decodable {
+public struct TriageSettings: Decodable {
     struct Route: Decodable {
         let action: WakeAction
         let heavy: Bool
@@ -138,7 +146,7 @@ struct TriageSettings: Decodable {
         }
     }
 
-    let enabled: Bool?
+    public let enabled: Bool?
     let graceSeconds: Double
     let routes: [String: [Route]]
 
@@ -162,7 +170,7 @@ struct TriageSettings: Decodable {
     /// unsure kind. A memo is cheap to take back, so it never waits for review (2026-11-22).
     let memo: Route?
 
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled)
         memo = try c.decodeIfPresent(Route.self, forKey: .memo)
@@ -200,12 +208,12 @@ enum DictationTimingGuard {
     }
 }
 
-final class ConfigFile {
+public final class ConfigFile {
     let path: String
     private var mtime: Date?
-    private(set) var cfg: Config
+    public private(set) var cfg: Config
 
-    init(path: String) throws {
+    public init(path: String) throws {
         self.path = path
         cfg = try Self.load(path)
         mtime = Self.modified(path)
@@ -213,7 +221,7 @@ final class ConfigFile {
     }
 
     // Checked between utterances so wake words can be edited without a restart.
-    func reloadIfChanged() {
+    public func reloadIfChanged() {
         let m = Self.modified(path)
         guard m != mtime else { return }
         mtime = m
@@ -241,25 +249,25 @@ final class ConfigFile {
 }
 
 /// URL actions are decoded at the config boundary; execution never repairs or shell-quotes them.
-struct MacOSActions: Decodable {
+public struct MacOSActions: Decodable {
     var wakeURL: ActionURL?
     var stopURL: ActionURL?
-    var actions: [WakeAction]?
-    var stickyTarget: Bool?
+    public var actions: [WakeAction]?
+    public var stickyTarget: Bool?
     /// Wake words that start a sticky dictation. The default wake words keep pasting into the frontmost app.
     var stickyWakeWords: [String]?
     /// Bundle IDs that get Return after a sticky paste (a tmux pane uses its terminal's). Absent: paste only.
-    var stickyEnterApps: [String]?
+    public var stickyEnterApps: [String]?
 }
 
 /// A wake phrase that hands the dictated text to its own target: a URL opened with the text as `input=`,
 /// an https URL POSTed with `tokenEnv`, or a shell `command` that reads the text on stdin.
-struct WakeAction: Decodable {
-    enum Delivery: Equatable { case open(ActionURL), post(ActionURL), command(String) }
+public struct WakeAction: Decodable {
+    public enum Delivery: Equatable { case open(ActionURL), post(ActionURL), command(String) }
 
-    let name: String
-    let wakeWords: [String]
-    let delivery: Delivery
+    public let name: String
+    public let wakeWords: [String]
+    public let delivery: Delivery
     /// nil for a command action.
     var url: ActionURL? {
         switch delivery {
@@ -269,27 +277,27 @@ struct WakeAction: Decodable {
     }
     /// Superwhisper mode (key or name) used for this action's dictation, typically one with auto-paste off
     /// so the text reaches only the action. Absent falls back to `dictation.superwhisperMode`.
-    let superwhisperMode: String?
+    public let superwhisperMode: String?
     /// Query item carrying the dictation. JSON `inputParam`; defaults to `input` when omitted or null.
     let inputParam: String?
     /// Environment variable holding a bearer token. When set, the dictation is POSTed to the https `url` as
     /// multipart form fields rendered by `postFields` instead of being opened.
-    let tokenEnv: String?
+    public let tokenEnv: String?
     /// Multipart field name to value template for a tokenEnv action; `{text}` and `{recordedAtMs}` are replaced.
     /// Absent sends `defaultPostFields`.
     let fields: [String: String]?
     /// Shown in the HUD instead of the mic while this action waits for text: an .app gives its own icon,
     /// anything else is read as an image. Windows reads an .exe's icon the same way.
-    let icon: String?
+    public let icon: String?
     /// Global key that starts this action, same names as `pauseShortcut`. Absent registers none.
-    let shortcut: String?
+    public let shortcut: String?
 
     private enum CodingKeys: String, CodingKey { case name, wakeWords, url, command, superwhisperMode, inputParam, tokenEnv, icon, fields, shortcut }
 
     /// The Pebble Index webhook in transcription-only mode, so a receiver built for it accepts a config without fields.
     static let defaultPostFields = ["transcription": "{text}", "recordedAt": "{recordedAtMs}", "client": "ring"]
 
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         try self.init(from: decoder, routeName: nil)
     }
 
@@ -360,7 +368,7 @@ struct WakeAction: Decodable {
 
     /// Multipart name/value pairs sorted by name. `{text}` is replaced in one pass, so a dictation containing
     /// "{recordedAtMs}" stays literal.
-    func postFields(text: String, recordedAtMs: Int64) -> [(name: String, value: String)] {
+    public func postFields(text: String, recordedAtMs: Int64) -> [(name: String, value: String)] {
         let ms = String(recordedAtMs)
         return (fields ?? WakeAction.defaultPostFields).sorted { $0.key < $1.key }.map { field in
             (field.key, field.value.components(separatedBy: "{text}")
@@ -370,7 +378,7 @@ struct WakeAction: Decodable {
     }
 
     /// `open` arguments with the URL's `input` query replaced by `input` (one item, percent-encoded).
-    func openArguments(input: String) -> [String] {
+    public func openArguments(input: String) -> [String] {
         guard case .open(let url) = delivery else { return [] }
         let param = inputParam ?? "input"
         let text: String
@@ -393,8 +401,8 @@ struct WakeAction: Decodable {
 /// Grok Bot prompt-link limits (documented, not live-tested; staff forum 2026-10-16).
 /// Mirrors Core GrokBotPrompt line for line: CR LF and CR become LF, tab runs become one space, trim,
 /// cap the percent-encoded value at 1000 characters on a whole UTF-8 scalar.
-enum GrokBotPrompt {
-    static func isPrompt(_ url: String) -> Bool {
+public enum GrokBotPrompt {
+    public static func isPrompt(_ url: String) -> Bool {
         guard let parts = URLComponents(string: url),
               parts.scheme?.lowercased() == "grokbot",
               parts.host?.lowercased() == "app",
@@ -407,7 +415,7 @@ enum GrokBotPrompt {
         return value.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "." || $0 == "_" || $0 == "~") }
     }
 
-    static func fit(_ text: String) -> (fitted: String, truncated: Bool) {
+    public static func fit(_ text: String) -> (fitted: String, truncated: Bool) {
         let collapsed = text.replacingOccurrences(of: "\\r\\n?", with: "\n", options: .regularExpression)
             .replacingOccurrences(of: "\\t+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -433,11 +441,11 @@ enum GrokBotPrompt {
     }
 }
 
-struct ActionURL: Decodable, Equatable {
-    let rawValue: String
+public struct ActionURL: Decodable, Equatable {
+    public let rawValue: String
     var openArguments: [String] { ["-g", "--", rawValue] }
 
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         let raw = try container.decode(String.self)
         func invalid() -> DecodingError {

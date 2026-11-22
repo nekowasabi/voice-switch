@@ -4,7 +4,7 @@ import Foundation
 
 /// Thin wrapper around the public macrowhisper CLI
 /// (https://github.com/ognistik/macrowhisper — same commands as the Alfred workflow).
-enum Macrowhisper {
+public enum Macrowhisper {
     @discardableResult
     static func run(bin: String, arguments: [String]) -> Int32 {
         let p = Process()
@@ -28,7 +28,7 @@ enum Macrowhisper {
 
     /// Prepare macrowhisper for the Superwhisper session that is about to start.
     /// Priority matches documented mutual exclusion: scheduleAction > autoReturn > activeAction.
-    static func prepare(_ cfg: MacrowhisperConfig?) {
+    public static func prepare(_ cfg: MacrowhisperConfig?) {
         guard let cfg else { return }
         let bin = cfg.bin ?? "macrowhisper"
         if let name = cfg.scheduleAction?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
