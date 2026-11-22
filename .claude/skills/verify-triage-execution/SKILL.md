@@ -30,11 +30,12 @@ A request misread as `thought` or `filler` is classifier accuracy, not ordering.
 
 | Config | Meaning | Expected result at the sync commit |
 |---|---|---|
-| `design` | The execution design as written: nothing is written before the route runs, unsure rows stay in the CLI list | `FAIL AtMostOnce`, `FAIL NoSilentDrop` (findings below), the rest pass |
-| `fixed` | Two changes: `executing` is appended to `proposals.jsonl` before the route runs and is restored as "実行されたか不明" after a restart, and unjudged / unrouted request rows appear in the proposal window | all PASS |
-| `auto` | `fixed` with `self_task` marked `auto: true` | `FAIL StrictNoWrongExecution` (expected: an auto route runs on a wrong verdict), the rest pass |
+| `design` | The execution design: `executing` is appended to `proposals.jsonl` before a route runs and restored as "実行されたか不明" after a restart (流れ 6-7), and unjudged / unrouted request rows show in the proposal window as 確認待ち (流れ 3). No route is auto. | all PASS |
+| `auto` | `design` with `self_task` marked `auto: true` | `FAIL StrictNoWrongExecution` (expected: an auto route runs on a wrong verdict), the rest pass |
 
-## Findings (design as written)
+## Findings that shaped the design (2026-11-21, before 流れ 3, 6, 7 were added)
+
+The first version of the design had `PreRecord = FALSE` and `MenuShowsUnsure = FALSE`. Setting both back to FALSE in `design.cfg` reproduces these.
 
 1. `AtMostOnce`: the user approves a proposal, the route runs, the app dies before it appends "done", the restart reads the proposal as still waiting, the user approves it again (or an auto route starts it again), and the route runs a second time. Fix: append `executing` before running, and restore it as "実行されたか不明" for the user to confirm or retry.
 2. `NoSilentDrop`: Jev returns `unjudged` (or a request kind with no route) for a request, and the design puts it only in the CLI list, which the menu-only user never sees. Fix: show those rows in the proposal window for review.
@@ -44,17 +45,17 @@ A request misread as `thought` or `filler` is classifier accuracy, not ordering.
 
 1. **Real target** (once the proposal window exists): approve a proposal whose route is a slow command, quit VoiceSwitch.app while it runs, relaunch, and see the proposal shown as "実行されたか不明", not as a fresh proposal, and see the route not run again. Then speak an unclear request and see it in the proposal window, not only in `python3 scripts/journal_triage.py` output. Until someone has seen both, a model pass is unverified on the app.
 2. **Logs on every degraded path** (once code exists): the app logs one line each for `triage: <id> executing <kind>` before a route runs, `triage: <id> restored unknown` on restart, `triage: <id> no route for <kind>`, and `triage: <id> unjudged`, so a real run can tell them apart.
-3. **Model**: `sh .claude/skills/verify-triage-execution/check.sh fixed` must print only PASS lines. `design` and `auto` must print the failures in the table above and nothing else; a new failure there is a new finding.
+3. **Model**: `sh .claude/skills/verify-triage-execution/check.sh design` must print only PASS lines. `auto` must print only `FAIL StrictNoWrongExecution`; any other failure is a new finding.
 4. **Mutants**: `sh .claude/skills/verify-triage-execution/mutants.sh` must print `CAUGHT` for every line. `MISSED` means a property went blind; `anchor missing` means the model changed and the mutant table in `mutants.sh` needs the new text.
 
 ## Run
 
 ```sh
-sh .claude/skills/verify-triage-execution/check.sh fixed      # design | fixed | auto
+sh .claude/skills/verify-triage-execution/check.sh design     # design | auto
 sh .claude/skills/verify-triage-execution/mutants.sh
 ```
 
-Pinned TLC v1.7.4 (`tla2tools.jar`, sha256 checked, fetched with an authenticated `gh` into `~/.cache/tla2tools-v1.7.4/` the first time, the same jar as `verify-meet-pause`). Needs Java 11+. Each config takes a few seconds (8 496 distinct states for `fixed`); `mutants.sh` about 30 s. `check.sh` runs one TLC per invariant and prints `PASS` / `FAIL` / `ERROR` per invariant; traces are in `${TMPDIR}/verify-triage-execution/<config>/<invariant>.out`. Run one `check.sh` or `mutants.sh` at a time: they share that folder.
+Pinned TLC v1.7.4 (`tla2tools.jar`, sha256 checked, fetched with an authenticated `gh` into `~/.cache/tla2tools-v1.7.4/` the first time, the same jar as `verify-meet-pause`). Needs Java 11+. Each config takes a few seconds (8 496 distinct states for `design`); `mutants.sh` about 30 s. `check.sh` runs one TLC per invariant and prints `PASS` / `FAIL` / `ERROR` per invariant; traces are in `${TMPDIR}/verify-triage-execution/<config>/<invariant>.out`. Run one `check.sh` or `mutants.sh` at a time: they share that folder.
 
 Read every result with the `/statechart` skill: a failure as its shortest path in plain words, a pass as a chart of the states.
 
@@ -68,12 +69,12 @@ Sync commit: 3a0f455 (design documents only; no implementation yet). Move it onl
 
 | Model action | Design text (and, once written, the code) |
 |---|---|
-| `Classify` | design.md "判定（コードの真理値表）"; execution.md 流れ 2-3 (an unrouted kind "提案にせず一覧に残すだけ") |
+| `Classify` | design.md "判定（コードの真理値表）"; execution.md 流れ 2-3 (unjudged and unrouted rows become 確認待ち) |
 | `Approve`, `Dismiss`, `Fix` | execution.md 流れ 5 (「実行」「却下」「種類を直す」) |
 | `Auto` | execution.md 流れ 4 and `auto` in `dictation.triage.routes` |
 | `Start`, `Run` | execution.md "実行は既存の実行部分だけを通る" (`WakeAction` open / post / command, `Sources/voice-switch/Config.swift:186`) |
-| `Record`, `Restart`, `Restore` | execution.md 流れ 6 and the `proposals.jsonl` row in 持ち主 |
-| `Retry`, `ConfirmDone` | not in the design yet; the `fixed` config adds them with `PreRecord` |
+| `Start` (its `PreRecord` write), `Record` | execution.md 流れ 6 |
+| `Restart`, `Restore`, `Retry`, `ConfirmDone` | execution.md 流れ 7 and the `proposals.jsonl` row in 持ち主 |
 
 When any of these change, rerun items 3 and 4, update the model if the change was intended, then move the sync commit.
 
