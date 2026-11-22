@@ -3,9 +3,9 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(git -C "$HERE" rev-parse --show-toplevel)"
-WORK="${TMPDIR:-/tmp}/verify-journal-append"
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/verify-journal-append.XXXXXX")
+trap 'rm -rf "$WORK"' EXIT
 TRIAGE_TEST="$ROOT/tests/test_journal_triage.py"
-mkdir -p "$WORK"
 
 build() { # build <sources-dir> <binary>
   local src="$1" out="$2" f files=()
@@ -32,7 +32,7 @@ triage() { # triage [script]
 check() {
   local rc=0
   build "$ROOT/Sources/voice-switch" "$WORK/harness"
-  "$WORK/harness" "$WORK/run-$$" "${1:-4}" || rc=1
+  "$WORK/harness" "$WORK/run" "${1:-4}" || rc=1
   triage || rc=1
   return $rc
 }
@@ -43,7 +43,7 @@ mutants() {
   while IFS='|' read -r name want file old new; do
     i=$((i + 1))
     copy="$WORK/mut-$i"
-    rm -rf "$copy"; mkdir -p "$copy"
+    mkdir -p "$copy"
     # The script reads Resources/triage_questions.json next to its own folder, so the copy keeps that layout.
     if [[ $file == *.py ]]; then mkdir -p "$copy/scripts" "$copy/Resources"; cp "$ROOT/$file" "$copy/scripts/"
       cp "$ROOT/Resources/triage_questions.json" "$copy/Resources/"; target="$copy/scripts/$(basename "$file")"

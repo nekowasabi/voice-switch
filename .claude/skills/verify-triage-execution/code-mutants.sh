@@ -5,8 +5,7 @@
 set -eu
 dir=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$dir/../../.." && pwd)
-work="${TMPDIR:-/tmp}/verify-triage-execution/code-mutants-$$"
-mkdir -p "$work"
+work=$(mktemp -d "${TMPDIR:-/tmp}/verify-triage-execution-code-mutants.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 i=0
 while IFS='|' read -r name want file old new; do

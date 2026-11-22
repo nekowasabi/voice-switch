@@ -1,6 +1,6 @@
 #!/bin/sh
 # Model-check TriageExec.tla, one invariant per TLC run so each gets its own verdict and trace.
-# Usage: check.sh <design|risk> [Model.tla]   (traces land in $TMPDIR/verify-triage-execution/<cfg>/)
+# Usage: check.sh <design|risk> [Model.tla]   (failures print the path to the retained TLC log)
 set -eu
 dir=$(cd "$(dirname "$0")" && pwd)
 ver=v1.7.4
@@ -14,8 +14,7 @@ $sha  $jar
 EOF
 cfg=${1:?usage: check.sh <design|risk> [Model.tla]}
 spec=${2:-$dir/TriageExec.tla}
-out="${TMPDIR:-/tmp}/verify-triage-execution/$cfg"
-rm -rf "$out"; mkdir -p "$out"
+out=$(mktemp -d "${TMPDIR:-/tmp}/verify-triage-execution-$cfg.XXXXXX")
 cp "$spec" "$out/TriageExec.tla"
 invariants=$(sed -n 's/^INVARIANTS //p' "$dir/$cfg.cfg")
 status=0
