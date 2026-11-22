@@ -209,7 +209,9 @@ class Listing(unittest.TestCase):
               ("noul-string", answers(wants_action="0.9")), ("noul-above-1", answers(is_filler=1.5))]
 
     def test_every_combination(self):
-        questions = json.loads((SCRIPT.parents[1] / "Resources/triage_questions.json").read_text(encoding="utf-8"))
+        # The file also holds verify_route, the app's extra check for a heavy route; the classifier asks only its 6.
+        stored = json.loads((SCRIPT.parents[1] / "Resources/triage_questions.json").read_text(encoding="utf-8"))
+        questions = {q: stored[q] for q in QUESTIONS}
         with tempfile.TemporaryDirectory() as tmp:
             world = World(tmp)
             n = 0

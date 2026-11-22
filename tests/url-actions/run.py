@@ -49,16 +49,19 @@ def check_wiring(repo):
     enter_mode = "enterSuperwhisperMode(wantedMode, target: target)"
     assert mode_override in handoff and enter_mode in handoff
     assert handoff.index(mode_override) < handoff.index(enter_mode)
-    assert "case .open(let url)" in handoff and "Platform.urlProcess(url)" in handoff
-    assert "Platform.runURLProcess(p, wait: false)" in handoff
-    assert "case .command(let command)" in handoff, "command action must have its own delivery"
-    assert "Platform.runCommand(command, stdin: result" in handoff, "command action must get the dictation on stdin"
-    assert '"VOICE_SWITCH_APP": target?.bundleIdentifier' in handoff, "command action must name the dictation target app"
-    assert "openArguments(input:" in handoff and "let route = await routeDictation(result)" in handoff
-    action_pos = handoff.index("openArguments(input:")
-    command_pos = handoff.index("Platform.runCommand(command, stdin: result")
+    # Wake actions and triage routes share executeWakeAction; handoff runs it without waiting, before pane routing.
+    run_action = "_ = await executeWakeAction(action, text: result, app: target?.bundleIdentifier)"
+    assert run_action in handoff and "let route = await routeDictation(result)" in handoff
+    action_pos = handoff.index(run_action)
     route_pos = handoff.index("let route = await routeDictation(result)")
-    assert action_pos < command_pos < route_pos and "return .delivered" in handoff[command_pos:route_pos]
+    assert action_pos < route_pos and "return .delivered" in handoff[action_pos:route_pos]
+    execute = extract_braced_body(mac, r"func executeWakeAction\(.*?-> Bool \{")
+    assert "case .open(let url)" in execute and "Platform.urlProcess(url)" in execute
+    assert "process.arguments = action.openArguments(input: text)" in execute
+    assert "Platform.runURLProcess(process, wait: wait" in execute
+    assert "case .command(let command)" in execute, "command action must have its own delivery"
+    assert "Platform.runCommand(command, stdin: text" in execute, "command action must get the dictation on stdin"
+    assert '"VOICE_SWITCH_APP": app' in execute, "command action must name the dictation target app"
 
 repo = SourceTree(root)
 check_wiring(repo)
@@ -81,12 +84,12 @@ mutations = [
     ("MacApp.swift", "enterSuperwhisperMode(wantedMode, target: target)"),
     ("MacApp.swift", "case .open(let url)"),
     ("MacApp.swift", "Platform.urlProcess(url)"),
-    ("MacApp.swift", "Platform.runURLProcess(p, wait: false)"),
+    ("MacApp.swift", "Platform.runURLProcess(process, wait: wait"),
     ("MacApp.swift", "case .command(let command)"),
-    ("MacApp.swift", "Platform.runCommand(command, stdin: result"),
-    ("MacApp.swift", '"VOICE_SWITCH_APP": target?.bundleIdentifier'),
-    ("MacApp.swift", "openArguments(input:"),
-    ("MacApp.swift", "        }\n        return .delivered\n"),
+    ("MacApp.swift", "Platform.runCommand(command, stdin: text"),
+    ("MacApp.swift", '"VOICE_SWITCH_APP": app'),
+    ("MacApp.swift", "process.arguments = action.openArguments(input: text)"),
+    ("MacApp.swift", "app: target?.bundleIdentifier)\n        return .delivered\n"),
     ("MacApp.swift", "if isHead && start == nil"),
     ("MacApp.swift", "let route = await routeDictation(result)"),
 ]
