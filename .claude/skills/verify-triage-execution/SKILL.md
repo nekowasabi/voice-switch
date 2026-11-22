@@ -64,7 +64,7 @@ Replay the trace against the design text or the code, one action per step. If a 
 
 ## Coverage and sync
 
-Sync commit: PENDING. Move it only after items 3 and 4 pass at the new commit and the table below names the code.
+Sync commit: e31725c (design documents only; no implementation yet). Move it only after items 3 and 4 pass at the new commit and the table below names the code.
 
 | Model action | Design text (and, once written, the code) |
 |---|---|
