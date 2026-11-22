@@ -114,4 +114,18 @@ if let c = step(fresh, .classify("a", .kind(.lookUp), verified: false, flagged: 
     fail("reducer: the chosen candidate is not the one sent: \(s.effects)")
 }
 print(failures == reducerFailures ? "PASS reducer 6 rules (send once, review, cancel, crash, fail, chosen candidate)" : "FAIL reducer")
+// Gates: what may leave the journal (sessionTalk, maybeSessionTalk, worthKeeping in TriageClassifier.swift).
+let gateFailures = failures
+if !TriageClassifier.sessionTalk(["needs_local": 0.7], text: "修正してください") { fail("gate: needs_local 0.7 is not session talk") }
+if TriageClassifier.sessionTalk(["needs_local": 0.69], text: "明日の天気を調べて") { fail("gate: needs_local 0.69 is session talk") }
+if !TriageClassifier.sessionTalk(nil, text: "アレクサ、今何時?") || !TriageClassifier.sessionTalk([:], text: "OK、グーグル。2時間たったら起こして") {
+    fail("gate: a call to another voice assistant is not session talk")
+}
+if !TriageClassifier.maybeSessionTalk(["needs_local": 0.3]) || TriageClassifier.maybeSessionTalk(["needs_local": 0.29]) {
+    fail("gate: the review band for a bot request does not start at 0.3")
+}
+if !TriageClassifier.worthKeeping(["keep_note": 0.7]) || TriageClassifier.worthKeeping(["keep_note": 0.69]) || TriageClassifier.worthKeeping(nil) {
+    fail("gate: a memo needs keep_note 0.7 or more, and no answer keeps nothing")
+}
+print(failures == gateFailures ? "PASS gates (session talk, review band, memo)" : "FAIL gates")
 exit(failures == 0 ? 0 : 1)

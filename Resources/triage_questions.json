@@ -62,5 +62,21 @@
       "true": "The destination and the literal text to be sent both fit the speaker's request.",
       "false": "The destination is unsuitable, the text does not stand on its own, or the speaker's intent is unclear."
     }
+  },
+  "needs_local": {
+    "type": "noul",
+    "instructions": "Would acting on `utterance.text` need the work session the speaker is in the middle of on this computer: its code, files, apps, settings, or the conversation with an AI assistant on screen?",
+    "criteria": {
+      "true": "It refers to what is on the screen or in progress, such as 「修正してください」「原因を特定してください」「検証項目を作成して」「キーパイプの実装がどこまで進んでいるか教えて」「ダッシュボードも更新してくれ」.",
+      "false": "Anyone with the web could act on it, or it asks for nothing, such as 「明日の東京の天気を調べて」「楽天でビーフジャーキーを注文して」「Amazon でモバイルモニターの最安値を探して」「この坂、思ったより長いな」."
+    }
+  },
+  "keep_note": {
+    "type": "noul",
+    "instructions": "Is `utterance.text` the speaker thinking aloud or noting something to themselves that they would want to read again later?",
+    "criteria": {
+      "true": "An idea, plan, decision, worry, lesson, or fact to remember, or a chore for themselves, such as 「12月25日辺りに Mac Studio が来るなら、その辺りで冬休みを入れてもよさそう」「牛乳を買っておかないと」「後でやっておきたいのでメモして」.",
+      "false": "A reaction, greeting, talk with other people or a TV, a misrecognized phrase that makes no sense, a microphone test, or an instruction or question to an AI assistant, such as 「いいですね」「地球の飛行機交代分離戦。」「昔々あるところに」「修正してください」「明日の天気を調べて」."
+    }
   }
 }

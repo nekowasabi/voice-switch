@@ -211,7 +211,7 @@ class Listing(unittest.TestCase):
     def test_every_combination(self):
         # The file also holds verify_route, the app's extra check for a heavy route; the classifier asks only its 6.
         stored = json.loads((SCRIPT.parents[1] / "Resources/triage_questions.json").read_text(encoding="utf-8"))
-        questions = {q: stored[q] for q in QUESTIONS}
+        questions = {q: stored[q] for q in (*QUESTIONS, "needs_local", "keep_note")}  # plus the two gates
         with tempfile.TemporaryDirectory() as tmp:
             world = World(tmp)
             n = 0

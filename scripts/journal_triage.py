@@ -24,7 +24,7 @@ QUESTIONS_PATH = Path(__file__).resolve().parents[1] / "Resources" / "triage_que
 
 def load_questions():
     questions = json.loads(QUESTIONS_PATH.read_text(encoding="utf-8"))
-    return {qid: questions[qid] for qid in QUESTION_IDS}
+    return {qid: questions[qid] for qid in (*QUESTION_IDS, *GATE_IDS)}
 
 
 LOCAL_MARKERS = {
@@ -36,6 +36,7 @@ LOCAL_MARKERS = {
 KINDS = (*LOCAL_MARKERS, "delegate")
 LEGACY_QUESTION_IDS = ("wants_action", "is_filler", *(f"kind_{kind}" for kind in LOCAL_MARKERS))
 QUESTION_IDS = (*LEGACY_QUESTION_IDS, "kind_delegate")
+GATE_IDS = ("needs_local", "keep_note")  # asked with the table, not part of it (TriageClassifier.gateIDs)
 DEFAULT_BAND = {"no": 0.3, "yes": 0.7}
 STARTED = {"自動", "ウェイク", "手動"}
 DESTINATIONS = {*(f"action:{kind}" for kind in KINDS), "thought", "filler",
@@ -217,6 +218,7 @@ def ask_jev(key, state, questions):
         with urllib.request.urlopen(request, timeout=10) as response:
             raw = json.load(response)["answers"]
         answers = {qid: raw[qid]["noul"] for qid in QUESTION_IDS}
+        answers.update({qid: raw[qid]["noul"] for qid in GATE_IDS if qid in raw})  # the gates are optional here
         if valid_answers(answers):
             return answers
     except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError, RecursionError):

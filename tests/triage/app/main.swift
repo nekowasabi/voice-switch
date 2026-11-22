@@ -69,8 +69,10 @@ for c in fixture["cases"] as! [[String: Any]] {
     if Set(sent.allKeys as! [String]) != ["model", "questions", "state"] || sent["model"] as? String != "jev-latest" {
         fail("classification \(name): keys \(sent.allKeys), model \(sent["model"] ?? "nil")")
     }
-    let seven = questionsJSON.filter { TriageClassifier.questionIDs.contains($0.key) }
-    if seven.count != 7 || seven["kind_delegate"] == nil || sent["questions"] as? NSDictionary != seven as NSDictionary {
+    // The seven table questions plus the two gates (needs_local, keep_note), and nothing else (not verify_route).
+    let seven = questionsJSON.filter { TriageClassifier.requestIDs.contains($0.key) }
+    if seven.count != 9 || seven["kind_delegate"] == nil || seven["keep_note"] == nil
+        || sent["questions"] as? NSDictionary != seven as NSDictionary {
         fail("classification \(name): questions \(((sent["questions"] as? NSDictionary)?.allKeys ?? []))")
     }
     if !leaks(body).isEmpty { fail("classification \(name): sent \(leaks(body))") }

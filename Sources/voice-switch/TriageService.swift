@@ -203,6 +203,7 @@ final class TriageService {
         var proposal = TriageProposal(id: id, text: entry.text, createdAt: entry.createdAt, updatedAt: Date(),
                                       focusBundleID: note.focus?.bundleId)
         let verdict: TriageExecution.Verdict
+        var keep = false
         var verified = false
         do {
             let bands = try TriageClassifier.readThresholds(files.directory.appendingPathComponent("thresholds.json"))
@@ -218,8 +219,15 @@ final class TriageService {
             let kinds = proposal.destinations.compactMap { destination in
                 destination.hasPrefix("action:") ? TriageKind(rawValue: String(destination.dropFirst("action:".count))) : nil
             }
-            if proposal.destinations == ["thought"] { verdict = .thought }
+            let session = !result.off && proposal.destinations != ["filler"]
+                && TriageClassifier.sessionTalk(result.answers, text: entry.text)
+            keep = !session && TriageClassifier.worthKeeping(result.answers)
+            if session {
+                verdict = .thought  // already heard by the session on screen: kept in the journal only
+                log("triage: \(id) session")
+            } else if proposal.destinations == ["thought"] { verdict = .thought }
             else if proposal.destinations == ["filler"] { verdict = .filler }
+            else if kinds.isEmpty && keep { verdict = .thought }  // an unsure kind that is kept as a memo needs no review
             else if kinds.count != 1 {
                 verdict = .unjudged
                 proposal.reasons = [kinds.isEmpty ? reason(for: proposal.destinations.first) : "種類が複数"]
@@ -228,6 +236,9 @@ final class TriageService {
                 verdict = .kind(kind)
                 proposal.kind = kind
                 if result.off { proposal.reasons.append("Jev のキーなし") }
+                if kind == .lookUp || kind == .delegate, TriageClassifier.maybeSessionTalk(result.answers) {
+                    proposal.reasons.append("画面の作業への話かも")
+                }
                 if let route = route(kind, at: 0) {
                     // A light route (heavy: false) is cheap to take back, so a second kind in the unsure band and the
                     // warm-up do not hold it; only a heavy route waits for them.
@@ -257,7 +268,7 @@ final class TriageService {
         }
         state.rows[id] = TriageExecution.Row()
         guard apply(.classify(id, verdict, verified: verified, flagged: !proposal.reasons.isEmpty), updated: proposal) else { return }
-        if verdict != .filler, verdict != .kind(.selfTask), verdict != .kind(.writeText) { memo(proposal) }
+        if keep, verdict != .filler, verdict != .kind(.selfTask), verdict != .kind(.writeText) { memo(proposal) }
         if let action = simulation?.action {
             switch action {
             case .send: send(id, routeIndex: simulation?.routeIndex)

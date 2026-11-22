@@ -46,8 +46,8 @@ struct TriageRequest: Encodable {
     private let state: State
 
     static func classification(_ questions: [String: TriageClassifier.Question], state: State) -> Self? {
-        let batch = questions.filter { TriageClassifier.questionIDs.contains($0.key) }
-        guard batch.count == TriageClassifier.questionIDs.count else { return nil }
+        let batch = questions.filter { TriageClassifier.requestIDs.contains($0.key) }
+        guard batch.count == TriageClassifier.requestIDs.count else { return nil }
         return Self(questions: batch, state: state)
     }
 
