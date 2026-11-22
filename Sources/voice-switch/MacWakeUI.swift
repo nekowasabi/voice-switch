@@ -1,7 +1,16 @@
 #if os(macOS)
 import AppKit
+import VoiceSwitchCore
 import Carbon
 import Darwin
+
+extension DictationJournal {
+    /// The session-start app for the journal: the frontmost app stored on `Dictation.target` when the
+    /// session began. The later frontmost app read for paste is not passed here.
+    static func focus(of app: NSRunningApplication) -> FocusApp {
+        FocusApp(name: app.localizedName, bundleId: app.bundleIdentifier, exe: nil, pid: Int(app.processIdentifier))
+    }
+}
 
 final class HistoryCopyButton: NSButton {
     var entryID = UUID()

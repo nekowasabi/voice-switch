@@ -687,7 +687,7 @@ def check_config_fields(result: Result, repo: SourceTree, contract: dict) -> Non
 
 def extract_swift_struct_fields(source: str, struct_name: str) -> set[str]:
     body = block_after(source, rf"struct\s+{struct_name}\s*:\s*Decodable\s*\{{")
-    return set(re.findall(r"^\s*var\s+([A-Za-z][A-Za-z0-9_]*)\s*:", body, flags=re.MULTILINE))
+    return set(re.findall(r"^\s*(?:public\s+)?var\s+([A-Za-z][A-Za-z0-9_]*)\s*:", body, flags=re.MULTILINE))
 
 
 def extract_cs_record_fields(source: str, record_name: str) -> set[str]:
@@ -880,20 +880,12 @@ def check_swift_core_behavior(result: Result, require_swift: bool) -> None:
         binary = Path(tmp) / "swift-parity"
         completed = subprocess.run(
             [
+                sys.executable, str(ROOT / "tests/core_sources.py"), "segmenter", str(ROOT / "Sources/voice-switch"),
                 swiftc,
                 "-module-name",
                 "voice_switch",
                 "-module-cache-path",
                 str(Path(tmp) / "module-cache"),
-                str(ROOT / "Sources/voice-switch/Config.swift"),
-                str(ROOT / "Sources/voice-switch/SecretLog.swift"),
-                str(ROOT / "Sources/voice-switch/DictationJournal.swift"),
-                str(ROOT / "Sources/voice-switch/WakeSafety.swift"),
-                str(ROOT / "Sources/voice-switch/Transcript.swift"),
-                str(ROOT / "Sources/voice-switch/Segmenter.swift"),
-                str(ROOT / "Sources/voice-switch/Platform.swift"),
-                str(ROOT / "Sources/voice-switch/SuperwhisperModes.swift"),
-                str(ROOT / "Sources/voice-switch/PaneRoute.swift"),
                 str(SWIFT_HARNESS),
                 "-o",
                 str(binary),

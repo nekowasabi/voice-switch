@@ -2,16 +2,16 @@
 import Foundation
 
 @MainActor
-final class TriageService {
-    struct Simulation: Decodable {
+public final class TriageService {
+    public struct Simulation: Decodable {
         enum Action: String, Decodable { case send, cancel, `switch` }
         let answers: [String: Double]
         let verification: Double?
         let action: Action?
         /// The candidate the simulated user picks: [<name> に送る] for send, 送り先を変更 for switch (default 1).
         let routeIndex: Int?
-        let dictations: [String]?
-        let seconds: Double?
+        public let dictations: [String]?
+        public let seconds: Double?
     }
 
     private let settings: TriageSettings
@@ -23,14 +23,21 @@ final class TriageService {
     private var proposals: [String: TriageProposal] = [:]
     private var classificationTail: Task<Void, Never>?
     private var timer: Timer?
-    private(set) var paused = false
-    private(set) var storeError = false
-    var onChange: (() -> Void)?
+    public private(set) var paused = false
+    public private(set) var storeError = false
+    public var onChange: (() -> Void)?
+
+    public typealias ActionExecutor = (WakeAction, String, String?, @escaping (String) -> Void) async -> Bool
 
     private let stopWords: [String]
+    private let questionsURL: () -> URL?
+    private let runAction: ActionExecutor
 
-    init(settings: TriageSettings, journalDir: String?, home: URL = FileManager.default.homeDirectoryForCurrentUser,
-         simulation: Simulation? = nil, stopWords: [String] = []) {
+    public init(settings: TriageSettings, journalDir: String?, home: URL = FileManager.default.homeDirectoryForCurrentUser,
+                simulation: Simulation? = nil, stopWords: [String] = [], questionsURL: @escaping () -> URL?,
+                runAction: @escaping ActionExecutor) {
+        self.questionsURL = questionsURL
+        self.runAction = runAction
         self.settings = settings
         self.stopWords = stopWords
         self.simulation = simulation
@@ -43,7 +50,7 @@ final class TriageService {
         })
     }
 
-    func start() {
+    public func start() {
         do {
             proposals = try files.loadProposals()
             proposals = proposals.mapValues { saved in
@@ -70,31 +77,31 @@ final class TriageService {
         }
     }
 
-    var review: [TriageProposal] {
+    public var review: [TriageProposal] {
         sorted.filter {
             let stage = state.rows[$0.id]?.stage
             return [.review, .unknown, .failed].contains(stage) || (stage == .pending && !canAutoSend($0))
         }
     }
 
-    var pending: [TriageProposal] {
+    public var pending: [TriageProposal] {
         sorted.filter { state.rows[$0.id]?.stage == .pending && canAutoSend($0) }
             .sorted { ($0.deadline ?? .distantFuture) < ($1.deadline ?? .distantFuture) }
     }
 
-    var today: [TriageProposal] {
+    public var today: [TriageProposal] {
         sorted.filter { state.rows[$0.id]?.stage == .done && Calendar.current.isDateInToday($0.updatedAt) }
     }
 
     private var sorted: [TriageProposal] { proposals.values.sorted { $0.createdAt > $1.createdAt } }
 
-    func stage(of id: String) -> TriageExecution.Stage? { state.rows[id]?.stage }
+    public func stage(of id: String) -> TriageExecution.Stage? { state.rows[id]?.stage }
 
-    func routeNames(_ kind: TriageKind) -> [String] {
+    public func routeNames(_ kind: TriageKind) -> [String] {
         (routes[kind] ?? []).map { routeName($0) ?? kind.rawValue }
     }
 
-    func routeName(_ proposal: TriageProposal) -> String? {
+    public func routeName(_ proposal: TriageProposal) -> String? {
         proposal.routeName ?? proposal.kind.flatMap { kind in
             route(kind, at: proposal.routeIndex ?? 0).flatMap(routeName)
         }
@@ -119,31 +126,31 @@ final class TriageService {
         }
     }
 
-    func togglePause() {
+    public func togglePause() {
         paused.toggle()
         armTimer()
         onChange?()
     }
 
-    func dismiss(_ id: String) {
+    public func dismiss(_ id: String) {
         guard let proposal = proposals[id], apply(.dismiss(id)) else { return }
         saveLabel(proposal, kind: nil)  // 送らない: the commonest label, "this was not a request to carry out"
     }
 
-    func confirmDone(_ id: String) {
+    public func confirmDone(_ id: String) {
         guard var proposal = proposals[id] else { return }
         proposal.outcome = .sent
         _ = apply(.confirmDone(id), updated: proposal)
     }
 
-    func canRetry(_ proposal: TriageProposal) -> Bool { savedRoute(proposal) != nil }
+    public func canRetry(_ proposal: TriageProposal) -> Bool { savedRoute(proposal) != nil }
 
-    func retry(_ id: String) {
+    public func retry(_ id: String) {
         guard let proposal = proposals[id], let kind = proposal.kind, canRetry(proposal) else { return }
         _ = apply(.retry(id, kind))
     }
 
-    func send(_ id: String, as chosen: TriageKind? = nil, routeIndex: Int? = nil) {
+    public func send(_ id: String, as chosen: TriageKind? = nil, routeIndex: Int? = nil) {
         guard var proposal = proposals[id], let kind = chosen ?? proposal.kind else { return }
         let index = routeIndex ?? (kind == proposal.kind ? proposal.routeIndex : nil) ?? 0
         guard let destination = route(kind, at: index) else { return }
@@ -154,7 +161,7 @@ final class TriageService {
         if apply(event, updated: proposal) { saveLabel(proposal, kind: kind) }
     }
 
-    func switchDestination(_ id: String, to index: Int) {
+    public func switchDestination(_ id: String, to index: Int) {
         guard var proposal = proposals[id], let kind = proposal.kind, let destination = route(kind, at: index),
               canAutoSend(proposal), let deadline = proposal.deadline, deadline > Date() else { return }
         select(destination, kind: kind, index: index, for: &proposal)
@@ -165,7 +172,7 @@ final class TriageService {
         _ = apply(.switchDestination(id, index, verified: false, flagged: !proposal.reasons.isEmpty), updated: proposal)
     }
 
-    func correct(_ id: String, to kind: TriageKind) {
+    public func correct(_ id: String, to kind: TriageKind) {
         guard let proposal = proposals[id], state.rows[id]?.stage == .done else { return }
         saveLabel(proposal, kind: kind)
     }
@@ -185,7 +192,7 @@ final class TriageService {
     }
 
     private lazy var questions: [String: TriageClassifier.Question]? = {
-        guard let path = Bundle.module.url(forResource: "triage_questions", withExtension: "json"),
+        guard let path = questionsURL(),
               let bytes = try? Data(contentsOf: path) else { return nil }
         return try? JSONDecoder().decode([String: TriageClassifier.Question].self, from: bytes)
     }()
@@ -433,8 +440,7 @@ final class TriageService {
         Task {
             var finished = proposal
             let text = TriageClassifier.withoutStopWords(proposal.text, stopWords: stopWords)
-            let sent = await executeWakeAction(route.action, text: text, app: proposal.focusBundleID,
-                                               wait: true, quiet: true) { finished.failureReason = $0 }
+            let sent = await runAction(route.action, text, proposal.focusBundleID) { finished.failureReason = $0 }
             finished.outcome = sent ? .sent : .failed
             _ = apply(sent ? .run(id) : .fail(id), updated: finished)
         }
@@ -445,9 +451,8 @@ final class TriageService {
         guard let route = settings.memo else { return }
         Task {
             var reason: String?
-            let ok = await executeWakeAction(route.action, text: TriageClassifier.withoutStopWords(proposal.text, stopWords: stopWords),
-                                             app: proposal.focusBundleID,
-                                             wait: true, quiet: true) { reason = $0 }
+            let ok = await runAction(route.action, TriageClassifier.withoutStopWords(proposal.text, stopWords: stopWords),
+                                     proposal.focusBundleID) { reason = $0 }
             log(ok ? "triage: \(proposal.id) memo" : "triage: \(proposal.id) memo failed \(reason ?? "unknown")")
         }
     }
@@ -456,11 +461,12 @@ final class TriageService {
         timer?.invalidate()
         guard !paused, !storeError, let proposal = pending.first, let deadline = proposal.deadline else { return }
         let delay = max(0.001, min(deadline.timeIntervalSinceNow, 3600))
+        let id = proposal.id
         timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self, !self.paused else { return }
-                if deadline <= Date(), self.pending.contains(where: { $0.id == proposal.id && $0.deadline == deadline }) {
-                    _ = self.apply(.graceExpire(proposal.id))
+                if deadline <= Date(), self.pending.contains(where: { $0.id == id && $0.deadline == deadline }) {
+                    _ = self.apply(.graceExpire(id))
                 } else { self.armTimer() }
             }
         }

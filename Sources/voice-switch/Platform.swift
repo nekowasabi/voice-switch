@@ -1,28 +1,28 @@
 // Platform hooks (macOS only; the Windows runtime lives in dotnet/).
 import Foundation
 
-enum Platform {
+public enum Platform {
     /// Default config `command` / `stopCommand` when examples are installed.
     static var defaultSuperwhisperToggle: String {
         "open -g superwhisper://record"
     }
 
-    static var defaultRecordingsDir: String {
+    public static var defaultRecordingsDir: String {
         "~/Documents/superwhisper/recordings"
     }
 
-    static var defaultConfigPath: String {
+    public static var defaultConfigPath: String {
         if let env = ProcessInfo.processInfo.environment["VOICE_SWITCH_CONFIG"], !env.isEmpty {
             return expandPath(env)
         }
         return NSString(string: "~/.config/voice-switch/config.json").expandingTildeInPath
     }
 
-    static var logURL: URL {
+    public static var logURL: URL {
         return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/voice-switch.log")
     }
 
-    static func expandPath(_ path: String) -> String {
+    public static func expandPath(_ path: String) -> String {
         return NSString(string: path).expandingTildeInPath
     }
 
@@ -31,7 +31,7 @@ enum Platform {
     /// `keypipe --line` waits for EOF; the command's stdout is discarded and its stderr reaches the log.
     /// `environment` is added over the app's own environment.
     @discardableResult
-    static func runCommand(_ command: String, stdin: String? = nil, environment: [String: String] = [:],
+    public static func runCommand(_ command: String, stdin: String? = nil, environment: [String: String] = [:],
                            wait: Bool = false, quiet: Bool = false, onFailure: ((String) -> Void)? = nil) -> Bool {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -77,7 +77,7 @@ enum Platform {
 
     /// macOS wake/stop dispatch. A URL override never falls back to a shell on failure.
     @discardableResult
-    static func runMacAction(_ cfg: Config, stop: Bool = false, wait: Bool = false) -> Bool {
+    public static func runMacAction(_ cfg: Config, stop: Bool = false, wait: Bool = false) -> Bool {
         if let url = stop ? cfg.macOS?.stopURL : cfg.macOS?.wakeURL {
             log("URL action: \(stop ? "stop" : "wake")")
             return runURLProcess(urlProcess(url), wait: wait)
@@ -86,7 +86,7 @@ enum Platform {
         return true
     }
 
-    static func urlProcess(_ url: ActionURL) -> Process {
+    public static func urlProcess(_ url: ActionURL) -> Process {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         process.arguments = url.openArguments
@@ -94,7 +94,7 @@ enum Platform {
     }
 
     @discardableResult
-    static func runURLProcess(_ process: Process, wait: Bool, quiet: Bool = false,
+    public static func runURLProcess(_ process: Process, wait: Bool, quiet: Bool = false,
                               onFailure: ((String) -> Void)? = nil) -> Bool {
         func report(_ process: Process) {
             if !quiet, process.terminationStatus != 0 {
@@ -126,6 +126,6 @@ enum Platform {
 
 /// Wall-clock seconds for one STT call: max(10, audioSeconds + 20).
 /// Same formula as Windows `TranscribeDeadline.Seconds` / RESEARCH hyp 2.
-func transcribeDeadlineSeconds(audioSeconds: Double) -> TimeInterval {
+public func transcribeDeadlineSeconds(audioSeconds: Double) -> TimeInterval {
     max(10, audioSeconds + 20)
 }

@@ -7,6 +7,7 @@ import argparse
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -38,13 +39,8 @@ def main() -> int:
         with tempfile.TemporaryDirectory(prefix="voice-policy-") as temp:
             binary = Path(temp) / "policy-tests"
             subprocess.run([
+                sys.executable, str(ROOT / "tests/core_sources.py"), "journal", str(ROOT / "Sources/voice-switch"),
                 "swiftc", "-module-name", "voice_switch", "-module-cache-path", str(Path(temp) / "module-cache"),
-                str(ROOT / "Sources/voice-switch/SecretLog.swift"),
-                str(ROOT / "Sources/voice-switch/Config.swift"),
-                str(ROOT / "Sources/voice-switch/Platform.swift"),
-                str(ROOT / "Sources/voice-switch/DictationJournal.swift"),
-                str(ROOT / "Sources/voice-switch/WakeSafety.swift"),
-                str(ROOT / "Sources/voice-switch/Transcript.swift"),
                 str(HERE / "swift/main.swift"), "-o", str(binary),
             ], cwd=ROOT, check=True)
             subprocess.run([str(binary), str(FIXTURE)], cwd=ROOT, check=True)

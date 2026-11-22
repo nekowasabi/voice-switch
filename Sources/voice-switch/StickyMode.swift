@@ -1,7 +1,7 @@
 // Wake-word sticky delivery. Transitions match .claude/skills/verify-sticky-mode/StickyMode.tla.
 // One tick is 60 seconds. At maxAge the armed or recording dictation is dropped.
 
-enum StickyPhase: Hashable {
+public enum StickyPhase: Hashable {
   case idle
   case armed
   case recording
@@ -10,7 +10,7 @@ enum StickyPhase: Hashable {
   case fellBack
 }
 
-enum StickyKind: Hashable {
+public enum StickyKind: Hashable {
   case none
   case field
   case tmux
@@ -18,12 +18,12 @@ enum StickyKind: Hashable {
   case noField
 }
 
-enum StickyFocus: Hashable {
+public enum StickyFocus: Hashable {
   case user
   case target
 }
 
-enum StickyEvent: Hashable {
+public enum StickyEvent: Hashable {
   case toggleOn
   case toggleOff
   case start(StickyKind)
@@ -39,21 +39,21 @@ enum StickyEvent: Hashable {
   case reset
 }
 
-struct StickyState: Hashable {
+public struct StickyState: Hashable {
   var on: Bool
-  var phase: StickyPhase
-  var kind: StickyKind
+  public var phase: StickyPhase
+  public var kind: StickyKind
   var alive: Bool
   var switched: Bool
   var deliveries: Int
   var entered: Bool
   var age: Int
-  var focus: StickyFocus
+  public var focus: StickyFocus
   var bad: Bool
 
   static let maxAge = 3
 
-  static func initial(on: Bool) -> StickyState {
+  public static func initial(on: Bool) -> StickyState {
     StickyState(
       on: on, phase: .idle, kind: .none, alive: false, switched: false,
       deliveries: 0, entered: false, age: 0, focus: .user, bad: false)
@@ -64,17 +64,17 @@ func stickyCapturable(_ kind: StickyKind) -> Bool {
   kind == .field || kind == .tmux
 }
 
-func stickyEnabled(configFlag: Bool?, override: Bool?) -> Bool {
+public func stickyEnabled(configFlag: Bool?, override: Bool?) -> Bool {
   if let override { return override }
   return configFlag == true
 }
 
-func stickyMayPaste(_ s: StickyState) -> Bool {
+public func stickyMayPaste(_ s: StickyState) -> Bool {
   s.on && s.phase == .delivering && s.deliveries == 0 && !s.entered && s.alive
     && stickyCapturable(s.kind) && s.age < StickyState.maxAge && !s.bad
 }
 
-func stickyMayEnter(_ s: StickyState) -> Bool {
+public func stickyMayEnter(_ s: StickyState) -> Bool {
   s.on && s.phase == .delivering && s.deliveries == 1 && !s.entered && s.alive
     && stickyCapturable(s.kind)
 }
@@ -99,7 +99,7 @@ private func stickyBegin(_ s: StickyState, _ kind: StickyKind) -> StickyState {
   return next
 }
 
-func stickyStep(_ s: StickyState, _ event: StickyEvent) -> StickyState {
+public func stickyStep(_ s: StickyState, _ event: StickyEvent) -> StickyState {
   switch event {
   case .toggleOn:
     guard !s.on, s.phase == .idle || s.phase == .delivered || s.phase == .fellBack else { return s }
@@ -184,7 +184,7 @@ func stickyStep(_ s: StickyState, _ event: StickyEvent) -> StickyState {
   }
 }
 
-func stickyAdvanceAge(_ s: StickyState, _ seconds: Int) -> StickyState {
+public func stickyAdvanceAge(_ s: StickyState, _ seconds: Int) -> StickyState {
   let steps = min(StickyState.maxAge, max(0, seconds) / 60)
   var next = s
   for _ in 0..<steps { next = stickyStep(next, .tick) }

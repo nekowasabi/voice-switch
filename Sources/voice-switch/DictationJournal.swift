@@ -2,7 +2,7 @@
 // A bad path is logged and the platform default directory is used. Text only.
 import Foundation
 
-enum JournalDelivery: String {
+public enum JournalDelivery: String {
     case paste, sticky, pane, action, history
 }
 
@@ -17,15 +17,22 @@ struct JournalNote {
 /// The app in front when the dictation session target was chosen, not the app in front at append time.
 /// Mac fills `name` from `localizedName` and `bundleId` from `bundleIdentifier`. Windows fills
 /// `name` and `exe` from `Process.ProcessName` and leaves `bundleId` null.
-struct FocusApp {
+public struct FocusApp {
     var name: String?
     var bundleId: String?
     var exe: String?
     var pid: Int?
+    public init(name: String? = nil, bundleId: String? = nil, exe: String? = nil, pid: Int? = nil) {
+        self.name = name
+        self.bundleId = bundleId
+        self.exe = exe
+        self.pid = pid
+    }
+
     var isEmpty: Bool { name == nil && bundleId == nil && exe == nil && (pid == nil || pid! <= 0) }
 }
 
-final class DictationJournal {
+public final class DictationJournal {
     static let schemaVersion = 1
     static let taskFileCap = 4096
     private static let notesLock = NSLock()
@@ -33,7 +40,7 @@ final class DictationJournal {
     static var active: DictationJournal?
 
     private let lock = NSLock()
-    private let log: (String) -> Void
+    private let logger: (String) -> Void
     private let fallback: String
     private let journalTaskFile: String?
     private var target: Target
@@ -47,11 +54,11 @@ final class DictationJournal {
         self.target = target
         self.fallback = fallback
         self.journalTaskFile = journalTaskFile
-        self.log = log
+        self.logger = log
     }
 
-    static func bind(_ configured: String?, journalTaskFile: String? = nil, fallback: String? = nil) {
-        active = open(configured, fallback: fallback, journalTaskFile: journalTaskFile) { voice_switch.log($0) }
+    public static func bind(_ configured: String?, journalTaskFile: String? = nil, fallback: String? = nil) {
+        active = open(configured, fallback: fallback, journalTaskFile: journalTaskFile, log: log)
     }
 
     static func defaultDirectory() -> String {
@@ -63,7 +70,7 @@ final class DictationJournal {
         return origin.isAutomatic ? "自動" : "ウェイク"
     }
 
-    static func note(_ id: UUID, endReason: String? = nil, recordingSeconds: Double? = nil, manual: Bool? = nil, focus: FocusApp? = nil, delivery: JournalDelivery? = nil) {
+    public static func note(_ id: UUID, endReason: String? = nil, recordingSeconds: Double? = nil, manual: Bool? = nil, focus: FocusApp? = nil, delivery: JournalDelivery? = nil) {
         notesLock.lock()
         defer { notesLock.unlock() }
         var existing = notes[id] ?? JournalNote(endReason: nil, recordingSeconds: nil, manual: false)
@@ -182,9 +189,9 @@ final class DictationJournal {
 
     private func noteFailure(_ place: Target, _ error: Error) {
         if place.path == fallback {
-            log("dictation journal: default unwritable (\(error))")
+            logger("dictation journal: default unwritable (\(error))")
         } else {
-            log("dictation journal: \(error); using default \(fallback)")
+            logger("dictation journal: \(error); using default \(fallback)")
         }
     }
 
@@ -404,18 +411,6 @@ final class DictationJournal {
         try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: 0o600)], ofItemAtPath: path)
     }
 }
-
-#if canImport(AppKit)
-import AppKit
-
-extension DictationJournal {
-    /// The session-start app for the journal: the frontmost app stored on `Dictation.target` when the
-    /// session began. The later frontmost app read for paste is not passed here.
-    static func focus(of app: NSRunningApplication) -> FocusApp {
-        FocusApp(name: app.localizedName, bundleId: app.bundleIdentifier, exe: nil, pid: Int(app.processIdentifier))
-    }
-}
-#endif
 
 private struct JournalWriteError: Error, CustomStringConvertible {
     let description: String

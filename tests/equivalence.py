@@ -129,7 +129,7 @@ def feature_list(repo, modes, handlers, artifact=b""):
                     field_name, _, value = field.strip().partition("=")
                     fields[field_name.strip()] = json.loads(value.strip()) if value else field_name.strip()
         else:
-            fields = {key: key for key in re.findall(rf"(?m)^{indent}    (?:var|let) (\w+):[^\n{{]+$", body)}
+            fields = {key: key for key in re.findall(rf"(?m)^{indent}    (?:public )?(?:var|let) (\w+):[^\n{{]+$", body)}
         type_name = "TriageSettings.Route" if name == "Route" else name
         reflected = reflection.get(f"{type_name}.CodingKeys", fields)
         keys.extend(f"{name}.{fields.get(key, key)}" for key in reflected)

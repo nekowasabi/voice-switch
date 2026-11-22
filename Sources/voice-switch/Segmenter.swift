@@ -1,32 +1,32 @@
 // Energy VAD / utterance segmentation — pure Swift, shared by macOS and Windows.
 import Foundation
 
-let rate = 16000.0
-let frameLen = 480 // 30 ms
+public let rate = 16000.0
+public let frameLen = 480 // 30 ms
 
-func frames(ms: Int) -> Int { max(1, ms * Int(rate) / 1000 / frameLen) }
+public func frames(ms: Int) -> Int { max(1, ms * Int(rate) / 1000 / frameLen) }
 
 /// Same state machine as the Python prototype, with an adaptive-floor energy VAD in place of webrtcvad.
-struct Segmenter {
-    var cfg: Config
+public struct Segmenter {
+    public var cfg: Config
     private var floor: Float = 0.001 // typical quiet-room mic level; adapts within a second
     private var ring: [[Float]] = []
     private var utt: [[Float]] = []
     private var silent = 0
     /// Frames since the energy VAD last heard the open utterance; `silent` also waits for the HAL voice detector.
-    private(set) var energySilent = 0
+    public private(set) var energySilent = 0
     private var skipping = false
     private var tailFrames: [[Float]] = []
-    private(set) var lastRms: Float = 0
+    public private(set) var lastRms: Float = 0
     private var levelSum: Double = 0
     private var levelCount = 0
-    private(set) var lastWasEnergy = false
-    private(set) var lastWasSpeech = false
+    public private(set) var lastWasEnergy = false
+    public private(set) var lastWasSpeech = false
     /// Off while dictating: quiet syllables classed as non-speech would otherwise pull the floor up toward
     /// the voice itself, so after ~2-3 s of talking the threshold passes the speech and it reads as silence.
-    var adaptFloor = true
+    public var adaptFloor = true
 
-    enum Event {
+    public enum Event {
         case utterance([Float])
         /// The start of an utterance too long to be a wake word; may be a one-breath dictation.
         case head([Float])
@@ -34,16 +34,16 @@ struct Segmenter {
         case tail([Float])
     }
 
-    init(cfg: Config) { self.cfg = cfg }
+    public init(cfg: Config) { self.cfg = cfg }
 
-    var noiseFloor: Float { floor }
-    var threshold: Float { max(floor * (cfg.vadRatio ?? 3), cfg.vadMinRMS ?? 0.005) }
-    var isSkipping: Bool { skipping }
+    public var noiseFloor: Float { floor }
+    public var threshold: Float { max(floor * (cfg.vadRatio ?? 3), cfg.vadMinRMS ?? 0.005) }
+    public var isSkipping: Bool { skipping }
 
     // The floor only adapts while quiet, so steady sound above the threshold reads as speech forever. Once the
     // recognizer heard no wake word in the over-cap head, that sound is the room, and its mean level becomes the floor.
     // Mirrors VoiceSwitch.Windows.Core.Segmenter.RebaseFloor.
-    mutating func rebaseFloor() {
+    public mutating func rebaseFloor() {
         if skipping && levelCount > 0 {
             floor = max(floor, Float(levelSum / Double(levelCount)))
         }
@@ -71,10 +71,10 @@ struct Segmenter {
     /// Silero's silence at the tail of the open utterance: ms since it last scored voice, nil until it has.
     /// The HAL detector holds "voice" 300-700 ms past the word and the energy threshold can sit above the voice,
     /// so this is the only signal near the true word end (Silero fell within 32-64 ms on real recordings).
-    private(set) var voiceSilentMs: Int?
+    public private(set) var voiceSilentMs: Int?
     private var voiceEdge = false
     /// One Silero window score (32 ms), with Silero's own hysteresis: voice at 0.5, silence below 0.35.
-    mutating func noteVoice(_ p: Float) {
+    public mutating func noteVoice(_ p: Float) {
         guard !utt.isEmpty else { return }
         if p >= 0.5 { voiceSilentMs = 0; return }
         guard p < 0.35, let ms = voiceSilentMs else { return }
@@ -84,9 +84,9 @@ struct Segmenter {
     }
 
     /// Tail silence for the probe verdict: the later of the HAL/energy silence and Silero's.
-    var probeSilentFrames: Int { max(silent, (voiceSilentMs ?? 0) / 30) }
+    public var probeSilentFrames: Int { max(silent, (voiceSilentMs ?? 0) / 30) }
 
-    mutating func probe() -> [Float]? {
+    public mutating func probe() -> [Float]? {
         defer { voiceEdge = false }
         // An action wake word gets the silence-gap probes without earlyWakeMs; speech-interval probes stay opt-in.
         guard cfg.earlyWakeMs != nil || !(cfg.macOS?.actions ?? []).isEmpty, !utt.isEmpty, !skipping else { return nil }
@@ -99,15 +99,15 @@ struct Segmenter {
     }
 
     /// Frames of silence at the tail of the open utterance (0 while speech continues).
-    var tailSilentFrames: Int { silent }
+    public var tailSilentFrames: Int { silent }
 
     /// Drop the open utterance after an early wake fired, so the hangover does not report it a second time.
-    mutating func reset() {
+    public mutating func reset() {
         utt = []; ring = []; skipping = false; silent = 0; energySilent = 0; lastProbe = 0
         levelSum = 0; levelCount = 0; voiceSilentMs = nil; voiceEdge = false
     }
 
-    mutating func push(_ f: [Float], voice: Bool = false) -> Event? {
+    public mutating func push(_ f: [Float], voice: Bool = false) -> Event? {
         let preroll = frames(ms: cfg.prerollMs ?? 300)
         let hangover = frames(ms: cfg.hangoverMs ?? 300)
         let minFrames = frames(ms: cfg.minSpeechMs ?? 300)
@@ -155,7 +155,7 @@ struct Segmenter {
 }
 
 /// The words one owner answers to: the default wake words (action nil) or one macOS.actions entry.
-struct WakeSet {
+public struct WakeSet {
     var action: WakeAction?
     var words: [String]
     /// macOS.stickyWakeWords: a default dictation that remembers its target.
@@ -163,7 +163,7 @@ struct WakeSet {
 }
 
 /// The default set first, then each action in config order.
-func wakeSets(_ cfg: Config) -> [WakeSet] {
+public func wakeSets(_ cfg: Config) -> [WakeSet] {
     let sticky = cfg.macOS?.stickyWakeWords ?? []
     return [WakeSet(action: nil, words: cfg.wakeWords)]
         + (sticky.isEmpty ? [] : [WakeSet(action: nil, words: sticky, sticky: true)])
@@ -171,15 +171,15 @@ func wakeSets(_ cfg: Config) -> [WakeSet] {
 }
 
 /// The set an utterance wakes; start nil is a bare wake word that waits for the body.
-struct WakeVerdict {
-    var action: WakeAction?
-    var start: (cutAt: Double, rest: String)?
-    var sticky = false
+public struct WakeVerdict {
+    public var action: WakeAction?
+    public var start: (cutAt: Double, rest: String)?
+    public var sticky = false
 }
 
 /// The one wake judgment for probes (closed false, tail silence so far) and whole utterances (closed true).
 /// An over-cap head is a probe with no tail silence. Mirrors DictationBoundaries.Verdict in VoiceSwitch.Windows.Core.
-func wakeVerdict(_ tr: Transcript, sets: [WakeSet], tailSilentFrames: Int, closed: Bool) -> WakeVerdict? {
+public func wakeVerdict(_ tr: Transcript, sets: [WakeSet], tailSilentFrames: Int, closed: Bool) -> WakeVerdict? {
     let all = sets.flatMap(\.words)
     let text = tr.text
     let bare = sets.first { $0.words.map(normalize).contains(text) }.map { WakeVerdict(action: $0.action, sticky: $0.sticky) }
@@ -198,7 +198,7 @@ func wakeVerdict(_ tr: Transcript, sets: [WakeSet], tailSilentFrames: Int, close
 /// Superwhisper drops the first sentence of quiet speech when the file opens with the session's 300 ms preroll of
 /// room noise (voice-switch.log 2026-10-12; reproduced 4/5 with the real app, 0/20 once the head was cut), so the file
 /// it reads starts at most 120 ms before the first sample that is clearly speech. The session range is untouched.
-func trimQuietHead(_ samples: [Float], rate: Double) -> ArraySlice<Float> {
+public func trimQuietHead(_ samples: [Float], rate: Double) -> ArraySlice<Float> {
     let speech: Float = 300 / 32768
     let keep = Int(rate * 120 / 1000)
     var first = 0
@@ -209,7 +209,7 @@ func trimQuietHead(_ samples: [Float], rate: Double) -> ArraySlice<Float> {
 }
 
 /// Synthetic tones through the Segmenter — no Speech/AVFoundation required.
-func vadSelftest() {
+public func vadSelftest() {
     // RESEARCH hyp 2: deadline helper matches Windows TranscribeDeadline (no Apple Speech needed).
     guard transcribeDeadlineSeconds(audioSeconds: 0) == 20,
           transcribeDeadlineSeconds(audioSeconds: 5) == 25,

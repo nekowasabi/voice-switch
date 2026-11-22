@@ -1,6 +1,6 @@
 import Foundation
 
-enum TriageKind: String, CaseIterable, Codable {
+public enum TriageKind: String, CaseIterable, Codable {
     case selfTask = "self_task"
     case lookUp = "look_up"
     case writeText = "write_text"
@@ -8,8 +8,8 @@ enum TriageKind: String, CaseIterable, Codable {
     case delegate
 }
 
-enum TriageExecution {
-    enum Stage: String, Codable, CaseIterable {
+public enum TriageExecution {
+    public enum Stage: String, Codable, CaseIterable {
         case said, pending, review, approved, executing, ran, done, dismissed, listed, hidden, unknown, failed
     }
 
