@@ -144,6 +144,11 @@ struct TriageSettings: Decodable {
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled)
         graceSeconds = try Self.grace(c) ?? 300
         routes = try c.decodeIfPresent([String: Route].self, forKey: .routes) ?? [:]
+        let kinds = ["look_up", "self_task", "write_text", "computer_change"]
+        guard routes.keys.allSatisfy(kinds.contains) else {
+            throw DecodingError.dataCorruptedError(forKey: .routes, in: c,
+                debugDescription: "dictation.triage.routes contains an unknown kind.")
+        }
     }
 
     private static func grace<Key: CodingKey>(_ c: KeyedDecodingContainer<Key>) throws -> Double? {
