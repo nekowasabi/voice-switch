@@ -72,8 +72,12 @@ enum TriageClassifier {
         return out
     }
 
-    /// Worth reading again later: only these become a memo in changelogmemo.
-    static func worthKeeping(_ answers: [String: Double]?) -> Bool { (answers?["keep_note"] ?? 0) >= 0.7 }
+    /// Worth reading again later: only these become a memo in changelogmemo. An automatic recording (no wake word) also
+    /// picks up meetings and talk in the room, so it needs 0.8: on 732 labeled utterances that cut wrong memos from 32
+    /// to 7 and added 6 missed ones (they stay in the journal).
+    static func worthKeeping(_ answers: [String: Double]?, automatic: Bool = false) -> Bool {
+        (answers?["keep_note"] ?? 0) >= (automatic ? 0.8 : 0.7)
+    }
 
     static func readThresholds(_ file: URL) throws -> [String: Band] {
         do {

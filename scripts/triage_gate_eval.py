@@ -48,7 +48,7 @@ def main():
     counts, wrong = Counter(), []
     for label in labels:
         row = rows.get(label["id"])
-        got = jt.outcome(row["text"], row["destinations"], row["answers"]) if row else "drop"  # filler rows are not listed
+        got = jt.outcome(row["text"], row["destinations"], row["answers"], row.get("origin")) if row else "drop"  # filler rows are not listed
         key = "right" if got == label["expect"] else f'{label["expect"]} -> {got}'
         counts[key] += 1
         if got != label["expect"]:

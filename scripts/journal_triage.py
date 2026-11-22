@@ -363,21 +363,21 @@ def classify_day(journal, day, thresholds, *, use_jev, include_context):
 OTHER_ASSISTANT = re.compile(r"^\s*(?:アレクサ|alexa|ok[、,]?\s*(?:グーグル|google)|hey\s*siri|ヘイ\s*シリ)", re.IGNORECASE)
 
 
-def gate(text, destinations, answers):
+def gate(text, destinations, answers, origin=None):
     """What the app lets leave the journal (TriageClassifier.sessionTalk / worthKeeping): "session" for talk to the
     work session on screen or another voice assistant, "memo" for a note worth keeping, else None."""
     if destinations == ["filler"] or answers is None:
         return None
     if answers.get("needs_local", 0) >= 0.7 or OTHER_ASSISTANT.search(text):
         return "session"
-    return "memo" if answers.get("keep_note", 0) >= 0.7 else None
+    return "memo" if answers.get("keep_note", 0) >= (0.8 if origin == "自動" else 0.7) else None
 
 
-def outcome(text, destinations, answers):
+def outcome(text, destinations, answers, origin=None):
     """Where the app sends a row: "drop" (journal only), "memo", "review", or "route:<kind>" (TriageService.classify)."""
     if destinations == ["filler"]:
         return "drop"
-    kept = gate(text, destinations, answers)
+    kept = gate(text, destinations, answers, origin)
     if kept == "session":
         return "drop"
     kinds = [d.removeprefix("action:") for d in destinations if d.startswith("action:")]
@@ -395,7 +395,8 @@ def outcome(text, destinations, answers):
 def result_row(entry, device, destinations, answers):
     return {"id": entry.id, "device": device, "timestamp": entry.timestamp.isoformat(), "text": entry.text,
             "origin": entry.origin, "app": entry.focus_app, "task": entry.task_name,
-            "destinations": destinations, "answers": answers, "gate": gate(entry.text, destinations, answers)}
+            "destinations": destinations, "answers": answers,
+            "gate": gate(entry.text, destinations, answers, entry.origin)}
 
 
 def describe_row(row):

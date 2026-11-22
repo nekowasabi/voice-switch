@@ -17,6 +17,9 @@ class Gate(unittest.TestCase):
         self.assertIsNone(g("うん", ["filler"], {"needs_local": 0.9, "keep_note": 0.9}))
         self.assertIsNone(g("古いキャッシュ", ["thought"], None))
         self.assertIsNone(g("古いキャッシュ", ["thought"], {"wants_action": 0.1}))  # answers cached before the gates
+        self.assertIsNone(g("会議の話", ["thought"], {"needs_local": 0.1, "keep_note": 0.79}, "自動"))
+        self.assertEqual(g("会議の話", ["thought"], {"needs_local": 0.1, "keep_note": 0.8}, "自動"), "memo")
+        self.assertEqual(g("口述", ["thought"], {"needs_local": 0.1, "keep_note": 0.7}, "ウェイク"), "memo")
 
 
 class Outcome(unittest.TestCase):

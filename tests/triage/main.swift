@@ -124,6 +124,9 @@ if !TriageClassifier.sessionTalk(nil, text: "アレクサ、今何時?") || !Tri
 if !TriageClassifier.maybeSessionTalk(["needs_local": 0.3]) || TriageClassifier.maybeSessionTalk(["needs_local": 0.29]) {
     fail("gate: the review band for a bot request does not start at 0.3")
 }
+if !TriageClassifier.worthKeeping(["keep_note": 0.8], automatic: true) || TriageClassifier.worthKeeping(["keep_note": 0.79], automatic: true) {
+    fail("gate: an automatic recording needs keep_note 0.8 for a memo")
+}
 if !TriageClassifier.worthKeeping(["keep_note": 0.7]) || TriageClassifier.worthKeeping(["keep_note": 0.69]) || TriageClassifier.worthKeeping(nil) {
     fail("gate: a memo needs keep_note 0.7 or more, and no answer keeps nothing")
 }

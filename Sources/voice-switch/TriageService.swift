@@ -224,7 +224,8 @@ final class TriageService {
             }
             let session = !result.off && proposal.destinations != ["filler"]
                 && TriageClassifier.sessionTalk(result.answers, text: entry.text)
-            keep = !session && TriageClassifier.worthKeeping(result.answers)
+            keep = !session && TriageClassifier.worthKeeping(result.answers,
+                automatic: DictationJournal.originLabel(entry.origin, manual: note.manual) == "自動")
             if session {
                 verdict = .thought  // already heard by the session on screen: kept in the journal only
                 log("triage: \(id) session")
