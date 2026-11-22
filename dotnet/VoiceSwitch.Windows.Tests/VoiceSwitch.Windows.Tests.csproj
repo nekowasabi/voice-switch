@@ -3,6 +3,7 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <NoWarn>$(NoWarn);CS7022</NoWarn>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\VoiceSwitch.Windows\Program.cs" Link="VoiceSwitch.Windows.Program.cs" />

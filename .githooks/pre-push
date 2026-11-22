@@ -1,0 +1,4 @@
+#!/bin/sh
+# Let checks discover the worktree root when they run Git from subdirectories.
+unset GIT_DIR GIT_WORK_TREE
+exec sh tests/check.sh
