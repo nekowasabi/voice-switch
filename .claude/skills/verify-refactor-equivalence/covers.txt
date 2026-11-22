@@ -1,0 +1,5 @@
+Sources/voice-switch/Config.swift
+Sources/voice-switch/MacApp.swift
+Sources/voice-switch/WakeSafety.swift
+Sources/voice-switch/main.swift
+dotnet/VoiceSwitch.Windows/Program.cs
