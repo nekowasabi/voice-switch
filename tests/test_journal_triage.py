@@ -518,6 +518,7 @@ class Labels(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             world = World(tmp)
             world.write([row("IDS-p", T0, "発話 QZX")])
+            label(world, "IDS-p", "thought")  # the same world takes a good label
             for argv in (["IDS-p", "none"], ["IDS-p", "action:banana"], ["IDS-p", "thought", "filler"],
                          ["IDS-p", "action:look_up", "thought"], ["IDS-missing", "thought"]):
                 before = world.snapshot()

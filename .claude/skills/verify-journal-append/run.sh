@@ -73,6 +73,8 @@ markers-say-filler|C2|scripts/journal_triage.py|else ["unjudged:no-jev"]|else ["
 context-despite-no-context|C3|scripts/journal_triage.py|if not include_context:|if False:
 send-id|C3|scripts/journal_triage.py|{"text": prior.text, "seconds_before"|{"text": prior.text, "id": prior.id, "seconds_before"
 cache-ignored|C4|scripts/journal_triage.py|if saved.get("question_hash") == digest and valid_answers(saved.get("answers")):|if False:
+skip-automatic|C4|scripts/journal_triage.py|if not key:|if not key or entry.origin == "自動":
+markers-before-jev|C4|scripts/journal_triage.py|if not key:|if not key or local_category(entry.text) != ["unjudged:no-jev"]:
 hash-ignored|C4|scripts/journal_triage.py|if saved.get("question_hash") == digest and|if True and
 error-cached|C5|scripts/journal_triage.py|if answers is not None and entry.id is not None:|if entry.id is not None:
 no-prune|C5|scripts/journal_triage.py|if entry_id in ids or row.get("journal_hash") != journal_hash}|if True}

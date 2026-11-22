@@ -16,7 +16,7 @@ description: Bounded-exhaustive check (real Swift code, every order of up to 4 s
 
 1. **observe** — the symptom on the real target. `bash .claude/skills/verify-journal-append/run.sh observe [journal-dir]` prints line counts per day file (never the text). Default dir: `~/Library/Application Support/voice-switch/journal`. After the rebuilt app ran on a day with several dictations, that day must show more than one line. Until someone has seen that, the fix is unverified on the real app, whatever item 2 says.
 2. **check** — `bash .claude/skills/verify-journal-append/run.sh check [length]` (default length 4: 2 592 sequences, about 10 s; length 5 is about 6× longer; then the triage test, 19 tests, about 7 s). Exit 0 and `PASS J1`..`PASS J4`, `PASS T1`, `PASS T6`, `PASS C1`..`PASS C10` is a pass.
-3. **mutants** — `bash .claude/skills/verify-journal-append/run.sh mutants` (27 mutants, about 3 min). Each mutant breaks one guard in a copy of the Swift sources or of the script and must print `CAUGHT`. A script mutant runs in a copy of `scripts/` and `Resources/triage_questions.json` with the same layout. A `MISSED` line means the check went blind. An `anchor missing` line means the guarded code changed: update the mutant table in run.sh before trusting item 2.
+3. **mutants** — `bash .claude/skills/verify-journal-append/run.sh mutants` (29 mutants, about 3 min). Each mutant breaks one guard in a copy of the Swift sources or of the script and must print `CAUGHT`. A script mutant runs in a copy of `scripts/` and `Resources/triage_questions.json` with the same layout. A `MISSED` line means the check went blind. An `anchor missing` line means the guarded code changed: update the mutant table in run.sh before trusting item 2.
 
 Needs `swiftc` (Xcode or Command Line Tools) and `python3` (standard library only). Nothing is written outside `${TMPDIR}/verify-journal-append` and the test's own temp directories: the triage test sets `HOME` to a temp folder, so the real cache, config.json and journal are never read or written. The triage check never opens a socket: `urlopen` is replaced, and `socket.connect` is blocked and counted.
 
@@ -48,7 +48,7 @@ Needs `swiftc` (Xcode or Command Line Tools) and `python3` (standard library onl
 | list | origin (手動, ウェイク, 自動, absent, unknown) × local marker hits (0, 1, 2) × Jev, `--no-jev`, no key × 36 answers and 5 failures (HTTP error, not JSON, a question missing, a string, above 1); delivery (7 values) × origin × key |
 | state | origin × app present or not × task present or not × `--no-context` × an earlier utterance or none; every subset of up to 4 earlier rows from: same device and listed at 0, 1, 59, 60, 61 seconds, a pasted row and another device's row at 1 and 60 seconds; one across midnight |
 | cache | every sequence of 4 steps from: append a row, delete the oldest row, run, run with the network down, change the question wording, run `--no-jev` |
-| labels | label each destination for a row of this device and of another; bad destinations and an unknown id; review order |
+| labels | label each destination for a row of this device and of another; a good label, then bad destinations and an unknown id; review order |
 | scoring | eval over 40 labels at default and custom thresholds with the cache deleted; the split learned from tune's counts with labels added in two orders; tune with an improvement, fewer than 30 labels, a holdout that disagrees, and a holdout that gets lighter with one more filler miss |
 
 | Rule | Plain sentence |
@@ -58,7 +58,7 @@ Needs `swiftc` (Xcode or Command Line Tools) and `python3` (standard library onl
 | C1 | every answer has exactly the destinations of the truth table in the fixture; at 0.7 a question is yes, at 0.3 it is no |
 | C2 | `filler` only when wants_action is no and is_filler is yes; a failed request, a malformed answer, `--no-jev` or no key never give filler (the markers give `action:<kind>` or `unjudged:no-jev`) |
 | C3 | a request is a POST to api.typesafe.ai with the questions of Resources/triage_questions.json and a state of utterance (text, started), context (app, task, time) and previous only; started is the origin when it is 手動, ウェイク or 自動; no bundleId, pid, exe, ids, endReason or taskchute id anywhere in the request; with `--no-context` only the utterance |
-| C4 | a row with a cached answer under the same question wording is not asked again; after the wording changes it is; a failed request leaves no cache line and is asked again next run; each cache line records the wording |
+| C4 | every listed row without a cached answer is asked exactly once, whatever its origin (自動 included) and its local markers; a row with a cached answer under the same question wording is not asked again; after the wording changes it is; a failed request leaves no cache line and is asked again next run; each cache line records the wording |
 | C5 | the journal bytes never change; after any run the cache holds one line per listed id that is still in the journal and nothing else |
 | C6 | stderr carries no text, app or task |
 | C7 | previous is from the same device, listed rows only, more than 0 and at most 60 seconds before, the 2 nearest at most |
