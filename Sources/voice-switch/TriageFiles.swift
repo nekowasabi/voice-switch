@@ -25,11 +25,11 @@ struct TriageProposal: Codable, Equatable {
 
     enum Outcome: String, Codable { case sent, failed }
 
-    func routeExceptions(in history: some Sequence<Self>) -> [String] {
+    func routeExceptions(in history: some Sequence<Self>, warmUp: Bool = true) -> [String] {
         guard let routeID else { return [] }
         let matching = history.filter { $0.id != id && $0.routeID == routeID }
         var reasons: [String] = []
-        if matching.lazy.filter({ $0.outcome == .sent }).prefix(5).count < 5 {
+        if warmUp, matching.lazy.filter({ $0.outcome == .sent }).prefix(5).count < 5 {
             reasons.append("送り先の最初の5件")
         }
         if matching.contains(where: { $0.createdAt < createdAt && createdAt.timeIntervalSince($0.createdAt) <= 60 }) {

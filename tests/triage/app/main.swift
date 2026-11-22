@@ -237,6 +237,11 @@ for (name, p, history, want) in exceptionCases {
     let got = p.routeExceptions(in: history)
     if got != want { fail("exceptions: \(name): \(got), want \(want)") }
 }
+// A light route (heavy: false) has no warm-up, but a 60 s repeat still holds it.
+if proposal("new", route: "memo", at: 0).routeExceptions(in: [], warmUp: false) != [] { fail("exceptions: a light route still warms up") }
+if proposal("new", route: "memo", at: 0).routeExceptions(in: [proposal("r", route: "memo", at: -30)], warmUp: false) != [repeated] {
+    fail("exceptions: a light route lost its 60 s repeat check")
+}
 print(failures == routeFailures ? "PASS exceptions count the first 5 sends and a 60 s repeat per destination (\(exceptionCases.count) cases)"
                                 : "FAIL exceptions")
 let exceptionFailures = failures

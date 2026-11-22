@@ -151,7 +151,7 @@ final class TriageService {
         guard var proposal = proposals[id], let kind = proposal.kind, let destination = route(kind, at: index),
               canAutoSend(proposal), let deadline = proposal.deadline, deadline > Date() else { return }
         select(destination, kind: kind, index: index, for: &proposal)
-        proposal.reasons = proposal.routeExceptions(in: proposals.values)
+        proposal.reasons = proposal.routeExceptions(in: proposals.values, warmUp: destination.heavy)
         if destination.heavy { proposal.reasons.append("重い送り先は確認が必要") }
         proposal.deadline = proposal.reasons.isEmpty
             ? Date().addingTimeInterval(destination.graceSeconds ?? settings.graceSeconds) : nil
@@ -224,10 +224,12 @@ final class TriageService {
                 verdict = .kind(kind)
                 proposal.kind = kind
                 if result.off { proposal.reasons.append("Jev のキーなし") }
-                if let answers = result.answers, TriageClassifier.hasUnsureAnswer(answers, thresholds: bands) {
-                    proposal.reasons.append("判定に迷い")
-                }
                 if let route = route(kind, at: 0) {
+                    // A light route (heavy: false) is cheap to take back, so a second kind in the unsure band and the
+                    // warm-up do not hold it; only a heavy route waits for them.
+                    if route.heavy, let answers = result.answers, TriageClassifier.hasUnsureAnswer(answers, thresholds: bands) {
+                        proposal.reasons.append("判定に迷い")
+                    }
                     select(route, kind: kind, index: 0, for: &proposal)
                     if route.heavy {
                         let probability = await verify(kind, destination: proposal.routeName ?? kind.rawValue, context: context)
@@ -236,7 +238,7 @@ final class TriageService {
                         proposal.verified = verified
                         if !verified { proposal.reasons.append("重い送り先の確認不足") }
                     }
-                    proposal.reasons += proposal.routeExceptions(in: proposals.values)
+                    proposal.reasons += proposal.routeExceptions(in: proposals.values, warmUp: route.heavy)
                     if proposal.reasons.isEmpty {
                         proposal.deadline = Date().addingTimeInterval(route.graceSeconds ?? settings.graceSeconds)
                     }
