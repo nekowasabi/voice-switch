@@ -43,7 +43,7 @@
 {
   "utterance": {"text": "…", "started": "自動 | ウェイク | 手動"},
   "context": {"app": "Ghostty", "task": "voice-switch 開発", "time": "15:48"},
-  "previous": [{"text": "…", "minutes_before": 2}]
+  "previous": [{"text": "…", "seconds_before": 42}]
 }
 ```
 
