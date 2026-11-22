@@ -2635,7 +2635,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         pauseMicrophoneName = config.cfg.pauseWhenMicrophoneConnected
         DictationJournal.bind(config.cfg.dictation?.journalDir, journalTaskFile: config.cfg.dictation?.journalTaskFile)
         if let settings = config.cfg.dictation?.triage, settings.enabled == true {
-            let triage = TriageService(settings: settings, journalDir: config.cfg.dictation?.journalDir)
+            let triage = TriageService(settings: settings, journalDir: config.cfg.dictation?.journalDir,
+                                       stopWords: config.cfg.stopWords ?? [])
             triagePanel = TriagePanel(service: triage)
             triage.onChange = { [weak self, weak triage] in
                 guard let self else { return }

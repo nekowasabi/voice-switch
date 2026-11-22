@@ -127,5 +127,13 @@ if !TriageClassifier.maybeSessionTalk(["needs_local": 0.3]) || TriageClassifier.
 if !TriageClassifier.worthKeeping(["keep_note": 0.7]) || TriageClassifier.worthKeeping(["keep_note": 0.69]) || TriageClassifier.worthKeeping(nil) {
     fail("gate: a memo needs keep_note 0.7 or more, and no answer keeps nothing")
 }
-print(failures == gateFailures ? "PASS gates (session talk, review band, memo)" : "FAIL gates")
+let stops = ["ed", "入力ストップ", "ストップ"]
+for (said, want) in [("調べてください。ストップ。", "調べてください。"), ("作成してストップ。", "作成して"),
+                     ("移動してから、作成して、ストップ。", "移動してから、作成して、"), ("実施してもらいたいためです。ストップ。ストップ。", "実施してもらいたいためです。"),
+                     ("自動送信をストップ。", "自動送信をストップ。"), ("ストップ。", "ストップ。"), ("天気を調べて 入力ストップ", "天気を調べて"),
+                     ("It is finished", "It is finished"), ("raised. ed", "raised.")] {
+    let got = TriageClassifier.withoutStopWords(said, stopWords: stops)
+    if got != want { fail("gate: stop word \(said) -> \(got), want \(want)") }
+}
+print(failures == gateFailures ? "PASS gates (session talk, review band, memo, stop word at the end)" : "FAIL gates")
 exit(failures == 0 ? 0 : 1)

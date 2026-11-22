@@ -53,6 +53,25 @@ enum TriageClassifier {
     /// A bot request that may still lean on the session on screen waits for review instead of going out on its own.
     static func maybeSessionTalk(_ answers: [String: Double]?) -> Bool { (answers?["needs_local"] ?? 0) >= 0.3 }
 
+    /// The text a route or the memo gets: a stop word the listener missed is cut from the end ("…してください。ストップ。"),
+    /// but only after a sentence break or a て-form, so "自動送信をストップ。" keeps its meaning. 18 of 1413 journal rows ended so.
+    static func withoutStopWords(_ text: String, stopWords: [String]) -> String {
+        var out = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let words = stopWords.filter { !$0.isEmpty }.sorted { $0.count > $1.count }
+        var cut = true
+        while cut {
+            cut = false
+            for word in words {
+                let pattern = "(?:(?<=[。、.,!?！？\\s])|(?<=て))" + NSRegularExpression.escapedPattern(for: word) + "[。.!！\\s]*$"
+                guard let range = out.range(of: pattern, options: [.regularExpression, .caseInsensitive]) else { continue }
+                let rest = String(out[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if rest.isEmpty { continue }
+                out = rest; cut = true
+            }
+        }
+        return out
+    }
+
     /// Worth reading again later: only these become a memo in changelogmemo.
     static func worthKeeping(_ answers: [String: Double]?) -> Bool { (answers?["keep_note"] ?? 0) >= 0.7 }
 

@@ -27,9 +27,12 @@ final class TriageService {
     private(set) var storeError = false
     var onChange: (() -> Void)?
 
+    private let stopWords: [String]
+
     init(settings: TriageSettings, journalDir: String?, home: URL = FileManager.default.homeDirectoryForCurrentUser,
-         simulation: Simulation? = nil) {
+         simulation: Simulation? = nil, stopWords: [String] = []) {
         self.settings = settings
+        self.stopWords = stopWords
         self.simulation = simulation
         files = TriageFiles(journalDir: journalDir, home: home)
         routes = Dictionary(uniqueKeysWithValues: settings.routes.compactMap { name, route in
@@ -414,7 +417,8 @@ final class TriageService {
         log("triage: \(id) sending \(kind.rawValue)")
         Task {
             var finished = proposal
-            let sent = await executeWakeAction(route.action, text: proposal.text, app: proposal.focusBundleID,
+            let text = TriageClassifier.withoutStopWords(proposal.text, stopWords: stopWords)
+            let sent = await executeWakeAction(route.action, text: text, app: proposal.focusBundleID,
                                                wait: true, quiet: true) { finished.failureReason = $0 }
             finished.outcome = sent ? .sent : .failed
             _ = apply(sent ? .run(id) : .fail(id), updated: finished)
@@ -426,7 +430,8 @@ final class TriageService {
         guard let route = settings.memo else { return }
         Task {
             var reason: String?
-            let ok = await executeWakeAction(route.action, text: proposal.text, app: proposal.focusBundleID,
+            let ok = await executeWakeAction(route.action, text: TriageClassifier.withoutStopWords(proposal.text, stopWords: stopWords),
+                                             app: proposal.focusBundleID,
                                              wait: true, quiet: true) { reason = $0 }
             log(ok ? "triage: \(proposal.id) memo" : "triage: \(proposal.id) memo failed \(reason ?? "unknown")")
         }

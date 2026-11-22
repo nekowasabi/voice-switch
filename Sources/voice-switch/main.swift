@@ -216,7 +216,8 @@ if mode == "--enroll-speaker" {
         guard let fixture, let fixtureHome else { return nil }
         DictationJournal.bind(dictation?.journalDir, journalTaskFile: dictation?.journalTaskFile, fallback: fallback)
         guard let settings = dictation?.triage, settings.enabled == true else { return nil }
-        let service = TriageService(settings: settings, journalDir: dictation?.journalDir, home: fixtureHome, simulation: fixture)
+        let service = TriageService(settings: settings, journalDir: dictation?.journalDir, home: fixtureHome, simulation: fixture,
+                                    stopWords: listener.config.cfg.stopWords ?? [])
         service.start()
         return service
     }
