@@ -76,19 +76,19 @@ A failure prints one line: `FAIL J1 mode=dir seq=RRBR step=2(R): record 1A2B3C4D
 
 - Verified: the Swift journal code above, two modes, every order of 4 steps from the 6 above, one process, one thread.
 - Verified: `scripts/journal_triage.py`, every combination listed above, in one process with HTTP replaced and HOME in a temp folder.
-- Not covered: the Windows journal (`dotnet/VoiceSwitch.Windows.Core/DictationJournal.cs`; `tests/journal/Program.cs` has `delivery-noted`, unrun on this Mac without dotnet); which delivery the handoff notes (`MacApp.swift` handoff and `transcribeToHistory`, `SuperwhisperHandoff.cs`, `LocalHistoryHandoff.cs`; read by hand only); that `DictationHistory.add` carries the note (`tests/journal/main.swift` `delivery-note` checks it); concurrent writers or two app instances; a crash in the middle of `filter`'s temp-file rename; disk full; permissions (0700/0600) and symlinks, which `tests/journal/main.swift` checks; the fallback directory itself failing; the JSON fields `focusApp` / `taskchute` (their values are not checked, only that the line parses); real Jev answers (the triage check never calls TypeSafe); the Swift and C# readers of `triage_decide.json` (next stage); whether tune finds the lowest weight on the tuning labels (it is a coordinate search; on ties it takes the lowest edge, for example wants_action yes at 0.025); pruning the cache of days other than the one listed (`prune_other_days`); two label writers at once; the content of the eval report (only that one is written); `label --no-jev`.
+- Not covered: the Windows journal (`dotnet/VoiceSwitch.Windows.Core/DictationJournal.cs`; `tests/journal/Program.cs` has `delivery-noted`, unrun on this Mac without dotnet); which delivery the handoff notes (`MacApp.swift` handoff and `transcribeToHistory`, `SuperwhisperHandoff.cs`, `LocalHistoryHandoff.cs`; read by hand only); that `DictationHistory.add` carries the note (`tests/journal/main.swift` `delivery-note` checks it); concurrent writers or two app instances; a crash in the middle of `filter`'s temp-file rename; disk full; permissions (0700/0600) and symlinks, which `tests/journal/main.swift` checks; the fallback directory itself failing; the JSON fields `focusApp` / `taskchute` (their values are not checked, only that the line parses); real Jev answers (the triage check never calls TypeSafe); the C# reader of `triage_decide.json` (Windows comes later; the Swift reader is `sh tests/triage/run.sh`); whether tune finds the lowest weight on the tuning labels (it is a coordinate search; on ties it takes the edge nearest the current threshold, C8); pruning the cache of days other than the one listed (`prune_other_days`); two label writers at once; the content of the eval report (only that one is written); `label --no-jev`.
 - Known behaviour, not a failure here: after a fallback, `deleteEntry` only looks at the current target, so a record written before the switch cannot be deleted through the API.
 
 ## Coverage and sync
 
-Sync commit: c00e9d1 (items 2 and 3 pass there). Move it only after items 2 and 3 pass at the new commit.
+Sync commit: 792fd1c (items 2 and 3 pass there). Move it only after items 2 and 3 pass at the new commit.
 
 | File | Functions |
 |---|---|
 | Sources/voice-switch/DictationJournal.swift | open, record, write, noteFailure, appendLine, deleteEntry, filter, line |
 | Sources/voice-switch/WakeSafety.swift | DictationHistory.add (only that it calls record; not driven here) |
 | scripts/journal_triage.py | journal_sources, journal_rows, decide, request_state, ask_jev, local_category, classify_day, prior_entries, context_history, prune_cache, listing, review, add_label, read_labels, score, split_labels, find_thresholds, tune, main |
-| Resources/triage_questions.json | the wording whose hash keys the cache |
+| Resources/triage_questions.json | the wording whose hash keys the cache; C3 checks a request carries exactly the 6 classifier questions, not `verify_route` (the app's extra check for a heavy route) |
 | tests/parity/make_triage_decide.py | the truth table and tests/parity/fixtures/triage_decide.json |
 
 When any of these change after the sync commit, rerun items 2 and 3, fix the harness if the change was intended, then move the sync commit.
