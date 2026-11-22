@@ -66,6 +66,7 @@ no-fallback-write|J1|Sources/voice-switch/DictationJournal.swift|if write(next, 
 silent-fallback|J4|Sources/voice-switch/DictationJournal.swift|log("dictation journal: \(error); using default \(fallback)")|_ = error
 delivery-dropped|J3|Sources/voice-switch/DictationJournal.swift|"\"delivery\":\(delivery.map { jsonString($0.rawValue) } ?? "null")",|"\"delivery\":null",
 decide-hole|C1|scripts/journal_triage.py|return actions or ["unjudged:kind"]|return actions
+tune-tie-takes-smallest|C8|scripts/journal_triage.py|return weight, sum(abs(candidate[q][b] - thresholds[q][b]) for q in QUESTION_IDS for b in ("no", "yes"))|return weight, 0
 unsure-edge-at-no|C1|scripts/journal_triage.py|if intent > intent_band["no"]:|if intent >= intent_band["no"]:
 error-becomes-filler|C2|scripts/journal_triage.py|return ["unjudged:error"]|return ["filler"]
 unsure-filler-is-filler|C2|scripts/journal_triage.py|if filler >= filler_band["yes"]:|if filler >= filler_band["yes"] or filler > filler_band["no"]:

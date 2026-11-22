@@ -495,10 +495,16 @@ def split_labels(labels):
 
 
 def find_thresholds(training, thresholds):
+    # Among candidates of equal weight, the one nearest the current thresholds wins: the labels pick how far an edge
+    # moves, and a tie must not push it to the smallest value tried (a wants_action yes edge of 0.025 once came out).
+    def key(candidate):
+        weight = score(training, candidate)["weight"]
+        return weight, sum(abs(candidate[q][b] - thresholds[q][b]) for q in QUESTION_IDS for b in ("no", "yes"))
+
     best = dict(thresholds)
-    best_weight = score(training, best)["weight"]
+    best_key = key(best)
     while True:
-        before = best_weight
+        before = best_key
         for qid in QUESTION_IDS:
             current = best[qid]
             points = sorted({0, 1, *current.values(), *(label["answers"][qid] for label in training)})
@@ -509,10 +515,10 @@ def find_thresholds(training, thresholds):
                     if no >= yes:
                         continue
                     candidate = {**best, qid: {"no": no, "yes": yes}}
-                    weight = score(training, candidate)["weight"]
-                    if weight < best_weight:
-                        best, best_weight = candidate, weight
-        if best_weight == before:
+                    candidate_key = key(candidate)
+                    if candidate_key < best_key:
+                        best, best_key = candidate, candidate_key
+        if best_key == before:
             return best
 
 

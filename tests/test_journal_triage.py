@@ -631,6 +631,19 @@ class Scoring(unittest.TestCase):
                    else ["filler"] for i in specs}
         self.tune_case(specs, targets, want_proposal=False)
 
+    def test_tune_ties_keep_the_closest_threshold(self):
+        # Every wants_action yes edge in (0, 0.65] fixes these labels equally. The proposal must move the edge only as
+        # far as the labels need (0.7 -> 0.65) and leave every other edge alone, not jump to the smallest tied value.
+        specs = {f"IDS-{n:03d}": answers(wants_action=0.65, kind_look_up=0.9) for n in range(40)}
+
+        def closest(world, proposal):
+            self.assertEqual(proposal["wants_action"], {"no": DEFAULT["wants_action"]["no"], "yes": 0.65},
+                             "C8 tie took a far threshold")
+            self.assertEqual({k: v for k, v in proposal.items() if k != "wants_action"},
+                             {k: v for k, v in DEFAULT.items() if k != "wants_action"}, "C8 untouched edges moved")
+
+        self.tune_case(specs, {i: ["action:look_up"] for i in specs}, want_proposal=True, then=closest)
+
 
 if __name__ == "__main__":
     unittest.main()
