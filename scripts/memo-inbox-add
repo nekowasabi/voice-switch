@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Append one memo line to voice-switch's own inbox (JSONL, append only).
 
-The changelog skill is the only writer of changelogmemo and pulls these lines in; this script is the only writer of
-the inbox. No file has two writers, so there is no race to handle (docs/journal-triage-execution.md).
+This script is the only writer of the inbox. After the add it runs memo-import, which copies the new line into
+changelogmemo beside the inbox; if that fails the memo is still safe in the inbox and the next import brings it in.
 Usage: memo-inbox-add task|draft|thought < dictation.txt   (inbox: VOICE_SWITCH_MEMO_INBOX, else ~/repos/changelog/voice-switch-inbox.jsonl)
 """
 import datetime
 import json
 import os
 import sys
+import subprocess
 import uuid
 from pathlib import Path
 
@@ -37,6 +38,7 @@ def main():
             os.close(fd)
     except OSError as error:
         sys.exit(f"memo-inbox-add: {error.strerror}: {path}")
+    subprocess.run([sys.executable, str(Path(__file__).with_name("memo-import")), str(path)], check=False)
 
 
 if __name__ == "__main__":

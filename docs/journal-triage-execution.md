@@ -190,7 +190,8 @@ E1〜E6 と E9 は `.claude/skills/verify-triage-execution`（TLA+）で検査�
 どのファイルも、書き手を 1 つにする。
 
 1. voice-switch の送り先 `scripts/memo-inbox-add` は、`~/repos/changelog/voice-switch-inbox.jsonl`（`VOICE_SWITCH_MEMO_INBOX` で変えられる）に JSON を 1 行追記するだけ。中身は id、at、kind、title、text。追記だけなので、前の行は変わらない。書けなければ 0 以外で終わり、依頼は「送信に失敗」になる。
-2. changelogmemo を書くのは changelog スキルだけ。スキルは動くたびに取り込み待ちファイルを読み、changelogmemo にまだ無い id の行を項目として足す。取り込み待ちファイルは書き換えない。
+2. 取り込み待ちファイルは、changelogmemo の写しの元として残す。memo-inbox-add は追記のあとに memo-import を呼び、changelogmemo にまだ無い id の行を、日付の行の下に新しい順で足す（2026-11-22、changelog スキルを動かさない限りメモが changelogmemo に現れなかったため）。changelog スキルも同じ規則で取り込む。
+   - changelogmemo の書き手は 2 つになる。memo-import は読んでから置き換えるまでに相手が書いたら読み直すが、エディタが古い内容で上書きすると項目が一時的に消える。消えた項目は取り込み待ちファイルに残っており、次の取り込みで戻る（id で見分けるので二重にはならない）。下の 3 との違いは、元の行が消えないこと。
 3. 2026-11-21 から 22 にかけては、voice-switch が changelogmemo を直接書き換えていた（`changelogmemo-add`）。changelog スキルの編集と同じファイルを書くため、ロックを取らない相手と重なると項目が消えた。入れ替え・読み直し・時間の上限で 3 回直しても別の競合が出たので、書き手を分ける形に変えた。
 
 ## 範囲外
