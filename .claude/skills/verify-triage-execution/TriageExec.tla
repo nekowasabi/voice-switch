@@ -55,12 +55,13 @@ Init == /\ intent \in [U -> Intents]
         /\ crashes = 0
 
 \* 流れ 1-3: the app classifies after DictationHistory.add, asks the extra check for a heavy route, and files the row.
-Classify(u) == /\ alive /\ stage[u] = "said"
-               /\ \E v \in Verdicts, ok \in BOOLEAN, flagged \in BOOLEAN:
-                    /\ verdict' = Set(verdict, u, v)
-                    /\ verified' = Set(verified, u, v \in Heavy /\ ok)
-                    /\ stage' = Set(stage, u, Shown(v, ok, flagged))
-                    /\ persisted' = Set(persisted, u, Shown(v, ok, flagged))
+\* v, ok and flagged are Jev's verdict, the extra check's answer and rules 4-5; Next tries every value.
+Classify(u, v, ok, flagged) ==
+               /\ alive /\ stage[u] = "said"
+               /\ verdict' = Set(verdict, u, v)
+               /\ verified' = Set(verified, u, v \in Heavy /\ ok)
+               /\ stage' = Set(stage, u, Shown(v, ok, flagged))
+               /\ persisted' = Set(persisted, u, Shown(v, ok, flagged))
                /\ UNCHANGED <<intent, runs, runKind, graced, userOK, retries, dismissed, dRuns, alive, crashes>>
 
 \* 流れ 2: the grace period runs out. Only a row in まもなく送る can go out this way.
@@ -134,7 +135,7 @@ Restart == /\ ~alive /\ alive' = TRUE
 Done == /\ alive /\ \A u \in U: stage[u] \in {"done", "dismissed", "listed", "hidden"}
         /\ UNCHANGED vars
 
-Next == \/ \E u \in U: Classify(u) \/ GraceExpire(u) \/ SendNow(u) \/ Fix(u) \/ Dismiss(u) \/ Start(u)
+Next == \/ \E u \in U: (\E v \in Verdicts, ok \in BOOLEAN, flagged \in BOOLEAN: Classify(u, v, ok, flagged)) \/ GraceExpire(u) \/ SendNow(u) \/ Fix(u) \/ Dismiss(u) \/ Start(u)
                        \/ Run(u) \/ Record(u) \/ Retry(u) \/ ConfirmDone(u)
         \/ Crash \/ Restart \/ Done
 

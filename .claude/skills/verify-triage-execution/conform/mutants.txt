@@ -1,0 +1,8 @@
+# name<TAB>check that must FAIL<TAB>text in TriageExecution.swift<TAB>replacement   (\n is a newline)
+sendnow-any-kind	reject	guard let kind, row.kind == kind, rules.routes.contains(kind) else { return nil }\n            next.row.userOK = true	next.row.userOK = true
+fix-same-kind	reject	guard let kind, row.kind != kind, rules.routes.contains(kind)	guard let kind, rules.routes.contains(kind)
+dismiss-while-approved	reject	case (.pending, .dismiss), (.review, .dismiss), (.unknown, .dismiss):	case (.pending, .dismiss), (.review, .dismiss), (.unknown, .dismiss), (.approved, .dismiss):
+grace-skipped	accept	? .review : .pending	? .review : .approved
+heavy-no-verify	accept	(rules.heavy.contains(kind) && !verified) || 	
+restart-reruns-executing	accept	persisted == .executing ? .unknown : persisted	persisted == .executing ? .approved : persisted
+route-before-sending-line	accept	next.persist(id, .executing)\n            next.effects.append(.execute(id, kind))	next.effects.append(.execute(id, kind))\n            next.persist(id, .executing)
