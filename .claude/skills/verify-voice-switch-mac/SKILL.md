@@ -54,6 +54,24 @@ Action HUD latency has its own drive. `$V latency log` reads the real app's log 
 
 The `run` command prints the exit code, the evidence folder, any marker files, and the `heard` / `dictation` / `phase` / `whisper` lines (the last covers `whisper: ready` and `superwhisper mode:`). The fixture text and expected lines for each feature are in [features/README.md](features/README.md).
 
+## Triage (依頼) drive
+
+```sh
+VS_BIN=<voice-switch binary> python3 .claude/skills/verify-voice-switch-mac/triage.py [unsure heavy sure restart disabled]
+```
+
+It runs the binary as `--simulate - --triage-fixture <fixture.json>`. The binary accepts a fixture only with an isolated `HOME` (not the account's home) and `VOICE_SWITCH_CONFIG` set, so a fixture never reaches the user's files and `config.json` alone cannot switch Jev off. The fixture's `dictations` go straight into `DictationHistory` (no audio, no Superwhisper), its `answers` and `verification` stand in for Jev, and its `action` presses 送る or 取消 right after classification. The script removes `TYPESAFE_API_KEY` and `JEV_API_KEY` from the environment and points `journalDir` and every route into the evidence folder. Routes are shell commands that append `start <text>` to `starts.txt` when they begin and the text to `sent.txt` when they end, so a pass counts side effects, not log lines.
+
+| Scenario | What a PASS shows |
+|---|---|
+| `unsure` | an unsure answer files the request in 確認が要るもの (`exception` line); no route starts |
+| `heavy` | a heavy route whose extra check answers 0.4 logs `verify look_up 0.4` and becomes an exception; no route starts |
+| `sure` | after 5 requests sent with 送る (warm-up rule) and a 61 s wait (repeat rule), a sure request logs `pending`, then `sending` 2 s later, and its route starts exactly once; then a request cancelled while pending stays at `pending, dismissed` and never starts |
+| `restart` | SIGKILL right after `sending` for a 20 s route; the relaunch logs `restored unknown`, sends nothing, and after the route ends `starts.txt` still has one line |
+| `disabled` | `triage.enabled: false` logs no `triage` line and writes no `proposals.jsonl` |
+
+The last line compares the user's real `proposals.jsonl`, triage cache and changelogmemo before and after, and looks for the test texts in today's real journals. Evidence is under `$VS_VERIFY_ROOT/evidence/triage-<time>/<scenario>/` (`runN-stdout.txt`, `home/`, `starts.txt`, `sent.txt`). It takes about 3 min. The window itself is out of reach here; `verify-triage-execution` check item 1 lists the steps on the real app.
+
 ## Evidence
 
 Each run leaves `~/Library/Caches/voice-switch-verify/evidence/<run>/<fixture>/`.
