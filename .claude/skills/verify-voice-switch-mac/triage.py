@@ -2,7 +2,7 @@
 """Drive the 依頼 send path (docs/journal-triage-execution.md, plan A) in the built binary and check its side effects.
 
 Usage: VS_BIN=<voice-switch binary> python3 triage.py [scenario ...]
-       scenarios: unsure heavy sure cancel restart disabled (default: all)
+       scenarios: unsure heavy sure restart failed disabled (default: all)
 
 Each run is `voice-switch --simulate - --triage-fixture <fixture.json>` with an isolated HOME and VOICE_SWITCH_CONFIG in
 the evidence folder, TYPESAFE_API_KEY and JEV_API_KEY removed, and Jev replaced by the fixture's answers. Dictations go
@@ -10,7 +10,7 @@ straight into DictationHistory (no audio, no Superwhisper). Routes are shell com
 folder: starts.txt gets "start <text>" when a route begins, sent.txt gets the text when it ends. Nothing outside the
 evidence folder is written; the script compares the user's real files before and after.
 """
-import json, os, re, signal, subprocess, sys, time
+import fcntl, json, os, re, signal, subprocess, sys, time
 from pathlib import Path
 
 ROOT = Path(os.environ.get("VS_VERIFY_ROOT", Path.home() / "Library/Caches/voice-switch-verify"))
@@ -22,7 +22,8 @@ REAL = [Path.home() / p for p in (
     "repos/changelog/changelogmemo")]
 # The user's app may write its own journal lines meanwhile, so the journals are checked for this script's texts instead.
 JOURNALS = [Path.home() / "Library/Application Support/voice-switch/journal", Path.home() / "repos/context-storage/voice-switch"]
-MARKS = re.compile(r"(?:unsure|heavy|warm|sure|cancel|slow|off)-\d")
+MARKS = re.compile(r"(?:unsure|heavy|warm|sure|cancel|slow|fail|off)-\d")
+REPO = Path(__file__).resolve().parents[3]
 
 
 def leaked():
@@ -194,6 +195,40 @@ def restart():
           + [f"starts.txt 'slow-1' lines after 22 s: {len(starts)}, proposals.jsonl last line stage: {[x['stage'] for x in rows]}"])
 
 
+def failed():
+    """The route is the real scripts/changelogmemo-add on a memo in the evidence folder. While this script holds the memo's
+    lock, the add gives up after CHANGELOGMEMO_TIMEOUT_SECONDS 0.5 with exit 75; the request must land in 確認が要るもの as
+    failed with its reason, and neither the rest of the run nor a relaunch (with the lock free again) sends it again."""
+    h = Home("failed")
+    memo = h.dir / "changelogmemo"
+    add = (f'CHANGELOG_FILE={memo} CHANGELOGMEMO_TIMEOUT_SECONDS=0.5 {sys.executable} {REPO}/scripts/changelogmemo-add task')
+    h.config["dictation"]["triage"]["routes"]["self_task"] = {
+        "command": f't=$(cat); echo "start $t" >> {h.dir}/starts.txt; printf "%s\\n" "$t" | {add} && printf "%s\\n" "$t" >> {h.dir}/sent.txt',
+        "heavy": False, "graceSeconds": 2}
+    (h.dir / "config.json").write_text(json.dumps(h.config, ensure_ascii=False, indent=2))
+    warm(h)  # five 送る through the real script, so the next request goes out on its own after the grace period
+    warmed = memo.read_text().count("  - 内容: warm-") if memo.exists() else 0
+    said = "fail-1 牛乳を買う"
+    with open(str(memo) + ".lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        r = h.run({"answers": sure("self_task"), "dictations": [said], "seconds": 8})
+    r2 = h.run({"answers": sure("self_task"), "dictations": [], "seconds": 6})
+    starts = [l for l in h.lines("starts.txt") if l == f"start {said}"]
+    row = [x for x in h.proposals().values() if x["text"] == said]
+    failed_lines = [l for l in r["triage"] if re.search(r"triage: \S+ failed self_task command exit 75$", l)]
+    sending = [l for l in r["triage"] + r2["triage"] if " sending self_task" in l]
+    in_memo = memo.read_text().count(f"  - 内容: {said}") if memo.exists() else 0
+    check("(e) a route that exits 75 (changelogmemo-add out of time) leaves the request failed with its reason; "
+          "nothing sends it again, not even a relaunch with the lock free",
+          warmed == 5 and len(failed_lines) == 1 and len(sending) == 1 and len(starts) == 1 and in_memo == 0
+          and not [l for l in h.lines("sent.txt") if l == said]
+          and row and row[0]["stage"] == "failed" and row[0].get("failureReason") == "command exit 75",
+          [f"warm-up: changelogmemo has {warmed} warm- entries"] + ["run 1 (lock held):"] + r["triage"]
+          + ["run 2 (relaunch, lock free, no new dictation):"] + r2["triage"]
+          + [f"starts.txt 'fail-1' lines: {len(starts)}, changelogmemo 'fail-1' entries: {in_memo}, "
+             f"last stage: {row[0]['stage'] if row else None}, failureReason: {row[0].get('failureReason') if row else None}"])
+
+
 def disabled():
     h = Home("disabled", enabled=False)
     r = h.run({"answers": sure("self_task"), "dictations": ["off-1 送らない"], "seconds": 4})
@@ -203,7 +238,8 @@ def disabled():
           [f"triage log lines: {len(r['triage'])}, proposals.jsonl exists: {f.exists()}, starts.txt lines: {len(h.lines('starts.txt'))}"])
 
 
-SCENARIOS = {"unsure": unsure, "heavy": heavy, "sure": sure_and_cancel, "restart": restart, "disabled": disabled}
+SCENARIOS = {"unsure": unsure, "heavy": heavy, "sure": sure_and_cancel, "restart": restart, "failed": failed,
+             "disabled": disabled}
 
 if __name__ == "__main__":
     if not os.access(BIN, os.X_OK):
