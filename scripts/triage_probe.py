@@ -2,7 +2,7 @@
 """Send the classifier questions (and their variants) to Jev for a few utterances, to see which band each answer lands in.
 
 Reads the listed journal rows for the given days plus invented control sentences. --dry-run prints what would be sent.
-Each request and response is saved under --out so any case can be rerun. The key is read from the environment only.
+Each request and response is saved under --out so any case can be rerun. Live requests use a key from the environment.
 """
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import journal_triage as triage  # noqa: E402
-from triage_questions import QUESTIONS, VARIANTS  # noqa: E402
 
 # Invented sentences with the answer a person would give. They check the bands, not the user's speech.
 CONTROLS = [
@@ -64,12 +63,13 @@ def main(argv=None):
         cases += [(f"{e.source or '-'} {e.timestamp:%m-%d %H:%M:%S}", state(e, entries[:i]), None) for i, e in enumerate(entries)]
     cases += [(f"control {i + 1}", {"utterance": {"text": text, "started": "自動"}}, want) for i, (text, want) in enumerate(CONTROLS)]
 
-    key = os.environ.get("TYPESAFE_API_KEY") or os.environ.get("JEV_API_KEY")
+    key = None if args.dry_run else os.environ.get("TYPESAFE_API_KEY") or os.environ.get("JEV_API_KEY")
     if not args.dry_run and not key:
         parser.error("set TYPESAFE_API_KEY or JEV_API_KEY, or use --dry-run")
+    questions = triage.load_questions()
     args.out.mkdir(parents=True, exist_ok=True)
     for n, (name, st, want) in enumerate(cases, 1):
-        body = {"model": "jev-latest", "state": st, "questions": {**QUESTIONS, **VARIANTS}}
+        body = {"model": "jev-latest", "state": st, "questions": questions}
         (args.out / f"{n:02d}-request.json").write_text(json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"## {n:02d} {name}" + (f"  (want {want})" if want else ""))
         print(json.dumps(st, ensure_ascii=False))

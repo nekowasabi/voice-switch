@@ -16,6 +16,13 @@ from datetime import date, datetime
 from pathlib import Path
 
 
+QUESTIONS_PATH = Path(__file__).resolve().parents[1] / "Resources" / "triage_questions.json"
+
+
+def load_questions():
+    return json.loads(QUESTIONS_PATH.read_text(encoding="utf-8"))
+
+
 LOCAL_MARKERS = {
     "task": r"\b(?:task|todo)\s*[:：]|(?:タスク|やること)\s*[:：]|タスクに(?:追加|登録)",
     "research": r"\bresearch\s*[:：]|(?:調査|リサーチ)\s*[:：]|調べて",
