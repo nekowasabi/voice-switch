@@ -292,7 +292,7 @@ final class TriageService {
         case .error: return (nil, nil, false)
         case .data(let bytes):
             guard let response = try? JSONDecoder().decode(TriageClassifier.Response.self, from: bytes) else { return (nil, nil, false) }
-            let answers = response.answers.filter { TriageClassifier.questionIDs.contains($0.key) }.mapValues(\.noul)
+            let answers = response.answers.filter { TriageClassifier.requestIDs.contains($0.key) }.mapValues(\.noul)
             guard TriageClassifier.valid(answers) else { return (nil, nil, false) }
             if simulation == nil {
                 do { try files.cache(answers, id: proposal.id, at: proposal.createdAt, questionHash: hash) }

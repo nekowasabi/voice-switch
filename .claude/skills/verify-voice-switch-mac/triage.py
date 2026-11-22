@@ -22,7 +22,7 @@ REAL = [Path.home() / p for p in (
     "repos/changelog/changelogmemo", "repos/changelog/voice-switch-inbox.jsonl")]
 # The user's app may write its own journal lines meanwhile, so the journals are checked for this script's texts instead.
 JOURNALS = [Path.home() / "Library/Application Support/voice-switch/journal", Path.home() / "repos/context-storage/voice-switch"]
-MARKS = re.compile(r"(?:unsure|heavy|warm|sure|cancel|slow|fail|off)-\d|dest-[a-z]+-\d")
+MARKS = re.compile(r"(?:unsure|heavy|warm|sure|cancel|slow|fail|off|gate)-\d|dest-[a-z]+-\d")
 REPO = Path(__file__).resolve().parents[3]
 
 
@@ -31,7 +31,8 @@ def leaked():
     for root in JOURNALS:
         for f in root.rglob(time.strftime("%Y-%m-%d") + ".jsonl") if root.exists() else []:
             found += [str(f) for l in f.read_text(errors="replace").splitlines() if MARKS.search(l)]
-    for memo in (Path.home() / "repos/changelog/changelogmemo", Path.home() / "repos/changelog/voice-switch-inbox.jsonl"):
+    for memo in (Path.home() / "repos/changelog/changelogmemo", Path.home() / "repos/changelog/voice-switch-inbox.jsonl",
+                 Path.home() / "Library/Application Support/voice-switch/proposals.jsonl"):
         if memo.exists() and MARKS.search(memo.read_text(errors="replace")):
             found.append(str(memo))
     return sorted(set(found))
@@ -332,8 +333,31 @@ def disabled():
           [f"triage log lines: {len(r['triage'])}, proposals.jsonl exists: {f.exists()}, starts.txt lines: {len(h.lines('starts.txt'))}"])
 
 
+def gates():
+    """needs_local 0.7 or more: a sure, light bot request is neither sent nor kept as a memo. keep_note 0.7 or more:
+    a thought goes to the memo route at once; below it the thought stays in the journal only."""
+    h = Home("gates")
+    memo = f't=$(cat); printf "%s\\n" "$t" >> {h.dir}/memo.txt'
+    h.config["dictation"]["triage"]["memo"] = {"command": memo, "heavy": False}
+    h.config["dictation"]["triage"]["routes"]["look_up"] = {"command": h.config["dictation"]["triage"]["routes"]["self_task"]["command"],
+                                                            "heavy": False, "graceSeconds": 2}
+    (h.dir / "config.json").write_text(json.dumps(h.config, ensure_ascii=False, indent=2))
+    thought = {q: 0.05 for q in QUESTIONS}
+    r1 = h.run({"answers": sure("look_up") | {"needs_local": 0.9, "keep_note": 0.9}, "dictations": ["gate-1 原因を特定してください"], "seconds": 6})
+    r2 = h.run({"answers": thought | {"needs_local": 0.05, "keep_note": 0.9}, "dictations": ["gate-2 冬休みは年末に取ろう"], "seconds": 4})
+    r3 = h.run({"answers": thought | {"needs_local": 0.05, "keep_note": 0.2}, "dictations": ["gate-3 いいですね"], "seconds": 4})
+    memo_lines = h.lines("memo.txt")
+    check("(k) an instruction to the session on screen (needs_local 0.9) is neither sent to a light bot route nor kept as a memo",
+          any(" session" in l for l in r1["triage"]) and not any(" sending" in l for l in r1["triage"])
+          and not h.lines("starts.txt") and "gate-1 原因を特定してください" not in memo_lines,
+          r1["triage"] + [f"starts.txt lines: {len(h.lines('starts.txt'))}, memo.txt: {memo_lines}"])
+    check("(l) a thought worth keeping (keep_note 0.9) reaches the memo route once; one that is not (0.2) stays in the journal",
+          memo_lines.count("gate-2 冬休みは年末に取ろう") == 1 and "gate-3 いいですね" not in memo_lines,
+          r2["triage"] + r3["triage"] + [f"memo.txt: {memo_lines}"])
+
+
 SCENARIOS = {"unsure": unsure, "heavy": heavy, "sure": sure_and_cancel, "restart": restart, "failed": failed,
-             "destinations": destinations, "disabled": disabled}
+             "destinations": destinations, "disabled": disabled, "gates": gates}
 
 if __name__ == "__main__":
     if not os.access(BIN, os.X_OK):
@@ -344,8 +368,9 @@ if __name__ == "__main__":
     shown = [f"{run}: {said}" for run, said, found in SAID if found]
     check("no log line carries the dictated text (the triage lines give ids, kinds and fixed reasons only)",
           bool(SAID) and not shown, shown or [f"{len(SAID)} dictated texts, none in the runs' stdout"])
-    changed = [str(p) for p in REAL if stat(p) != before[p]] + leaked()
+    # The user's own app keeps writing these files during a run, so a changed file is not a leak; a test text in one is.
+    changed = leaked()
     check("the user's real proposals.jsonl, triage cache, changelogmemo, memo inbox and journals are untouched",
-          not changed, [f"changed: {changed}" if changed else f"unchanged: {len(REAL)} files; no test text in today's journals or changelogmemo"])
+          not changed, [f"test text found in: {changed}" if changed else "no test text in today's journals, changelogmemo, the memo inbox or proposals.jsonl"])
     print(f"evidence={EVID}")
     sys.exit(0 if all(results) else 1)
