@@ -1,14 +1,20 @@
+import Foundation
+
 package struct MacDictationSession {
     package private(set) var clock = 0
     private var followupUntil = 0
     private var samplesSinceStopCheck = 0
     package private(set) var recent: [Float] = []
     // Voiced frames are joined across gaps up to the hangover, which the VAD alone splits into short runs.
-    package private(set) var speechFrames = 0
+    private var speechFrames = 0
     private var gapFrames = 0
-    package private(set) var phraseEnergy = 0
-    package private(set) var phraseHAL = 0
-    package private(set) var phrasePeak: Float = 0
+    private var phraseEnergy = 0
+    private var phraseHAL = 0
+    private var phrasePeak: Float = 0
+    // The last reason this phrase did not open a session, or empty once logged.
+    package var phraseOutcome = ""
+    // A phrase started while another app held the mic still belongs to that app if it releases the mic mid-phrase.
+    package var phraseForOtherApp = false
 
     package init() {}
 
@@ -47,6 +53,7 @@ package struct MacDictationSession {
             phraseEnergy = 0
             phraseHAL = 0
             phrasePeak = 0
+            phraseForOtherApp = false
         }
         speechFrames += 1
         gapFrames = 0
@@ -83,5 +90,11 @@ package struct MacDictationSession {
         // ponytail: capped at 10 s of audio; a longer phrase keeps only its tail.
         let keep = hasSpeech ? Int(rate) * 10 : frames(ms: prerollMs ?? 300) * frameLen + frameLen
         if recent.count > keep { recent.removeFirst(recent.count - keep) }
+    }
+
+    package func phraseLog(outcome: String, threshold: Float) -> String {
+        let ms = { (n: Int) in n * frameLen * 1000 / Int(rate) }
+        let level = String(format: "peakRms=%.4f threshold=%.4f", locale: Locale(identifier: "en_US_POSIX"), phrasePeak, threshold)
+        return "voice: phrase voicedMs=\(ms(speechFrames)) energyMs=\(ms(phraseEnergy)) halMs=\(ms(phraseHAL)) \(level) -> \(outcome)"
     }
 }
