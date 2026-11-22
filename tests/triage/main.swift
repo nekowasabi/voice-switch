@@ -61,4 +61,57 @@ for e in expected {
 }
 print(failures == decideFailures ? "PASS thresholds \(expected.count) files read as Python reads them"
                                   : "FAIL thresholds (\(failures - decideFailures) files)")
+// The reducer, rule by rule (the TLA+ model checks the orderings; this checks the code takes the same steps).
+typealias TE = TriageExecution
+let reducerFailures = failures
+let rules = TE.Rules(routes: [.selfTask: 1, .lookUp: 2], heavy: [.lookUp: [0]])
+func step(_ s: TE.State, _ e: TE.Event, _ label: String) -> (state: TE.State, effects: [TE.Effect])? {
+    let r = TE.reduce(s, e, rules: rules)
+    if r == nil { fail("reducer: \(label) was refused") }
+    return r
+}
+func refused(_ s: TE.State, _ e: TE.Event, _ label: String) { if TE.reduce(s, e, rules: rules) != nil { fail("reducer: \(label) was taken") } }
+let fresh = TE.State(rows: ["a": TE.Row()])
+// 1. a sure request waits, then goes out once and is recorded
+if let p = step(fresh, .classify("a", .kind(.selfTask), verified: false, flagged: false), "classify sure"),
+   let g = step(p.state, .graceExpire("a"), "grace"), let s = step(g.state, .start("a"), "start"),
+   let r = step(s.state, .run("a"), "run"), let d = step(r.state, .record("a"), "record") {
+    if p.state.rows["a"]?.stage != .pending { fail("reducer: a sure request is not pending") }
+    if s.effects != [.persist("a", .executing), .execute("a", .selfTask, 0)] { fail("reducer: 送信中 is not written before the route runs: \(s.effects)") }
+    if d.state.rows["a"]?.stage != .done || d.state.rows["a"]?.runs != 1 { fail("reducer: a sent request is not done once") }
+    refused(d.state, .start("a"), "a second start")
+}
+// 2. unsure, unrouted and unverified heavy requests wait in 確認が要るもの
+for (verdict, verified, label) in [(TE.Verdict.unjudged, false, "unjudged"), (.kind(.writeText), false, "no route"), (.kind(.lookUp), false, "heavy unverified")] {
+    if let c = step(fresh, .classify("a", verdict, verified: verified, flagged: false), label), c.state.rows["a"]?.stage != .review {
+        fail("reducer: \(label) is not in review")
+    }
+}
+// 3. a cancelled request never goes out
+if let p = step(fresh, .classify("a", .kind(.selfTask), verified: false, flagged: false), "classify"),
+   let x = step(p.state, .dismiss("a"), "dismiss") {
+    refused(x.state, .graceExpire("a"), "grace after 取消"); refused(x.state, .start("a"), "start after 取消")
+}
+// 4. a crash during a send restores as 送ったか不明 and does not send again on its own
+if let p = step(fresh, .classify("a", .kind(.selfTask), verified: false, flagged: false), "classify"),
+   let g = step(p.state, .graceExpire("a"), "grace"), let s = step(g.state, .start("a"), "start"),
+   let c = step(s.state, .crash, "crash"), let r = step(c.state, .restart, "restart") {
+    if r.state.rows["a"]?.stage != .unknown || r.effects != [.restoredUnknown("a")] { fail("reducer: 送信中 is not restored as unknown") }
+    refused(r.state, .start("a"), "start after restore")
+    if let t = step(r.state, .retry("a", .selfTask), "retry"), t.state.rows["a"]?.retries != 1 { fail("reducer: retry is not counted") }
+}
+// 5. a failed send stays in review and goes out again only by retry
+if let p = step(fresh, .classify("a", .kind(.selfTask), verified: false, flagged: false), "classify"),
+   let g = step(p.state, .graceExpire("a"), "grace"), let s = step(g.state, .start("a"), "start"),
+   let f = step(s.state, .fail("a"), "fail") {
+    if f.state.rows["a"]?.stage != .failed || f.effects != [.persist("a", .failed)] { fail("reducer: a failed send is not filed as failed") }
+    refused(f.state, .start("a"), "start after fail")
+}
+// 6. the user's chosen candidate is the one that runs
+if let c = step(fresh, .classify("a", .kind(.lookUp), verified: false, flagged: false), "classify heavy"),
+   let n = step(c.state, .sendNow("a", .lookUp, routeIndex: 1), "send to candidate 2"),
+   let s = step(n.state, .start("a"), "start"), s.effects.last != .execute("a", .lookUp, 1) {
+    fail("reducer: the chosen candidate is not the one sent: \(s.effects)")
+}
+print(failures == reducerFailures ? "PASS reducer 6 rules (send once, review, cancel, crash, fail, chosen candidate)" : "FAIL reducer")
 exit(failures == 0 ? 0 : 1)

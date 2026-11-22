@@ -7,7 +7,7 @@ description: Model-check (TLA+) the journal triage send path of plan A (docs/jou
 
 The triage classifier (`docs/journal-triage-design.md`) turns a dictation into a verdict. Plan A of the execution design (`docs/journal-triage-execution.md`) files a request either in まもなく送る (sent on its own when its grace period runs out, unless cancelled) or, when an exception rule fires, in 確認が要るもの (sent only when the user presses a button). `TriageExec.tla` explores every order of those steps for two utterances, with any verdict Jev could return (it can be wrong), any answer of the extra check for a heavy route, a kind with two candidate destinations (the first is the default; the user can pick the other on 確認が要るもの or switch to it in まもなく送る), a route that succeeds or fails, one app crash, and a restart.
 
-The macOS code implements the model as a pure reducer, `TriageExecution.reduce` in `Sources/voice-switch/TriageExecution.swift`, one case per model action. `conform/` feeds every transition TLC finds to that reducer (check item 5), so a model pass speaks for the reducer too. `TriageService` (classification, exception rules, `proposals.jsonl`, the grace timer, the routes) drives the reducer; `verify-voice-switch-mac/triage.py` runs it in the built binary (check item 2).
+The macOS code implements the model as a pure reducer, `TriageExecution.reduce` in `Sources/voice-switch/TriageExecution.swift`, one case per model action. `tests/triage/run.sh` checks that the reducer takes the model's key steps, rule by rule (check item 5). `TriageService` (classification, exception rules, `proposals.jsonl`, the grace timer, the routes) drives the reducer; `verify-voice-switch-mac/triage.py` runs it in the built binary (check item 2).
 
 ## The two worst cases
 
@@ -60,12 +60,7 @@ A request misread as `thought` or `filler` is classifier accuracy, measured by t
 2. **Logs on every degraded path, in the built binary**: `VS_BIN=<binary> python3 .claude/skills/verify-voice-switch-mac/triage.py` must print only PASS lines. It runs `--simulate - --triage-fixture` with an isolated HOME and VOICE_SWITCH_CONFIG, the Jev keys removed and Jev replaced by fixed answers, and counts route starts in files. Its runs show each line once: `triage: <id> pending <kind> until <time>` (sure request), `triage: <id> exception <reason>` (unsure request), `triage: <id> verify <route> <probability>` (heavy route), `triage: <id> sending <kind>` before a route runs, `triage: <id> restored unknown` on relaunch after a SIGKILL during a send, and `triage: <id> failed <kind> <reason>` when the route fails (scenario (e): the route is the real `scripts/memo-inbox-add` pointed at an inbox whose folder is a file, so it exits 1 and the line ends `command exit 1`; the row's last `proposals.jsonl` stage is `failed` with that `failureReason`, and neither the rest of the run nor a relaunch with the inbox writable starts the route again). The reasons are fixed words; the script fails when any line of a run's stdout contains a text that run dictated. Scenario `destinations` gives `delegate` three candidates and checks (g) [B に送る] on 確認が要るもの reaches B only, (h) a switch to B in まもなく送る reaches B only after B's grace period, (f) an untouched request reaches the default A only, (i) a SIGKILL after the switch and a relaunch still reach B only, and (j) a switch to a candidate never sent to lands in 確認が要るもの with that candidate's warm-up reason (rules 4 and 5 count per destination). It also checks a cancelled request never starts its route, a sure one starts it exactly once, `enabled: false` files nothing, and the user's real `proposals.jsonl`, triage cache, journals, changelogmemo and memo inbox stay untouched.
 3. **Model**: `sh .claude/skills/verify-triage-execution/check.sh design` must print only PASS lines; `check.sh risk` must print only `FAIL StrictNoWrongExecution`. Any other failure is a new finding.
 4. **Mutants**: `sh .claude/skills/verify-triage-execution/mutants.sh` must print `CAUGHT` for every line (17 at the sync commit; 4 for failed sends: a failed row taken off the screen or hidden by the restore, caught by `NoSilentDrop`; a failed row sent again on its own, and a retry not counted, caught by `AtMostOnce`; 6 for destinations, all caught by `NoWrongDestination`: `Run` sends the default, a graced send goes to the default, [<name> に送る] or a kind button keeps the shown candidate, a switch is ignored, a restart forgets the chosen candidate). `<NL>` in a mutant is a newline. `MISSED` means a property went blind; `anchor missing` means the model changed and the table in `mutants.sh` needs the new text.
-5. **Reducer conforms to the model**: `sh .claude/skills/verify-triage-execution/conform/conform.sh check` must print `PASS accept`, `PASS reject` and `PASS coverage`. `conform.sh mutants` must print `CAUGHT` for every line of `conform/mutants.txt` (18 at the sync commit; 4 for failed sends; 7 for destinations: `start` runs candidate 0, `run` records candidate 0, a switch keeps the old candidate, [<name> に送る] or a kind button keeps the shown one or takes 0, a switch back to the heavy default skips the extra check, a switch accepted in `review`).
-   - `conform/transitions.json` holds every reachable state of `design.cfg` (95 140, with the speaker's intent, intended candidate and `picked` left out because the app cannot see them) and every transition (231 972). `conform/gen.py` writes it from TLC: `TriageExecEvents.tla` prints each step of `Next` with its arguments, and each action that reads the speaker's intent (`SwitchDestination`, `SendNow`, `Fix`, `Retry`) again as if that row's speaker had meant any other kind and candidate, since the user, not the app, chooses them. gen.py stops when the printed real steps differ in number from the steps `Spec` generated.
-   - accept: each transition is accepted and lands on the model's next state (all fields, both rows); a line goes to `proposals.jsonl` whenever the model's `persisted` changes; a route starts only in `start`, after its 送信中 line.
-   - reject: from each reachable state, every event the model cannot take (7 029 893), including a switch or [<name> に送る] to either candidate, returns nil. `crash` at `MaxCrashes` is exempt; the bound only keeps the model finite.
-   - coverage: all 12 stages and 15 events occur, so a shrunken fixture fails.
-   - After any change to `TriageExec.tla` or `design.cfg`, run `conform.sh gen` (about 15 min; TLC runs on one worker so the printed steps stay whole lines); `check` refuses a fixture whose model or config hash differs.
+5. **Reducer, rule by rule**: `sh tests/triage/run.sh` prints `PASS reducer 6 rules`. It drives `TriageExecution.reduce` through a sure send (送信中 written before the route runs, sent once), review for unsure / unrouted / unverified heavy requests, a cancel, a crash during a send (restored as 送ったか不明, no resend), a failed send (no resend until retry), and the user's chosen candidate. (Until 2026-11-22 a TLC dump of every transition, 5.5 MB, was replayed into the reducer; it checked the same orderings twice and had to be regenerated on every model change, so it was removed.)
 6. **App-side triage against Python and the config**: `sh tests/triage/run.sh` must print seven PASS lines and no FAIL.
    - `decide` and `thresholds`: `TriageClassifier` gives every case of `tests/parity/fixtures/triage_decide.json` its `want` and reads `thresholds.json` as Python's `read_thresholds` does (15 files).
    - `request`: `TriageRequest` (`Sources/voice-switch/TriageRequest.swift`, the request body `TriageService` sends) builds, from each case of `tests/parity/fixtures/triage_state.json`, the same state Python builds from the same journal rows (`tests/test_journal_triage.py` C3 / C7 read the same file). The cases hold 60 s and 61 s, 59.6 s (sent as 59), a row at the same instant, a pasted row, another device's row, a third listed row, an empty app name and a -05:00 time. The classification request carries the seven questions of `Resources/triage_questions.json` (with `kind_delegate`) and `model` only; the heavy-route check carries `verify_route` only and the state plus `route` {kind, destination}; no bundleId, pid, exe or task id is in either body.
@@ -79,20 +74,25 @@ A request misread as `thought` or `filler` is classifier accuracy, measured by t
 
 ## Run
 
+Every change (about 70 s, stops at the first failure):
+
 ```sh
-sh tests/triage/run.sh                                          # Swift truth table and thresholds reader against Python
-sh .claude/skills/verify-triage-execution/check.sh design     # design | risk
+sh tests/check.sh
+```
+
+Before a PR only (minutes; they prove the checks still bite and drive the real binary):
+
+```sh
+sh .claude/skills/verify-triage-execution/check.sh risk          # must print only FAIL StrictNoWrongExecution
 sh .claude/skills/verify-triage-execution/mutants.sh
-sh .claude/skills/verify-triage-execution/conform/conform.sh check   # gen | check | mutants
-python3 -m unittest tests.test_memo_inbox_add                    # item 7
-python3 -m unittest tests.test_mail_send                         # item 9
-sh .claude/skills/verify-triage-execution/code-mutants.sh       # item 8
+sh .claude/skills/verify-triage-execution/code-mutants.sh
+bash .claude/skills/verify-journal-append/run.sh mutants
 VS_BIN=<voice-switch binary> python3 .claude/skills/verify-voice-switch-mac/triage.py
 ```
 
-Pinned TLC v1.7.4 (`tla2tools.jar`, sha256 checked, fetched with an authenticated `gh` into `~/.cache/tla2tools-v1.7.4/` the first time, the same jar as `verify-meet-pause`). Needs Java 11+. `design` takes about 20 s, `mutants.sh` about 5 min. `check.sh` runs one TLC per invariant and prints `PASS` / `FAIL` / `ERROR` per invariant; traces are in `${TMPDIR}/verify-triage-execution/<config>/<invariant>.out`. Run one `check.sh` or `mutants.sh` at a time: they share that folder, and a second run deletes the first one's files mid-run (its results then show other state counts or `ERROR`). When another session may be running them, set `TMPDIR` to a folder of your own. `conform.sh check` takes about 10 s, `conform.sh mutants` about 2.5 min, `triage.py` about 8 min (61 s waits let the warm-up and repeat rules pass).
+Pinned TLC v1.7.4 (`tla2tools.jar`, sha256 checked, fetched with an authenticated `gh` into `~/.cache/tla2tools-v1.7.4/` the first time). Needs Java 11+. Run one `check.sh` or `mutants.sh` at a time, or give each its own `TMPDIR`.
 
-Read every result with the `/statechart` skill: a failure as its shortest path in plain words, a pass as a chart of the states.
+Read every TLA+ result with the `/statechart` skill.
 
 ## Telling a real bug from a modeling error
 
