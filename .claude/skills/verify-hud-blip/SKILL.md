@@ -64,10 +64,10 @@ Sync commit: `cf89a2f` の作業ツリー（未コミット）。A 案の表示�
 | `h`, `HalOK` | `voiceBeingHeard()` and the HAL listener in `watchVoiceActivity` (`kAudioDevicePropertyVoiceActivityDetectionState`) |
 | `halRun`, `sinceVoice`, `gate` | `voiceActivity.onSince` / `lastVoiceEnd` (set only after a run of `minVoiceSeconds`), `voiceRecentlyActive()`, `automaticWakeBlock()` -> `Listener.noVoiceActivity` |
 | `speech` | `Segmenter.isSpeech`: energy over threshold or the HAL flag; noise is assumed over the threshold |
-| `speechFrames`, `phraseHAL` | consume's `speechFrames` / `phraseHAL` on the idle path, reset after `hangoverMs` of gap (modeled as one frame) |
+| `speechFrames`, `phraseHAL` | `MacDictationSession.speechFrames` and the idle path's `phraseHAL`, reset after `hangoverMs` of gap (modeled as one frame) |
 | idle path `dict' = "auto"` | `longEnough`, `NoWakePolicy.onSpeech`, `automaticWakeAllowed()`, `dictation = Dictation(... origin: origin)` |
 | `w`, `dict' = "wake"` | a wake word or `macOS.actions` wake word recognized by `speaksWake` / `dictationStart` |
-| dictation branch | `if var d = dictation { ... }`: `silentFrames`, end on `endSilenceMs` or `maxSeconds`, `dictation = nil; speechFrames = 0` |
+| dictation branch | `if var d = dictation { ... }`: `silentFrames`, end on `endSilenceMs` or `maxSeconds`, `dictation = nil; session.clearRecentSpeech()` |
 | `confirmed` | `Dictation.confirmed` via `wordCheck` / `agreedWordCount` (Mac); `confirmedSession` via `CheckWords` (Windows) |
 | `HudMac` | `dict = "wake" \/ (dict = "auto" /\ confirmed)`。phase の `defer` は本文後の未確認自動セッションと待機中のフレーズを `.idle` にし、確認後の `.recording` / `.stopping` とウェイクの `.waiting` を保つ |
 | `HudWindows` | `PublishPhase(DictationSession, long)` and `Confirmed(session)` |
