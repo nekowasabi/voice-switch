@@ -14,10 +14,12 @@ while IFS='|' read -r name want old new; do
   if printf '%s\n' "$out" | grep -q "^FAIL $want "; then echo "CAUGHT $name by $want"
   else echo "MISSED $name (want FAIL $want)"; printf '%s\n' "$out"; bad=1; fi
 done <<'EOF'
-auto-ignores-route-flag|StrictNoWrongExecution|stage[u] = "proposed" /\ verdict[u] \in AutoRoutes|stage[u] = "proposed" /\ verdict[u] \in Routes
+grace-skipped|NoSendWithoutChance|ELSE IF Exception(v, ok, flagged) THEN "review" ELSE "pending"|ELSE IF Exception(v, ok, flagged) THEN "review" ELSE "approved"
+heavy-no-verify|HeavyNeedsVerify|v \notin Routes \/ (v \in Heavy /\ ~ok) \/ flagged|v \notin Routes \/ flagged
+cancel-ignored|DismissedNeverRuns|GraceExpire(u) == /\ alive /\ stage[u] = "pending"|GraceExpire(u) == /\ alive /\ stage[u] \in {"pending", "dismissed"}
 start-after-dismiss|DismissedNeverRuns|Start(u) == /\ alive /\ stage[u] = "approved"|Start(u) == /\ alive /\ stage[u] \in {"approved", "dismissed"}
 restart-reruns-executing|AtMostOnce|IF p = "executing" THEN "unknown" ELSE p|IF p = "executing" THEN "approved" ELSE p
-unsure-to-cli-list|NoSilentDrop|ELSE IF MenuShowsUnsure THEN "review" ELSE "listed"|ELSE "listed"
-approve-any-kind|StrictNoWrongExecution|/\ verdict[u] \in Routes /\ verdict[u] = intent[u]|/\ verdict[u] \in Routes
+unsure-to-cli-list|NoSilentDrop|(IF MenuShowsUnsure THEN "review" ELSE "listed")|"listed"
+approve-any-kind|NoWrongExecution|/\ verdict[u] \in Routes /\ verdict[u] = intent[u]|/\ verdict[u] \in Routes
 EOF
 exit $bad
