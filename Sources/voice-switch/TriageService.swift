@@ -50,8 +50,8 @@ final class TriageService {
             log("triage: proposals read failed")
         }
         _ = apply(.restart)
-        DictationHistory.shared.onTriageEntry = { [weak self] entry, note, task, previous in
-            Task { @MainActor [weak self] in self?.enqueue(entry, note: note, task: task, previous: previous) }
+        DictationHistory.shared.onTriageEntry = { [weak self] entry, note, task, history in
+            Task { @MainActor [weak self] in self?.enqueue(entry, note: note, task: task, history: history) }
         }
     }
 
@@ -128,12 +128,12 @@ final class TriageService {
         catch { log("triage: \(proposal.id) label write failed") }
     }
 
-    private func enqueue(_ entry: DictationHistoryEntry, note: JournalNote, task: String?, previous: [DictationHistoryEntry]) {
+    private func enqueue(_ entry: DictationHistoryEntry, note: JournalNote, task: String?, history: [DictationHistoryEntry]) {
         guard settings.enabled == true, !storeError else { return }
         let tail = classificationTail
         classificationTail = Task { [weak self] in
             await tail?.value
-            await self?.classify(entry, note: note, task: task, previous: previous)
+            await self?.classify(entry, note: note, task: task, history: history)
         }
     }
 
@@ -143,53 +143,22 @@ final class TriageService {
         return try? JSONDecoder().decode([String: TriageClassifier.Question].self, from: bytes)
     }()
 
-    private func ask(_ questions: [String: TriageClassifier.Question], context: Context,
-                     route: RouteContext? = nil) async -> JevReply {
+    private func ask(_ request: TriageRequest) async -> JevReply {
         if let simulation {
             struct Answer: Encodable { let noul: Double }
-            let values = route == nil ? simulation.answers : simulation.verification.map { ["verify_route": $0] } ?? [:]
+            let values = request.questions["verify_route"] == nil ? simulation.answers : simulation.verification.map { ["verify_route": $0] } ?? [:]
             guard let reply = try? JSONEncoder().encode(["answers": values.mapValues(Answer.init)]) else { return .error }
             return .data(reply)
         }
-        struct Request: Encodable {
-            let model = "jev-latest"
-            let questions: [String: TriageClassifier.Question]
-            let state: Context
-        }
-        var context = context
-        context.route = route
-        return await requestJev(try? JSONEncoder().encode(Request(questions: questions, state: context)),
-                                logPrefix: "triage jev")
+        return await requestJev(try? request.body(), logPrefix: "triage jev")
     }
 
-    private struct RouteContext: Encodable {
-        let kind: TriageKind
-        let destination: String
-    }
-
-    private struct Context: Encodable {
-        struct Utterance: Encodable { let text: String; let started: String }
-        struct Metadata: Encodable { let app: String?; let task: String?; let time: String }
-        struct Previous: Encodable { let text: String; let seconds_before: Int }
-
-        let utterance: Utterance
-        let context: Metadata
-        let previous: [Previous]?
-        var route: RouteContext?
-    }
-
-    private func classify(_ entry: DictationHistoryEntry, note: JournalNote, task: String?, previous: [DictationHistoryEntry]) async {
+    private func classify(_ entry: DictationHistoryEntry, note: JournalNote, task: String?, history: [DictationHistoryEntry]) async {
         let id = entry.id.uuidString.lowercased()
         guard !storeError, state.rows[id] == nil else { return }
-        let clock = DateFormatter()
-        clock.locale = Locale(identifier: "en_US_POSIX")
-        clock.dateFormat = "HH:mm"
-        let context = Context(
-            utterance: .init(text: entry.text, started: DictationJournal.originLabel(entry.origin, manual: note.manual)),
-            context: .init(app: note.focus?.name, task: task, time: clock.string(from: entry.createdAt)),
-            previous: previous.isEmpty ? nil : previous.map {
-                .init(text: $0.text, seconds_before: Int(entry.createdAt.timeIntervalSince($0.createdAt)))
-            }
+        let context = TriageRequest.State(
+            entry: entry, note: note, task: task, device: files.device,
+            history: history.map { TriageRequest.HistoryRow(device: files.device, entry: $0) }, timeZone: .current
         )
         var proposal = TriageProposal(id: id, text: entry.text, createdAt: entry.createdAt, updatedAt: Date(),
                                       focusBundleID: note.focus?.bundleId)
@@ -251,17 +220,16 @@ final class TriageService {
         }
     }
 
-    private func probabilities(for proposal: TriageProposal, context: Context) async -> (answers: [String: Double]?, hash: String?, off: Bool) {
-        guard let questions else { return (nil, nil, false) }
-        let classifier = questions.filter { TriageClassifier.questionIDs.contains($0.key) }
-        guard classifier.count == TriageClassifier.questionIDs.count, let hash = try? TriageFiles.questionHash(classifier) else {
+    private func probabilities(for proposal: TriageProposal, context: TriageRequest.State) async -> (answers: [String: Double]?, hash: String?, off: Bool) {
+        guard let questions, let request = TriageRequest.classification(questions, state: context),
+              let hash = try? TriageFiles.questionHash(request.questions) else {
             return (nil, nil, false)
         }
         if simulation == nil,
            let cached = files.cached(proposal.id, at: proposal.createdAt, questionHash: hash) {
             return (cached.answers, hash, false)
         }
-        switch await ask(classifier, context: context) {
+        switch await ask(request) {
         case .off: return (nil, nil, true)
         case .error: return (nil, nil, false)
         case .data(let bytes):
@@ -276,10 +244,10 @@ final class TriageService {
         }
     }
 
-    private func verify(_ kind: TriageKind, context: Context) async -> Double? {
-        guard let question = questions?["verify_route"],
-              case .data(let bytes) = await ask(["verify_route": question], context: context,
-                                                route: RouteContext(kind: kind, destination: routeName(kind) ?? kind.rawValue)),
+    private func verify(_ kind: TriageKind, context: TriageRequest.State) async -> Double? {
+        let route = TriageRequest.Route(kind: kind, destination: routeName(kind) ?? kind.rawValue)
+        guard let questions, let request = TriageRequest.verification(questions, state: context, route: route),
+              case .data(let bytes) = await ask(request),
               let response = try? JSONDecoder().decode(TriageClassifier.Response.self, from: bytes),
               let probability = response.answers["verify_route"]?.noul, (0...1).contains(probability) else { return nil }
         return probability

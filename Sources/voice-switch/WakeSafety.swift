@@ -153,9 +153,7 @@ final class DictationHistory {
         let noted = DictationJournal.take(id)
         let entry = DictationHistoryEntry(id: id, text: text, origin: origin, createdAt: created, delivery: noted.delivery)
         let triage = entry.eligibleForTriage ? onTriageEntry : nil
-        let previous = triage == nil ? [] : Array(entries.reversed().lazy.filter {
-            $0.eligibleForTriage && $0.createdAt < created && created.timeIntervalSince($0.createdAt) <= 60
-        }.prefix(2).reversed())
+        let priorEntries = triage == nil ? [] : entries
         entries.append(entry)
         if entries.count > capacity { entries.removeFirst(entries.count - capacity) }
         lock.unlock()
@@ -165,7 +163,7 @@ final class DictationHistory {
         context.focus = focus ?? noted.focus
         let task = sink?.record(id: id, at: created, text: text, origin: origin, endReason: endReason ?? noted.endReason, recordingSeconds: recordingSeconds ?? noted.recordingSeconds, manual: context.manual, focus: context.focus, delivery: noted.delivery)
         onChange?()
-        triage?(entry, context, task, previous)
+        triage?(entry, context, task, priorEntries)
         return true
     }
 
