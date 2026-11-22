@@ -1,15 +1,18 @@
-"""Exhaustive behavior test for scripts/journal_triage.py.
+"""Behavior test for scripts/journal_triage.py, the triage CLI (docs/journal-triage-design.md).
 
-Every combination of origin x delivery x local marker matches x --no-jev x API key x --min-confidence x Jev answer
-runs through main() with HTTP replaced. The expected result comes from the rules in the task, not from the script:
-listed when delivery is history, null or absent; each listed text goes to Jev once unless --no-jev or no key, whatever
-its origin (monologues are what Jev is for); only the text is sent; a Jev answer at or above the floor wins, none
-included; otherwise one local match, else none; the log never carries the text.
+Every case drives main() through its arguments with HTTP replaced and HOME in a temp folder, and reads back what a
+caller can see: the JSON on stdout, the request sent to Jev, the files under the journal root and the cache, stderr.
+Expected values come from the design (the truth table lives in tests/parity/make_triage_decide.py), not from the script.
 Failure messages start with the rule id the verify-journal-append skill uses:
-T1 no request with --no-jev or without a key, and no real connection ever; T2 exactly one request per listed row
-otherwise, automatic ones included; T3 a request carries only the text; T4 the category (Jev above the floor first,
-then one local hit, else none);
-T5 the log carries no text, focusApp or taskchute; T6 which rows are listed, with time and context, journal untouched.
+T1 no Jev request with --no-jev or without a key, and no real connection ever; T6 which rows are listed, with time
+and context, the journal untouched, broken rows counted, dot folders not read as devices;
+C1 the truth table has no hole (tests/parity/fixtures/triage_decide.json); C2 filler only when wants_action is no and
+is_filler is yes, never on an error or without Jev; C3 the request carries only the table's fields (only the utterance
+with --no-context); C4 a cached answer with the same question wording is not asked again, a new wording is; C5 the
+journal bytes stay, cache lines of ids gone from the journal go; C6 stderr carries no text, app or task; C7 previous is
+the same device, listed rows, within 60 seconds before, at most 2; C8 the label split depends on the id only and tune
+proposes only when the holdout gets lighter without more filler misses (and only from 30 labels); C9 eval and tune use
+no network and score the answers kept with the labels; C10 label writes one line to its own device's file only.
 
 JOURNAL_TRIAGE points the test at another copy of the script (run.sh mutants uses it).
 """
@@ -19,50 +22,60 @@ import io
 import itertools
 import json
 import os
-import re
+import shutil
 import socket
 import sys
 import tempfile
 import unittest
 import urllib.error
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
-SCRIPT = Path(os.environ.get("JOURNAL_TRIAGE") or Path(__file__).parents[1] / "scripts/journal_triage.py")
-spec = importlib.util.spec_from_file_location("journal_triage", SCRIPT)
-triage = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = triage  # dataclass resolves its own module while the script loads
-spec.loader.exec_module(triage)
+HERE = Path(__file__).resolve().parent
+SCRIPT = Path(os.environ.get("JOURNAL_TRIAGE") or HERE.parent / "scripts/journal_triage.py")
+
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module  # dataclass resolves its own module while the script loads
+    spec.loader.exec_module(module)
+    return module
+
+
+triage = load("journal_triage", SCRIPT)
+ref = load("make_triage_decide", HERE / "parity/make_triage_decide.py")
+QUESTIONS = ref.QUESTIONS
+DEFAULT = {q: dict(ref.DEFAULT) for q in QUESTIONS}
 
 DAY = "2026-11-21"
-STAMP = "2026-11-21T14:03:05.123+09:00"
-FOCUS = "FocusSentinelApp"
-TASK = "TaskSentinelName"
-# Texts by how many local markers they hit; the 1-hit text is a task. Each carries a token the log must never show.
-TEXTS = {0: "今日はいい天気ですね QZX0", 1: "タスク: 牛乳を買う QZX1", 2: "タスク: 新しいマイクを調べて QZX2"}
-ORIGINS = ["手動", "ウェイク", "自動", None, "不明"]
+T0 = datetime.fromisoformat("2026-11-21T14:03:05.123+09:00")
+FOCUS, TASK = "FocusSentinelApp", "TaskSentinelName"
+# Never sent: what the journal row holds beyond the table's fields.
+HIDDEN = ("BundleSentinel", "987654", "ExeSentinel", "TaskIdSentinel", "Silence", "IDS-")
+STARTS = ("手動", "ウェイク", "自動")
+ORIGINS = [*STARTS, None, "謎の値"]
 DELIVERIES = ["<absent>", None, "paste", "sticky", "pane", "action", "history"]
 LISTED = {"<absent>", None, "history"}
-FLOORS = [None, 0.5]
-# (name, answer body or exception, category Jev means, confidence or None)
-ANSWERS = [
-    ("high", {"choice": "research", "confidence": 0.95}, "research", 0.95),
-    ("at-floor", {"choice": "research", "confidence": 0.9}, "research", 0.9),
-    ("below-floor", {"choice": "research", "confidence": 0.85}, "research", 0.85),
-    ("low", {"choice": "draft", "confidence": 0.6}, "draft", 0.6),
-    ("very-low", {"choice": "agent", "confidence": 0.4}, "agent", 0.4),
-    ("none", {"choice": "none", "confidence": 0.99}, "none", 0.99),
-    ("unknown-choice", {"choice": "banana", "confidence": 0.99}, None, None),
-    ("bad-confidence", {"choice": "task", "confidence": "high"}, None, None),
-    ("http-error", urllib.error.URLError("down"), None, None),
-    ("not-json", b"<html>busy</html>", None, None),
-]
+# Texts by how many local markers they hit. Every text carries QZX, which stderr must never show.
+TEXTS = {0: "今日はいい天気ですね QZX0", 1: "タスク: 牛乳を買う QZX1", 2: "タスク: 新しいマイクを調べて QZX2"}
+NO = {q: 0.05 for q in QUESTIONS}
 
 
-def row(text, origin, delivery, stamp=STAMP):
-    out = {"id": "x", "timestamp": stamp, "text": text, "endReason": "Silence", "recordingSeconds": 1,
-           "schemaVersion": 1, "focusApp": {"name": FOCUS, "bundleId": "b", "exe": None, "pid": 1},
-           "taskchute": {"name": TASK, "id": "t1", "startedAt": None, "source": "file", "readAt": stamp}}
+def answers(**values):
+    return NO | values
+
+
+def row(entry_id, when, text, origin="ウェイク", delivery="history", app=FOCUS, task=TASK):
+    out = {"id": entry_id, "timestamp": when.isoformat(timespec="milliseconds"), "text": text, "endReason": "Silence",
+           "recordingSeconds": 1, "schemaVersion": 1,
+           "focusApp": {"name": app, "bundleId": "BundleSentinel", "exe": "ExeSentinel", "pid": 987654},
+           "taskchute": {"name": task, "id": "TaskIdSentinel", "startedAt": None, "source": "file", "readAt": None}}
+    if app is None:
+        out["focusApp"] = None
+    if task is None:
+        out["taskchute"] = None
     if origin is not None:
         out["origin"] = origin
     if delivery != "<absent>":
@@ -70,183 +83,552 @@ def row(text, origin, delivery, stamp=STAMP):
     return json.dumps(out, ensure_ascii=False)
 
 
-class Net:
-    """Fake urlopen plus a socket guard: every request is kept, any real connection attempt is counted."""
+class World:
+    """A temp HOME whose config.json points at <root>/private, so this device is "private"."""
 
-    def __init__(self, answer):
-        self.answer, self.requests, self.connects = answer, [], 0
+    def __init__(self, tmp):
+        self.home, self.root = Path(tmp) / "home", Path(tmp) / "root"
+        for device in ("private", "wsl"):
+            (self.root / device).mkdir(parents=True)
+        config = self.home / ".config/voice-switch/config.json"
+        config.parent.mkdir(parents=True)
+        config.write_text(json.dumps({"dictation": {"journalDir": str(self.root / "private")}}), encoding="utf-8")
+        self.cache = self.home / "Library/Caches/voice-switch/triage"
+
+    def journal(self, device="private", day=DAY):
+        return self.root / device / f"{day}.jsonl"
+
+    def write(self, lines, device="private", day=DAY):
+        self.journal(device, day).write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+
+    def cached(self, device="private", day=DAY):
+        path = self.cache / device / f"{day}.jsonl"
+        return path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+
+    def snapshot(self):
+        return {p: p.read_bytes() for base in (self.root, self.home) for p in base.rglob("*") if p.is_file()}
+
+
+class Net:
+    """Fake urlopen plus a socket guard. reply(state) gives the Noul answers, an exception, or raw bytes."""
+
+    def __init__(self, reply):
+        self.reply, self.requests, self.connects = reply, [], 0
 
     def urlopen(self, request, timeout=None):
         self.requests.append(request)
-        if isinstance(self.answer, Exception):
-            raise self.answer
-        body = self.answer if isinstance(self.answer, bytes) else json.dumps({"answers": {"classification": self.answer}}).encode()
-        return io.BytesIO(body)
+        reply = self.reply(json.loads(request.data)["state"]) if callable(self.reply) else self.reply
+        if isinstance(reply, Exception):
+            raise reply
+        if isinstance(reply, bytes):
+            return io.BytesIO(reply)
+        return io.BytesIO(json.dumps({"answers": {q: {"type": "noul", "noul": v} for q, v in reply.items()}}).encode())
 
     def connect(self, *args, **kwargs):
         self.connects += 1
         raise OSError("network blocked by test")
 
+    def states(self):
+        return [json.loads(request.data)["state"] for request in self.requests]
 
-def run(argv, answer=None, key=None):
-    net = Net(answer)
-    env = {k: v for k, v in os.environ.items() if k not in ("TYPESAFE_API_KEY", "JEV_API_KEY")}
-    if key:
-        env["TYPESAFE_API_KEY"] = key
+
+@contextlib.contextmanager
+def environ(**values):
+    """Set or (with None) remove a few variables, then restore them. patch.dict(clear=True) rewrites the whole
+    environment twice per run, which was most of the test's time."""
+    saved = {name: os.environ.get(name) for name in values}
+    try:
+        for name, value in values.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        yield
+    finally:
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+def run(world, argv, reply=None, key="k-sentinel"):
+    net = Net(reply)
+    home = str(world.home)
     out, err = io.StringIO(), io.StringIO()
-    with mock.patch.dict(os.environ, env, clear=True), \
+    code = 0
+    with environ(HOME=home, USERPROFILE=home, LOCALAPPDATA=home, TYPESAFE_API_KEY=key, JEV_API_KEY=None), \
             mock.patch.object(triage.urllib.request, "urlopen", net.urlopen), \
             mock.patch.object(socket.socket, "connect", net.connect), \
             contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         try:
             triage.main(argv)
         except SystemExit as stop:
-            if stop.code not in (0, None):
-                raise AssertionError(f"exit {stop.code}: {err.getvalue()}")
-    return out.getvalue(), err.getvalue(), net
+            code = stop.code or 0
+    stderr = err.getvalue()
+    for secret in ("QZX", FOCUS, TASK):
+        assert secret not in stderr, f"C6 stderr carries {secret}: {argv}"
+    assert net.connects == 0, f"T1 real connection: {argv}"
+    return code, out.getvalue(), net
 
 
-def items(stdout):
-    return [line for line in stdout.splitlines() if line.startswith("- ")]
+def listed(world, *args, reply=None, key="k-sentinel"):
+    code, stdout, net = run(world, ["list", DAY, "--root", str(world.root), *args], reply, key)
+    assert code == 0, f"T6 list exited {code}"
+    return json.loads(stdout), net
 
 
-def category(line):
-    found = re.findall(r"`(task|research|draft|agent|none)`", line)
-    assert len(found) == 1, line
-    return found[0]
+def rows_of(result):
+    return [(group, item) for group in ("actions", "thoughts", "unjudged") for item in result[group]]
 
 
-def skipped(stdout):
-    found = [int(n) for line in stdout.splitlines() if re.search(r"(?i)skip|malformed|broken", line)
-             for n in re.findall(r"\b\d+\b", line)]
-    assert len(found) == 1, stdout
-    return found[0]
+def wire(request):
+    return request.data.decode("utf-8") + json.dumps(dict(request.header_items()), ensure_ascii=False)
 
 
-class ExhaustiveTriage(unittest.TestCase):
+class Decide(unittest.TestCase):
+    def test_fixture(self):
+        fixture = json.loads((HERE / "parity/fixtures/triage_decide.json").read_text(encoding="utf-8"))
+        self.assertEqual(fixture["default"], ref.DEFAULT)
+        for case in fixture["cases"]:
+            got = triage.decide(case["answers"], case.get("thresholds", DEFAULT))
+            if got == ["filler"] != case["want"]:
+                self.fail(f"C2 filler for {case['name']}")
+            self.assertEqual(got, case["want"], f"C1 {case['name']}")
+
+
+class Listing(unittest.TestCase):
+    """Through main(): the destination of each answer, origin and local-marker count, with and without Jev."""
+
+    REPLIES = [(f"wa={wa} filler={fi} kinds={kinds}", answers(wants_action=wa, is_filler=fi, **kinds))
+               for wa in (0.9, 0.5, 0.1) for fi in (0.9, 0.5, 0.1)
+               for kinds in ({}, {"kind_look_up": 0.8}, {"kind_self_task": 0.95, "kind_computer_change": 0.7},
+                             {"kind_write_text": 0.6})]
+    ERRORS = [("http-error", urllib.error.URLError("down")), ("not-json", b"<html>busy</html>"),
+              ("missing-question", {q: 0.9 for q in QUESTIONS if q != "kind_look_up"}),
+              ("noul-string", answers(wants_action="0.9")), ("noul-above-1", answers(is_filler=1.5))]
+
     def test_every_combination(self):
+        questions = json.loads((SCRIPT.parents[1] / "Resources/triage_questions.json").read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "j.jsonl"
-            cases = 0
-            for origin, delivery, hits, no_jev, key, floor, (name, answer, meant, conf) in itertools.product(
-                    ORIGINS, DELIVERIES, TEXTS, [False, True], [None, "k-sentinel"], FLOORS, ANSWERS):
-                cases += 1
-                text = TEXTS[hits]
-                path.write_text(row(text, origin, delivery) + "\n", encoding="utf-8")
-                before = path.read_bytes()
-                argv = [DAY, str(path)] + (["--no-jev"] if no_jev else []) + ([] if floor is None else ["--min-confidence", str(floor)])
-                stdout, stderr, net = run(argv, answer, key)
-                where = f"origin={origin} delivery={delivery} hits={hits} no_jev={no_jev} key={bool(key)} floor={floor} answer={name}"
-
-                self.assertEqual(path.read_bytes(), before, "T6 journal changed " + where)
-                self.assertEqual(net.connects, 0, "T1 real connection " + where)
-                listed = items(stdout)
-                if delivery not in LISTED:
-                    self.assertEqual(listed, [], "T6 listed a delivered row " + where)
-                    self.assertEqual(net.requests, [], "T1 sent a delivered row " + where)
+            world = World(tmp)
+            n = 0
+            # Without Jev the reply cannot matter, so one reply stands for all of them there.
+            for origin, hits, mode, (name, reply) in itertools.product(
+                    ORIGINS, TEXTS, ("jev", "no-jev", "no-key"), self.REPLIES + self.ERRORS):
+                if mode != "jev" and name != self.REPLIES[0][0]:
                     continue
-                self.assertEqual(len(listed), 1, "T6 not listed " + where)
-                line = listed[0]
-                self.assertIn("14:03:05", line, "T6 time " + where)
-                self.assertIn(FOCUS, line, "T6 focusApp " + where)
-                self.assertIn(TASK, line, "T6 taskchute " + where)
-
-                send = not no_jev and key is not None
-                self.assertEqual(len(net.requests), 1 if send else 0, f"{'T2' if send else 'T1'} requests " + where)
-                local = "task" if hits == 1 else "none"
-                floor_value = 0.9 if floor is None else floor
-                want = meant if send and meant is not None and conf >= floor_value else local
-                self.assertEqual(category(line), want, "T4 category " + where)
-
+                n += 1
+                text = TEXTS[hits]
+                world.write([row(f"IDS-{n}", T0, text, origin)])
+                before = world.journal().read_bytes()
+                result, net = listed(world, *(["--no-jev"] if mode == "no-jev" else []),
+                                     reply=reply, key=None if mode == "no-key" else "k-sentinel")
+                where = f"origin={origin} hits={hits} mode={mode} reply={name}"
+                self.assertEqual(world.journal().read_bytes(), before, "C5 journal changed " + where)
+                send = mode == "jev"
+                self.assertEqual(len(net.requests), int(send), f"{'C4' if send else 'T1'} requests " + where)
+                if send:
+                    want = ref.decide(reply if isinstance(reply, dict) else None, {})
+                else:
+                    want = ["action:self_task"] if hits == 1 else ["unjudged:no-jev"]
+                found = rows_of(result)
+                if want == ["filler"]:
+                    self.assertEqual((found, result["filler_count"]), ([], 1), "C2 filler not counted " + where)
+                    continue
+                self.assertEqual(result["filler_count"], 0, "C2 filler " + where)
+                self.assertEqual(len(found), 1, "T6 not listed " + where)
+                group, item = found[0]
+                self.assertEqual(item["destinations"], want, "C1 destination " + where)
+                self.assertEqual(group, {"action": "actions", "thought": "thoughts"}.get(want[0].split(":")[0], "unjudged"),
+                                 "T6 group " + where)
+                self.assertEqual(datetime.fromisoformat(item["timestamp"]), T0, "T6 time " + where)
+                self.assertEqual((item["app"], item["task"]), (FOCUS, TASK), "T6 context " + where)
                 if send:
                     request = net.requests[0]
-                    self.assertEqual(request.get_method(), "POST", "T3 method " + where)
-                    self.assertEqual(request.host, "api.typesafe.ai", "T3 host " + where)
-                    body = json.loads(request.data)
-                    self.assertEqual(body["state"], {"dictation": text}, "T3 sent more than the text " + where)
-                    wire = request.data.decode("utf-8") + json.dumps(dict(request.header_items()))
-                    for extra in (FOCUS, TASK, "t1", STAMP, "Silence"):
-                        self.assertNotIn(extra, wire, f"T3 sent {extra} " + where)
-                for secret in (text, text.split()[-1], FOCUS, TASK):
-                    self.assertNotIn(secret, stderr, "T5 log carries content " + where)
-            self.assertEqual(cases, len(ORIGINS) * len(DELIVERIES) * len(TEXTS) * 2 * 2 * len(FLOORS) * len(ANSWERS))
+                    self.assertEqual((request.get_method(), request.host), ("POST", "api.typesafe.ai"), "C3 target " + where)
+                    self.assertEqual(json.loads(request.data)["questions"], questions, "C3 questions " + where)
+                    self.assertEqual(net.states()[0]["utterance"]["text"], text, "C3 text " + where)
+            self.assertEqual(n, len(ORIGINS) * len(TEXTS) * (len(self.REPLIES) + len(self.ERRORS) + 2))
 
-
-class Reading(unittest.TestCase):
-    def test_each_local_category_wins_alone(self):
-        # The exhaustive test's one-hit text is a task; one text per other category keeps their markers honest.
-        # With --no-jev the markers decide alone.
-        texts = {"task": "やること: 部屋の掃除", "research": "新しいマイクを調べて", "draft": "下書きを書いて お礼のメール",
-                 "agent": "クロードに依頼 テストの追加", "none": "今日はいい天気ですね"}
+    def test_only_history_null_or_absent_is_listed(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "j.jsonl"
+            world = World(tmp)
+            for n, (origin, delivery, key) in enumerate(itertools.product(ORIGINS, DELIVERIES, (None, "k"))):
+                world.write([row(f"IDS-{n}", T0, TEXTS[0], origin, delivery)])
+                result, net = listed(world, reply=answers(), key=key)
+                where = f"origin={origin} delivery={delivery} key={bool(key)}"
+                want = 1 if delivery in LISTED else 0
+                self.assertEqual(len(rows_of(result)), want, "T6 listed " + where)
+                self.assertEqual(len(net.requests), want if key else 0, "T1 requests " + where)
+
+    def test_each_local_marker_alone(self):
+        texts = {"action:self_task": "やること: 部屋の掃除 QZX", "action:look_up": "新しいマイクを調べて QZX",
+                 "action:write_text": "下書きを書いて お礼のメール QZX", "action:computer_change": "クロードに依頼 テストの追加 QZX",
+                 "unjudged:no-jev": "えーと QZX"}
+        with tempfile.TemporaryDirectory() as tmp:
+            world = World(tmp)
             for want, text in texts.items():
-                path.write_text(row(text, "ウェイク", "history") + "\n", encoding="utf-8")
-                stdout, _, net = run([DAY, str(path), "--no-jev"], {"choice": "none", "confidence": 0.99}, "k")
-                self.assertEqual(category(items(stdout)[0]), want, "T4 local " + text)
-                self.assertEqual(len(net.requests), 0, "T1 requests " + text)
+                world.write([row("IDS-m", T0, text)])
+                result, net = listed(world, "--no-jev", reply=answers(is_filler=0.99))
+                self.assertEqual([item["destinations"] for _, item in rows_of(result)], [[want]], "C2 marker " + text)
+                self.assertEqual(net.requests, [], "T1 requests " + text)
 
     def test_broken_rows_are_skipped_and_counted(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "j.jsonl"
-            good = row(TEXTS[0], "ウェイク", "history")
-            other_day = row(TEXTS[0], "ウェイク", "history", stamp="2026-11-20T09:00:00+09:00")
-            broken = ["not json", "[1]", json.dumps({"timestamp": "x", "text": "y"}), "{\"id\":\"frag\",\"text\":\"cut"]
-            path.write_bytes(("\n".join([good, broken[0], other_day, broken[1], broken[2], good]) + "\n" + broken[3]).encode())
-            stdout, _, net = run([DAY, str(path)])
-            self.assertEqual(len(items(stdout)), 2)
-            self.assertEqual(skipped(stdout), len(broken))
-            self.assertEqual(net.requests, [])
-
-    def test_directory_reads_only_that_day(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / f"{DAY}.jsonl").write_text(row(TEXTS[0], "ウェイク", None) + "\n", encoding="utf-8")
-            (Path(tmp) / "2026-11-20.jsonl").write_text(row(TEXTS[0], "ウェイク", None, "2026-11-20T09:00:00+09:00") + "\n", encoding="utf-8")
-            stdout, _, _ = run([DAY, tmp])
-            self.assertEqual(len(items(stdout)), 1)
-            self.assertEqual(skipped(stdout), 0)
+            world = World(tmp)
+            good = [row(f"IDS-{n}", T0, TEXTS[0]) for n in range(2)]
+            other_day = row("IDS-9", T0 - timedelta(days=1), TEXTS[0])
+            broken = ["not json", "[1]", json.dumps({"timestamp": "x", "text": "y"}), '{"id":"frag","text":"cut']
+            world.journal().write_bytes(("\n".join([good[0], broken[0], other_day, broken[1], broken[2], good[1]])
+                                         + "\n" + broken[3]).encode())
+            result, _ = listed(world, "--no-jev")
+            self.assertEqual((len(rows_of(result)), result["skipped"]), (2, len(broken)), "T6 skipped")
 
     def test_windows_timestamp_with_seven_digits(self):
         with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / f"{DAY}.jsonl").write_text(row(TEXTS[0], "ウェイク", "history", "2026-11-21T14:03:05.1234567+09:00") + "\n", encoding="utf-8")
-            stdout, _, _ = run([DAY, tmp])
-            self.assertEqual(len(items(stdout)), 1)
-            self.assertIn("14:03:05", items(stdout)[0])
+            world = World(tmp)
+            world.write([row("IDS-w", T0, TEXTS[0]).replace("14:03:05.123", "14:03:05.1234567")])
+            result, _ = listed(world, "--no-jev")
+            self.assertEqual(datetime.fromisoformat(rows_of(result)[0][1]["timestamp"]).time().second, 5, "T6 time")
 
-    def test_default_location_is_read(self):
-        with tempfile.TemporaryDirectory() as home:
-            journal = Path(home) / "Library/Application Support/voice-switch/journal"
-            if os.name == "nt":
-                journal = Path(home) / "voice-switch/journal"
-            journal.mkdir(parents=True)
-            (journal / f"{DAY}.jsonl").write_text(row(TEXTS[0], "ウェイク", "history") + "\n", encoding="utf-8")
-            with mock.patch.dict(os.environ, {"HOME": home, "LOCALAPPDATA": home}):
-                stdout, _, _ = run([DAY])
-            self.assertEqual(len(items(stdout)), 1)
-
-    def test_subfolders_are_merged_in_time_order_with_labels(self):
+    def test_devices_are_merged_in_time_order_and_dot_folders_skipped(self):
         with tempfile.TemporaryDirectory() as tmp:
-            for name, stamp in (("wsl", "2026-11-21T11:00:00+09:00"), ("private", "2026-11-21T10:00:00+09:00")):
-                (Path(tmp) / name).mkdir()
-                (Path(tmp) / name / f"{DAY}.jsonl").write_text(row(TEXTS[0], "ウェイク", "history", stamp) + "\n", encoding="utf-8")
-            stdout, _, _ = run([DAY, tmp])
-            listed = items(stdout)
-            self.assertEqual(len(listed), 2)
-            self.assertIn("10:00:00** · private · ", listed[0])
-            self.assertIn("11:00:00** · wsl · ", listed[1])
+            world = World(tmp)
+            world.write([row("IDS-w", T0 + timedelta(hours=1), TEXTS[0])], device="wsl")
+            world.write([row("IDS-p", T0, TEXTS[0])])
+            (world.root / ".triage").mkdir()
+            (world.root / ".triage" / f"{DAY}.jsonl").write_text(row("IDS-dot", T0, TEXTS[0]) + "\n", encoding="utf-8")
+            result, _ = listed(world, "--no-jev")
+            self.assertEqual([(item["id"], item["device"]) for _, item in rows_of(result)],
+                             [("IDS-p", "private"), ("IDS-w", "wsl")], "T6 devices")
 
-    def test_default_is_the_parent_of_the_configured_journal_dir(self):
-        with tempfile.TemporaryDirectory() as home:
-            root = Path(home) / "storage/voice-switch"
-            for name in ("private", "wsl"):
-                (root / name).mkdir(parents=True)
-                (root / name / f"{DAY}.jsonl").write_text(row(TEXTS[0], "ウェイク", "history") + "\n", encoding="utf-8")
-            config = Path(home) / ".config/voice-switch/config.json"
-            config.parent.mkdir(parents=True)
-            config.write_text(json.dumps({"dictation": {"journalDir": "~/storage/voice-switch/private"}}), encoding="utf-8")
-            with mock.patch.dict(os.environ, {"HOME": home, "USERPROFILE": home}):
-                stdout, _, _ = run([DAY])
-            self.assertEqual(len(items(stdout)), 2)
+    def test_default_root_is_the_parent_of_the_configured_journal_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            world = World(tmp)
+            world.write([row("IDS-p", T0, TEXTS[0])])
+            world.write([row("IDS-w", T0, TEXTS[0])], device="wsl")
+            code, stdout, _ = run(world, ["list", DAY, "--no-jev"])
+            self.assertEqual(len(rows_of(json.loads(stdout))), 2, "T6 default root")
+
+    def test_text_format(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            world = World(tmp)
+            world.write([row("IDS-a", T0, "あ QZXa"), row("IDS-b", T0, "い QZXb"), row("IDS-c", T0, "う QZXc")])
+            replies = {"あ QZXa": answers(wants_action=0.9, kind_look_up=0.9), "い QZXb": answers(),
+                       "う QZXc": answers(is_filler=0.9)}
+            code, stdout, _ = run(world, ["list", DAY, "--root", str(world.root), "--format", "text"],
+                                  lambda state: replies[state["utterance"]["text"]])
+            self.assertEqual(code, 0)
+            for part in ("### 依頼", "### 考え", "### 未判定", "あ QZXa", "い QZXb", "フィラー 1 件"):
+                self.assertIn(part, stdout, "T6 text format")
+            self.assertNotIn("う QZXc", stdout, "C2 filler text shown")
+
+
+class Request(unittest.TestCase):
+    def test_state_holds_only_the_table(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            world = World(tmp)
+            for n, (origin, app, task, no_context, prior) in enumerate(itertools.product(
+                    ORIGINS, (FOCUS, None), (TASK, None), (False, True), (False, True))):
+                lines = [row(f"IDS-p{n}", T0 - timedelta(seconds=30), "前の発話 QZXp")] if prior else []
+                world.write(lines + [row(f"IDS-{n}", T0, TEXTS[0], origin, app=app, task=task)])
+                _, net = listed(world, *(["--no-context"] if no_context else []), reply=answers())
+                where = f"origin={origin} app={app} task={task} no_context={no_context} prior={prior}"
+                states = [s for s in net.states() if s["utterance"]["text"] == TEXTS[0]]
+                self.assertEqual(len(states), 1, "C4 requests " + where)
+                state = states[0]
+                started = state["utterance"].get("started")
+                self.assertEqual(set(state["utterance"]), {"text", "started"}, "C3 utterance " + where)
+                if origin in STARTS:
+                    self.assertEqual(started, origin, "C3 started " + where)
+                else:
+                    self.assertNotIn(started, (*STARTS, origin), "C3 started " + where)
+                for request in net.requests:
+                    for hidden in HIDDEN:
+                        self.assertNotIn(hidden, wire(request), f"C3 sent {hidden} " + where)
+                if no_context:
+                    self.assertEqual(set(state), {"utterance"}, "C3 context with --no-context " + where)
+                    continue
+                self.assertLessEqual(set(state), {"utterance", "context", "previous"}, "C3 keys " + where)
+                context = {"app": app, "task": task, "time": "14:03"}
+                self.assertEqual(state.get("context"), {k: v for k, v in context.items() if v}, "C3 context " + where)
+                previous = state.get("previous", [])
+                self.assertEqual([p["text"] for p in previous], ["前の発話 QZXp"] if prior else [], "C7 previous " + where)
+                for item in previous:
+                    self.assertTrue(all(type(v) in (int, float) for k, v in item.items() if k != "text"),
+                                    "C3 previous " + where)
+
+    def test_previous_is_same_device_listed_within_60_seconds_at_most_two(self):
+        # Same device and listed at every edge; a pasted row and another device's row at 1 and 60 seconds.
+        candidates = ([(offset, "history", "private") for offset in (0, 1, 59, 60, 61)]
+                      + [(offset, *other) for offset in (1, 60) for other in (("paste", "private"), ("history", "wsl"))])
+        target = "いまの発話 QZXt"
+        with tempfile.TemporaryDirectory() as tmp:
+            world = World(tmp)
+            for size in range(5):
+                for chosen in itertools.combinations(candidates, size):
+                    lines = {"private": [], "wsl": []}
+                    for offset, delivery, device in chosen:
+                        lines[device].append(row(f"IDS-{offset}{delivery}{device}", T0 - timedelta(seconds=offset),
+                                                 f"前 {offset} {delivery} {device} QZX", delivery=delivery))
+                    lines["private"].append(row("IDS-t", T0, target))
+                    for device, items in lines.items():
+                        world.write(items, device)
+                    shutil.rmtree(world.cache, ignore_errors=True)
+                    _, net = listed(world, reply=answers())
+                    state = next(s for s in net.states() if s["utterance"]["text"] == target)
+                    near = sorted((o, f"前 {o} {d} {v} QZX") for o, d, v in chosen
+                                  if v == "private" and d == "history" and 0 < o <= 60)
+                    self.assertEqual(sorted(p["text"] for p in state.get("previous", [])),
+                                     sorted(text for _, text in near[:2]), f"C7 previous for {chosen}")
+
+    def test_previous_reaches_across_midnight(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            world = World(tmp)
+            midnight = datetime.fromisoformat("2026-11-21T00:00:30+09:00")
+            world.write([row("IDS-y", midnight - timedelta(seconds=40), "昨日の終わり QZX")], day="2026-11-20")
+            world.write([row("IDS-t", midnight, "今日の始まり QZX")])
+            _, net = listed(world, reply=answers())
+            self.assertEqual([p["text"] for p in net.states()[0].get("previous", [])], ["昨日の終わり QZX"], "C7 midnight")
+
+
+class Cache(unittest.TestCase):
+    """Every sequence of 4 steps from: A append a row, D delete the oldest row, R run, E run with the network down,
+    W change the question wording, N run --no-jev. The model says which ids must be asked and which cache lines stay."""
+
+    def test_every_sequence(self):
+        base = json.loads((SCRIPT.parents[1] / "Resources/triage_questions.json").read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as tmp:
+            world = World(tmp)
+            wordings = [Path(tmp) / f"questions-{w}.json" for w in (0, 1)]
+            for w, path in enumerate(wordings):
+                changed = json.loads(json.dumps(base))
+                changed["is_filler"]["instructions"] += " (wording 1)" * w
+                path.write_text(json.dumps(changed, ensure_ascii=False), encoding="utf-8")
+            for seq in itertools.product("ADREWN", repeat=4):
+                shutil.rmtree(world.cache, ignore_errors=True)
+                journal, cached, wording, next_id = ["IDS-0", "IDS-1"], {}, 0, 2
+                world.write([row(i, T0, f"発話 {i} QZX") for i in journal])
+                for step, op in enumerate(seq):
+                    where = f"seq={''.join(seq)} step={step}({op})"
+                    if op == "A":
+                        journal.append(f"IDS-{next_id}")
+                        next_id += 1
+                    elif op == "D" and journal:
+                        journal.pop(0)
+                    elif op == "W":
+                        wording = 1 - wording
+                    if op in "AD":
+                        world.write([row(i, T0, f"発話 {i} QZX") for i in journal])
+                        continue
+                    if op == "W":
+                        continue
+                    before = world.journal().read_bytes()
+                    reply = urllib.error.URLError("down") if op == "E" else answers()
+                    with mock.patch.object(triage, "QUESTIONS_PATH", wordings[wording]):
+                        _, net = listed(world, *(["--no-jev"] if op == "N" else []), reply=reply)
+                    self.assertEqual(world.journal().read_bytes(), before, "C5 journal changed " + where)
+                    asked = sorted(s["utterance"]["text"].split()[1] for s in net.states())
+                    want = [] if op == "N" else sorted(i for i in journal if cached.get(i) != wording)
+                    self.assertEqual(asked, want, "C4 asked " + where)
+                    cached = {i: w for i, w in cached.items() if i in journal}
+                    if op == "R":
+                        cached |= {i: wording for i in journal}
+                    lines = [json.loads(line) for line in world.cached()]
+                    self.assertEqual(sorted(line["id"] for line in lines), sorted(cached), "C5 cache ids " + where)
+                    rest = {}
+                    for line in lines:
+                        rest.setdefault(cached[line.pop("id")], set()).add(json.dumps(line, sort_keys=True))
+                    self.assertTrue(all(len(v) == 1 for v in rest.values()) and len(set().union(*rest.values()) if rest else ()) == len(rest),
+                                    "C4 cache line does not tell the wording apart " + where)
+
+
+def label_world(tmp, specs):
+    """Journal rows whose Jev answers are given, listed once so the cache holds them. specs: id -> answers."""
+    world = World(tmp)
+    world.write([row(i, T0 + timedelta(minutes=n), f"発話 {i} QZX") for n, i in enumerate(specs)])
+    listed(world, reply=lambda state: specs[state["utterance"]["text"].split()[1]])
+    return world
+
+
+def label(world, entry_id, *destinations):
+    code, stdout, net = run(world, ["label", entry_id, *destinations, "--root", str(world.root)])
+    assert code == 0 and net.requests == [], f"C10 label {entry_id} {destinations} exited {code}"
+    return stdout
+
+
+def cli(world, *argv):
+    code, stdout, net = run(world, [*argv, "--root", str(world.root)], reply=urllib.error.URLError("down"))
+    assert code == 0, f"C9 {argv} exited {code}"
+    assert net.requests == [], f"C9 {argv} asked Jev"
+    return json.loads(stdout)
+
+
+def weight(labels, thresholds):
+    """The design's error weights: content to filler 10, request to thought 3, unjudged 0.5, any other miss 1."""
+    total, misses = 0, 0
+    for target, given in labels:
+        actual = ref.decide(given, thresholds)
+        if set(actual) == set(target):
+            continue
+        if actual == ["filler"]:
+            total, misses = total + 10, misses + 1
+        elif actual == ["thought"] and target[0].startswith("action:"):
+            total += 3
+        elif actual[0].startswith("unjudged:"):
+            total += 0.5
+        else:
+            total += 1
+    return total, misses
+
+
+POOL = [answers(), answers(is_filler=0.9), answers(is_filler=0.5), answers(wants_action=0.5),
+        answers(wants_action=0.9, kind_look_up=0.9), answers(wants_action=0.9, kind_self_task=0.8, kind_write_text=0.9),
+        answers(wants_action=0.9), answers(wants_action=0.65, kind_computer_change=0.9), answers(is_filler=0.65),
+        answers(wants_action=0.25, is_filler=0.75)]
+TARGETS = [["thought"], ["filler"], ["action:look_up"], ["action:self_task", "action:write_text"], ["action:computer_change"]]
+
+
+class Labels(unittest.TestCase):
+    def test_label_writes_one_line_to_its_own_device_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            world = World(tmp)
+            world.write([row("IDS-p", T0, "自分の端末 QZX")])
+            world.write([row("IDS-w", T0, "別の端末 QZX")], device="wsl")
+            listed(world, reply=answers())
+            labels = world.root / ".triage/labels"
+            labels.mkdir(parents=True)
+            (labels / "wsl-cli.jsonl").write_text('{"id": "x"}\n', encoding="utf-8")
+            (labels / "private-app.jsonl").write_text('{"id": "y"}\n', encoding="utf-8")
+            mine = labels / "private-cli.jsonl"
+            for n, (entry_id, target) in enumerate(itertools.product(
+                    ("IDS-p", "IDS-w"), [*([d] for d in ("thought", "filler", "unjudged:intent")), *TARGETS])):
+                before = world.snapshot()
+                label(world, entry_id, *target)
+                after = world.snapshot()
+                changed = {p for p in before.keys() | after.keys() if before.get(p) != after.get(p)}
+                self.assertEqual(changed, {mine}, f"C10 label {entry_id} {target} changed {changed}")
+                added = after[mine][len(before.get(mine, b"")):].decode("utf-8")
+                self.assertEqual(before.get(mine, b""), after[mine][:len(before.get(mine, b""))], "C10 label rewrote")
+                self.assertEqual(added.count("\n"), 1, "C10 label lines")
+                self.assertEqual(json.loads(added)["id"], entry_id, "C10 label id")
+
+    def test_bad_destination_or_id_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            world = World(tmp)
+            world.write([row("IDS-p", T0, "発話 QZX")])
+            for argv in (["IDS-p", "none"], ["IDS-p", "action:banana"], ["IDS-p", "thought", "filler"],
+                         ["IDS-p", "action:look_up", "thought"], ["IDS-missing", "thought"]):
+                before = world.snapshot()
+                code, _, net = run(world, ["label", *argv, "--root", str(world.root)])
+                self.assertNotEqual(code, 0, f"C10 accepted {argv}")
+                self.assertEqual(world.snapshot(), before, f"C10 wrote for {argv}")
+
+    def test_review_puts_unjudged_then_near_threshold_first_and_writes_no_label(self):
+        specs = {"IDS-far": answers(wants_action=1, kind_look_up=1, is_filler=0),
+                 "IDS-near": answers(wants_action=0.72, kind_look_up=1, is_filler=0),
+                 "IDS-unjudged": answers(wants_action=0.5)}
+        with tempfile.TemporaryDirectory() as tmp:
+            world = label_world(tmp, specs)
+            before = world.snapshot()
+            code, stdout, net = run(world, ["review", DAY, "--root", str(world.root)], reply=urllib.error.URLError("down"))
+            self.assertEqual((code, net.requests), (0, []), "C4 review asked again")
+            self.assertEqual([c["id"] for c in json.loads(stdout)["candidates"]], ["IDS-unjudged", "IDS-near", "IDS-far"],
+                             "C10 review order")
+            self.assertEqual(world.snapshot(), before, "C10 review wrote")
+
+
+class Scoring(unittest.TestCase):
+    def test_eval_scores_the_kept_answers_without_network(self):
+        specs = {f"IDS-{n:03d}": POOL[n % len(POOL)] for n in range(40)}
+        targets = {i: TARGETS[(n * 3) % len(TARGETS)] for n, i in enumerate(specs)}
+        custom = {**DEFAULT, "wants_action": {"no": 0.2, "yes": 0.6}, "is_filler": {"no": 0.4, "yes": 0.6}}
+        with tempfile.TemporaryDirectory() as tmp:
+            world = label_world(tmp, specs)
+            for i, target in targets.items():
+                label(world, i, *target)
+            shutil.rmtree(world.cache)  # labels keep their answers: no cache needed
+            labelled = [(targets[i], specs[i]) for i in specs]
+            for name, thresholds in (("default", None), ("custom", custom)):
+                if thresholds:
+                    (world.root / ".triage/thresholds.json").write_text(json.dumps(thresholds), encoding="utf-8")
+                result = cli(world, "eval")
+                self.assertEqual((result["weight"], result["filler_misses"]), weight(labelled, thresholds or DEFAULT),
+                                 f"C9 eval {name}")
+            self.assertEqual(len(list((world.root / ".triage/reports").glob("*.md"))), 2, "C9 eval report")
+
+    def partition(self, tmp, ids, order):
+        """Which ids tune puts in the holdout, read from its counts as labels are added one at a time."""
+        world = label_world(tmp, {i: answers() for i in ids})
+        holdout, last = set(), 0
+        for i in order:
+            label(world, i, "thought")
+            count = cli(world, "tune")["holdout_count"]
+            if count > last:
+                holdout.add(i)
+            last = count
+        return holdout
+
+    def test_split_depends_on_the_id_only(self):
+        ids = [f"IDS-{n:03d}" for n in range(60)]
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            first, second = self.partition(a, ids, ids), self.partition(b, ids, ids[::-1])
+        self.assertEqual(first, second, "C8 split depends on the order")
+        self.assertTrue(8 <= len(first) <= 28, f"C8 split is not 7 to 3: {len(first)} of 60 held out")
+
+    def tune_case(self, specs, targets, *, want_proposal, then=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            world = label_world(tmp, specs)
+            for i, target in targets.items():
+                label(world, i, *target)
+            thresholds = world.root / ".triage/thresholds.json"
+            result = cli(world, "tune")
+            self.assertFalse(thresholds.exists(), "C8 tune without --apply wrote")
+            proposal = result["proposal"]
+            self.assertEqual(proposal is not None, want_proposal, f"C8 proposal {proposal}")
+            again = cli(world, "tune", "--apply")
+            self.assertEqual(again["proposal"], proposal, "C8 tune is not repeatable")
+            self.assertEqual(thresholds.exists(), want_proposal, "C8 --apply")
+            if proposal:
+                self.assertEqual(json.loads(thresholds.read_text(encoding="utf-8")), proposal, "C8 applied")
+            if then:
+                then(world, proposal)
+
+    def test_tune_gates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ids = [f"IDS-{n:03d}" for n in range(90)]
+            holdout = self.partition(tmp, ids, ids)
+        training = [i for i in ids if i not in holdout]
+        unsure_request = answers(wants_action=0.65, kind_look_up=0.9)
+        unsure_filler = answers(is_filler=0.6)
+        # Training and holdout both gain from a lower wants_action edge: a proposal, and it takes effect.
+        specs = {i: unsure_request for i in ids[:40]}
+
+        def takes_effect(world, proposal):
+            kept = [(["action:look_up"], specs[i]) for i in specs if i in holdout]
+            self.assertLess(weight(kept, proposal), weight(kept, DEFAULT), "C8 holdout not lighter")
+            result, _ = listed(world, reply=urllib.error.URLError("down"))
+            self.assertEqual({tuple(item["destinations"]) for _, item in rows_of(result)}, {("action:look_up",)},
+                             "C8 applied thresholds not used")
+
+        self.tune_case(specs, {i: ["action:look_up"] for i in specs}, want_proposal=True, then=takes_effect)
+        # Fewer than 30 labels: no proposal.
+        specs = {i: unsure_request for i in ids[:29]}
+        self.tune_case(specs, {i: ["action:look_up"] for i in specs}, want_proposal=False)
+        # The holdout disagrees with the training labels: no proposal.
+        specs = {i: unsure_request for i in ids[:40]}
+        self.tune_case(specs, {i: ["action:look_up"] if i in training else ["thought"] for i in specs},
+                       want_proposal=False)
+        # The holdout gets lighter but one more content utterance becomes filler: no proposal. The plain thoughts keep
+        # the wants_action edge above 0.05, so the training labels can only gain by lowering the is_filler edge.
+        held = [i for i in ids if i in holdout]
+        self.assertGreaterEqual(len(held), 21, "C8 too few holdout ids for this case")
+        specs = ({i: unsure_request for i in training[:20] + held[:20]} | {i: unsure_filler for i in training[20:30] + held[20:21]}
+                 | {i: answers() for i in training[30:35]})
+        targets = {i: ["action:look_up"] if specs[i] is unsure_request else ["thought"] if specs[i] == answers() or i in holdout
+                   else ["filler"] for i in specs}
+        self.tune_case(specs, targets, want_proposal=False)
 
 
 if __name__ == "__main__":
