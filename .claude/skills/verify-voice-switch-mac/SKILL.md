@@ -57,7 +57,7 @@ The `run` command prints the exit code, the evidence folder, any marker files, a
 ## Triage (依頼) drive
 
 ```sh
-VS_BIN=<voice-switch binary> python3 .claude/skills/verify-voice-switch-mac/triage.py [unsure heavy sure restart failed destinations disabled]
+VS_BIN=<voice-switch binary> python3 .claude/skills/verify-voice-switch-mac/triage.py [unsure heavy sure restart failed destinations disabled gates]
 ```
 
 It runs the binary as `--simulate - --triage-fixture <fixture.json>`. The binary accepts a fixture only with an isolated `HOME` (not the account's home) and `VOICE_SWITCH_CONFIG` set, so a fixture never reaches the user's files and `config.json` alone cannot switch Jev off. The fixture's `dictations` go straight into `DictationHistory` (no audio, no Superwhisper), its `answers` and `verification` stand in for Jev, and its `action` presses 送る or 取消 right after classification, or `switch` picks another candidate in まもなく送る; `routeIndex` names the candidate (送る with it is [<name> に送る]). The script removes `TYPESAFE_API_KEY` and `JEV_API_KEY` from the environment and points `journalDir` and every route into the evidence folder. Routes are shell commands that append `start <text>` to `starts.txt` when they begin and the text to `sent.txt` when they end, so a pass counts side effects, not log lines.
