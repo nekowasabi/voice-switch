@@ -12,6 +12,16 @@ step "budget (model size)" sh tests/budget.sh
 step "python tests" python3 -m unittest discover -s tests -p 'test_*.py'
 step "swift triage (truth table, reducer, request, routes)" sh tests/triage/run.sh
 step "tla+ send path" sh .claude/skills/verify-triage-execution/check.sh design
+# Why: each model takes 1-5 s, so every change runs them all instead of choosing. Run one at a time:
+# verify-meet-pause-windows failed (exit 150) when started beside the other TLC runs on 2026-11-23.
+step "tla+ hud blip (mac)" sh .claude/skills/verify-hud-blip/check.sh mac
+step "tla+ hud blip (windows)" sh .claude/skills/verify-hud-blip/check.sh windows
+step "tla+ hud noise" sh .claude/skills/verify-hud-noise/check.sh
+step "tla+ meet pause (mac)" sh .claude/skills/verify-meet-pause/check.sh
+step "tla+ meet pause (windows)" sh .claude/skills/verify-meet-pause-windows/check.sh
+step "tla+ mic fallback" sh .claude/skills/verify-mic-fallback/check.sh
+step "tla+ sticky delivery" sh .claude/skills/verify-sticky-mode/check.sh
+step "wake allowances" sh .claude/skills/verify-wake-allowances/check.sh
 step "journal append" bash .claude/skills/verify-journal-append/run.sh check
 step "url actions" make url-test
 step "build" make build
