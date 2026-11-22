@@ -19,6 +19,7 @@ final class TriagePanel {
     private var countdowns: [(NSTextField, Date)] = []
     private var countdownTimer: Timer?
     private var lastDay = Calendar.current.startOfDay(for: Date())
+    private var showsSent = false
 
     init(service: TriageService) { self.service = service }
 
@@ -110,11 +111,19 @@ final class TriagePanel {
         }
 
         let today = service.today
-        section("送った（今日）", count: today.filter { $0.outcome != .failed }.count, in: stack)
-        for proposal in today {
+        let sentCount = today.filter { $0.outcome != .failed }.count
+        let sentToggle = button("送った（今日 \(sentCount)）\(showsSent ? " ▾" : " ▸")") { [weak self] in
+            guard let self else { return }
+            self.showsSent.toggle()
+            self.refresh()
+        }
+        sentToggle.isEnabled = true
+        stack.addArrangedSubview(sentToggle)
+        for proposal in today where showsSent || proposal.outcome == .failed {
             stack.addArrangedSubview(label(proposal.text))
             let result = proposal.outcome == .failed ? "送信に失敗" : proposal.kind?.title ?? "送信済み"
             let correction = NSPopUpButton()
+            correction.isEnabled = !service.storeError
             correction.addItem(withTitle: "種類を直す")
             for kind in TriageKind.allCases {
                 correction.addItem(withTitle: kind.title)
@@ -132,7 +141,7 @@ final class TriagePanel {
 
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
-        let document = TriageDocumentView()
+        let document = TriageDocumentView(frame: NSRect(x: 0, y: 0, width: 620, height: 460))
         document.addSubview(stack)
         stack.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -141,7 +150,7 @@ final class TriagePanel {
             stack.topAnchor.constraint(equalTo: document.topAnchor),
         ])
         tick()
-        document.frame = NSRect(x: 0, y: 0, width: 620, height: max(460, stack.fittingSize.height))
+        document.frame.size.height = max(460, stack.fittingSize.height)
         scroll.documentView = document
         window.contentView = scroll
         scroll.contentView.scroll(to: scroll.contentView.constrainBoundsRect(

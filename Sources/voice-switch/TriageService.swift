@@ -79,7 +79,10 @@ final class TriageService {
         guard let kind, let route = routes[kind] else { return nil }
         switch route.action.delivery {
         case .command(let command):
-            return command.contains("changelogmemo-add") ? "changelogmemo" : "コマンド"
+            let executable = command.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? ""
+            let name = (executable as NSString).lastPathComponent
+            if name == "changelogmemo-add" { return "changelogmemo" }
+            return name.range(of: #"^[A-Za-z0-9_.-]{1,64}$"#, options: .regularExpression) == nil ? "コマンド" : name
         case .open(let url), .post(let url):
             let parts = URLComponents(string: url.rawValue)
             return parts?.host ?? parts?.scheme
