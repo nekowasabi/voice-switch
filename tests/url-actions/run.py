@@ -55,6 +55,8 @@ def check_wiring(repo):
     action_pos = handoff.index(run_action)
     route_pos = handoff.index("let route = await routeDictation(result)")
     assert action_pos < route_pos and "return .delivered" in handoff[action_pos:route_pos]
+    assert "func executeWakeAction(_ action: WakeAction, text: String, app: String?, wait: Bool = false" in mac, \
+        "a wake action must not hold up the handoff"
     execute = extract_braced_body(mac, r"func executeWakeAction\(.*?-> Bool \{")
     assert "case .open(let url)" in execute and "Platform.urlProcess(url)" in execute
     assert "process.arguments = action.openArguments(input: text)" in execute
@@ -85,6 +87,7 @@ mutations = [
     ("MacApp.swift", "case .open(let url)"),
     ("MacApp.swift", "Platform.urlProcess(url)"),
     ("MacApp.swift", "Platform.runURLProcess(process, wait: wait"),
+    ("MacApp.swift", "app: String?, wait: Bool = false"),
     ("MacApp.swift", "case .command(let command)"),
     ("MacApp.swift", "Platform.runCommand(command, stdin: text"),
     ("MacApp.swift", '"VOICE_SWITCH_APP": app'),

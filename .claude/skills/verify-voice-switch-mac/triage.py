@@ -99,6 +99,8 @@ class Home:
         p.wait(); log.close()
         text = (self.dir / f"{tag}-stdout.txt").read_text()
         lines = [l for l in text.splitlines() if "triage" in l]
+        for said in fixture.get("dictations") or []:
+            SAID.append((f"{self.dir.name}/{tag}", said, any(said in l for l in text.splitlines())))
         return {"exit": p.returncode, "killed": killed, "triage": lines, "all": text}
 
     def lines(self, name):
@@ -114,6 +116,7 @@ class Home:
 
 
 results = []
+SAID = []  # (run, dictated text, whether any log line of that run contains it)
 
 
 def check(name, ok, evidence):
@@ -208,6 +211,9 @@ if __name__ == "__main__":
     before = {p: stat(p) for p in REAL}
     for name in sys.argv[1:] or SCENARIOS:
         SCENARIOS[name]()
+    shown = [f"{run}: {said}" for run, said, found in SAID if found]
+    check("no log line carries the dictated text (the triage lines give ids, kinds and fixed reasons only)",
+          bool(SAID) and not shown, shown or [f"{len(SAID)} dictated texts, none in the runs' stdout"])
     changed = [str(p) for p in REAL if stat(p) != before[p]] + leaked()
     check("the user's real proposals.jsonl, triage cache, changelogmemo and journals are untouched",
           not changed, [f"changed: {changed}" if changed else f"unchanged: {len(REAL)} files; no test text in today's journals or changelogmemo"])
