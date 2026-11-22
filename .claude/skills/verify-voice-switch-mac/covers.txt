@@ -19,6 +19,7 @@ Sources/voice-switch/MacApp.swift Listener.storeLocal
 Sources/voice-switch/MacApp.swift transcribe
 Sources/voice-switch/MacApp.swift Listener.transcribeToHistory
 Sources/voice-switch/MacApp.swift transcribeUnbounded
+Sources/voice-switch/MacDictationSession.swift
 Sources/voice-switch/MacWakeUI.swift macReading
 Sources/voice-switch/MacWakeUI.swift macRelaxedWake
 Sources/voice-switch/Segmenter.swift

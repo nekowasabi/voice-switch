@@ -1,6 +1,7 @@
 package struct MacDictationSession {
     package private(set) var clock = 0
     private var followupUntil = 0
+    private var samplesSinceStopCheck = 0
 
     package init() {}
 
@@ -18,5 +19,17 @@ package struct MacDictationSession {
 
     package mutating func clearFollowup() {
         followupUntil = 0
+    }
+
+    package mutating func advanceStopCheck(sampleCount: Int) {
+        samplesSinceStopCheck += sampleCount
+    }
+
+    package mutating func resetStopCheck() {
+        samplesSinceStopCheck = 0
+    }
+
+    package func stopCutCount(_ cut: Int, sampleCount: Int) -> Int {
+        min(cut + samplesSinceStopCheck, sampleCount)
     }
 }

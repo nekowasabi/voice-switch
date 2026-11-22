@@ -1618,7 +1618,6 @@ final class Listener {
         let stopCheck = LatestRecognition<StopVerdict>()
         let wordCheck = LatestRecognition<(session: UUID, agreed: Bool)>()
         var stopJob: (session: UUID, generation: Int)?
-        var stopFrames = 0
         func submitAndArm(_ d: Dictation, cfg: DictationConfig, reason: String) {
             session.armFollowup(isAutomatic: d.origin.isAutomatic, hasAction: d.action != nil, options: cfg.noWakeWord)
             recent.removeAll(); speechFrames = 0
@@ -1701,7 +1700,7 @@ final class Listener {
                     // A recognizer that fails confirms, as the handoff hands such a recording off.
                     wordCheck.submit { (session, (try? await agreedWordCount(samples, locale: locale)).map { $0 >= NoWakePolicy.minAgreedCharacters } ?? true) }
                 }
-                stopFrames += f.count
+                session.advanceStopCheck(sampleCount: f.count)
                 // The stop word is judged beside the frame loop, on the newest utterance only. Frames keep flowing meanwhile,
                 // so the result is taken on a later frame, and the cut also drops the frames that arrived since.
                 if let verdict = stopCheck.take(), let job = stopJob {
@@ -1709,7 +1708,7 @@ final class Listener {
                     let current = job.session == d.sessionID && job.generation == generation
                     if current { d.stopHeard = verdict == .heard }
                     if case let .cut(cut) = verdict, cut > 0, current {
-                        d.samples.removeLast(min(cut + stopFrames, d.samples.count))
+                        d.samples.removeLast(session.stopCutCount(cut, sampleCount: d.samples.count))
                         dictation = nil; recent.removeAll(); speechFrames = 0; Hotkeys.end(); endedByUser = true
                         log("dictation finished by stop word \(sidField(d.sessionID))")
                         if d.heardSpeech, !d.samples.isEmpty { submitAndArm(d, cfg: dc, reason: finishReasonToken("stop word")) }
@@ -1734,11 +1733,11 @@ final class Listener {
                 if let stopAudio, let words = config.cfg.stopWords, !words.isEmpty {
                     let locale = Locale(identifier: config.cfg.locale ?? "ja_JP")
                     let quiet = config.cfg.dictation?.noWakeWord?.enabled == true
-                    let session = d.sessionID
-                    stopCheck.submit { await stopWordCut(stopAudio.u, heard: stopAudio.heard, stopWords: words, locale: locale, quiet: quiet, kind: stopAudio.kind, sessionID: session) }
+                    let sessionID = d.sessionID
+                    stopCheck.submit { await stopWordCut(stopAudio.u, heard: stopAudio.heard, stopWords: words, locale: locale, quiet: quiet, kind: stopAudio.kind, sessionID: sessionID) }
                     d.stopCheckedSamples = d.samples.count
                     stopJob = (d.sessionID, generation)
-                    stopFrames = 0
+                    session.resetStopCheck()
                 }
                 guard localHistoryState.withLock({ $0.generation == generation }) else { continue }
                 if d.deafFrames > 0 { d.deafFrames -= 1 } else if !d.heardSpeech && speaking {
