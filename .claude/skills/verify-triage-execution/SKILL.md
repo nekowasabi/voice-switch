@@ -93,7 +93,7 @@ Replay the trace against the design text or the code, one action per step. If a 
 
 ## Coverage and sync
 
-Sync commit: PENDING. Move it only after items 2 to 8 pass at the new commit and the table below names the code. (Until 2026-11-22 item 7 checked `scripts/changelogmemo-add` writing changelogmemo beside the changelog skill without a shared lock; it never passed reliably, and the script was replaced by the single-writer inbox.)
+Sync commit: 3d3a3ef. Move it only after items 2 to 8 pass at the new commit and the table below names the code. (Until 2026-11-22 item 7 checked `scripts/changelogmemo-add` writing changelogmemo beside the changelog skill without a shared lock; it never passed reliably, and the script was replaced by the single-writer inbox.)
 
 | Model action | Design text | Code |
 |---|---|---|
