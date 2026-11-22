@@ -34,6 +34,14 @@
 
 `dictation.journalDir` は、履歴に入った発話のテキストを端末に残す。既定のディレクトリは macOS が `~/Library/Application Support/voice-switch/journal`、Windows が `%LOCALAPPDATA%\voice-switch\journal`。ディレクトリなら日ごとの `yyyy-MM-dd.jsonl`、パスが `.jsonl` で終われば単一ファイル。`~` と `%LOCALAPPDATA%` は `recordingsDir` と同じ展開。不正または書けないパスはログに `dictation journal:` と `using default` を残して既定のディレクトリへフォールバックする。ディレクトリは `0700`、ファイルは `0600`。削除は day（日）単位と entry（件）単位。閲覧 UI はない（no viewer）。音声は残さない。`dictation.journalTaskFile` は、外部の更新ツールが書き換える小さなタスクファイルへの任意のパスで、追記時に読んだタスクを `taskchute` に記録する。未設定や読めないとき、その行の `taskchute` は null になる。
 
+JSONL の各行には `id`、`timestamp`、`text`、`origin`、`endReason`、`recordingSeconds`、`schemaVersion`（1）、`focusApp`、`taskchute`、`delivery` が入る。`delivery` は追記時の予定先で、アプリへの貼り付けは `paste`、スティッキーで固定した入力欄は `sticky`、固定した tmux ペインは `pane`、ウェイクアクションは `action`、履歴に留める場合は `history`。追記後にペイン振り分けを行うなど、追記時に予定先が決まっていなければ `null` になる。旧行では `delivery` がないことがある。
+
+`python3 scripts/journal_triage.py list YYYY-MM-DD` で、配送先が `history` または未定の発話を依頼・考え・未判定に分けて表示する。フィラーは件数だけ出す。既定は JSON で、`--format text` で読みやすい表示に切り替えられる。`--root` にはジャーナルのフォルダか単一の JSONL ファイルを指定できる。指定がなければ、設定済みの `dictation.journalDir` の親フォルダか既定のジャーナルを読む。フォルダの場合は、直下と 1 段下の端末フォルダから日付に対応するファイルを読む。ドットで始まるフォルダは読み飛ばす。ジャーナルは読み取り専用。
+
+`TYPESAFE_API_KEY` または `JEV_API_KEY` があれば、保存済みの答えがない発話は自動録音も含めて 1 件ずつ Jev に送る。状態には本文、録音の開始方法、アプリ名、タスク名、発話時刻、同じ端末で発話の前 60 秒以内にある一覧対象の発話を最大 2 件含める。`--no-context` を指定すると本文と録音の開始方法だけを送る。答えは `~/Library/Caches/voice-switch/triage/<端末>/<日>.jsonl` に保存し、問いの文面が同じあいだは再利用する。通信失敗や不正な答えは `unjudged:error` になる。キーがない場合や `--no-jev` の場合は、`タスク:`、`調査:`、`下書き:`、`エージェント:` などの目印が 1 種類だけあれば対応する依頼を返す。目印がゼロか複数なら `unjudged:no-jev` になる。
+
+`review [YYYY-MM-DD]` は見直す順に発話を表示する。`label <id> <行き先>` で正解をジャーナルのルートにある `.triage/labels/<端末>-cli.jsonl` に記録する。行き先は `thought`、`filler`、`unjudged:<段>`、または `action:self_task`、`action:look_up`、`action:write_text`、`action:computer_change` のうち一つ以上を指定できる。`eval` はラベルに保存した答えを採点し、`.triage/reports/` に結果を残す。`tune` は保存した答えからしきい値の案を探し、`--apply` を指定すると採用条件を満たした案を `.triage/thresholds.json` に保存する。確率の既定の帯は 0.3 以下が「いいえ」、0.7 以上が「はい」。
+
 `stopWords` を単体で言うと、進行中の入力を終える。代わりに `skipWhileMicInUseBy` のアプリがマイクを使っているときは、同じ語で `stopCommand` を実行する。見本の語は `入力ストップ`。`stopWords` を書かないときは locale ごとの既定が入る。`ja-JP`（`locale` 省略時も）は `入力ストップ`、`en-US` は `stop dictation`、それ以外の locale は既定なし。自分で書いた値は `[]` も含めて上書きしない。停止ワードは、その locale の言葉で、本文に出にくい言葉を選ぶ。（macOS の既定は Mac 未検証。）見本の `stopCommand` は同じ superwhisper の録音 URL で、録音はトグルする。
 
 Windows では、本文のあとに続けた停止語を dictation が吸い込むことがある。`dictation.dedicatedStopRecognizer`（Windows だけ。見本は false）を true にすると、同じ PCM を停止語だけの別の SAPI 認識器に渡し、通常の経路が単独の停止を見つけなかったとき、その手前で入力を終える。人の声と打鍵音は未測定なので見本は false。Mac はこのキーを読んでも使わない。測定と実装は [docs/stop-word-recognizer.md](docs/stop-word-recognizer.md)。
@@ -197,11 +205,37 @@ LaunchServices、実マイク、Superwhisper の録音・文字起こし・貼�
 停止は Superwhisper の UI、またはテスト用コピーの `wakeURL` を `/record/stop` に変更して確認してください。
 
 
+## 口述した依頼を送る（macOS）
+
+`dictation.triage.enabled` を `true` にしてアプリを再起動すると、配送先が `history` または未設定の新しい発話を裏で振り分けます。メニューバーの「依頼」を開くと「確認が要るもの」「まもなく送る」「送った」が並びます。アイコンに出る数字は要確認の件数です。「まもなく送る」から取消や即時送信ができ、画面上部で自動送信を一時停止できます。送信中にアプリが終了した依頼は「送ったか不明」になります。再起動後に送信済みとするか、やり直すかを選べます。「送った」で種類を直すとラベルが残ります。
+
+`dictation.triage` の設定例です。
+
+```json
+{
+  "enabled": true,
+  "graceSeconds": 300,
+  "routes": {
+    "self_task": {"command": "/絶対パス/voice-switch/scripts/memo-inbox-add task", "heavy": false, "graceSeconds": 60},
+    "write_text": {"command": "/絶対パス/voice-switch/scripts/memo-inbox-add draft", "heavy": false},
+    "look_up": {"url": "grokbot://prompt?text={text}"}
+  }
+}
+```
+
+種類は `self_task`（自分の作業）、`write_text`（下書き）、`look_up`（調べもの）、`computer_change`（PC への変更）です。送り先は `macOS.actions` と同じ書式で、URL、HTTPS POST、標準入力で本文を受け取るコマンドを指定できます。メモ用スクリプトには Python 3 が必要です。`VOICE_SWITCH_MEMO_INBOX` または `~/repos/changelog/voice-switch-inbox.jsonl` に JSON を 1 行追記します。changelogmemo は直接書き換えません。changelogmemo を書くのは changelog スキルだけで、次に動いたときに取り込み待ちの行を取り込みます。2 つが同じファイルを書くことはありません。
+
+猶予の既定は 300 秒で、送り先ごとに上書きできます。`heavy` の既定は `true` です。答えが迷いの帯にある、種類が複数ある、送り先がない、重い送り先の追加確認が 0.7 未満、送り先の最初の 5 件、60 秒以内に同じ送り先への依頼がある場合は、利用者の確認が必要です。Jev のキーがない場合も確認が必要です。振り分けは既定では無効です。
+
+しきい値はジャーナルのルートにある `.triage/thresholds.json` から読み、画面で付けたラベルは `.triage/labels/<端末>-app.jsonl` に記録します。依頼の状態と猶予の締め切りは `~/Library/Application Support/voice-switch/proposals.jsonl` に記録します。
+
+[依頼の送信設計](docs/journal-triage-execution.md)
+
 ## ウェイクワードなしの録音（実験的）
 
 `dictation.noWakeWord` の `followup`、`autoIdle`、`relaxedReadingDistance2` は個別に指定できます。すべて既定では無効です。Mac では `dictation.superwhisperMode` も必須です。
 
-自動で始まった録音は履歴だけに進みます。`dictation.superwhisperMode` が `autoPaste: false` のモードなら、そのモードに切り替えて Superwhisper で変換します。そうでなければ端末内で文字起こしします。Jev、tmux、アクション URL、貼り付けには渡しません。自動録音中は Escape などの Superwhisper ショートカットを奪わず、無音か停止ワードで終わります。ただし、停止ワードを言って終えた自動録音はウェイクワードの録音と同じ扱いになり、Superwhisper が手前のアプリに貼り付けます（ログは `dictation session: automatic ended by stop word, pasting like a wake-word dictation`）。自動録音中にウェイクワードを話すと、自動録音を破棄して通常の録音に切り替えます。履歴はメモリ上の最大50件で、30分後またはアプリ終了時に消えます。選んだものだけコピーできます。`dictation.journalDir` のジャーナルは別のファイルで、ディスクに残ります。
+自動で始まった録音の文字起こしは、その場では履歴に入ります。`dictation.superwhisperMode` が `autoPaste: false` のモードなら、そのモードに切り替えて Superwhisper で変換します。そうでなければ端末内で文字起こしします。macOS で依頼の振り分けを有効にすると、自動録音も裏で分類します。分類時に Jev へ送るのは、本文、録音の始まり方、アプリ名、作業名、端末の時刻、同じ端末から直前 60 秒以内の一覧対象の発話最大 2 件（本文と経過秒数）です。重い送り先の追加確認には、種類と送り先の名前も使います。自動録音中は Escape などの Superwhisper ショートカットを奪わず、無音か停止ワードで終わります。ただし、停止ワードを言って終えた自動録音はウェイクワードの録音と同じ扱いになり、Superwhisper が手前のアプリに貼り付けます（ログは `dictation session: automatic ended by stop word, pasting like a wake-word dictation`）。自動録音中にウェイクワードを話すと、自動録音を破棄して通常の録音に切り替えます。履歴はメモリ上の最大50件で、30分後またはアプリ終了時に消えます。選んだものだけコピーできます。`dictation.journalDir` のジャーナルは別のファイルで、ディスクに残ります。
 
 - Ctrl+Shift+F10 は手動録音の開始
 - Ctrl+Shift+F9 または HUD のクリックは履歴

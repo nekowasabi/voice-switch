@@ -11,6 +11,8 @@ namespace VoiceSwitch.Windows.Core;
 
 public enum JournalPlatform { Windows, Mac }
 
+public enum JournalDelivery { Paste, Sticky, Pane, Action, History }
+
 public sealed record JournalEntry(
     Guid Id,
     DateTimeOffset Timestamp,
@@ -18,7 +20,8 @@ public sealed record JournalEntry(
     string Origin,
     string? EndReason,
     double? RecordingSeconds,
-    FocusApp? Focus = null);
+    FocusApp? Focus = null,
+    JournalDelivery? Delivery = null);
 
 /// <summary>
 /// The app in front when the dictation session target was chosen, not the app in front at append time.
@@ -163,6 +166,7 @@ public sealed class DictationJournal
             writer.WriteString("timestamp", timestamp);
             writer.WriteString("text", entry.Text);
             writer.WriteString("origin", entry.Origin);
+            writer.WriteString("delivery", entry.Delivery?.ToString().ToLowerInvariant());
             if (entry.EndReason is null) writer.WriteNull("endReason");
             else writer.WriteString("endReason", entry.EndReason);
             if (entry.RecordingSeconds is null) writer.WriteNull("recordingSeconds");
@@ -489,19 +493,19 @@ public sealed class DictationJournal
     }
 }
 
-public readonly record struct JournalNote(string? EndReason, double? RecordingSeconds, bool Manual, FocusApp? Focus = null);
+public readonly record struct JournalNote(string? EndReason, double? RecordingSeconds, bool Manual, FocusApp? Focus = null, JournalDelivery? Delivery = null);
 
 public static class JournalNotes
 {
     private static readonly object Gate = new();
     private static readonly Dictionary<Guid, JournalNote> Pending = new();
 
-    public static void Note(Guid id, string? endReason = null, double? recordingSeconds = null, bool? manual = null, FocusApp? focus = null)
+    public static void Note(Guid id, string? endReason = null, double? recordingSeconds = null, bool? manual = null, FocusApp? focus = null, JournalDelivery? delivery = null)
     {
         lock (Gate)
         {
             Pending.TryGetValue(id, out var existing);
-            Pending[id] = new JournalNote(endReason ?? existing.EndReason, recordingSeconds ?? existing.RecordingSeconds, manual ?? existing.Manual, focus ?? existing.Focus);
+            Pending[id] = new JournalNote(endReason ?? existing.EndReason, recordingSeconds ?? existing.RecordingSeconds, manual ?? existing.Manual, focus ?? existing.Focus, delivery ?? existing.Delivery);
         }
     }
 

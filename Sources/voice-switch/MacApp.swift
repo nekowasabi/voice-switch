@@ -455,6 +455,7 @@ final class StickySession {
     let window: AXUIElement?
     let paneID: String?
     let capturedAt: Date
+    var journalDelivery: JournalDelivery { paneID == nil ? .sticky : .pane }
     /// bundleID is in macOS.stickyEnterApps.
     var enter = false
     /// The target app's bundle, drawn in the HUD instead of the mic so a sticky dictation shows where its text goes.
@@ -956,6 +957,8 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     }
     log("dictation: \(result.count) chars in \(Int(Date().timeIntervalSince(submitted) * 1000)) ms audio=\(String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), Double(samples.count) / rate))s \(sidField(sessionID))")
     guard stillCurrent() else { return .delivered }
+    let delivery: JournalDelivery? = stickySession?.journalDelivery ?? (controlled ? .history : action != nil ? .action : dictationMayRouteToPane(result) ? nil : .paste)
+    DictationJournal.note(sessionID, delivery: delivery)
     guard DictationHistory.shared.add(id: sessionID, text: result, origin: origin, expectedGeneration: historyGeneration, policy: transcriptPolicy) else { return .delivered }
     if let stickySession {
         await deliverSticky(stickySession, text: result)
@@ -963,29 +966,7 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     }
     if controlled { return .delivered }
     if let action {
-        switch action.delivery {
-        case .post(let url):
-            do {
-                try await postAction(action, to: url, text: result)
-                log("dictation delivered: post \(action.name)")
-            } catch {
-                log("dictation action \(action.name) failed: \(error.localizedDescription)")
-            }
-        case .open(let url):
-            if GrokBotPrompt.isPrompt(url.rawValue) {
-                let (_, truncated) = GrokBotPrompt.fit(result)
-                if truncated {
-                    log("grokbot prompt text truncated to 1000 encoded chars for action \(action.name)")
-                }
-            }
-            let p = Platform.urlProcess(url)
-            p.arguments = action.openArguments(input: result)
-            Platform.runURLProcess(p, wait: false)
-        case .command(let command):
-            // keypipe's when.app must see the app the dictation was aimed at, not voice-switch.
-            Platform.runCommand(command, stdin: result, environment: ["VOICE_SWITCH_APP": target?.bundleIdentifier ?? ""])
-            log("dictation delivered: command \(action.name)")
-        }
+        _ = await executeWakeAction(action, text: result, app: target?.bundleIdentifier)
         return .delivered
     }
     let route = await routeDictation(result)
@@ -996,10 +977,61 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     return .delivered
 }
 
+func executeWakeAction(_ action: WakeAction, text: String, app: String?, wait: Bool = false, quiet: Bool = false,
+                       onFailure: ((String) -> Void)? = nil) async -> Bool {
+    switch action.delivery {
+    case .post(let url):
+        do {
+            try await postAction(action, to: url, text: text)
+            if !quiet { log("dictation delivered: post \(action.name)") }
+            return true
+        } catch {
+            if !quiet { log("dictation action \(action.name) failed: \(error.localizedDescription)") }
+            let failure = error as? PostActionError
+            onFailure?(failure?.reason ?? "POST 通信失敗")
+            return false
+        }
+    case .open(let url):
+        if !quiet, GrokBotPrompt.isPrompt(url.rawValue), GrokBotPrompt.fit(text).1 {
+            log("grokbot prompt text truncated to 1000 encoded chars for action \(action.name)")
+        }
+        let process = Platform.urlProcess(url)
+        process.arguments = action.openArguments(input: text)
+        return Platform.runURLProcess(process, wait: wait, quiet: quiet, onFailure: onFailure)
+    case .command(let command):
+        let sent = Platform.runCommand(command, stdin: text, environment: ["VOICE_SWITCH_APP": app ?? ""],
+                                       wait: wait, quiet: quiet, onFailure: onFailure)
+        if !quiet { log("dictation delivered: command \(action.name)") }
+        return sent
+    }
+}
+
+private enum PostActionError: LocalizedError {
+    case missingToken(String)
+    case invalidResponse
+    case http(Int, String)
+
+    var reason: String {
+        switch self {
+        case .missingToken: return "POST 認証設定なし"
+        case .invalidResponse: return "POST の HTTP 応答なし"
+        case .http(let status, _): return "HTTP \(status)"
+        }
+    }
+
+    var errorDescription: String? {
+        switch self {
+        case .missingToken(let env): return "environment variable \(env) is not set"
+        case .http(_, let reply): return "\(reason) \(reply)"
+        case .invalidResponse: return reason
+        }
+    }
+}
+
 /// POSTs `text` to the action's https url as the multipart fields from `postFields` with the bearer token from `tokenEnv`; the token is never in the config.
 func postAction(_ action: WakeAction, to url: ActionURL, text: String) async throws {
     guard let env = action.tokenEnv, let token = ProcessInfo.processInfo.environment[env] else {
-        throw NSError(domain: "voice-switch", code: 1, userInfo: [NSLocalizedDescriptionKey: "environment variable \(action.tokenEnv ?? "") is not set"])
+        throw PostActionError.missingToken(action.tokenEnv ?? "")
     }
     let boundary = "voice-switch-\(UUID().uuidString)"
     var body = Data()
@@ -1012,10 +1044,11 @@ func postAction(_ action: WakeAction, to url: ActionURL, text: String) async thr
     request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
     request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
     let (data, response) = try await URLSession.shared.upload(for: request, from: body)
-    if let status = (response as? HTTPURLResponse)?.statusCode, !(200 ..< 300).contains(status) {
+    guard let status = (response as? HTTPURLResponse)?.statusCode else { throw PostActionError.invalidResponse }
+    if !(200 ..< 300).contains(status) {
         // The status alone cannot tell a bad field from a receiver fault; the head of the reply can.
         let reply = String(decoding: data.prefix(300), as: UTF8.self)
-        throw NSError(domain: "voice-switch", code: status, userInfo: [NSLocalizedDescriptionKey: "HTTP \(status) \(reply)"])
+        throw PostActionError.http(status, reply)
     }
 }
 
@@ -1252,6 +1285,7 @@ enum InputRoute: Equatable {
 
 /// Owns the microphone. stop() releases it fully (menu-bar mic indicator goes off).
 final class Listener {
+    let journalFallback: String?
     let config: ConfigFile
     private var engine = AVAudioEngine()
     private let localHistoryState = OSAllocatedUnfairLock(initialState: (busy: false, generation: 0))
@@ -1292,8 +1326,9 @@ final class Listener {
     /// The mic being recorded from, for the menu; nil while not listening.
     var activeDeviceName: String? { running ? activeRoute?.deviceID.map(audioDeviceName) : nil }
 
-    init(config: ConfigFile) {
+    init(config: ConfigFile, journalFallback: String? = nil) {
         self.config = config
+        self.journalFallback = journalFallback
         let (stream, cont) = AsyncStream<CaptureFrame>.makeStream()
         self.cont = cont
         let (phases, phaseCont) = AsyncStream<(phase: Phase, icon: String?)>.makeStream()
@@ -1862,7 +1897,8 @@ final class Listener {
             if case .tail = event { continue }
             let (u, isHead) = switch event { case let .utterance(u): (u, false); case let .head(u): (u, true); case .tail: ([], false) }
             config.reloadIfChanged()
-            DictationJournal.bind(config.cfg.dictation?.journalDir, journalTaskFile: config.cfg.dictation?.journalTaskFile)
+            DictationJournal.bind(config.cfg.dictation?.journalDir, journalTaskFile: config.cfg.dictation?.journalTaskFile,
+                                  fallback: journalFallback)
             seg.cfg = config.cfg
             let transcript: Transcript
             let began = Date()
@@ -2038,8 +2074,10 @@ final class Listener {
             guard localHistoryState.withLock({ $0.generation == generation }) else { return }
             log("dictation recognition: complete id=\(takeRecognitionId()) \(d.origin.fields) \(sidField(d.sessionID))")
             let text = transcript.runs.map(\.text).joined()
+            let delivery: JournalDelivery = d.origin.isAutomatic || d.action != nil ? .history : d.sticky?.journalDelivery ?? .paste
+            DictationJournal.note(d.sessionID, delivery: delivery)
             let retained = DictationHistory.shared.add(id: d.sessionID, text: text, origin: d.origin, expectedGeneration: historyGeneration, policy: d.transcriptPolicy)
-            if retained && !d.origin.isAutomatic && d.action == nil {
+            if retained && delivery != .history {
                 if let sticky = d.sticky {
                     await deliverSticky(sticky, text: text)
                 } else {
@@ -2556,11 +2594,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let login = NSMenuItem(title: "ログイン時に起動", action: #selector(toggleLogin), keyEquivalent: "")
     let sound = NSMenuItem(title: "効果音", action: #selector(toggleSound), keyEquivalent: "")
     let sticky = NSMenuItem(title: "スティッキー貼り付け", action: #selector(toggleSticky), keyEquivalent: "")
+    let requests = NSMenuItem(title: "依頼", action: #selector(showRequests), keyEquivalent: "")
     let micMenu = NSMenu()
     let hud = HUD()
     private var listeningPolicy = ListeningPolicy()
     private var captureReady = false
     private var pauseMicrophoneName: String?
+    private var triageReviewCount = 0
+    private var triagePanel: TriagePanel?
 
     init(configPath: String) { self.configPath = configPath }
 
@@ -2569,6 +2610,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         MacWakeShortcuts.install()
         menu.addItem(toggle)
         menu.addItem(NSMenuItem(title: "文字起こし履歴", action: #selector(showHistory), keyEquivalent: ""))
+        requests.isHidden = true
+        menu.addItem(requests)
         menu.addItem(.separator())
         let mic = NSMenuItem(title: "マイク", action: nil, keyEquivalent: "")
         micMenu.delegate = self
@@ -2591,6 +2634,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         pauseMicrophoneName = config.cfg.pauseWhenMicrophoneConnected
         DictationJournal.bind(config.cfg.dictation?.journalDir, journalTaskFile: config.cfg.dictation?.journalTaskFile)
+        if let settings = config.cfg.dictation?.triage, settings.enabled == true {
+            let triage = TriageService(settings: settings, journalDir: config.cfg.dictation?.journalDir,
+                                       stopWords: config.cfg.stopWords ?? [])
+            triagePanel = TriagePanel(service: triage)
+            triage.onChange = { [weak self, weak triage] in
+                guard let self else { return }
+                self.triageReviewCount = triage?.review.count ?? 0
+                self.refresh()
+                self.triagePanel?.refresh()
+            }
+            requests.isHidden = false
+            triage.start()
+        }
         listener = Listener(config: config)
         listener.onPhase = { [hud] in hud.show($0, icon: $1) }
         listener.onDelivery = { [hud] in hud.deliver($0) }
@@ -2671,8 +2727,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func refresh() {
         let on = listener?.running ?? false
-        item.button?.title = on ? "🔔" : "🔕"
-        item.button?.setAccessibilityLabel(on ? "voice-switch: 待ち受け中" : "voice-switch: 停止中")
+        let count = triageReviewCount
+        item.length = count == 0 ? NSStatusItem.squareLength : NSStatusItem.variableLength
+        item.button?.title = (on ? "🔔" : "🔕") + (count == 0 ? "" : " \(count)")
+        let accessibility = on ? "voice-switch: 待ち受け中" : "voice-switch: 停止中"
+        item.button?.setAccessibilityLabel(accessibility + (count == 0 ? "" : "、確認が要る依頼 \(count) 件"))
         if listeningPolicy.microphoneConnected {
             toggle.title = listeningPolicy.offersPause ? "切断後の自動再開を停止" : "切断後の自動再開を有効にする"
         } else {
@@ -2695,6 +2754,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc func showHistory() { HistoryPanel.shared.show() }
+    @objc func showRequests() { Task { @MainActor in triagePanel?.show() } }
 
     @objc func toggleSound() {
         UserDefaults.standard.set(!UserDefaults.standard.bool(forKey: soundKey), forKey: soundKey)

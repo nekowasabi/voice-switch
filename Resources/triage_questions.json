@@ -1,0 +1,82 @@
+{
+  "is_filler": {
+    "type": "noul",
+    "instructions": "Is `utterance.text` only a sound with no meaningful content?",
+    "criteria": {
+      "true": "A backchannel, hesitation, cut-off restart, misrecognized noise, or a short call to someone in the room, such as 「うん」「えーと、あれ」「はいはい」.",
+      "false": "It carries a thought, observation, plan, wish, question, or instruction, even if short or cut off, such as 「駅の傘立て、いつも満杯だな」「明日の会議を 10 時にずらして」."
+    }
+  },
+  "wants_action": {
+    "type": "noul",
+    "instructions": "Does the speaker of `utterance.text` want something to be done, beyond keeping the thought?",
+    "criteria": {
+      "true": "The speaker wants themselves, a computer, or an AI to do something, such as 「牛乳を買っておかないと」「この表を週ごとにまとめて」.",
+      "false": "The speaker only states an observation, feeling, or idea, such as 「この坂、思ったより長いな」."
+    }
+  },
+  "kind_self_task": {
+    "type": "noul",
+    "instructions": "In `utterance.text`, read as a continuation of `previous` when present, does the speaker name a chore or task they will do themselves?",
+    "criteria": {
+      "true": "Such as 「牛乳を買っておかないと」.",
+      "false": "The work is for someone else or a computer, or there is no task."
+    }
+  },
+  "kind_look_up": {
+    "type": "noul",
+    "instructions": "In `utterance.text`, read as a continuation of `previous` when present, does the speaker want information found out (searched, looked up, compared, or summarized), whether by themselves or by an AI assistant or bot such as Grok Bot or Muse, now or later?",
+    "criteria": {
+      "true": "The speaker wants to know or find something, such as 「Grok Bot に来週の天気を調べさせて」「ミューズ、この記事を要約しておいて」「あとで安い電池を探しておいて」「この電池の寿命はどれくらいなんだろう」.",
+      "false": "The speaker wants something done or changed rather than found out, such as 「古いファイルを全部消して」, or wants a tool or bot itself changed, such as 「このアプリで天気を調べられるようにして」."
+    }
+  },
+  "kind_write_text": {
+    "type": "noul",
+    "instructions": "In `utterance.text`, read as a continuation of `previous` when present, does the speaker want a message or document drafted?",
+    "criteria": {
+      "true": "Such as 「大家さんへのお礼のメールを書かなきゃ」.",
+      "false": "No text needs to be written."
+    }
+  },
+  "kind_computer_change": {
+    "type": "noul",
+    "instructions": "In `utterance.text`, read as a continuation of `previous` when present, does the speaker want a computer or AI agent to change a setting, code, or file?",
+    "criteria": {
+      "true": "Including giving a tool or bot a new ability, such as 「このスクリプトで祝日も数えられるようにして」「このアプリで天気を調べられるようにして」.",
+      "false": "Nothing on a computer needs to change."
+    }
+  },
+  "kind_delegate": {
+    "type": "noul",
+    "instructions": "In `utterance.text`, read as a continuation of `previous` when present, does the speaker ask an AI assistant or bot to carry out an operation that changes something, such as updating a record, booking an appointment, or running a procedure?",
+    "criteria": {
+      "true": "The speaker delegates an operation, such as 「案内ボットに来週の会議室を予約してもらって」「受付ボットに注文の配送日時を変更してもらって」.",
+      "false": "The speaker wants information, such as 「会議室の空き時間を調べて」, a change to computer settings, code, or files, such as 「通知の設定を変えて」, a draft, or a task they will do themselves."
+    }
+  },
+  "verify_route": {
+    "type": "noul",
+    "instructions": "Would sending utterance.text as-is to the destination described by route fulfill what the speaker wants?",
+    "criteria": {
+      "true": "The destination and the literal text to be sent both fit the speaker's request.",
+      "false": "The destination is unsuitable, the text does not stand on its own, or the speaker's intent is unclear."
+    }
+  },
+  "needs_local": {
+    "type": "noul",
+    "instructions": "Would acting on `utterance.text` need the work session the speaker is in the middle of on this computer: its code, files, apps, settings, or the conversation with an AI assistant on screen?",
+    "criteria": {
+      "true": "It refers to what is on the screen or in progress, such as 「修正してください」「原因を特定してください」「検証項目を作成して」「キーパイプの実装がどこまで進んでいるか教えて」「ダッシュボードも更新してくれ」.",
+      "false": "Anyone with the web could act on it, or it asks for nothing, such as 「明日の東京の天気を調べて」「楽天でビーフジャーキーを注文して」「Amazon でモバイルモニターの最安値を探して」「この坂、思ったより長いな」."
+    }
+  },
+  "keep_note": {
+    "type": "noul",
+    "instructions": "Is `utterance.text` the speaker thinking aloud or noting something to themselves that they would want to read again later?",
+    "criteria": {
+      "true": "An idea, plan, decision, worry, lesson, or fact to remember, or a chore for themselves, such as 「12月25日辺りに Mac Studio が来るなら、その辺りで冬休みを入れてもよさそう」「牛乳を買っておかないと」「後でやっておきたいのでメモして」.",
+      "false": "A reaction, greeting, talk with other people or a TV, a misrecognized phrase that makes no sense, a microphone test, or an instruction or question to an AI assistant, such as 「いいですね」「地球の飛行機交代分離戦。」「昔々あるところに」「修正してください」「明日の天気を調べて」."
+    }
+  }
+}

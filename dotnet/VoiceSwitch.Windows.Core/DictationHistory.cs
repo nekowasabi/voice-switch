@@ -42,7 +42,7 @@ public sealed class DictationHistory
         var journal = Journal ?? (ReferenceEquals(this, Shared) ? DictationJournal.Active : null);
         try
         {
-            journal?.Append(new JournalEntry(id, created, text, DictationJournal.OriginLabel(origin, manual || noted.Manual), endReason ?? noted.EndReason, recordingSeconds ?? noted.RecordingSeconds, focus ?? noted.Focus));
+            journal?.Append(new JournalEntry(id, created, text, DictationJournal.OriginLabel(origin, manual || noted.Manual), endReason ?? noted.EndReason, recordingSeconds ?? noted.RecordingSeconds, focus ?? noted.Focus, noted.Delivery));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

@@ -1,0 +1,204 @@
+{
+  "_doc": "Jev に送る状態の共通見本（docs/journal-triage-design.md の「Jev に渡す状態」）。同じ入力から、Swift の TriageRequest.State と Python の request_state / prior_entries が want と同じ状態を作ることを、tests/triage/run.sh と tests/test_journal_triage.py（C3 / C7）が確かめる。utterance は発話、rows はそれより seconds_before 秒前の行（device はジャーナルの端末フォルダ、delivery の null は欄が null、欄が無い行は absent）。want は設計から手で書いた値で、コードの出力から作っていない。previous は同じ端末・一覧に出る行（delivery が history か null か欄なし）・その発話より前で 60 秒以内・新しい 2 件を古い順に、seconds_before は切り捨ての整数秒。app と task は名前だけで、bundleId・pid・exe・id は送らない。",
+  "device": "private",
+  "hidden": [
+    "BundleSentinel",
+    "987654",
+    "ExeSentinel",
+    "TaskIdSentinel"
+  ],
+  "cases": [
+    {
+      "name": "60 秒ちょうどは入り、61 秒は入らない",
+      "utterance": {
+        "at": "2026-11-21T14:03:05.000+09:00",
+        "text": "それも調べておいて QZXa",
+        "origin": "ウェイク",
+        "app": "Ghostty",
+        "task": "voice-switch 開発"
+      },
+      "rows": [
+        {
+          "device": "private",
+          "seconds_before": 61,
+          "text": "61 秒前 QZXa61",
+          "delivery": "history"
+        },
+        {
+          "device": "private",
+          "seconds_before": 60,
+          "text": "60 秒前 QZXa60",
+          "delivery": "history"
+        }
+      ],
+      "want": {
+        "utterance": {
+          "text": "それも調べておいて QZXa",
+          "started": "ウェイク"
+        },
+        "context": {
+          "app": "Ghostty",
+          "task": "voice-switch 開発",
+          "time": "14:03"
+        },
+        "previous": [
+          {
+            "text": "60 秒前 QZXa60",
+            "seconds_before": 60
+          }
+        ]
+      }
+    },
+    {
+      "name": "一覧に出る行が 3 件あれば新しい 2 件、paste の行と別の端末の行は入らない",
+      "utterance": {
+        "at": "2026-11-21T09:30:00.250+09:00",
+        "text": "あとで牛乳を買う QZXb",
+        "origin": "自動",
+        "app": "WezTerm",
+        "task": null
+      },
+      "rows": [
+        {
+          "device": "private",
+          "seconds_before": 50,
+          "text": "50 秒前 QZXb50",
+          "delivery": "history"
+        },
+        {
+          "device": "private",
+          "seconds_before": 15,
+          "text": "15 秒前の paste QZXb15",
+          "delivery": "paste"
+        },
+        {
+          "device": "private",
+          "seconds_before": 30,
+          "text": "30 秒前 QZXb30",
+          "delivery": null
+        },
+        {
+          "device": "wsl",
+          "seconds_before": 20,
+          "text": "20 秒前の別の端末 QZXb20",
+          "delivery": "history"
+        },
+        {
+          "device": "private",
+          "seconds_before": 10,
+          "text": "10 秒前 QZXb10",
+          "delivery": "absent"
+        }
+      ],
+      "want": {
+        "utterance": {
+          "text": "あとで牛乳を買う QZXb",
+          "started": "自動"
+        },
+        "context": {
+          "app": "WezTerm",
+          "time": "09:30"
+        },
+        "previous": [
+          {
+            "text": "30 秒前 QZXb30",
+            "seconds_before": 30
+          },
+          {
+            "text": "10 秒前 QZXb10",
+            "seconds_before": 10
+          }
+        ]
+      }
+    },
+    {
+      "name": "前の行が無く、アプリ名が空で作業も無い手動の発話",
+      "utterance": {
+        "at": "2026-11-21T23:59:59.999+09:00",
+        "text": "駅の傘立て、いつも満杯だな QZXc",
+        "origin": "手動",
+        "app": "",
+        "task": null
+      },
+      "rows": [
+        {
+          "device": "private",
+          "seconds_before": 90,
+          "text": "90 秒前 QZXc90",
+          "delivery": "history"
+        }
+      ],
+      "want": {
+        "utterance": {
+          "text": "駅の傘立て、いつも満杯だな QZXc",
+          "started": "手動"
+        },
+        "context": {
+          "time": "23:59"
+        }
+      }
+    },
+    {
+      "name": "59.6 秒前は 59 秒になり、同じ時刻の行は前の行ではない",
+      "utterance": {
+        "at": "2026-11-21T12:00:00.000+09:00",
+        "text": "その続きで QZXd",
+        "origin": "ウェイク",
+        "app": "Ghostty",
+        "task": "週報"
+      },
+      "rows": [
+        {
+          "device": "private",
+          "seconds_before": 59.6,
+          "text": "59.6 秒前 QZXd59",
+          "delivery": "history"
+        },
+        {
+          "device": "private",
+          "seconds_before": 0,
+          "text": "同じ時刻 QZXd00",
+          "delivery": "history"
+        }
+      ],
+      "want": {
+        "utterance": {
+          "text": "その続きで QZXd",
+          "started": "ウェイク"
+        },
+        "context": {
+          "app": "Ghostty",
+          "task": "週報",
+          "time": "12:00"
+        },
+        "previous": [
+          {
+            "text": "59.6 秒前 QZXd59",
+            "seconds_before": 59
+          }
+        ]
+      }
+    },
+    {
+      "name": "時刻は発話の時差のまま（-05:00）",
+      "utterance": {
+        "at": "2026-11-21T08:15:30.000-05:00",
+        "text": "会議を 10 時にずらして QZXe",
+        "origin": "ウェイク",
+        "app": "Slack",
+        "task": null
+      },
+      "rows": [],
+      "want": {
+        "utterance": {
+          "text": "会議を 10 時にずらして QZXe",
+          "started": "ウェイク"
+        },
+        "context": {
+          "app": "Slack",
+          "time": "08:15"
+        }
+      }
+    }
+  ]
+}

@@ -190,19 +190,53 @@ if mode == "--enroll-speaker" {
     RunLoop.main.run(until: Date() + 8)
     exit(0)
 } else if mode == "--simulate" {
-    let listener = Listener(config: try ConfigFile(path: configPath))
+    guard args.count == 1 || (args.count == 3 && args[1] == "--triage-fixture") else {
+        log("usage: --simulate <audio> [--triage-fixture <fixture.json>]")
+        exit(1)
+    }
+    let fixture = try args.count == 3 ? JSONDecoder().decode(TriageService.Simulation.self,
+        from: Data(contentsOf: URL(fileURLWithPath: args[2]))) : nil
+    let fixtureHome = ProcessInfo.processInfo.environment["HOME"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
+    if fixture != nil {
+        let nativeHome = getpwuid(getuid()).map { String(cString: $0.pointee.pw_dir) }
+        guard let fixtureHome, fixtureHome.resolvingSymlinksInPath().path != nativeHome,
+              ProcessInfo.processInfo.environment["VOICE_SWITCH_CONFIG"]?.isEmpty == false else {
+            log("triage simulation: set an isolated HOME and VOICE_SWITCH_CONFIG")
+            exit(1)
+        }
+    }
+    let fallback = fixture == nil ? nil : fixtureHome?.appendingPathComponent("Library/Application Support/voice-switch/journal").path
+    let listener = Listener(config: try ConfigFile(path: configPath), journalFallback: fallback)
     _ = NSApplication.shared
     let hud = HUD()
     listener.onPhase = { log("phase: \($0)"); hud.show($0, icon: $1) }
     listener.onDelivery = { hud.deliver($0) }
-    Task {
-        do {
-            try await ensureModel(Locale(identifier: listener.config.cfg.locale ?? "ja_JP"))
-            await listener.feed(try loadSamples(args[0]) + [Float](repeating: 0, count: Int(rate) * 5),
-                              realtime: ProcessInfo.processInfo.environment["SIMULATE_REALTIME"] != nil)
-        } catch { log("fatal: \(error)"); exit(1) }
+    let dictation = listener.config.cfg.dictation
+    let triage: TriageService? = MainActor.assumeIsolated {
+        guard let fixture, let fixtureHome else { return nil }
+        DictationJournal.bind(dictation?.journalDir, journalTaskFile: dictation?.journalTaskFile, fallback: fallback)
+        guard let settings = dictation?.triage, settings.enabled == true else { return nil }
+        let service = TriageService(settings: settings, journalDir: dictation?.journalDir, home: fixtureHome, simulation: fixture,
+                                    stopWords: listener.config.cfg.stopWords ?? [])
+        service.start()
+        return service
     }
-    RunLoop.main.run(until: Date() + 40)
+    if let dictations = fixture?.dictations {
+        for text in dictations {
+            let id = UUID()
+            DictationJournal.note(id, delivery: .history)
+            DictationHistory.shared.add(id: id, text: text, origin: WakeOrigin(rule: .autoB, inputIdleSeconds: nil))
+        }
+    } else {
+        Task {
+            do {
+                try await ensureModel(Locale(identifier: listener.config.cfg.locale ?? "ja_JP"))
+                await listener.feed(try loadSamples(args[0]) + [Float](repeating: 0, count: Int(rate) * 5),
+                                    realtime: ProcessInfo.processInfo.environment["SIMULATE_REALTIME"] != nil)
+            } catch { log("fatal: \(error)"); exit(1) }
+        }
+    }
+    withExtendedLifetime(triage) { RunLoop.main.run(until: Date() + min(40, max(1, fixture?.seconds ?? 40))) }
     exit(0)
 } else {
     if isatty(STDOUT_FILENO) == 0 {

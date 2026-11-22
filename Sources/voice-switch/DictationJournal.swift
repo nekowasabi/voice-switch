@@ -2,11 +2,16 @@
 // A bad path is logged and the platform default directory is used. Text only.
 import Foundation
 
+enum JournalDelivery: String {
+    case paste, sticky, pane, action, history
+}
+
 struct JournalNote {
     var endReason: String?
     var recordingSeconds: Double?
     var manual: Bool
     var focus: FocusApp?
+    var delivery: JournalDelivery?
 }
 
 /// The app in front when the dictation session target was chosen, not the app in front at append time.
@@ -45,8 +50,8 @@ final class DictationJournal {
         self.log = log
     }
 
-    static func bind(_ configured: String?, journalTaskFile: String? = nil) {
-        active = open(configured, journalTaskFile: journalTaskFile) { voice_switch.log($0) }
+    static func bind(_ configured: String?, journalTaskFile: String? = nil, fallback: String? = nil) {
+        active = open(configured, fallback: fallback, journalTaskFile: journalTaskFile) { voice_switch.log($0) }
     }
 
     static func defaultDirectory() -> String {
@@ -58,7 +63,7 @@ final class DictationJournal {
         return origin.isAutomatic ? "自動" : "ウェイク"
     }
 
-    static func note(_ id: UUID, endReason: String? = nil, recordingSeconds: Double? = nil, manual: Bool? = nil, focus: FocusApp? = nil) {
+    static func note(_ id: UUID, endReason: String? = nil, recordingSeconds: Double? = nil, manual: Bool? = nil, focus: FocusApp? = nil, delivery: JournalDelivery? = nil) {
         notesLock.lock()
         defer { notesLock.unlock() }
         var existing = notes[id] ?? JournalNote(endReason: nil, recordingSeconds: nil, manual: false)
@@ -66,6 +71,7 @@ final class DictationJournal {
         if let recordingSeconds { existing.recordingSeconds = recordingSeconds }
         if let manual { existing.manual = manual }
         if let focus { existing.focus = focus }
+        if let delivery { existing.delivery = delivery }
         notes[id] = existing
     }
 
@@ -95,18 +101,21 @@ final class DictationJournal {
         return DictationJournal(target: Target(path: expanded, single: single), fallback: fallback, journalTaskFile: journalTaskFile, log: log)
     }
 
-    func record(id: UUID, at: Date, text: String, origin: WakeOrigin, endReason: String?, recordingSeconds: Double?, manual: Bool, focus: FocusApp? = nil) {
-        let stamped = Self.line(id: id, at: at, text: text, origin: Self.originLabel(origin, manual: manual), endReason: endReason, recordingSeconds: recordingSeconds, focus: focus, journalTaskFile: journalTaskFile)
+    @discardableResult
+    func record(id: UUID, at: Date, text: String, origin: WakeOrigin, endReason: String?, recordingSeconds: Double?, manual: Bool, focus: FocusApp? = nil, delivery: JournalDelivery? = nil) -> String? {
+        let task = Self.readTask(journalTaskFile)
+        let stamped = Self.line(id: id, at: at, text: text, origin: Self.originLabel(origin, manual: manual), endReason: endReason, recordingSeconds: recordingSeconds, focus: focus, delivery: delivery, task: task)
         lock.lock()
         defer { lock.unlock() }
-        if write(target, line: stamped.text, day: stamped.day) { return }
+        if write(target, line: stamped.text, day: stamped.day) { return task?.name }
         if target.path == fallback {
-            return
+            return task?.name
         }
         let next = Target(path: fallback, single: false)
         if write(next, line: stamped.text, day: stamped.day) {
             target = next
         }
+        return task?.name
     }
 
     @discardableResult
@@ -186,7 +195,8 @@ final class DictationJournal {
                 throw JournalWriteError("create failed")
             }
         }
-        let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: file))
+        // forUpdating, not forWritingTo: the newline check below reads the last byte, and a write-only handle fails that read with EBADF.
+        let handle = try FileHandle(forUpdating: URL(fileURLWithPath: file))
         defer { try? handle.close() }
         let end = try handle.seekToEnd()
         if end > 0 {
@@ -238,7 +248,7 @@ final class DictationJournal {
         return true
     }
 
-    private static func line(id: UUID, at: Date, text: String, origin: String, endReason: String?, recordingSeconds: Double?, focus: FocusApp?, journalTaskFile: String?) -> (text: String, day: String) {
+    private static func line(id: UUID, at: Date, text: String, origin: String, endReason: String?, recordingSeconds: Double?, focus: FocusApp?, delivery: JournalDelivery?, task: (name: String?, id: String?, startedAt: String?)?) -> (text: String, day: String) {
         let timestamp = stamp(at)
         let day = String(timestamp.prefix(10))
         let seconds = recordingSeconds.map(jsonNumber) ?? "null"
@@ -248,11 +258,12 @@ final class DictationJournal {
             "\"timestamp\":\(jsonString(timestamp))",
             "\"text\":\(jsonString(text))",
             "\"origin\":\(jsonString(origin))",
+            "\"delivery\":\(delivery.map { jsonString($0.rawValue) } ?? "null")",
             "\"endReason\":\(reason)",
             "\"recordingSeconds\":\(seconds)",
             "\"schemaVersion\":\(schemaVersion)",
             "\"focusApp\":\(focusJson(focus))",
-            "\"taskchute\":\(taskJson(journalTaskFile: journalTaskFile, timestamp: timestamp))",
+            "\"taskchute\":\(taskJson(task, timestamp: timestamp))",
         ].joined(separator: ",")
         return ("{\(body)}", day)
     }
@@ -263,8 +274,8 @@ final class DictationJournal {
         return "{\"name\":\(focus.name.map(jsonString) ?? "null"),\"bundleId\":\(focus.bundleId.map(jsonString) ?? "null"),\"exe\":\(focus.exe.map(jsonString) ?? "null"),\"pid\":\(pid)}"
     }
 
-    private static func taskJson(journalTaskFile: String?, timestamp: String) -> String {
-        guard let task = readTask(journalTaskFile) else { return "null" }
+    private static func taskJson(_ task: (name: String?, id: String?, startedAt: String?)?, timestamp: String) -> String {
+        guard let task else { return "null" }
         return "{\"name\":\(task.name.map(jsonString) ?? "null"),\"id\":\(task.id.map(jsonString) ?? "null"),\"startedAt\":\(task.startedAt.map(jsonString) ?? "null"),\"source\":\"file\",\"readAt\":\(jsonString(timestamp))}"
     }
 

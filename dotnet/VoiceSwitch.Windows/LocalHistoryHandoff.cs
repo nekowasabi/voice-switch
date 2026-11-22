@@ -19,6 +19,7 @@ public sealed class LocalHistoryHandoff(
         var generation = history.Generation;
         var text = await transcribeLocal(audio, cancellation);
         cancellation.ThrowIfCancellationRequested();
+        JournalNotes.Note(audio.SessionId, delivery: audio.Wake.IsAutomatic ? JournalDelivery.History : JournalDelivery.Paste);
         var retained = history.Add(audio.SessionId, text, audio.Wake, generation, audio.TranscriptPolicy);
         if (retained && !audio.Wake.IsAutomatic) pasteManualFallback?.Invoke(text, audio.Target);
         return new HandoffResult(HandoffStatus.RecordedLocally, audio.SessionId, null,

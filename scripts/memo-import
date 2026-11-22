@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""Copy inbox lines that changelogmemo does not have yet into changelogmemo (newest first, under the date line).
+
+memo-inbox-add runs this after each add, so a dictated memo shows up in changelogmemo at once. changelogmemo sits
+beside the inbox. The inbox stays append only, and an entry is known by its "  - id: <id>" line, so the import is
+idempotent: if another writer (an editor, the changelog skill) replaces changelogmemo and drops an entry, the next
+import puts it back. A missing changelogmemo is left alone (never created).
+Usage: memo-import [inbox]   (inbox: argument, else VOICE_SWITCH_MEMO_INBOX, else ~/repos/changelog/voice-switch-inbox.jsonl)
+"""
+import datetime
+import json
+import os
+import re
+import sys
+import tempfile
+from pathlib import Path
+
+
+def entry(row):
+    lines = row["text"].strip().split("\n")
+    body = "".join(f"\n    {line}" for line in lines[1:])
+    return f"* {row['title']} {row['at'][:10]} [note]: [voice-switch]:\n  - 内容: {lines[0]}{body}\n  - id: {row['id']}\n\n"
+
+
+def pending(inbox, memo_text):
+    known = set(re.findall(r"^  - id: (\S+)$", memo_text, re.M))
+    rows = []
+    for line in inbox.read_text(encoding="utf-8").splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue  # a cut line: memo-inbox-add starts the next one fresh
+        if isinstance(row, dict) and all(isinstance(row.get(k), str) for k in ("id", "at", "title", "text")) \
+                and row["id"] not in known:
+            known.add(row["id"])
+            rows.append(row)
+    return sorted(rows, key=lambda r: r["at"], reverse=True)
+
+
+def run(inbox, tries=5):
+    memo = inbox.parent / "changelogmemo"
+    if not inbox.exists() or not memo.exists():
+        return 0
+    for _ in range(tries):
+        before = memo.stat()
+        text = memo.read_text(encoding="utf-8")
+        rows = pending(inbox, text)
+        if not rows:
+            return 0
+        first, _, rest = text.partition("\n")
+        rest = rest[1:] if rest.startswith("\n") else rest
+        today = datetime.date.today().isoformat()
+        first = re.sub(r"^\d{4}-\d{2}-\d{2}", today, first)
+        fd, tmp = tempfile.mkstemp(dir=memo.parent, prefix=".changelogmemo.")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as out:
+                out.write(first + "\n\n" + "".join(entry(r) for r in rows) + rest)
+                out.flush()
+                os.fsync(out.fileno())
+            os.chmod(tmp, before.st_mode & 0o777)
+            now = memo.stat()
+            if (now.st_mtime_ns, now.st_size, now.st_ino) != (before.st_mtime_ns, before.st_size, before.st_ino):
+                continue  # someone wrote in between: read again
+            os.replace(tmp, memo)
+            return 0
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+    print(f"memo-import: changelogmemo kept changing, try again later: {memo}", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    arg = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("VOICE_SWITCH_MEMO_INBOX") or "~/repos/changelog/voice-switch-inbox.jsonl"
+    sys.exit(run(Path(arg).expanduser()))

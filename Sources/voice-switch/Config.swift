@@ -113,6 +113,77 @@ struct DictationConfig: Decodable {
     var journalDir: String? = nil
     /// Optional task file an external updater refreshes; the task read at append time, or null.
     var journalTaskFile: String? = nil
+    var triage: TriageSettings? = nil
+}
+
+struct TriageSettings: Decodable {
+    struct Route: Decodable {
+        let action: WakeAction
+        let heavy: Bool
+        let graceSeconds: Double?
+        /// What the destination is, in words. Shown in the window and sent to Jev for the heavy-route check, which
+        /// cannot judge a destination it only knows as "コマンド".
+        let name: String?
+
+        private enum CodingKeys: String, CodingKey { case heavy, graceSeconds, name }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            let kind = decoder.codingPath.last(where: { $0.intValue == nil })?.stringValue ?? ""
+            action = try WakeAction(from: decoder, routeName: kind)
+            heavy = try c.decodeIfPresent(Bool.self, forKey: .heavy) ?? true
+            graceSeconds = try TriageSettings.grace(c)
+            name = try c.decodeIfPresent(String.self, forKey: .name)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 }
+        }
+    }
+
+    let enabled: Bool?
+    let graceSeconds: Double
+    let routes: [String: [Route]]
+
+    private struct Candidates: Decodable {
+        let routes: [Route]
+
+        init(from decoder: Decoder) throws {
+            if var array = try? decoder.unkeyedContainer() {
+                var routes: [Route] = []
+                while !array.isAtEnd { routes.append(try array.decode(Route.self)) }
+                self.routes = routes
+            } else {
+                routes = [try Route(from: decoder)]
+            }
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey { case enabled, graceSeconds, routes, memo }
+
+    /// Where every utterance with content goes at once, besides any request route: a thought, an unsure intent, an
+    /// unsure kind. A memo is cheap to take back, so it never waits for review (2026-11-22).
+    let memo: Route?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled)
+        memo = try c.decodeIfPresent(Route.self, forKey: .memo)
+        graceSeconds = try Self.grace(c) ?? 300
+        routes = try c.decodeIfPresent([String: Candidates].self, forKey: .routes)?.mapValues(\.routes) ?? [:]
+        let kinds = ["look_up", "self_task", "write_text", "computer_change", "delegate"]
+        guard routes.keys.allSatisfy(kinds.contains) else {
+            throw DecodingError.dataCorruptedError(forKey: .routes, in: c,
+                debugDescription: "dictation.triage.routes contains an unknown kind.")
+        }
+    }
+
+    private static func grace<Key: CodingKey>(_ c: KeyedDecodingContainer<Key>) throws -> Double? {
+        guard let key = Key(stringValue: "graceSeconds"),
+              let value = try c.decodeIfPresent(Double.self, forKey: key) else { return nil }
+        guard value >= 0, value.isFinite else {
+            throw DecodingError.dataCorruptedError(forKey: key, in: c,
+                debugDescription: "graceSeconds must be a non-negative number.")
+        }
+        return value
+    }
 }
 
 
@@ -219,18 +290,25 @@ struct WakeAction: Decodable {
     static let defaultPostFields = ["transcription": "{text}", "recordedAt": "{recordedAtMs}", "client": "ring"]
 
     init(from decoder: Decoder) throws {
+        try self.init(from: decoder, routeName: nil)
+    }
+
+    init(from decoder: Decoder, routeName: String?) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        name = try c.decode(String.self, forKey: .name)
-        wakeWords = try c.decode([String].self, forKey: .wakeWords)
+        name = try routeName ?? c.decode(String.self, forKey: .name)
+        wakeWords = try routeName == nil ? c.decode([String].self, forKey: .wakeWords) : []
         let url = try c.decodeIfPresent(ActionURL.self, forKey: .url)
         let command = try c.decodeIfPresent(String.self, forKey: .command)
         superwhisperMode = try c.decodeIfPresent(String.self, forKey: .superwhisperMode)
-        inputParam = try c.decodeIfPresent(String.self, forKey: .inputParam)
+        let configuredInput = try c.decodeIfPresent(String.self, forKey: .inputParam)
+        let routeTemplate = routeName == nil ? nil : url.flatMap { URLComponents(string: $0.rawValue) }?
+            .queryItems?.first { $0.value == "{text}" }?.name
+        inputParam = configuredInput ?? routeTemplate
         icon = try c.decodeIfPresent(String.self, forKey: .icon)
         shortcut = try c.decodeIfPresent(String.self, forKey: .shortcut)
         tokenEnv = try c.decodeIfPresent(String.self, forKey: .tokenEnv)
         fields = try c.decodeIfPresent([String: String].self, forKey: .fields)
-        guard !wakeWords.isEmpty else {
+        guard routeName != nil || !wakeWords.isEmpty else {
             throw DecodingError.dataCorruptedError(forKey: .wakeWords, in: c,
                 debugDescription: "Wake action needs at least one wake word.")
         }

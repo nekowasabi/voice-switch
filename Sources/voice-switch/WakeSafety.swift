@@ -116,6 +116,9 @@ struct DictationHistoryEntry {
     let text: String
     let origin: WakeOrigin
     let createdAt: Date
+    var delivery: JournalDelivery? = nil
+
+    var eligibleForTriage: Bool { delivery == nil || delivery == .history }
 }
 
 final class DictationHistory {
@@ -128,6 +131,7 @@ final class DictationHistory {
     private let capacity: Int
     private let retention: TimeInterval
     var onChange: (() -> Void)?
+    var onTriageEntry: ((DictationHistoryEntry, JournalNote, String?, [DictationHistoryEntry]) -> Void)?
 
     init(now: @escaping () -> Date = Date.init, capacity: Int = 50, retention: TimeInterval = 1800) {
         precondition(capacity > 0 && retention > 0)
@@ -146,13 +150,20 @@ final class DictationHistory {
         guard expectedGeneration == nil || expectedGeneration == currentGeneration else { lock.unlock(); return false }
         guard !entries.contains(where: { $0.id == id }) else { lock.unlock(); return false }
         let created = now()
-        entries.append(DictationHistoryEntry(id: id, text: text, origin: origin, createdAt: created))
+        let noted = DictationJournal.take(id)
+        let entry = DictationHistoryEntry(id: id, text: text, origin: origin, createdAt: created, delivery: noted.delivery)
+        let triage = entry.eligibleForTriage ? onTriageEntry : nil
+        let priorEntries = triage == nil ? [] : entries
+        entries.append(entry)
         if entries.count > capacity { entries.removeFirst(entries.count - capacity) }
         lock.unlock()
-        let noted = DictationJournal.take(id)
         let sink = journal ?? (self === DictationHistory.shared ? DictationJournal.active : nil)
-        sink?.record(id: id, at: created, text: text, origin: origin, endReason: endReason ?? noted.endReason, recordingSeconds: recordingSeconds ?? noted.recordingSeconds, manual: manual || noted.manual, focus: focus ?? noted.focus)
+        var context = noted
+        context.manual = manual || noted.manual
+        context.focus = focus ?? noted.focus
+        let task = sink?.record(id: id, at: created, text: text, origin: origin, endReason: endReason ?? noted.endReason, recordingSeconds: recordingSeconds ?? noted.recordingSeconds, manual: context.manual, focus: context.focus, delivery: noted.delivery)
         onChange?()
+        triage?(entry, context, task, priorEntries)
         return true
     }
 
