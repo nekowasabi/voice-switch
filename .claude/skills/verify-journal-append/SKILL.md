@@ -40,11 +40,11 @@ Needs `swiftc` (Xcode or Command Line Tools) and `python3` (standard library onl
 
 ## The triage check (T1, T6, C1-C10)
 
-`tests/test_journal_triage.py` drives `journal_triage.main` through its arguments, one exhaustive loop per group of rules, and reads back only what a caller sees: the JSON on stdout, each request to Jev, the files under the journal root and the cache, stderr. The expected destinations come from the truth table in `tests/parity/make_triage_decide.py`, written from the design, not from the script; it also writes `tests/parity/fixtures/triage_decide.json` (811 cases), which Swift and C# are to read in the next stage. `JOURNAL_TRIAGE=<path>` points the test at a copy, which is how the script mutants run.
+`tests/test_journal_triage.py` drives `journal_triage.main` through its arguments, one exhaustive loop per group of rules, and reads back only what a caller sees: the JSON on stdout, each request to Jev, the files under the journal root and the cache, stderr. The expected destinations come from the truth table in `tests/parity/make_triage_decide.py`, written from the design, not from the script; it also writes `tests/parity/fixtures/triage_decide.json` (2 282 cases), which Swift and C# are to read in the next stage. `JOURNAL_TRIAGE=<path>` points the test at a copy, which is how the script mutants run.
 
 | Loop | Combinations |
 |---|---|
-| decide | the fixture: 3 bands of each of the 6 questions with the edge values 0, 0.1, 0.3 / 0.31, 0.5, 0.69 / 0.7, 0.9, 1 (729), thresholds of its own per question at each edge and 0.01 on both sides (36), and each question missing or not a probability, or no answer at all (46) |
+| decide | the fixture: 3 bands of each of the 7 questions (kind_delegate since 2026-11-22) with the edge values 0, 0.1, 0.3 / 0.31, 0.5, 0.69 / 0.7, 0.9, 1 (2 187), thresholds of its own per question at each edge and 0.01 on both sides (42), and each question missing or not a probability, or no answer at all (53) |
 | list | origin (手動, ウェイク, 自動, absent, unknown) × local marker hits (0, 1, 2) × Jev, `--no-jev`, no key × 36 answers and 5 failures (HTTP error, not JSON, a question missing, a string, above 1); delivery (7 values) × origin × key |
 | state | origin × app present or not × task present or not × `--no-context` × an earlier utterance or none; every subset of up to 4 earlier rows from: same device and listed at 0, 1, 59, 60, 61 seconds, a pasted row and another device's row at 1 and 60 seconds; one across midnight |
 | cache | every sequence of 4 steps from: append a row, delete the oldest row, run, run with the network down, change the question wording, run `--no-jev` |
@@ -63,7 +63,7 @@ Needs `swiftc` (Xcode or Command Line Tools) and `python3` (standard library onl
 | C6 | stderr carries no text, app or task |
 | C7 | previous is from the same device, listed rows only, more than 0 and at most 60 seconds before, the 2 nearest at most; tests/parity/fixtures/triage_state.json holds shared cases that verify-triage-execution item 6 feeds to the Swift app |
 | C8 | the split into tuning and holdout depends on the id only; tune proposes only from 30 labels and only when the holdout gets lighter without more filler misses; `--apply` writes the proposal to thresholds.json, which list then uses |
-| C9 | eval and tune send no request and score the answers kept in the labels, at the current thresholds, with the design's weights (content to filler 10, request to thought 3, unjudged 0.5, other misses 1) |
+| C9 | eval and tune send no request and score the answers kept in the labels, at the current thresholds, with the design's weights (content to filler 10, request to thought 3, unjudged 0.5, other misses 1); a label kept before kind_delegate (six answers) is scored with kind_delegate read as no, and one with a broken answer is not scored |
 | C10 | label appends exactly one line to `<root>/.triage/labels/<this device>-cli.jsonl` and changes no other file; a bad destination or an unknown id writes nothing; review writes nothing outside the cache and puts unjudged rows first, then answers nearest a threshold |
 
 T2 (one request per listed row whatever its origin), T3 (the text alone) and T4 (the 0.9 floor and the markers) of the first version are replaced: T2 by C4, T3 by C3 and C7 (the user decided on 2026-11-21 to send the context), T4 by C1 and C2. T5 is now C6.

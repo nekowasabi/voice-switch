@@ -67,6 +67,8 @@ silent-fallback|J4|Sources/voice-switch/DictationJournal.swift|log("dictation jo
 delivery-dropped|J3|Sources/voice-switch/DictationJournal.swift|"\"delivery\":\(delivery.map { jsonString($0.rawValue) } ?? "null")",|"\"delivery\":null",
 decide-hole|C1|scripts/journal_triage.py|return actions or ["unjudged:kind"]|return actions
 tune-tie-takes-smallest|C8|scripts/journal_triage.py|return weight, sum(abs(candidate[q][b] - thresholds[q][b]) for q in QUESTION_IDS for b in ("no", "yes"))|return weight, 0
+old-labels-unscored|C9|scripts/journal_triage.py|actual = decide(label["answers"], thresholds, legacy_label=True)|actual = decide(label["answers"], thresholds)
+python-no-delegate|C1|scripts/journal_triage.py|KINDS = (*LOCAL_MARKERS, "delegate")|KINDS = tuple(LOCAL_MARKERS)
 unsure-edge-at-no|C1|scripts/journal_triage.py|if intent > intent_band["no"]:|if intent >= intent_band["no"]:
 error-becomes-filler|C2|scripts/journal_triage.py|return ["unjudged:error"]|return ["filler"]
 unsure-filler-is-filler|C2|scripts/journal_triage.py|if filler >= filler_band["yes"]:|if filler >= filler_band["yes"] or filler > filler_band["no"]:
@@ -85,7 +87,7 @@ three-previous|C7|scripts/journal_triage.py|max(0, end - 2)|max(0, end - 3)
 split-by-order|C8|scripts/journal_triage.py|bucket = int(hashlib.sha256(label["id"].encode("utf-8")).hexdigest(), 16) % 10|bucket = (len(training) + len(holdout)) % 10
 no-filler-guard|C8|scripts/journal_triage.py| and adjusted["filler_misses"] <= baseline["filler_misses"]|
 tune-below-30|C8|scripts/journal_triage.py|if len(labels) < 30 or|if len(labels) < 3 or
-eval-ignores-thresholds|C9|scripts/journal_triage.py|actual = decide(label["answers"], thresholds)|actual = decide(label["answers"], {})
+eval-ignores-thresholds|C9|scripts/journal_triage.py|actual = decide(label["answers"], thresholds, legacy_label=True)|actual = decide(label["answers"], {}, legacy_label=True)
 label-to-row-device|C10|scripts/journal_triage.py|path = directory / f"{local_device}-cli.jsonl"|path = directory / f"{device}-cli.jsonl"
 jev-despite-no-jev|T1|scripts/journal_triage.py|key = (os.environ.get("TYPESAFE_API_KEY") or os.environ.get("JEV_API_KEY")) if use_jev else None|key = (os.environ.get("TYPESAFE_API_KEY") or os.environ.get("JEV_API_KEY"))
 list-pasted|T6|scripts/journal_triage.py|row.get("delivery") in (None, "history")|row.get("delivery") in (None, "history", "paste")
