@@ -113,6 +113,48 @@ struct DictationConfig: Decodable {
     var journalDir: String? = nil
     /// Optional task file an external updater refreshes; the task read at append time, or null.
     var journalTaskFile: String? = nil
+    var triage: TriageSettings? = nil
+}
+
+struct TriageSettings: Decodable {
+    struct Route: Decodable {
+        let action: WakeAction
+        let heavy: Bool
+        let graceSeconds: Double?
+
+        private enum CodingKeys: String, CodingKey { case heavy, graceSeconds }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            let kind = decoder.codingPath.last?.stringValue ?? ""
+            action = try WakeAction(from: decoder, routeName: kind)
+            heavy = try c.decodeIfPresent(Bool.self, forKey: .heavy) ?? true
+            graceSeconds = try TriageSettings.grace(c)
+        }
+    }
+
+    let enabled: Bool?
+    let graceSeconds: Double
+    let routes: [String: Route]
+
+    private enum CodingKeys: String, CodingKey { case enabled, graceSeconds, routes }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled)
+        graceSeconds = try Self.grace(c) ?? 300
+        routes = try c.decodeIfPresent([String: Route].self, forKey: .routes) ?? [:]
+    }
+
+    private static func grace<Key: CodingKey>(_ c: KeyedDecodingContainer<Key>) throws -> Double? {
+        guard let key = Key(stringValue: "graceSeconds"),
+              let value = try c.decodeIfPresent(Double.self, forKey: key) else { return nil }
+        guard value >= 0, value.isFinite else {
+            throw DecodingError.dataCorruptedError(forKey: key, in: c,
+                debugDescription: "graceSeconds must be a non-negative number.")
+        }
+        return value
+    }
 }
 
 
@@ -219,18 +261,25 @@ struct WakeAction: Decodable {
     static let defaultPostFields = ["transcription": "{text}", "recordedAt": "{recordedAtMs}", "client": "ring"]
 
     init(from decoder: Decoder) throws {
+        try self.init(from: decoder, routeName: nil)
+    }
+
+    init(from decoder: Decoder, routeName: String?) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        name = try c.decode(String.self, forKey: .name)
-        wakeWords = try c.decode([String].self, forKey: .wakeWords)
+        name = try routeName ?? c.decode(String.self, forKey: .name)
+        wakeWords = try routeName == nil ? c.decode([String].self, forKey: .wakeWords) : []
         let url = try c.decodeIfPresent(ActionURL.self, forKey: .url)
         let command = try c.decodeIfPresent(String.self, forKey: .command)
         superwhisperMode = try c.decodeIfPresent(String.self, forKey: .superwhisperMode)
-        inputParam = try c.decodeIfPresent(String.self, forKey: .inputParam)
+        let configuredInput = try c.decodeIfPresent(String.self, forKey: .inputParam)
+        let routeTemplate = routeName == nil ? nil : url.flatMap { URLComponents(string: $0.rawValue) }?
+            .queryItems?.first { $0.value == "{text}" }?.name
+        inputParam = configuredInput ?? routeTemplate
         icon = try c.decodeIfPresent(String.self, forKey: .icon)
         shortcut = try c.decodeIfPresent(String.self, forKey: .shortcut)
         tokenEnv = try c.decodeIfPresent(String.self, forKey: .tokenEnv)
         fields = try c.decodeIfPresent([String: String].self, forKey: .fields)
-        guard !wakeWords.isEmpty else {
+        guard routeName != nil || !wakeWords.isEmpty else {
             throw DecodingError.dataCorruptedError(forKey: .wakeWords, in: c,
                 debugDescription: "Wake action needs at least one wake word.")
         }

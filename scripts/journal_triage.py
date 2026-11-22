@@ -23,7 +23,8 @@ QUESTIONS_PATH = Path(__file__).resolve().parents[1] / "Resources" / "triage_que
 
 
 def load_questions():
-    return json.loads(QUESTIONS_PATH.read_text(encoding="utf-8"))
+    questions = json.loads(QUESTIONS_PATH.read_text(encoding="utf-8"))
+    return {qid: questions[qid] for qid in QUESTION_IDS}
 
 
 LOCAL_MARKERS = {

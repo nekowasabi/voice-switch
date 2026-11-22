@@ -46,5 +46,13 @@
       "true": "Including giving a tool or bot a new ability, such as 「このスクリプトで祝日も数えられるようにして」「このアプリで天気を調べられるようにして」.",
       "false": "Nothing on a computer needs to change."
     }
+  },
+  "verify_route": {
+    "type": "noul",
+    "instructions": "Would sending utterance.text as-is to the destination described by route fulfill what the speaker wants?",
+    "criteria": {
+      "true": "The destination and the literal text to be sent both fit the speaker's request.",
+      "false": "The destination is unsuitable, the text does not stand on its own, or the speaker's intent is unclear."
+    }
   }
 }

@@ -230,35 +230,46 @@ enum JevOutcome {
     case pick(JevPick)
 }
 
-/// Key from TYPESAFE_API_KEY, else JEV_API_KEY. No key means no request. The key and the dictation are never logged.
-func jevPick(_ dictation: String, _ panes: [PaneLabel], agents: [String: [String]]) async -> JevOutcome {
+enum JevReply {
+    case off, error, data(Data)
+}
+
+func requestJev(_ body: Data?, logPrefix: String = "jev") async -> JevReply {
+    if CommandLine.arguments.dropFirst().first == "--simulate", CommandLine.arguments.contains("--triage-fixture") { return .off }
     let env = ProcessInfo.processInfo.environment
     guard let key = ["TYPESAFE_API_KEY", "JEV_API_KEY"].compactMap({ env[$0] }).first(where: { !$0.isEmpty }) else { return .off }
-    guard let body = jevRequestBody(dictation, panes, agents: agents) else { return .error }
+    guard let body else { return .error }
     var request = URLRequest(url: URL(string: "https://api.typesafe.ai/v1/systemone")!)
     request.httpMethod = "POST"
     request.timeoutInterval = 5
     request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.httpBody = body
-    let reply: (Data, URLResponse)
     do {
-        reply = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 else {
+            log("\(logPrefix): http \(status)")
+            return .error
+        }
+        return .data(data)
     } catch {
-        log("jev: request failed or timed out")
+        log("\(logPrefix): request failed or timed out")
         return .error
     }
-    let (data, response) = reply
-    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-    guard status == 200 else {
-        log("jev: http \(status)")
-        return .error
+}
+
+func jevPick(_ dictation: String, _ panes: [PaneLabel], agents: [String: [String]]) async -> JevOutcome {
+    switch await requestJev(jevRequestBody(dictation, panes, agents: agents)) {
+    case .off: return .off
+    case .error: return .error
+    case .data(let data):
+        guard let pick = parseJevPick(data, catalog: panes.map { $0.id }) else {
+            log("jev: answer was not a catalog choice")
+            return .error
+        }
+        return .pick(pick)
     }
-    guard let pick = parseJevPick(data, catalog: panes.map { $0.id }) else {
-        log("jev: answer was not a catalog choice")
-        return .error
-    }
-    return .pick(pick)
 }
 
 // MARK: send body
@@ -468,36 +479,18 @@ enum JevBodyOutcome {
     case pick(JevBodyPick)
 }
 
-/// Key from TYPESAFE_API_KEY, else JEV_API_KEY. Only called when a pane is chosen and quotes missed.
 func jevBodyPick(_ dictation: String, candidates: [String]) async -> JevBodyOutcome {
-    let env = ProcessInfo.processInfo.environment
-    guard let key = ["TYPESAFE_API_KEY", "JEV_API_KEY"].compactMap({ env[$0] }).first(where: { !$0.isEmpty }) else { return .off }
-    guard let body = jevBodyRequestBody(dictation, candidates) else { return .error }
-    var request = URLRequest(url: URL(string: "https://api.typesafe.ai/v1/systemone")!)
-    request.httpMethod = "POST"
-    request.timeoutInterval = 5
-    request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.httpBody = body
-    let reply: (Data, URLResponse)
-    do {
-        reply = try await URLSession.shared.data(for: request)
-    } catch {
-        log("jev body: request failed or timed out")
-        return .error
+    switch await requestJev(jevBodyRequestBody(dictation, candidates), logPrefix: "jev body") {
+    case .off: return .off
+    case .error: return .error
+    case .data(let data):
+        let catalog = candidates.indices.map { "c\($0)" }
+        guard let pick = parseJevBodyPick(data, catalog: catalog) else {
+            log("jev body: answer was not a catalog choice")
+            return .error
+        }
+        return .pick(pick)
     }
-    let (data, response) = reply
-    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-    guard status == 200 else {
-        log("jev body: http \(status)")
-        return .error
-    }
-    let catalog = candidates.indices.map { "c\($0)" }
-    guard let pick = parseJevBodyPick(data, catalog: catalog) else {
-        log("jev body: answer was not a catalog choice")
-        return .error
-    }
-    return .pick(pick)
 }
 
 /// After decideRoute: a chosen pane with no body is skipped (SuppressFallback / SkippedNoBody).
