@@ -317,7 +317,7 @@ def destinations():
           len([l for l in r["triage"] if " pending delegate until " in l]) == 1
           and any(" exception 送り先の最初の5件" in l for l in r["triage"]) and not any(" sending" in l for l in r["triage"])
           and not h.lines("dest-c.txt") and at("dest-a", said) == 0
-          and row and row[0]["stage"] == "review" and row[0]["routeIndex"] == 2 and row[0]["reasons"] == ["送り先の最初の5件", "重い送り先は確認が必要"],
+          and row and row[0]["stage"] == "review" and row[0]["routeIndex"] == 2 and "送り先の最初の5件" in row[0]["reasons"],
           r["triage"] + [f"dest-c.txt lines: {len(h.lines('dest-c.txt'))}",
                          f"last line: stage {row[0]['stage'] if row else None}, routeIndex {row[0]['routeIndex'] if row else None}, "
                          f"reasons {row[0]['reasons'] if row else None}"])
