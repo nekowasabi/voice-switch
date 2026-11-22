@@ -977,7 +977,8 @@ func handoff(_ samples: [Float], cfg: DictationConfig, target: NSRunningApplicat
     return .delivered
 }
 
-func executeWakeAction(_ action: WakeAction, text: String, app: String?, wait: Bool = false, quiet: Bool = false) async -> Bool {
+func executeWakeAction(_ action: WakeAction, text: String, app: String?, wait: Bool = false, quiet: Bool = false,
+                       onFailure: ((String) -> Void)? = nil) async -> Bool {
     switch action.delivery {
     case .post(let url):
         do {
@@ -986,6 +987,8 @@ func executeWakeAction(_ action: WakeAction, text: String, app: String?, wait: B
             return true
         } catch {
             if !quiet { log("dictation action \(action.name) failed: \(error.localizedDescription)") }
+            let failure = error as? PostActionError
+            onFailure?(failure?.reason ?? "POST 通信失敗")
             return false
         }
     case .open(let url):
@@ -994,18 +997,41 @@ func executeWakeAction(_ action: WakeAction, text: String, app: String?, wait: B
         }
         let process = Platform.urlProcess(url)
         process.arguments = action.openArguments(input: text)
-        return Platform.runURLProcess(process, wait: wait, quiet: quiet)
+        return Platform.runURLProcess(process, wait: wait, quiet: quiet, onFailure: onFailure)
     case .command(let command):
-        let sent = Platform.runCommand(command, stdin: text, environment: ["VOICE_SWITCH_APP": app ?? ""], wait: wait, quiet: quiet)
+        let sent = Platform.runCommand(command, stdin: text, environment: ["VOICE_SWITCH_APP": app ?? ""],
+                                       wait: wait, quiet: quiet, onFailure: onFailure)
         if !quiet { log("dictation delivered: command \(action.name)") }
         return sent
+    }
+}
+
+private enum PostActionError: LocalizedError {
+    case missingToken(String)
+    case invalidResponse
+    case http(Int, String)
+
+    var reason: String {
+        switch self {
+        case .missingToken: return "POST 認証設定なし"
+        case .invalidResponse: return "POST の HTTP 応答なし"
+        case .http(let status, _): return "HTTP \(status)"
+        }
+    }
+
+    var errorDescription: String? {
+        switch self {
+        case .missingToken(let env): return "environment variable \(env) is not set"
+        case .http(_, let reply): return "\(reason) \(reply)"
+        case .invalidResponse: return reason
+        }
     }
 }
 
 /// POSTs `text` to the action's https url as the multipart fields from `postFields` with the bearer token from `tokenEnv`; the token is never in the config.
 func postAction(_ action: WakeAction, to url: ActionURL, text: String) async throws {
     guard let env = action.tokenEnv, let token = ProcessInfo.processInfo.environment[env] else {
-        throw NSError(domain: "voice-switch", code: 1, userInfo: [NSLocalizedDescriptionKey: "environment variable \(action.tokenEnv ?? "") is not set"])
+        throw PostActionError.missingToken(action.tokenEnv ?? "")
     }
     let boundary = "voice-switch-\(UUID().uuidString)"
     var body = Data()
@@ -1018,10 +1044,11 @@ func postAction(_ action: WakeAction, to url: ActionURL, text: String) async thr
     request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
     request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
     let (data, response) = try await URLSession.shared.upload(for: request, from: body)
-    if let status = (response as? HTTPURLResponse)?.statusCode, !(200 ..< 300).contains(status) {
+    guard let status = (response as? HTTPURLResponse)?.statusCode else { throw PostActionError.invalidResponse }
+    if !(200 ..< 300).contains(status) {
         // The status alone cannot tell a bad field from a receiver fault; the head of the reply can.
         let reply = String(decoding: data.prefix(300), as: UTF8.self)
-        throw NSError(domain: "voice-switch", code: status, userInfo: [NSLocalizedDescriptionKey: "HTTP \(status) \(reply)"])
+        throw PostActionError.http(status, reply)
     }
 }
 

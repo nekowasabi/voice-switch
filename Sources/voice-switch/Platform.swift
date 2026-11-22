@@ -32,7 +32,7 @@ enum Platform {
     /// `environment` is added over the app's own environment.
     @discardableResult
     static func runCommand(_ command: String, stdin: String? = nil, environment: [String: String] = [:],
-                           wait: Bool = false, quiet: Bool = false) -> Bool {
+                           wait: Bool = false, quiet: Bool = false, onFailure: ((String) -> Void)? = nil) -> Bool {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/sh")
         p.arguments = ["-c", command]
@@ -50,16 +50,28 @@ enum Platform {
         }
         do { try p.run() } catch {
             if !quiet { log("command failed to start: \(error)") }
+            onFailure?("command 起動失敗")
             return false
         }
+        var inputFailed = false
         if let pipe, let stdin {
             defer { try? pipe.fileHandleForWriting.close() }
             do { try pipe.fileHandleForWriting.write(contentsOf: Data(stdin.utf8)) } catch {
                 if !quiet { log("command stdin write failed: \(error): \(command)") }
+                inputFailed = true
+            }
+        }
+        if wait {
+            p.waitUntilExit()
+            if p.terminationStatus != 0 {
+                onFailure?("command exit \(p.terminationStatus)")
                 return false
             }
         }
-        if wait { p.waitUntilExit(); return p.terminationStatus == 0 }
+        if inputFailed {
+            onFailure?("command 標準入力への書き込み失敗")
+            return false
+        }
         return true
     }
 
@@ -82,7 +94,8 @@ enum Platform {
     }
 
     @discardableResult
-    static func runURLProcess(_ process: Process, wait: Bool, quiet: Bool = false) -> Bool {
+    static func runURLProcess(_ process: Process, wait: Bool, quiet: Bool = false,
+                              onFailure: ((String) -> Void)? = nil) -> Bool {
         func report(_ process: Process) {
             if !quiet, process.terminationStatus != 0 {
                 log("URL action failed (open exit \(process.terminationStatus)); check the URL setting and install/register its target app. See open's error above.")
@@ -97,11 +110,13 @@ enum Platform {
         do { try process.run() }
         catch {
             if !quiet { log("URL action could not start /usr/bin/open: \(error)") }
+            onFailure?("open 起動失敗")
             return false
         }
         if wait {
             process.waitUntilExit()
             report(process)
+            if process.terminationStatus != 0 { onFailure?("open exit \(process.terminationStatus)") }
             return process.terminationStatus == 0
         }
         return true

@@ -1,7 +1,6 @@
 ---- MODULE TriageExec ----
 \* Journal triage from classification to sending, as designed in docs/journal-triage-execution.md (plan A, 2026-11-22):
 \* a sure request waits a grace period and then goes out on its own; an exception waits in 確認が要るもの for the user.
-\* No code exists yet: every action names the design sentence it models.
 EXTENDS Naturals
 
 CONSTANTS U,               \* utterances
@@ -36,6 +35,8 @@ Shown(v, ok, flagged) == IF v = "filler" THEN "hidden"
                          ELSE IF v = "thought" THEN "listed"
                          ELSE IF v \notin Routes THEN (IF MenuShowsUnsure THEN "review" ELSE "listed")
                          ELSE IF Exception(v, ok, flagged) THEN "review" ELSE "pending"
+
+NeedsReview(u) == stage[u] \in {"review", "unknown", "failed"}
 
 Set(f, u, x) == [f EXCEPT ![u] = x]
 
@@ -85,8 +86,8 @@ Fix(u) == /\ alive /\ stage[u] = "review"
           /\ userOK' = Set(userOK, u, TRUE)
           /\ UNCHANGED <<intent, verified, persisted, runs, runKind, graced, retries, dismissed, dRuns, alive, crashes>>
 
-\* [取消] on まもなく送る, [送らない] on 確認が要るもの, or dismissing an "unknown" row.
-Dismiss(u) == /\ alive /\ stage[u] \in {"pending", "review", "unknown"}
+\* [取消] on まもなく送る or [送らない] on 確認が要るもの.
+Dismiss(u) == /\ alive /\ stage[u] \in {"pending", "review", "unknown", "failed"}
               /\ stage' = Set(stage, u, "dismissed")
               /\ persisted' = Set(persisted, u, "dismissed")
               /\ dismissed' = Set(dismissed, u, TRUE)
@@ -106,13 +107,20 @@ Run(u) == /\ alive /\ stage[u] = "executing"
           /\ stage' = Set(stage, u, "ran")
           /\ UNCHANGED <<intent, verdict, verified, persisted, graced, userOK, retries, dismissed, dRuns, alive, crashes>>
 
+Fail(u) == /\ alive /\ stage[u] = "executing"
+           /\ runs' = Set(runs, u, runs[u] + 1)
+           /\ runKind' = Set(runKind, u, verdict[u])
+           /\ stage' = Set(stage, u, "failed")
+           /\ persisted' = Set(persisted, u, "failed")
+           /\ UNCHANGED <<intent, verdict, verified, graced, userOK, retries, dismissed, dRuns, alive, crashes>>
+
 Record(u) == /\ alive /\ stage[u] = "ran"
              /\ stage' = Set(stage, u, "done")
              /\ persisted' = Set(persisted, u, "done")
              /\ UNCHANGED <<intent, verdict, verified, runs, runKind, graced, userOK, retries, dismissed, dRuns, alive, crashes>>
 
-\* 流れ 7: after a restart a "送信中" row shows as "送ったか不明"; the user retries or confirms.
-Retry(u) == /\ alive /\ stage[u] = "unknown" /\ verdict[u] = intent[u]
+\* 流れ 6-7: failed and unknown sends can run again only by explicit choice.
+Retry(u) == /\ alive /\ stage[u] \in {"unknown", "failed"} /\ verdict[u] = intent[u]
             /\ retries' = Set(retries, u, retries[u] + 1)
             /\ stage' = Set(stage, u, "approved")
             /\ UNCHANGED <<intent, verdict, verified, persisted, runs, runKind, graced, userOK, dismissed, dRuns, alive, crashes>>
@@ -136,13 +144,13 @@ Done == /\ alive /\ \A u \in U: stage[u] \in {"done", "dismissed", "listed", "hi
         /\ UNCHANGED vars
 
 Next == \/ \E u \in U: (\E v \in Verdicts, ok \in BOOLEAN, flagged \in BOOLEAN: Classify(u, v, ok, flagged)) \/ GraceExpire(u) \/ SendNow(u) \/ Fix(u) \/ Dismiss(u) \/ Start(u)
-                       \/ Run(u) \/ Record(u) \/ Retry(u) \/ ConfirmDone(u)
+                       \/ Run(u) \/ Fail(u) \/ Record(u) \/ Retry(u) \/ ConfirmDone(u)
         \/ Crash \/ Restart \/ Done
 
 Spec == Init /\ [][Next]_vars
 
-\* Keeps a broken variant that runs a route without end from exploring forever. Correct designs stay far below it.
-Bounded == \A u \in U: runs[u] <= 3
+\* Limit repeated retry exploration, including for variants that run a route without end.
+Bounded == \A u \in U: runs[u] <= 3 /\ retries[u] <= 1
 
 \* Nothing goes out unless the user said so or it sat in まもなく送る for the whole grace period.
 NoSendWithoutChance == \A u \in U: runs[u] > 0 => (userOK[u] \/ graced[u])
@@ -154,6 +162,7 @@ StrictNoWrongExecution == \A u \in U: runs[u] > 0 => runKind[u] = intent[u]
 HeavyNeedsVerify == \A u \in U: (runs[u] > 0 /\ ~userOK[u] /\ runKind[u] \in Heavy) => verified[u]
 AtMostOnce == \A u \in U: runs[u] <= 1 + retries[u]
 DismissedNeverRuns == \A u \in U: dismissed[u] => runs[u] = dRuns[u]
-\* Worst case 1 without a trace: an unsure or unrouted request ends where a menu user cannot see it.
-NoSilentDrop == \A u \in U: stage[u] = "listed" => verdict[u] = "thought"
+NoSilentDrop == \A u \in U:
+    /\ stage[u] = "listed" => verdict[u] = "thought"
+    /\ persisted[u] = "failed" /\ stage[u] # "approved" => NeedsReview(u)
 ====

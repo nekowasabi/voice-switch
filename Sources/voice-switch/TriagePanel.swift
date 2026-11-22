@@ -73,19 +73,24 @@ final class TriagePanel {
         section("確認が要るもの", count: review.count, in: stack)
         for proposal in review {
             stack.addArrangedSubview(label(proposal.text))
-            if service.stage(of: proposal.id) == .unknown {
-                stack.addArrangedSubview(label("送ったか不明", secondary: true))
-                stack.addArrangedSubview(NSStackView(views: [
-                    button("送ったことにする") { [weak service] in service?.confirmDone(proposal.id) },
+            let stage = service.stage(of: proposal.id)
+            if stage == .unknown || stage == .failed {
+                let reason = proposal.failureReason.map { "送信に失敗（\($0)）" } ?? "送信に失敗"
+                stack.addArrangedSubview(label(stage == .unknown ? "送ったか不明" : reason, secondary: true))
+                var buttons = [
                     button("やり直す", enabled: service.canRetry(proposal)) { [weak service] in service?.retry(proposal.id) },
                     button("送らない") { [weak service] in service?.dismiss(proposal.id) },
-                ]))
+                ]
+                if stage == .unknown {
+                    buttons.insert(button("送ったことにする") { [weak service] in service?.confirmDone(proposal.id) }, at: 0)
+                }
+                stack.addArrangedSubview(NSStackView(views: buttons))
                 continue
             }
-            let reasons = service.stage(of: proposal.id) == .pending ? ["送り先の設定が変わりました"] : proposal.reasons
+            let reasons = stage == .pending ? ["送り先の設定が変わりました"] : proposal.reasons
             stack.addArrangedSubview(label((reasons + [service.routeName(proposal.kind)].compactMap { $0 }).joined(separator: " · "),
                                            secondary: true))
-            let kinds = service.stage(of: proposal.id) == .review ? TriageKind.allCases : []
+            let kinds = stage == .review ? TriageKind.allCases : []
             let buttons = kinds.map { kind in
                 button(kind.title, enabled: service.routeName(kind) != nil) { [weak service] in
                     service?.send(proposal.id, as: kind)
@@ -111,17 +116,16 @@ final class TriagePanel {
         }
 
         let today = service.today
-        let sentCount = today.filter { $0.outcome != .failed }.count
-        let sentToggle = button("送った（今日 \(sentCount)）\(showsSent ? " ▾" : " ▸")") { [weak self] in
+        let sentToggle = button("送った（今日 \(today.count)）\(showsSent ? " ▾" : " ▸")") { [weak self] in
             guard let self else { return }
             self.showsSent.toggle()
             self.refresh()
         }
         sentToggle.isEnabled = true
         stack.addArrangedSubview(sentToggle)
-        for proposal in today where showsSent || proposal.outcome == .failed {
+        for proposal in today where showsSent {
             stack.addArrangedSubview(label(proposal.text))
-            let result = proposal.outcome == .failed ? "送信に失敗" : proposal.kind?.title ?? "送信済み"
+            let result = proposal.kind?.title ?? "送信済み"
             let correction = NSPopUpButton()
             correction.isEnabled = !service.storeError
             correction.addItem(withTitle: "種類を直す")

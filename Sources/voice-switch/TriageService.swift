@@ -58,7 +58,7 @@ final class TriageService {
     var review: [TriageProposal] {
         sorted.filter {
             let stage = state.rows[$0.id]?.stage
-            return stage == .review || stage == .unknown || (stage == .pending && !canAutoSend($0))
+            return [.review, .unknown, .failed].contains(stage) || (stage == .pending && !canAutoSend($0))
         }
     }
 
@@ -305,6 +305,10 @@ final class TriageService {
             guard case .persist(let id, let stage) = effect, var proposal = updated ?? proposals[id] else { continue }
             proposal.stage = stage
             proposal.updatedAt = Date()
+            if stage == .executing {
+                proposal.outcome = nil
+                proposal.failureReason = nil
+            }
             do { try files.append(proposal) }
             catch {
                 storeError = true
@@ -320,6 +324,10 @@ final class TriageService {
                 }
             case .review:
                 log("triage: \(id) exception \(proposal.reasons.joined(separator: ", "))")
+            case .failed:
+                if let kind = proposal.kind, let reason = proposal.failureReason {
+                    log("triage: \(id) failed \(kind.rawValue) \(reason)")
+                }
             default: break
             }
         }
@@ -345,11 +353,11 @@ final class TriageService {
         guard let proposal = proposals[id], let route = routes[kind] else { return }
         log("triage: \(id) sending \(kind.rawValue)")
         Task {
-            let sent = await executeWakeAction(route.action, text: proposal.text, app: proposal.focusBundleID,
-                                               wait: true, quiet: true)
             var finished = proposal
+            let sent = await executeWakeAction(route.action, text: proposal.text, app: proposal.focusBundleID,
+                                               wait: true, quiet: true) { finished.failureReason = $0 }
             finished.outcome = sent ? .sent : .failed
-            _ = apply(.run(id), updated: finished)
+            _ = apply(sent ? .run(id) : .fail(id), updated: finished)
         }
     }
 

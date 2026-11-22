@@ -18,6 +18,7 @@ struct TriageProposal: Codable, Equatable {
     var questionHash: String?
     var verified: Bool?
     var outcome: Outcome?
+    var failureReason: String?
     var focusBundleID: String?
 
     enum Outcome: String, Codable { case sent, failed }
@@ -80,7 +81,10 @@ struct TriageFiles {
 
     func loadProposals() throws -> [String: TriageProposal] {
         var byID: [String: TriageProposal] = [:]
-        for row in try read(TriageProposal.self, at: proposals) { byID[row.id] = row }
+        for var row in try read(TriageProposal.self, at: proposals) {
+            if row.stage == .done && row.outcome == .failed { row.stage = .failed }
+            byID[row.id] = row
+        }
         return byID
     }
 

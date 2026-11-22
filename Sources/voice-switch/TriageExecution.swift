@@ -9,7 +9,7 @@ enum TriageKind: String, CaseIterable, Codable {
 
 enum TriageExecution {
     enum Stage: String, Codable, CaseIterable {
-        case said, pending, review, approved, executing, ran, done, dismissed, listed, hidden, unknown
+        case said, pending, review, approved, executing, ran, done, dismissed, listed, hidden, unknown, failed
     }
 
     enum Verdict: Equatable {
@@ -56,6 +56,7 @@ enum TriageExecution {
         case dismiss(String)
         case start(String)
         case run(String)
+        case fail(String)
         case record(String)
         case retry(String, TriageKind?)
         case confirmDone(String)
@@ -137,7 +138,7 @@ enum TriageExecution {
         let id: String
         switch event {
         case .classify(let value, _, _, _), .graceExpire(let value), .sendNow(let value, _),
-             .fix(let value, _), .dismiss(let value), .start(let value), .run(let value),
+             .fix(let value, _), .dismiss(let value), .start(let value), .run(let value), .fail(let value),
              .record(let value), .retry(let value, _), .confirmDone(let value):
             id = value
         case .crash, .restart, .done:
@@ -164,7 +165,7 @@ enum TriageExecution {
             next.row.verdict = .kind(kind)
             next.row.userOK = true
             next.approve(id)
-        case (.pending, .dismiss), (.review, .dismiss), (.unknown, .dismiss):
+        case (.pending, .dismiss), (.review, .dismiss), (.unknown, .dismiss), (.failed, .dismiss):
             next.row.dismissed = true
             next.row.dRuns = row.runs
             next.persist(id, .dismissed)
@@ -177,9 +178,13 @@ enum TriageExecution {
             next.row.runs += 1
             next.row.runKind = row.kind
             next.effects.append(.record(id))
+        case (.executing, .fail):
+            next.row.runs += 1
+            next.row.runKind = row.kind
+            next.persist(id, .failed)
         case (.ran, .record), (.unknown, .confirmDone):
             next.persist(id, .done)
-        case (.unknown, .retry(_, let kind)):
+        case (.unknown, .retry(_, let kind)), (.failed, .retry(_, let kind)):
             guard let kind, row.kind == kind else { return nil }
             next.row.retries += 1
             next.approve(id)
