@@ -51,13 +51,13 @@ enum TriageExecution {
     enum Event {
         case classify(String, Verdict, verified: Bool, flagged: Bool)
         case graceExpire(String)
-        case sendNow(String, TriageKind)
-        case fix(String, TriageKind)
+        case sendNow(String, TriageKind?)
+        case fix(String, TriageKind?)
         case dismiss(String)
         case start(String)
         case run(String)
         case record(String)
-        case retry(String, TriageKind)
+        case retry(String, TriageKind?)
         case confirmDone(String)
         case crash, restart, done
     }
@@ -156,11 +156,11 @@ enum TriageExecution {
             next.row.graced = true
             next.approve(id)
         case (.pending, .sendNow(_, let kind)), (.review, .sendNow(_, let kind)):
-            guard row.kind == kind, rules.routes.contains(kind) else { return nil }
+            guard let kind, row.kind == kind, rules.routes.contains(kind) else { return nil }
             next.row.userOK = true
             next.approve(id)
         case (.review, .fix(_, let kind)):
-            guard row.kind != kind, rules.routes.contains(kind) else { return nil }
+            guard let kind, row.kind != kind, rules.routes.contains(kind) else { return nil }
             next.row.verdict = .kind(kind)
             next.row.userOK = true
             next.approve(id)
@@ -180,7 +180,7 @@ enum TriageExecution {
         case (.ran, .record), (.unknown, .confirmDone):
             next.persist(id, .done)
         case (.unknown, .retry(_, let kind)):
-            guard row.kind == kind else { return nil }
+            guard let kind, row.kind == kind else { return nil }
             next.row.retries += 1
             next.approve(id)
         default:
