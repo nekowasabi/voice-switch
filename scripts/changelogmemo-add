@@ -4,13 +4,18 @@ import ctypes
 import datetime
 import errno
 import fcntl
+import math
 import os
 from pathlib import Path
 import re
+import select
 import stat
 import sys
 import tempfile
 import time
+
+
+MIN_OBSERVATION = 0.025
 
 
 def exchange(pending, path):
@@ -63,9 +68,57 @@ def merge(current, retained, base=b""):
     return b"".join(missing) + current
 
 
-def after_publish(path, published, raced):
+def check_deadline(deadline):
+    if time.monotonic() >= deadline:
+        raise TimeoutError
+
+
+def read_input(deadline):
+    fd = sys.stdin.fileno()
+    chunks = []
+    while True:
+        check_deadline(deadline)
+        if not select.select([fd], [], [], min(1, max(0, deadline - time.monotonic())))[0]:
+            continue
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+
+
+def file_stamp(path):
+    try:
+        info = path.stat()
+        return info.st_ino, info.st_mtime_ns, info.st_size
+    except FileNotFoundError:
+        return None
+
+
+def wait_for_quiet(path, deadline):
+    # Give a writer that is actively replacing the file priority over our exchange.
+    stamp = file_stamp(path)
+    since = time.monotonic()
+    last_replacement = None
+    quiet_for = 0.006
+    while True:
+        check_deadline(deadline)
+        time.sleep(0.001)
+        current = file_stamp(path)
+        now = time.monotonic()
+        if current != stamp:
+            stamp, since = current, now
+            if current is not None and last_replacement is not None:
+                between_writes = current[1] - last_replacement[1]
+                if 0 <= between_writes < 8_000_000:
+                    quiet_for = 0.25
+            last_replacement = current
+        elif current is None or now - since >= quiet_for:
+            return stamp
+
+
+def after_publish(path, published, raced, deadline):
     # shortcut: A blind replacement delayed past this check needs writer cooperation.
-    deadline = time.monotonic() + (0.25 if raced else 0.025)
+    deadline = min(deadline, time.monotonic() + (0.25 if raced else MIN_OBSERVATION))
     while True:
         current = snapshot(path)
         if current[0] != published or time.monotonic() >= deadline:
@@ -73,18 +126,36 @@ def after_publish(path, published, raced):
         time.sleep(0.001)
 
 
-def prepend(path, details, title):
+def prepend(path, details, title, deadline):
     today = datetime.date.today().isoformat().encode()
     entry = (f"* {title} {today.decode()} [note]: [voice-switch]:\n"
              f"  - 内容: {details[0]}\n"
              + "".join(f"    {line}\n" for line in details[1:]) + "\n").encode()
     path.parent.mkdir(parents=True, exist_ok=True)
     with Path(str(path) + ".lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        waited_for_lock = False
+        while True:
+            check_deadline(deadline)
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                waited_for_lock = True
+                time.sleep(0.001)
         previous, author, rest, mode = snapshot(path)
         retained = entry + rest
-        raced = False
+        # A sequential call may overlap a writer that read the old file and has yet to replace it.
+        raced = previous is not None and not waited_for_lock
         while True:
+            stamp = wait_for_quiet(path, deadline)
+            current, current_author, current_rest, current_mode = snapshot(path)
+            if current != previous:
+                raced = True
+                retained = merge(current_rest, retained, rest)
+                previous, author, rest, mode = current, current_author, current_rest, current_mode
+            if file_stamp(path) != stamp:
+                raced = True
+                continue
             fd, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
             pending_path = Path(name)
             displaced = False
@@ -95,13 +166,11 @@ def prepend(path, details, title):
                     pending.write(published)
                     pending.flush()
                     os.fsync(pending.fileno())
-                current, current_author, current_rest, current_mode = snapshot(path)
-                if current != previous:
+                if snapshot(path)[0] != previous or file_stamp(path) != stamp:
                     raced = True
-                    previous, author, mode = current, current_author, current_mode
-                    retained = merge(current_rest, retained, rest)
-                    rest = current_rest
                     continue
+                # An exchange needs time to see and reconcile a stale replacement before reporting success.
+                check_deadline(deadline - (MIN_OBSERVATION if previous is not None else 0))
                 try:
                     if previous is None:
                         os.link(pending_path, path)
@@ -117,7 +186,7 @@ def prepend(path, details, title):
                         if replaced != previous:
                             raced = True
                             retained = merge(retained, replaced_rest, rest)
-                    current = after_publish(path, published, raced)
+                    current = after_publish(path, published, raced, deadline)
                     raced = raced or current[0] != published
                 previous, author, current_rest, mode = current
                 combined = merge(current_rest, retained, rest)
@@ -134,11 +203,22 @@ def main():
     titles = {"task": "自分の作業", "draft": "下書き"}
     if len(sys.argv) != 2 or sys.argv[1] not in titles:
         sys.exit("usage: changelogmemo-add task|draft < dictation.txt")
-    details = sys.stdin.buffer.read().decode("utf-8").strip().splitlines()
-    if not details:
-        sys.exit("changelogmemo-add: empty input")
-    path = Path(os.environ.get("CHANGELOG_FILE") or "~/repos/changelog/changelogmemo").expanduser().resolve()
-    prepend(path, details, titles[sys.argv[1]])
+    try:
+        seconds = float(os.environ.get("CHANGELOGMEMO_TIMEOUT_SECONDS", "1.25"))
+        if not math.isfinite(seconds) or seconds <= 0:
+            raise ValueError
+    except ValueError:
+        sys.exit("changelogmemo-add: CHANGELOGMEMO_TIMEOUT_SECONDS must be positive and finite")
+    deadline = time.monotonic() + seconds
+    try:
+        details = read_input(deadline).decode("utf-8").strip().splitlines()
+        if not details:
+            sys.exit("changelogmemo-add: empty input")
+        path = Path(os.environ.get("CHANGELOG_FILE") or "~/repos/changelog/changelogmemo").expanduser().resolve()
+        prepend(path, details, titles[sys.argv[1]], deadline)
+    except TimeoutError:
+        print("changelogmemo-add: time limit exceeded", file=sys.stderr)
+        sys.exit(os.EX_TEMPFAIL)
 
 
 if __name__ == "__main__":
