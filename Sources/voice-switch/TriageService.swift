@@ -4,10 +4,12 @@ import Foundation
 @MainActor
 final class TriageService {
     struct Simulation: Decodable {
-        enum Action: String, Decodable { case send, cancel }
+        enum Action: String, Decodable { case send, cancel, `switch` }
         let answers: [String: Double]
         let verification: Double?
         let action: Action?
+        /// The candidate the simulated user picks: [<name> に送る] for send, 送り先を変更 for switch (default 1).
+        let routeIndex: Int?
         let dictations: [String]?
         let seconds: Double?
     }
@@ -251,8 +253,9 @@ final class TriageService {
         guard apply(.classify(id, verdict, verified: verified, flagged: !proposal.reasons.isEmpty), updated: proposal) else { return }
         if let action = simulation?.action {
             switch action {
-            case .send: send(id)
+            case .send: send(id, routeIndex: simulation?.routeIndex)
             case .cancel: dismiss(id)
+            case .switch: switchDestination(id, to: simulation?.routeIndex ?? 1)
             }
         }
     }

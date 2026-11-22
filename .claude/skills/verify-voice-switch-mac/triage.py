@@ -2,7 +2,7 @@
 """Drive the 依頼 send path (docs/journal-triage-execution.md, plan A) in the built binary and check its side effects.
 
 Usage: VS_BIN=<voice-switch binary> python3 triage.py [scenario ...]
-       scenarios: unsure heavy sure restart failed disabled (default: all)
+       scenarios: unsure heavy sure restart failed destinations disabled (default: all)
 
 Each run is `voice-switch --simulate - --triage-fixture <fixture.json>` with an isolated HOME and VOICE_SWITCH_CONFIG in
 the evidence folder, TYPESAFE_API_KEY and JEV_API_KEY removed, and Jev replaced by the fixture's answers. Dictations go
@@ -16,13 +16,13 @@ from pathlib import Path
 ROOT = Path(os.environ.get("VS_VERIFY_ROOT", Path.home() / "Library/Caches/voice-switch-verify"))
 BIN = os.environ.get("VS_BIN", str(ROOT / "build/release/voice-switch"))
 EVID = ROOT / "evidence" / os.environ.get("VS_RUN_ID", "triage-" + time.strftime("%Y%m%d-%H%M%S"))
-QUESTIONS = ["wants_action", "is_filler", "kind_self_task", "kind_look_up", "kind_write_text", "kind_computer_change"]
+QUESTIONS = ["wants_action", "is_filler", "kind_self_task", "kind_look_up", "kind_write_text", "kind_computer_change", "kind_delegate"]
 REAL = [Path.home() / p for p in (
     "Library/Application Support/voice-switch/proposals.jsonl", "Library/Caches/voice-switch/triage",
     "repos/changelog/changelogmemo", "repos/changelog/voice-switch-inbox.jsonl")]
 # The user's app may write its own journal lines meanwhile, so the journals are checked for this script's texts instead.
 JOURNALS = [Path.home() / "Library/Application Support/voice-switch/journal", Path.home() / "repos/context-storage/voice-switch"]
-MARKS = re.compile(r"(?:unsure|heavy|warm|sure|cancel|slow|fail|off)-\d")
+MARKS = re.compile(r"(?:unsure|heavy|warm|sure|cancel|slow|fail|off)-\d|dest-[a-z]+-\d")
 REPO = Path(__file__).resolve().parents[3]
 
 
@@ -78,8 +78,9 @@ class Home:
         (out / "config.json").write_text(json.dumps(self.config, ensure_ascii=False, indent=2))
         self.runs = 0
 
-    def run(self, fixture, kill_on=None):
-        """One launch. kill_on: a log regex; when it appears the process gets SIGKILL (the app dies mid-send)."""
+    def run(self, fixture, kill_on=None, kill_when=None):
+        """One launch. kill_on: a log regex; when it appears the process gets SIGKILL (the app dies mid-send).
+        kill_when: the same with a test on the whole log so far."""
         self.runs += 1
         tag = f"run{self.runs}"
         fx = self.dir / f"{tag}-fixture.json"
@@ -93,7 +94,8 @@ class Home:
         deadline = time.time() + 60
         while p.poll() is None and time.time() < deadline:
             time.sleep(0.2)
-            if kill_on and re.search(kill_on, (self.dir / f"{tag}-stdout.txt").read_text()):
+            so_far = (self.dir / f"{tag}-stdout.txt").read_text()
+            if (kill_on and re.search(kill_on, so_far)) or (kill_when and kill_when(so_far)):
                 p.send_signal(signal.SIGKILL); killed = True
         if p.poll() is None:
             p.kill()
@@ -233,6 +235,93 @@ def failed():
              f"last stage: {row[0]['stage'] if row else None}, failureReason: {row[0].get('failureReason') if row else None}"])
 
 
+def destinations():
+    """delegate has two candidates, A (the default, graceSeconds 2) and B (graceSeconds 5), each a command that appends
+    to its own file, and C (graceSeconds 2), which is never sent to. (g) The user presses [B に送る] on 確認が要るもの.
+    (h) A sure request shows A in まもなく送る, the user switches it to B, and only B gets it. (f) A sure request nobody
+    touches goes to A. (i) The app dies after a switch to B, before B's grace period ends; on relaunch the request still
+    waits for B and goes only to B. (j) A switch to C lands in 確認が要るもの with C's warm-up reason although A and B are
+    past theirs: rules 4 and 5 count per destination."""
+    h = Home("destinations")
+    dest = lambda name: (f't=$(cat); echo "start $t" >> {h.dir}/starts.txt; printf "%s\\n" "$t" >> {h.dir}/{name}.txt; '
+                         f'printf "%s\\n" "$t" >> {h.dir}/sent.txt')
+    h.config["dictation"]["triage"]["routes"]["delegate"] = [
+        {"name": "A（既定の送り先）", "command": dest("dest-a"), "heavy": False, "graceSeconds": 2},
+        {"name": "B（2 番目の送り先）", "command": dest("dest-b"), "heavy": False, "graceSeconds": 5},
+        {"name": "C（送ったことのない送り先）", "command": dest("dest-c"), "heavy": False, "graceSeconds": 2}]
+    (h.dir / "config.json").write_text(json.dumps(h.config, ensure_ascii=False, indent=2))
+    at = lambda name, text: h.lines(f"{name}.txt").count(text)
+    rows = lambda prefix: [x for x in h.proposals().values() if x["text"].startswith(prefix)]
+
+    ra = h.run({"answers": sure("delegate"), "action": "send", "dictations": [f"dest-a-{i}" for i in range(5)], "seconds": 6})
+    rb = h.run({"answers": sure("delegate"), "action": "send", "routeIndex": 1, "dictations": [f"dest-b-{i}" for i in range(5)],
+                "seconds": 6})
+    b_rows = rows("dest-b-")
+    check("(g) on 確認が要るもの [B に送る] sends to the second candidate only, and proposals.jsonl records index 1 and B's name",
+          all(at("dest-a", f"dest-a-{i}") == 1 for i in range(5)) and all(at("dest-b", f"dest-b-{i}") == 1 for i in range(5))
+          and not [l for l in h.lines("dest-a.txt") if l.startswith("dest-b-")]
+          and len(b_rows) == 5 and all(r["routeIndex"] == 1 and r["routeName"] == "B（2 番目の送り先）" and r["stage"] == "done"
+                                       for r in b_rows),
+          ["run A (送る on the default):"] + ra["triage"] + ["run B (送る with candidate 1):"] + rb["triage"]
+          + [f"dest-a.txt: {h.lines('dest-a.txt')}", f"dest-b.txt: {h.lines('dest-b.txt')}",
+             f"B rows (routeIndex, routeName, stage, reasons): {[(r['routeIndex'], r['routeName'], r['stage'], r['reasons']) for r in b_rows]}"])
+    time.sleep(61)  # rule 5: no request to the same destination within 60 s of the warm-up
+
+    said = "dest-switch-1 会議室を予約して"
+    r = h.run({"answers": sure("delegate"), "action": "switch", "routeIndex": 1, "dictations": [said], "seconds": 9})
+    pend = [l for l in r["triage"] if " pending delegate until " in l]
+    until = [time.mktime(time.strptime(re.search(r"until (\S+)Z", l).group(1), "%Y-%m-%dT%H:%M:%S")) for l in pend]
+    row = rows("dest-switch-")
+    check("(h) a sure request shows A in まもなく送る; switched to B in its grace period, it waits B's graceSeconds and goes to B only",
+          len(pend) == 2 and until[1] - until[0] >= 2 and at("dest-b", said) == 1 and at("dest-a", said) == 0
+          and len([l for l in r["triage"] if " sending delegate" in l]) == 1
+          and row and row[0]["routeIndex"] == 1 and row[0]["routeName"] == "B（2 番目の送り先）" and row[0]["stage"] == "done",
+          r["triage"] + [f"deadlines A then B: {pend and [l.split(' until ')[1] for l in pend]}",
+                         f"dest-a.txt has it: {at('dest-a', said)}, dest-b.txt has it: {at('dest-b', said)}",
+                         f"last line: routeIndex {row[0]['routeIndex'] if row else None}, stage {row[0]['stage'] if row else None}"])
+
+    said = "dest-auto-1 来週の予定を登録して"
+    r = h.run({"answers": sure("delegate"), "dictations": [said], "seconds": 6})
+    row = rows("dest-auto-")
+    check("(f) a sure request nobody touches goes to the default candidate A after its grace period (B's request 10 s earlier "
+          "is not a repeat for A)",
+          at("dest-a", said) == 1 and at("dest-b", said) == 0 and len([l for l in r["triage"] if " pending delegate until " in l]) == 1
+          and row and row[0]["routeIndex"] == 0 and row[0]["routeName"] == "A（既定の送り先）" and row[0]["stage"] == "done",
+          r["triage"] + [f"dest-a.txt has it: {at('dest-a', said)}, dest-b.txt has it: {at('dest-b', said)}",
+                         f"last line: routeIndex {row[0]['routeIndex'] if row else None}, stage {row[0]['stage'] if row else None}"])
+    time.sleep(61)
+
+    said = "dest-keep-1 夕食のタスクを 19 時にして"
+    r1 = h.run({"answers": sure("delegate"), "action": "switch", "routeIndex": 1, "dictations": [said], "seconds": 20},
+               kill_when=lambda text: text.count(" pending delegate until ") >= 2)
+    before = rows("dest-keep-")
+    r2 = h.run({"answers": sure("delegate"), "dictations": [], "seconds": 9})
+    row = rows("dest-keep-")
+    check("(i) the app dies after the switch to B, inside B's grace period; on relaunch the request keeps B and goes to B only",
+          r1["killed"] and not any(" sending" in l for l in r1["triage"])
+          and before and before[0]["stage"] == "pending" and before[0]["routeIndex"] == 1
+          and len([l for l in r2["triage"] if " sending delegate" in l]) == 1
+          and at("dest-b", said) == 1 and at("dest-a", said) == 0
+          and row and row[0]["routeIndex"] == 1 and row[0]["routeName"] == "B（2 番目の送り先）" and row[0]["stage"] == "done",
+          ["run 1 (SIGKILL after the switch):"] + r1["triage"]
+          + [f"proposals.jsonl after the kill: stage {before[0]['stage'] if before else None}, routeIndex {before[0]['routeIndex'] if before else None}"]
+          + ["run 2 (relaunch, no new dictation):"] + r2["triage"]
+          + [f"dest-a.txt has it: {at('dest-a', said)}, dest-b.txt has it: {at('dest-b', said)}",
+             f"last line: routeIndex {row[0]['routeIndex'] if row else None}, stage {row[0]['stage'] if row else None}"])
+
+    said = "dest-cold-1 郵便の再配達を頼んで"  # A's last send was over 60 s ago, B's was (i)
+    r = h.run({"answers": sure("delegate"), "action": "switch", "routeIndex": 2, "dictations": [said], "seconds": 6})
+    row = rows("dest-cold-")
+    check("(j) switched to C, which has no sends yet, the request waits in 確認が要るもの for C's warm-up and is not sent",
+          len([l for l in r["triage"] if " pending delegate until " in l]) == 1
+          and any(" exception 送り先の最初の5件" in l for l in r["triage"]) and not any(" sending" in l for l in r["triage"])
+          and not h.lines("dest-c.txt") and at("dest-a", said) == 0
+          and row and row[0]["stage"] == "review" and row[0]["routeIndex"] == 2 and row[0]["reasons"] == ["送り先の最初の5件"],
+          r["triage"] + [f"dest-c.txt lines: {len(h.lines('dest-c.txt'))}",
+                         f"last line: stage {row[0]['stage'] if row else None}, routeIndex {row[0]['routeIndex'] if row else None}, "
+                         f"reasons {row[0]['reasons'] if row else None}"])
+
+
 def disabled():
     h = Home("disabled", enabled=False)
     r = h.run({"answers": sure("self_task"), "dictations": ["off-1 送らない"], "seconds": 4})
@@ -243,7 +332,7 @@ def disabled():
 
 
 SCENARIOS = {"unsure": unsure, "heavy": heavy, "sure": sure_and_cancel, "restart": restart, "failed": failed,
-             "disabled": disabled}
+             "destinations": destinations, "disabled": disabled}
 
 if __name__ == "__main__":
     if not os.access(BIN, os.X_OK):
