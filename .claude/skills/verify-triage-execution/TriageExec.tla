@@ -19,6 +19,7 @@ VARIABLES intent,     \* what the speaker meant
           intentRoute, \* the candidate the speaker meant
           route,      \* selected and stored candidate index (-1 when unrouted)
           runRoute,   \* candidate index actually handed to the sender
+          picked,     \* the user chose this row's candidate (a switch, [送る] or a kind button); a check-only variable
           verdict,    \* what the classifier decided; Jev may be wrong, so any verdict is possible
           verified,   \* the extra Jev check for a heavy route said the send matches the wish (may also be wrong)
           stage,      \* in-memory state in the app
@@ -29,7 +30,7 @@ VARIABLES intent,     \* what the speaker meant
           retries, dismissed, dRuns,
           alive, crashes
 
-vars == <<intent, intentRoute, route, runRoute, verdict, verified, stage, persisted, runs, runKind, graced, userOK, retries, dismissed, dRuns, alive, crashes>>
+vars == <<intent, intentRoute, picked, route, runRoute, verdict, verified, stage, persisted, runs, runKind, graced, userOK, retries, dismissed, dRuns, alive, crashes>>
 
 \* 例外になる条件 1-2 (3-4, the warm-up and the repeat check, only add exceptions; flagged covers them).
 Exception(v, ok, flagged) == v \notin Routes \/ (v \in Heavy /\ ~ok) \/ flagged
@@ -52,6 +53,7 @@ Init == /\ intent \in [U -> Intents]
         /\ intentRoute \in [U -> RouteIndices]
         /\ route = [u \in U |-> -1]
         /\ runRoute = [u \in U |-> -1]
+        /\ picked = [u \in U |-> FALSE]
         /\ verdict = [u \in U |-> "none"]
         /\ verified = [u \in U |-> FALSE]
         /\ stage = [u \in U |-> "said"]
@@ -75,13 +77,13 @@ Classify(u, v, ok, flagged) ==
                /\ verified' = Set(verified, u, v \in Heavy /\ ok)
                /\ stage' = Set(stage, u, Shown(v, ok, flagged))
                /\ persisted' = Set(persisted, u, Shown(v, ok, flagged))
-               /\ UNCHANGED <<intent, intentRoute, runRoute, runs, runKind, graced, userOK, retries, dismissed, dRuns, alive, crashes>>
+               /\ UNCHANGED <<intent, intentRoute, picked, runRoute, runs, runKind, graced, userOK, retries, dismissed, dRuns, alive, crashes>>
 
 \* 流れ 2: the grace period runs out. Only a row in まもなく送る can go out this way.
 GraceExpire(u) == /\ alive /\ stage[u] = "pending"
                   /\ stage' = Set(stage, u, "approved")
                   /\ graced' = Set(graced, u, TRUE)
-                  /\ UNCHANGED <<intent, intentRoute, route, runRoute, verdict, verified, persisted, runs, runKind, userOK, retries, dismissed, dRuns, alive, crashes>>
+                  /\ UNCHANGED <<intent, intentRoute, picked, route, runRoute, verdict, verified, persisted, runs, runKind, userOK, retries, dismissed, dRuns, alive, crashes>>
 
 \* In the grace period the user can replace the shown candidate. Its own exceptions
 \* decide whether it waits out a grace period or goes to review.
@@ -89,6 +91,7 @@ SwitchDestination(u, i, ok, flagged) ==
     /\ alive /\ stage[u] = "pending" /\ i = intentRoute[u] /\ i # route[u]
     /\ Candidate(verdict[u], i)
     /\ route' = Set(route, u, i)
+    /\ picked' = Set(picked, u, TRUE)
     /\ verified' = Set(verified, u, HeavyAt(verdict[u], i) /\ ok)
     /\ stage' = Set(stage, u, IF flagged \/ (HeavyAt(verdict[u], i) /\ ~ok) THEN "review" ELSE "pending")
     /\ persisted' = Set(persisted, u, stage'[u])
@@ -101,6 +104,7 @@ SendNow(u) == /\ alive /\ stage[u] \in {"pending", "review"}
               /\ Candidate(verdict[u], intentRoute[u]) /\ verdict[u] = intent[u]
               /\ (stage[u] = "review" \/ route[u] = intentRoute[u])
               /\ route' = Set(route, u, intentRoute[u])
+              /\ picked' = Set(picked, u, TRUE)
               /\ verified' = IF route[u] = intentRoute[u] THEN verified ELSE Set(verified, u, FALSE)
               /\ stage' = Set(stage, u, "approved")
               /\ userOK' = Set(userOK, u, TRUE)
@@ -111,6 +115,7 @@ Fix(u) == /\ alive /\ stage[u] = "review"
           /\ Candidate(intent[u], intentRoute[u]) /\ verdict[u] # intent[u]
           /\ verdict' = Set(verdict, u, intent[u])
           /\ route' = Set(route, u, intentRoute[u])
+          /\ picked' = Set(picked, u, TRUE)
           /\ verified' = Set(verified, u, FALSE)
           /\ stage' = Set(stage, u, "approved")
           /\ userOK' = Set(userOK, u, TRUE)
@@ -122,13 +127,13 @@ Dismiss(u) == /\ alive /\ stage[u] \in {"pending", "review", "unknown", "failed"
               /\ persisted' = Set(persisted, u, "dismissed")
               /\ dismissed' = Set(dismissed, u, TRUE)
               /\ dRuns' = Set(dRuns, u, runs[u])
-              /\ UNCHANGED <<intent, intentRoute, route, runRoute, verdict, verified, runs, runKind, graced, userOK, retries, alive, crashes>>
+              /\ UNCHANGED <<intent, intentRoute, picked, route, runRoute, verdict, verified, runs, runKind, graced, userOK, retries, alive, crashes>>
 
 \* 流れ 6: "送信中" is appended before the route runs.
 Start(u) == /\ alive /\ stage[u] = "approved"
             /\ stage' = Set(stage, u, "executing")
             /\ persisted' = IF PreRecord THEN Set(persisted, u, "executing") ELSE persisted
-            /\ UNCHANGED <<intent, intentRoute, route, runRoute, verdict, verified, runs, runKind, graced, userOK, retries, dismissed, dRuns, alive, crashes>>
+            /\ UNCHANGED <<intent, intentRoute, picked, route, runRoute, verdict, verified, runs, runKind, graced, userOK, retries, dismissed, dRuns, alive, crashes>>
 
 \* The route (WakeAction open / post / command) runs outside the app's state.
 Run(u) == /\ alive /\ stage[u] = "executing"
@@ -136,7 +141,7 @@ Run(u) == /\ alive /\ stage[u] = "executing"
           /\ runKind' = Set(runKind, u, verdict[u])
           /\ runRoute' = Set(runRoute, u, route[u])
           /\ stage' = Set(stage, u, "ran")
-          /\ UNCHANGED <<intent, intentRoute, route, verdict, verified, persisted, graced, userOK, retries, dismissed, dRuns, alive, crashes>>
+          /\ UNCHANGED <<intent, intentRoute, picked, route, verdict, verified, persisted, graced, userOK, retries, dismissed, dRuns, alive, crashes>>
 
 Fail(u) == /\ alive /\ stage[u] = "executing"
            /\ runs' = Set(runs, u, runs[u] + 1)
@@ -144,33 +149,33 @@ Fail(u) == /\ alive /\ stage[u] = "executing"
            /\ runRoute' = Set(runRoute, u, route[u])
            /\ stage' = Set(stage, u, "failed")
            /\ persisted' = Set(persisted, u, "failed")
-           /\ UNCHANGED <<intent, intentRoute, route, verdict, verified, graced, userOK, retries, dismissed, dRuns, alive, crashes>>
+           /\ UNCHANGED <<intent, intentRoute, picked, route, verdict, verified, graced, userOK, retries, dismissed, dRuns, alive, crashes>>
 
 Record(u) == /\ alive /\ stage[u] = "ran"
              /\ stage' = Set(stage, u, "done")
              /\ persisted' = Set(persisted, u, "done")
-             /\ UNCHANGED <<intent, intentRoute, route, runRoute, verdict, verified, runs, runKind, graced, userOK, retries, dismissed, dRuns, alive, crashes>>
+             /\ UNCHANGED <<intent, intentRoute, picked, route, runRoute, verdict, verified, runs, runKind, graced, userOK, retries, dismissed, dRuns, alive, crashes>>
 
 \* 流れ 6-7: failed and unknown sends can run again only by explicit choice.
 Retry(u) == /\ alive /\ stage[u] \in {"unknown", "failed"} /\ verdict[u] = intent[u] /\ route[u] = intentRoute[u]
             /\ retries' = Set(retries, u, retries[u] + 1)
             /\ stage' = Set(stage, u, "approved")
-            /\ UNCHANGED <<intent, intentRoute, route, runRoute, verdict, verified, persisted, runs, runKind, graced, userOK, dismissed, dRuns, alive, crashes>>
+            /\ UNCHANGED <<intent, intentRoute, picked, route, runRoute, verdict, verified, persisted, runs, runKind, graced, userOK, dismissed, dRuns, alive, crashes>>
 
 ConfirmDone(u) == /\ alive /\ stage[u] = "unknown"
                   /\ stage' = Set(stage, u, "done")
                   /\ persisted' = Set(persisted, u, "done")
-                  /\ UNCHANGED <<intent, intentRoute, route, runRoute, verdict, verified, runs, runKind, graced, userOK, retries, dismissed, dRuns, alive, crashes>>
+                  /\ UNCHANGED <<intent, intentRoute, picked, route, runRoute, verdict, verified, runs, runKind, graced, userOK, retries, dismissed, dRuns, alive, crashes>>
 
 Crash == /\ alive /\ crashes < MaxCrashes
          /\ alive' = FALSE /\ crashes' = crashes + 1
-         /\ UNCHANGED <<intent, intentRoute, route, runRoute, verdict, verified, stage, persisted, runs, runKind, graced, userOK, retries, dismissed, dRuns>>
+         /\ UNCHANGED <<intent, intentRoute, picked, route, runRoute, verdict, verified, stage, persisted, runs, runKind, graced, userOK, retries, dismissed, dRuns>>
 
 \* The app reloads proposals.jsonl. A pending row keeps its deadline (it is persisted), an in-memory approval is lost.
 Restore(p) == IF p = "executing" THEN "unknown" ELSE p
 Restart == /\ ~alive /\ alive' = TRUE
            /\ stage' = [u \in U |-> Restore(persisted[u])]
-           /\ UNCHANGED <<intent, intentRoute, route, runRoute, verdict, verified, persisted, runs, runKind, graced, userOK, retries, dismissed, dRuns, crashes>>
+           /\ UNCHANGED <<intent, intentRoute, picked, route, runRoute, verdict, verified, persisted, runs, runKind, graced, userOK, retries, dismissed, dRuns, crashes>>
 
 Done == /\ alive /\ \A u \in U: stage[u] \in {"done", "dismissed", "listed", "hidden"}
         /\ UNCHANGED vars
@@ -189,9 +194,10 @@ Bounded == \A u \in U: runs[u] <= 3 /\ retries[u] <= 1
 NoSendWithoutChance == \A u \in U: runs[u] > 0 => (userOK[u] \/ graced[u])
 \* Worst case 2: a route runs for something the speaker did not mean only after a grace period nobody stopped.
 NoWrongExecution == \A u \in U: runs[u] > 0 => (runKind[u] = intent[u] \/ graced[u])
-\* The actual route must be the selected one, with a mismatch to intent possible only after grace.
+\* The actual route must be the selected one. It may differ from the one the speaker meant only after a grace period
+\* nobody acted in: once the user chose a candidate (a switch, [送る] or a kind button), only that candidate goes out.
 NoWrongDestination == \A u \in U: runs[u] > 0 =>
-    runRoute[u] = route[u] /\ (runRoute[u] = intentRoute[u] \/ graced[u])
+    runRoute[u] = route[u] /\ (runRoute[u] = intentRoute[u] \/ (graced[u] /\ ~picked[u]))
 \* The same without the grace exception: what plan A costs (risk.cfg expects this to fail).
 StrictNoWrongExecution == \A u \in U: runs[u] > 0 => runKind[u] = intent[u]
 \* A heavy route goes out on its own only after the extra Jev check agreed.
