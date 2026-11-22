@@ -29,6 +29,7 @@ Probe ==
           \/ A(u, k)!Dismiss(u)     /\ OutA(u, k, <<"dismiss", u>>)
           \/ A(u, k)!Start(u)       /\ OutA(u, k, <<"start", u>>)
           \/ A(u, k)!Run(u)         /\ OutA(u, k, <<"run", u>>)
+          \/ A(u, k)!Fail(u)        /\ OutA(u, k, <<"fail", u>>)
           \/ A(u, k)!Record(u)      /\ OutA(u, k, <<"record", u>>)
           \/ A(u, k)!Retry(u)       /\ OutA(u, k, <<"retry", u, verdict[u]>>)
           \/ A(u, k)!ConfirmDone(u) /\ OutA(u, k, <<"confirmDone", u>>)

@@ -30,7 +30,8 @@ while IFS='|' read -r name want file old new; do
   else echo "MISSED $name (want FAIL $want)"; printf '%s\n' "$out" | tail -n 20; fi
 done <<'EOF' | tee "$work/out"
 changelogmemo-before-fix|test_a_writer_that_edits_now_and_then_loses_nothing|scripts/changelogmemo-add@1b4c0f5||
-changelogmemo-no-recheck|test_a_writer_that_edits_now_and_then_loses_nothing|scripts/changelogmemo-add|current = after_publish(path, published, raced)|current = snapshot(path)
+changelogmemo-no-recheck|test_a_writer_that_edits_now_and_then_loses_nothing|scripts/changelogmemo-add|current = after_publish(path, published, raced, deadline)|current = snapshot(path)
+changelogmemo-no-limit|test_a_held_lock_past_the_limit_gives_up_with_75_and_writes_nothing|scripts/changelogmemo-add|    if time.monotonic() >= deadline:|    if False:
 previous-window-61|request|Sources/voice-switch/TriageRequest.swift|age <= 60|age <= 61
 previous-three|request|Sources/voice-switch/TriageRequest.swift|.suffix(2)|.suffix(3)
 previous-other-device|request|Sources/voice-switch/TriageRequest.swift|row.device == device && |

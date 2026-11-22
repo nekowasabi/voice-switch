@@ -67,6 +67,7 @@ func event(_ e: [Any]) -> TE.Event {
     case "dismiss": return .dismiss(id)
     case "start": return .start(id)
     case "run": return .run(id)
+    case "fail": return .fail(id)
     case "record": return .record(id)
     case "retry": return .retry(id, kind(e[2] as! String))
     case "confirmDone": return .confirmDone(id)
@@ -128,7 +129,7 @@ shown = 0
 var alphabet: [[Any]] = [["crash"], ["restart"], ["done"]]
 for id in ids {
     for v in verdicts { for ok in [false, true] { for fl in [false, true] { alphabet.append(["classify", id, v, ok, fl]) } } }
-    for name in ["graceExpire", "dismiss", "start", "run", "record", "confirmDone"] { alphabet.append([name, id]) }
+    for name in ["graceExpire", "dismiss", "start", "run", "fail", "record", "confirmDone"] { alphabet.append([name, id]) }
     for k in kinds { for name in ["sendNow", "fix", "retry"] { alphabet.append([name, id, k]) } }
 }
 var refused = 0
@@ -147,7 +148,7 @@ print(failures == acceptFailures ? "PASS reject \(refused) events the model cann
 
 // --- coverage: the fixture really holds the whole model ---
 let allStages = Set(TE.Stage.allCases.map(\.rawValue))
-let allEvents: Set = ["classify", "graceExpire", "sendNow", "fix", "dismiss", "start", "run", "record", "retry", "confirmDone", "crash", "restart", "done"]
+let allEvents: Set = ["classify", "graceExpire", "sendNow", "fix", "dismiss", "start", "run", "fail", "record", "retry", "confirmDone", "crash", "restart", "done"]
 if stagesSeen != allStages || eventsSeen != allEvents {
     print("FAIL coverage: stages missing \(allStages.subtracting(stagesSeen).sorted()), events missing \(allEvents.subtracting(eventsSeen).sorted())")
     failures += 1

@@ -21,5 +21,9 @@ start-after-dismiss|DismissedNeverRuns|Start(u) == /\ alive /\ stage[u] = "appro
 restart-reruns-executing|AtMostOnce|IF p = "executing" THEN "unknown" ELSE p|IF p = "executing" THEN "approved" ELSE p
 unsure-to-cli-list|NoSilentDrop|(IF MenuShowsUnsure THEN "review" ELSE "listed")|"listed"
 approve-any-kind|NoWrongExecution|/\ verdict[u] \in Routes /\ verdict[u] = intent[u]|/\ verdict[u] \in Routes
+failed-off-screen|NoSilentDrop|/\ stage' = Set(stage, u, "failed")|/\ stage' = Set(stage, u, "done")
+restore-hides-failed|NoSilentDrop|Restore(p) == IF p = "executing" THEN "unknown" ELSE p|Restore(p) == IF p = "executing" THEN "unknown" ELSE IF p = "failed" THEN "listed" ELSE p
+failed-resends-on-its-own|AtMostOnce|/\ stage' = Set(stage, u, "failed")|/\ stage' = Set(stage, u, "approved")
+retry-uncounted|AtMostOnce|/\ retries' = Set(retries, u, retries[u] + 1)|/\ retries' = retries
 EOF
 exit $bad
