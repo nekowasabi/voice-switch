@@ -385,6 +385,33 @@ class Request(unittest.TestCase):
                     self.assertEqual(sorted(p["text"] for p in state.get("previous", [])),
                                      sorted(text for _, text in near[:2]), f"C7 previous for {chosen}")
 
+    def test_shared_state_fixture(self):
+        # tests/parity/fixtures/triage_state.json: tests/triage/run.sh feeds the same cases to Swift's TriageRequest.State.
+        fixture = json.loads((HERE / "parity/fixtures/triage_state.json").read_text(encoding="utf-8"))
+        for case in fixture["cases"]:
+            with tempfile.TemporaryDirectory() as tmp:
+                world = World(tmp)
+                spoken = case["utterance"]
+                at = datetime.fromisoformat(spoken["at"])
+                lines = {"private": [], "wsl": []}
+                for n, prior in enumerate(case["rows"]):
+                    delivery = "<absent>" if prior["delivery"] == "absent" else prior["delivery"]
+                    when = at - timedelta(seconds=prior["seconds_before"])
+                    lines[prior["device"]].append((when, row(f"IDS-r{n}", when, prior["text"], delivery=delivery)))
+                lines[fixture["device"]].append((at, row("IDS-u", at, spoken["text"], spoken["origin"],
+                                                         app=spoken["app"], task=spoken["task"])))
+                for device, items in lines.items():
+                    world.write([line for _, line in sorted(items, key=lambda item: item[0])], device)
+                _, net = listed(world, reply=answers())
+                states = [s for s in net.states() if s["utterance"]["text"] == spoken["text"]]
+                self.assertEqual(len(states), 1, f"C4 requests for {case['name']}")
+                want = case["want"]
+                self.assertEqual(states[0].get("previous"), want.get("previous"), f"C7 shared previous {case['name']}")
+                self.assertEqual(states[0], want, f"C3 shared state {case['name']}")
+                for request in net.requests:
+                    for hidden in fixture["hidden"]:
+                        self.assertNotIn(hidden, wire(request), f"C3 sent {hidden} for {case['name']}")
+
     def test_previous_reaches_across_midnight(self):
         with tempfile.TemporaryDirectory() as tmp:
             world = World(tmp)
