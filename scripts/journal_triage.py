@@ -15,7 +15,7 @@ import tempfile
 import urllib.request
 from bisect import bisect_left
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -36,6 +36,8 @@ KINDS = tuple(LOCAL_MARKERS)
 QUESTION_IDS = ("wants_action", "is_filler", *(f"kind_{kind}" for kind in KINDS))
 DEFAULT_BAND = {"no": 0.3, "yes": 0.7}
 STARTED = {"自動", "ウェイク", "手動"}
+DESTINATIONS = {*(f"action:{kind}" for kind in KINDS), "thought", "filler",
+                *(f"unjudged:{stage}" for stage in ("intent", "content", "kind", "error", "no-jev"))}
 
 
 @dataclass(frozen=True)
@@ -122,7 +124,7 @@ def journal_rows(path, day):
             except (ValueError, RecursionError):
                 yield None
                 continue
-            if timestamp.date() == day and row.get("delivery") in (None, "history"):
+            if (day is None or timestamp.date() == day) and row.get("delivery") in (None, "history"):
                 origin = row.get("origin")
                 entry_id = row.get("id")
                 yield Utterance(
@@ -225,8 +227,12 @@ def question_hash(questions):
     return hashlib.sha256(json.dumps(questions, sort_keys=True).encode("utf-8")).hexdigest()
 
 
+def cache_directory():
+    return Path.home() / "Library" / "Caches" / "voice-switch" / "triage"
+
+
 def cache_path(device, day):
-    return Path.home() / "Library" / "Caches" / "voice-switch" / "triage" / device / f"{day}.jsonl"
+    return cache_directory() / device / f"{day}.jsonl"
 
 
 def records(path):
@@ -282,19 +288,25 @@ def context_history(paths, day, entries):
     return history, [entry.instant for entry in history]
 
 
-def prune_other_days(paths, device, day):
-    for path in cache_path(device, day).parent.glob("*.jsonl"):
+def prune_cache(stored, ids, journal_hash):
+    return {entry_id: row for entry_id, row in stored.items()
+            if entry_id in ids or row.get("journal_hash") != journal_hash}
+
+
+def prune_other_days(sources, journal_hash, day):
+    for path in cache_directory().glob("*/*.jsonl"):
         try:
             cached_day = date.fromisoformat(path.stem)
         except ValueError:
             continue
-        if cached_day == day:
+        paths = sources.get(path.parent.name, [])
+        if paths and cached_day == day:
             continue
         stored = {row["id"]: row for row in records(path)}
-        if not stored:
+        if not any(row.get("journal_hash") == journal_hash for row in stored.values()):
             continue
         ids = {entry.id for source in paths for entry in journal_rows(source, cached_day) if entry}
-        kept = {entry_id: row for entry_id, row in stored.items() if entry_id in ids}
+        kept = prune_cache(stored, ids, journal_hash)
         if kept != stored:
             write_cache(path, kept)
 
@@ -305,7 +317,9 @@ def classify_day(journal, day, thresholds, *, use_jev, include_context):
     digest = question_hash(questions) if questions else None
     output = []
     skipped = 0
-    for device, paths in sources_by_device(journal, configured_device()).items():
+    journal_hash = hashlib.sha256(os.fsencode(journal.resolve())).hexdigest()
+    sources = sources_by_device(journal, configured_device())
+    for device, paths in sources.items():
         rows = [entry for source in paths for entry in journal_rows(source, day)]
         entries = [entry for entry in rows if entry is not None]
         skipped += len(rows) - len(entries)
@@ -313,7 +327,7 @@ def classify_day(journal, day, thresholds, *, use_jev, include_context):
         path = cache_path(device, day)
         stored = {row["id"]: row for row in records(path)}
         ids = {entry.id for entry in entries}
-        kept = {entry_id: row for entry_id, row in stored.items() if entry_id in ids}
+        kept = prune_cache(stored, ids, journal_hash)
         for entry in entries:
             answers = None
             if not key:
@@ -327,12 +341,13 @@ def classify_day(journal, day, thresholds, *, use_jev, include_context):
                     state = request_state(entry, previous, include_context=include_context)
                     answers = ask_jev(key, state, questions)
                     if answers is not None and entry.id is not None:
-                        kept[entry.id] = {"id": entry.id, "answers": answers, "question_hash": digest}
+                        kept[entry.id] = {"id": entry.id, "answers": answers, "question_hash": digest,
+                                          "journal_hash": journal_hash}
                 destinations = decide(answers, thresholds)
             output.append((entry, device, destinations, answers))
         if kept != stored:
             write_cache(path, kept)
-        prune_other_days(paths, device, day)
+    prune_other_days(sources, journal_hash, day)
     output.sort(key=lambda item: item[0].instant)
     return output, skipped
 
@@ -344,8 +359,12 @@ def result_row(entry, device, destinations, answers):
 
 
 def describe_row(row):
+    destinations = ", ".join(row["destinations"])
+    question = {"unjudged:intent": "wants_action", "unjudged:content": "is_filler"}.get(destinations)
+    if question is not None:
+        destinations += f'({row["answers"][question]:.2f})'
     return (f'- {datetime.fromisoformat(row["timestamp"]):%H:%M:%S} · {markdown(row["device"])} · '
-            f'{", ".join(row["destinations"])} · {markdown(row["app"])} · {markdown(row["task"])} — {markdown(row["text"])}')
+            f'{destinations} · {markdown(row["app"])} · {markdown(row["task"])} — {markdown(row["text"])}')
 
 
 def listing(rows, day, skipped):
@@ -366,6 +385,154 @@ def list_text(result):
         lines.extend(describe_row(row) for row in result[group])
     lines.append(f'フィラー {result["filler_count"]} 件 / 読めなかった行 {result["skipped"]} 件')
     return "\n".join(lines)
+
+
+def review(rows, day, skipped, thresholds):
+    candidates = []
+    for entry, device, destinations, answers in rows:
+        distance = None
+        if answers is not None:
+            distance = min(abs(answers[qid] - boundary) for qid in QUESTION_IDS
+                           for boundary in thresholds[qid].values())
+        row = result_row(entry, device, destinations, answers)
+        row["distance"] = distance
+        candidates.append(row)
+    candidates.sort(key=lambda row: (
+        not row["destinations"][0].startswith("unjudged:"), row["distance"] is None, row["distance"] or 0,
+    ))
+    return {"day": str(day), "candidates": candidates, "skipped": skipped}
+
+
+def journal_days(path):
+    if path.suffix.lower() == ".jsonl":
+        yield None
+        return
+    for daily in sorted(path.glob("*.jsonl"), reverse=True):
+        try:
+            yield date.fromisoformat(daily.stem)
+        except ValueError:
+            continue
+
+
+def find_utterance(journal, entry_id, local_device):
+    for device, paths in sources_by_device(journal, local_device).items():
+        for path in paths:
+            for day in journal_days(path):
+                for entry in journal_rows(path, day):
+                    if entry is not None and entry.id == entry_id:
+                        return entry, device
+    raise ValueError("entry not found")
+
+
+def valid_destinations(destinations):
+    return (isinstance(destinations, list) and bool(destinations)
+            and all(isinstance(value, str) and value in DESTINATIONS for value in destinations)
+            and len(set(destinations)) == len(destinations)
+            and (len(destinations) == 1 or all(value.startswith("action:") for value in destinations)))
+
+
+def add_label(journal, directory, entry_id, destinations, thresholds, *, use_jev):
+    local_device = configured_device()
+    entry, device = find_utterance(journal, entry_id, local_device)
+    saved = {}
+    if use_jev:
+        digest = question_hash(load_questions())
+        saved = next((row for row in records(cache_path(device, entry.timestamp.date()))
+                      if row["id"] == entry_id and row.get("question_hash") == digest), {})
+    answers = saved.get("answers")
+    if not valid_answers(answers):
+        answers = None
+    row = {"id": entry_id, "target": destinations,
+           "observed": decide(answers, thresholds) if answers is not None else local_category(entry.text),
+           "answers": answers, "question_hash": saved.get("question_hash") if answers is not None else None,
+           "device": device, "timestamp": datetime.now(timezone.utc).isoformat()}
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{local_device}-cli.jsonl"
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    with os.fdopen(fd, "wb") as stream:
+        stream.write((json.dumps(row) + "\n").encode("utf-8"))
+    return row
+
+
+def read_labels(directory):
+    latest = {}
+    for path in sorted(directory.glob("*.jsonl")):
+        for row in records(path):
+            timestamp = row.get("timestamp")
+            if not valid_destinations(row.get("target")) or not isinstance(timestamp, str):
+                continue
+            if row["id"] not in latest or timestamp >= latest[row["id"]]["timestamp"]:
+                latest[row["id"]] = row
+    return latest.values()
+
+
+def score(labels, thresholds):
+    weight = 0
+    filler_misses = 0
+    for label in labels:
+        expected = label["target"]
+        actual = decide(label["answers"], thresholds)
+        if set(expected) == set(actual):
+            continue
+        if actual == ["filler"]:
+            filler_misses += 1
+            weight += 10
+        elif actual == ["thought"] and expected[0].startswith("action:"):
+            weight += 3
+        elif actual[0].startswith("unjudged:"):
+            weight += 0.5
+        else:
+            weight += 1
+    return {"count": len(labels), "weight": weight, "filler_misses": filler_misses}
+
+
+def split_labels(labels):
+    training, holdout = [], []
+    for label in labels:
+        bucket = int(hashlib.sha256(label["id"].encode("utf-8")).hexdigest(), 16) % 10
+        (training if bucket < 7 else holdout).append(label)
+    return training, holdout
+
+
+def find_thresholds(training, thresholds):
+    best = dict(thresholds)
+    best_weight = score(training, best)["weight"]
+    while True:
+        before = best_weight
+        for qid in QUESTION_IDS:
+            current = best[qid]
+            points = sorted({0, 1, *current.values(), *(label["answers"][qid] for label in training)})
+            boundaries = sorted(set(points) | {(a + b) / 2 for a, b in zip(points, points[1:])})
+            lower = [current["no"]] if qid.startswith("kind_") else boundaries
+            for no in lower:
+                for yes in boundaries:
+                    if no >= yes:
+                        continue
+                    candidate = {**best, qid: {"no": no, "yes": yes}}
+                    weight = score(training, candidate)["weight"]
+                    if weight < best_weight:
+                        best, best_weight = candidate, weight
+        if best_weight == before:
+            return best
+
+
+def tune(labels, thresholds):
+    training, holdout = split_labels(labels)
+    result = {"training_count": len(training), "holdout_count": len(holdout), "proposal": None}
+    if len(labels) < 30 or not training or not holdout:
+        return result
+    candidate = find_thresholds(training, thresholds)
+    baseline = score(holdout, thresholds)
+    adjusted = score(holdout, candidate)
+    result.update(baseline=baseline, candidate=adjusted)
+    if adjusted["weight"] < baseline["weight"] and adjusted["filler_misses"] <= baseline["filler_misses"]:
+        result["proposal"] = candidate
+    return result
+
+
+def eval_text(result):
+    return (f'採点 {result["count"]} 件 / 答えなし {result["unscored"]} 件\n'
+            f'誤りの重さ {result["weight"]} / フィラーへの取りこぼし {result["filler_misses"]} 件')
 
 
 def common_options(parser):
@@ -389,18 +556,64 @@ def main(argv=None):
     list_parser.add_argument("day", type=date.fromisoformat, metavar="YYYY-MM-DD")
     list_parser.add_argument("journal_dir", type=Path, nargs="?")
     classification_options(list_parser)
+    label_parser = commands.add_parser("label", parents=[shared], help="record the expected destinations for an entry")
+    label_parser.add_argument("id")
+    label_parser.add_argument("destinations", nargs="+", metavar="destination")
+    label_parser.add_argument("--no-jev", action="store_true", help="record a label for a local-marker result")
+    review_parser = commands.add_parser("review", parents=[shared], help="rank candidates for review")
+    review_parser.add_argument("day", type=date.fromisoformat, nargs="?", default=date.today(), metavar="YYYY-MM-DD")
+    classification_options(review_parser)
+    commands.add_parser("eval", parents=[shared], help="score the answers saved with labels")
+    tune_parser = commands.add_parser("tune", parents=[shared], help="propose thresholds using saved labels")
+    tune_parser.add_argument("--apply", action="store_true", help="write an accepted proposal")
     args = parser.parse_args(argv)
 
-    journal = (getattr(args, "root", None) or args.journal_dir or configured_root()).expanduser()
+    journal = (getattr(args, "root", None) or getattr(args, "journal_dir", None) or configured_root()).expanduser()
     root = journal.parent if journal.suffix.lower() == ".jsonl" else journal
+    directory = root / ".triage"
+    threshold_path = directory / "thresholds.json"
     try:
-        thresholds = read_thresholds(root / ".triage" / "thresholds.json")
-        rows, skipped = classify_day(journal, args.day, thresholds, use_jev=not args.no_jev,
-                                     include_context=not args.no_context)
-        result = listing(rows, args.day, skipped)
+        thresholds = read_thresholds(threshold_path)
+        if args.command in ("list", "review"):
+            rows, skipped = classify_day(journal, args.day, thresholds, use_jev=not args.no_jev,
+                                         include_context=not args.no_context)
+            if args.command == "list":
+                result = listing(rows, args.day, skipped)
+                text_output = list_text(result)
+            else:
+                result = review(rows, args.day, skipped, thresholds)
+                lines = [f'{describe_row(row)} · ID {markdown(row["id"])}' for row in result["candidates"]]
+                text_output = "\n".join([f'## {result["day"]}', *lines])
+        elif args.command == "label":
+            if not valid_destinations(args.destinations):
+                parser.error("invalid destination")
+            result = add_label(journal, directory / "labels", args.id, args.destinations, thresholds,
+                               use_jev=not args.no_jev)
+            text_output = f'{result["id"]} · {", ".join(result["target"])}'
+        else:
+            labels = read_labels(directory / "labels")
+            scored = [row for row in labels if valid_answers(row.get("answers"))]
+            if args.command == "eval":
+                result = score(scored, thresholds)
+                result["unscored"] = len(labels) - len(scored)
+                text_output = eval_text(result)
+                stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+                report = directory / "reports" / f"{stamp}.md"
+                write_atomic(report, f"# {stamp}\n\n{text_output}\n")
+                result["report"] = str(report)
+            else:
+                result = tune(scored, thresholds)
+                result["applied"] = bool(args.apply and result["proposal"])
+                if result["applied"]:
+                    write_atomic(threshold_path, json.dumps(result["proposal"], indent=2) + "\n")
+                if result["proposal"] is None:
+                    text_output = "採用条件を満たすしきい値の案はありません。"
+                else:
+                    title = "しきい値を保存しました。" if result["applied"] else "しきい値の案"
+                    text_output = title + "\n" + json.dumps(result["proposal"], indent=2)
     except (OSError, ValueError, RecursionError):
-        parser.error("could not read the journal or thresholds, or write the cache")
-    print(list_text(result) if getattr(args, "format", "json") == "text" else json.dumps(result))
+        parser.error("could not read or write triage data, or the requested entry was not found")
+    print(text_output if getattr(args, "format", "json") == "text" else json.dumps(result))
 
 
 if __name__ == "__main__":

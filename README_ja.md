@@ -36,9 +36,11 @@
 
 JSONL の各行には `id`、`timestamp`、`text`、`origin`、`endReason`、`recordingSeconds`、`schemaVersion`（1）、`focusApp`、`taskchute`、`delivery` が入る。`delivery` は追記時の予定先で、アプリへの貼り付けは `paste`、スティッキーで固定した入力欄は `sticky`、固定した tmux ペインは `pane`、ウェイクアクションは `action`、履歴に留める場合は `history`。追記後にペイン振り分けを行うなど、追記時に予定先が決まっていなければ `null` になる。旧行では `delivery` がないことがある。
 
-`python3 scripts/journal_triage.py YYYY-MM-DD [journalDir]` で、配送先が `history` の発話と配送先が未定の発話を一覧表示できる。パスを省略すると、`~/.config/voice-switch/config.json` の `dictation.journalDir` の親フォルダを読む。そこに端末ごとのフォルダ（例: `private`、`wsl`）があれば、まとめて一覧にする。設定が無ければ既定のジャーナルを読む。フォルダを渡したときも同じで、その日のファイルを直下と 1 段下のフォルダから読み、時刻順に並べてフォルダ名を付ける。各行には時刻・アプリ名・タスク名を表示する。`タスク:`、`調査:`、`下書き:`、`エージェント:` などの目印で発話を分類する。一致する分類がゼロか複数なら `none` と表示する。
+`python3 scripts/journal_triage.py list YYYY-MM-DD` で、配送先が `history` または未定の発話を依頼・考え・未判定に分けて表示する。フィラーは件数だけ出す。既定は JSON で、`--format text` で読みやすい表示に切り替えられる。`--root` にはジャーナルのフォルダか単一の JSONL ファイルを指定できる。指定がなければ、設定済みの `dictation.journalDir` の親フォルダか既定のジャーナルを読む。フォルダの場合は、直下と 1 段下の端末フォルダから日付に対応するファイルを読む。ドットで始まるフォルダは読み飛ばす。ジャーナルは読み取り専用。
 
-`TYPESAFE_API_KEY` または `JEV_API_KEY` があれば、一覧に出る発話の本文を 1 件ずつ Jev に送って分類する。独り言やメモは口調が変わりやすく、固定の目印では意図を読み違えるため、自動録音の発話も送る（アプリがその場で配送する経路は、これまでどおり自動録音を Jev に渡さない）。送るのは本文だけ。`--min-confidence`（既定 `0.9`）以上の答えを採り、`none` もそのまま採る。信頼度が下限未満、通信に失敗、キーが無い、または `--no-jev` のときは目印で分類し、一つに決まらなければ `none` と表示する。ジャーナルは読み取り専用。
+`TYPESAFE_API_KEY` または `JEV_API_KEY` があれば、保存済みの答えがない発話は自動録音も含めて 1 件ずつ Jev に送る。状態には本文、録音の開始方法、アプリ名、タスク名、発話時刻、同じ端末で発話の前 60 秒以内にある一覧対象の発話を最大 2 件含める。`--no-context` を指定すると本文と録音の開始方法だけを送る。答えは `~/Library/Caches/voice-switch/triage/<端末>/<日>.jsonl` に保存し、問いの文面が同じあいだは再利用する。通信失敗や不正な答えは `unjudged:error` になる。キーがない場合や `--no-jev` の場合は、`タスク:`、`調査:`、`下書き:`、`エージェント:` などの目印が 1 種類だけあれば対応する依頼を返す。目印がゼロか複数なら `unjudged:no-jev` になる。
+
+`review [YYYY-MM-DD]` は見直す順に発話を表示する。`label <id> <行き先>` で正解をジャーナルのルートにある `.triage/labels/<端末>-cli.jsonl` に記録する。行き先は `thought`、`filler`、`unjudged:<段>`、または `action:self_task`、`action:look_up`、`action:write_text`、`action:computer_change` のうち一つ以上を指定できる。`eval` はラベルに保存した答えを採点し、`.triage/reports/` に結果を残す。`tune` は保存した答えからしきい値の案を探し、`--apply` を指定すると採用条件を満たした案を `.triage/thresholds.json` に保存する。確率の既定の帯は 0.3 以下が「いいえ」、0.7 以上が「はい」。
 
 `stopWords` を単体で言うと、進行中の入力を終える。代わりに `skipWhileMicInUseBy` のアプリがマイクを使っているときは、同じ語で `stopCommand` を実行する。見本の語は `入力ストップ`。`stopWords` を書かないときは locale ごとの既定が入る。`ja-JP`（`locale` 省略時も）は `入力ストップ`、`en-US` は `stop dictation`、それ以外の locale は既定なし。自分で書いた値は `[]` も含めて上書きしない。停止ワードは、その locale の言葉で、本文に出にくい言葉を選ぶ。（macOS の既定は Mac 未検証。）見本の `stopCommand` は同じ superwhisper の録音 URL で、録音はトグルする。
 
