@@ -25,10 +25,10 @@
   },
   "kind_look_up": {
     "type": "noul",
-    "instructions": "In `utterance.text`, read as a continuation of `previous` when present, does the speaker themselves want to learn an answer now?",
+    "instructions": "In `utterance.text`, read as a continuation of `previous` when present, does the speaker want something looked up, found, or done for them by an AI assistant or bot, such as Grok Bot or Muse, now or later?",
     "criteria": {
-      "true": "The speaker wants to know something, such as 「この電池の寿命はどれくらいなんだろう」「来週の天気を調べて」.",
-      "false": "There is no question the speaker wants answered now. Asking to give a tool or bot the ability to look things up is a change to that tool, such as 「このアプリで天気を調べられるようにして」."
+      "true": "The speaker hands a search, a comparison, a summary, or another errand to an assistant or bot, or wants to know an answer, such as 「Grok Bot に来週の天気を調べさせて」「ミューズ、この記事を要約しておいて」「あとで安い電池を探しておいて」「この電池の寿命はどれくらいなんだろう」.",
+      "false": "Nothing is to be looked up or done by an assistant, or the speaker wants a tool or bot itself changed, such as 「このアプリで天気を調べられるようにして」, which is a change to that tool."
     }
   },
   "kind_write_text": {
