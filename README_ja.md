@@ -205,11 +205,37 @@ LaunchServices、実マイク、Superwhisper の録音・文字起こし・貼�
 停止は Superwhisper の UI、またはテスト用コピーの `wakeURL` を `/record/stop` に変更して確認してください。
 
 
+## 口述した依頼を送る（macOS）
+
+`dictation.triage.enabled` を `true` にしてアプリを再起動すると、配送先が `history` または未設定の新しい発話を裏で振り分けます。メニューバーの「依頼」を開くと「確認が要るもの」「まもなく送る」「送った」が並びます。アイコンに出る数字は要確認の件数です。「まもなく送る」から取消や即時送信ができ、画面上部で自動送信を一時停止できます。送信中にアプリが終了した依頼は「送ったか不明」になります。再起動後に送信済みとするか、やり直すかを選べます。「送った」で種類を直すとラベルが残ります。
+
+`dictation.triage` の設定例です。
+
+```json
+{
+  "enabled": true,
+  "graceSeconds": 300,
+  "routes": {
+    "self_task": {"command": "/絶対パス/voice-switch/scripts/changelogmemo-add task", "heavy": false, "graceSeconds": 60},
+    "write_text": {"command": "/絶対パス/voice-switch/scripts/changelogmemo-add draft", "heavy": false},
+    "look_up": {"url": "grokbot://prompt?text={text}"}
+  }
+}
+```
+
+種類は `self_task`（自分の作業）、`write_text`（下書き）、`look_up`（調べもの）、`computer_change`（PC への変更）です。送り先は `macOS.actions` と同じ書式で、URL、HTTPS POST、標準入力で本文を受け取るコマンドを指定できます。メモ用スクリプトには Python 3 が必要です。`CHANGELOG_FILE` または `~/repos/changelog/changelogmemo` の先頭に項目を足します。
+
+猶予の既定は 300 秒で、送り先ごとに上書きできます。`heavy` の既定は `true` です。答えが迷いの帯にある、種類が複数ある、送り先がない、重い送り先の追加確認が 0.7 未満、送り先の最初の 5 件、60 秒以内に同じ送り先への依頼がある場合は、利用者の確認が必要です。Jev のキーがない場合も確認が必要です。振り分けは既定では無効です。
+
+しきい値はジャーナルのルートにある `.triage/thresholds.json` から読み、画面で付けたラベルは `.triage/labels/<端末>-app.jsonl` に記録します。依頼の状態と猶予の締め切りは `~/Library/Application Support/voice-switch/proposals.jsonl` に記録します。
+
+[依頼の送信設計](docs/journal-triage-execution.md)
+
 ## ウェイクワードなしの録音（実験的）
 
 `dictation.noWakeWord` の `followup`、`autoIdle`、`relaxedReadingDistance2` は個別に指定できます。すべて既定では無効です。Mac では `dictation.superwhisperMode` も必須です。
 
-自動で始まった録音は履歴だけに進みます。`dictation.superwhisperMode` が `autoPaste: false` のモードなら、そのモードに切り替えて Superwhisper で変換します。そうでなければ端末内で文字起こしします。Jev、tmux、アクション URL、貼り付けには渡しません。自動録音中は Escape などの Superwhisper ショートカットを奪わず、無音か停止ワードで終わります。ただし、停止ワードを言って終えた自動録音はウェイクワードの録音と同じ扱いになり、Superwhisper が手前のアプリに貼り付けます（ログは `dictation session: automatic ended by stop word, pasting like a wake-word dictation`）。自動録音中にウェイクワードを話すと、自動録音を破棄して通常の録音に切り替えます。履歴はメモリ上の最大50件で、30分後またはアプリ終了時に消えます。選んだものだけコピーできます。`dictation.journalDir` のジャーナルは別のファイルで、ディスクに残ります。
+自動で始まった録音の文字起こしは、その場では履歴に入ります。`dictation.superwhisperMode` が `autoPaste: false` のモードなら、そのモードに切り替えて Superwhisper で変換します。そうでなければ端末内で文字起こしします。macOS で依頼の振り分けを有効にすると、自動録音も裏で分類します。分類時に Jev へ送るのは、本文、録音の始まり方、アプリ名、作業名、端末の時刻、同じ端末から直前 60 秒以内の一覧対象の発話最大 2 件（本文と経過秒数）です。重い送り先の追加確認には、種類と送り先の名前も使います。自動録音中は Escape などの Superwhisper ショートカットを奪わず、無音か停止ワードで終わります。ただし、停止ワードを言って終えた自動録音はウェイクワードの録音と同じ扱いになり、Superwhisper が手前のアプリに貼り付けます（ログは `dictation session: automatic ended by stop word, pasting like a wake-word dictation`）。自動録音中にウェイクワードを話すと、自動録音を破棄して通常の録音に切り替えます。履歴はメモリ上の最大50件で、30分後またはアプリ終了時に消えます。選んだものだけコピーできます。`dictation.journalDir` のジャーナルは別のファイルで、ディスクに残ります。
 
 - Ctrl+Shift+F10 は手動録音の開始
 - Ctrl+Shift+F9 または HUD のクリックは履歴

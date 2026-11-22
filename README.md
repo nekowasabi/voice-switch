@@ -56,6 +56,28 @@ With `TYPESAFE_API_KEY` or `JEV_API_KEY`, the CLI sends one request per uncached
 
 `review [YYYY-MM-DD]` ranks entries for correction. `label <id> <destination>` records the correct destination in `.triage/labels/<device>-cli.jsonl` under the journal root. Use `thought`, `filler`, an `unjudged:<stage>` value, or one or more of `action:self_task`, `action:look_up`, `action:write_text`, and `action:computer_change`. `eval` scores the saved answers and writes a report under `.triage/reports/`. `tune` proposes thresholds using the saved answers and writes `.triage/thresholds.json` when an accepted proposal is applied with `--apply`. The default probability bands are 0.3 or below for no and 0.7 or above for yes.
 
+### Sending spoken requests on macOS
+
+Set `dictation.triage.enabled` to `true` and restart VoiceSwitch to classify new journal entries whose delivery is `history` or unset. The Requests window opens from the menu bar and shows items that need review, items about to send, and today's sent history. The badge counts items needing review. Cancel a pending item during the countdown, send it early, or pause automatic sending in the window. A request interrupted during sending requires a manual decision after restart. Correcting a sent item's kind records a label without sending it again.
+
+```json
+{
+  "enabled": true,
+  "graceSeconds": 300,
+  "routes": {
+    "self_task": {"command": "/absolute/path/voice-switch/scripts/changelogmemo-add task", "heavy": false, "graceSeconds": 60},
+    "write_text": {"command": "/absolute/path/voice-switch/scripts/changelogmemo-add draft", "heavy": false},
+    "look_up": {"url": "grokbot://prompt?text={text}"}
+  }
+}
+```
+
+Place this object at `dictation.triage`. Route keys are `self_task`, `look_up`, `write_text`, and `computer_change`. Each route uses the same URL, HTTPS POST, or command settings as `macOS.actions`. A command receives the text on stdin. The memo helper uses Python 3 and writes to `CHANGELOG_FILE` or `~/repos/changelog/changelogmemo`. The default grace period is 300 seconds and `heavy` defaults to `true` per route. Uncertain or multiple classifications, missing routes, and heavy routes whose extra check scores below 0.7 require review. So do the first five sends to a destination and requests to the same destination within 60 seconds.
+
+Jev receives the current utterance text and start mode, app and task names, local time, and the text and age of up to two prior eligible entries from this device in the last 60 seconds. The extra heavy-route check also includes the kind and destination name. Triage is off by default. Without a Jev key, items require manual review. The app reads `.triage/thresholds.json` under the journal root and saves corrections to `.triage/labels/<device>-app.jsonl`. Request history and pending deadlines are stored in `~/Library/Application Support/voice-switch/proposals.jsonl`.
+
+See the [execution design](docs/journal-triage-execution.md).
+
 `stopWords` said on their own end an in-progress dictation. If an app in `skipWhileMicInUseBy` is using the microphone instead, the same word runs `stopCommand`. The sample word is `入力ストップ`. When `stopWords` is absent, the locale picks a default: `入力ストップ` for `ja-JP` (also when `locale` is unset) and `stop dictation` for `en-US`; other locales get none. A value you set, including `[]`, is never replaced. Pick a word in your locale that rarely appears in body text, so ordinary dictation does not end the input. (macOS default: not verified on a Mac.) The sample `stopCommand` is the same superwhisper record URL, which toggles.
 
 `dictation.echoCancellation` (sample `true`; absent also means on) cancels what the speakers play before voice-switch listens, so a video or music never starts an automatic recording. Windows opens the microphone as a Communications stream whose echo canceller follows the default playback device. macOS keeps the raw microphone, so superwhisper and other apps still record it, and gates automatic recordings on the input's HAL voice activity detection (which runs on an echo-cancelled copy). With the gate enabled, the detector must hear a voice for 1.5 s without a break, or have ended such a run within the last 1.5 s; otherwise the log says `automatic wake blocked: no voice activity`. Voice processing I/O is not used, because it turned other apps' recordings of the same mic into silence. When the platform cannot do it, the log says `echo cancellation unavailable, raw input` and the raw microphone is used. On macOS, `false` bypasses only that automatic-recording gate; HAL detection stays enabled, and either energy or HAL detection counts as speech for utterance boundaries, stop-word checks, session timing, and the mic glyph before a session. The mic glyph stays through gaps up to the configured hangover. Speaker playback may start automatic recordings with `false`. On Windows, `false` uses the raw microphone. Measurements are in `.claude/skills/verify-voice-switch/features/playback-silence.md`.
@@ -305,7 +327,7 @@ Do not run CLI and tray concurrent capture. The default sample now runs live mic
 
 `dictation.noWakeWord` provides independent `followup`, `autoIdle`, and `relaxedReadingDistance2` switches. All default to false. Mac also requires `dictation.superwhisperMode`.
 
-Automatically started recordings go to in-memory history only. When `dictation.superwhisperMode` names a mode with `autoPaste: false`, they are transcribed by Superwhisper in that mode; otherwise they are transcribed locally. They never reach Jev, tmux, action URLs, or paste. An automatic recording leaves Escape and the other Superwhisper shortcuts to the foreground app and ends on silence or a stop word. One the user ends with the stop word is the exception: it is handed off like a wake-word dictation, so Superwhisper pastes it into the app in front (log `dictation session: automatic ended by stop word, pasting like a wake-word dictation`). A wake word spoken during an automatic recording discards it and starts a normal dictation. History keeps at most 50 entries for 30 minutes and disappears on exit. Only an explicit selection copies text. The journal from `dictation.journalDir` is a separate file and stays on disk.
+Automatically started recordings go to in-memory history only. When `dictation.superwhisperMode` names a mode with `autoPaste: false`, they are transcribed by Superwhisper in that mode; otherwise they are transcribed locally. The immediate dictation path keeps them in history. If macOS journal triage is enabled, the background classifier sends the fields listed above to Jev and can send confirmed requests to configured destinations. An automatic recording leaves Escape and the other Superwhisper shortcuts to the foreground app and ends on silence or a stop word. One the user ends with the stop word is the exception: it is handed off like a wake-word dictation, so Superwhisper pastes it into the app in front (log `dictation session: automatic ended by stop word, pasting like a wake-word dictation`). A wake word spoken during an automatic recording discards it and starts a normal dictation. History keeps at most 50 entries for 30 minutes and disappears on exit. Only an explicit selection copies text. The journal from `dictation.journalDir` is a separate file and stays on disk.
 
 - Ctrl+Shift+F10 starts a manual recording
 - Ctrl+Shift+F9 or a HUD click opens history

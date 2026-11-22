@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+import datetime
+import fcntl
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+import tempfile
+
+
+def prepend(path, details, title):
+    today = datetime.date.today().isoformat().encode()
+    entry = (f"* {title} {today.decode()} [note]: [voice-switch]:\n"
+             f"  - 内容: {details[0]}\n"
+             + "".join(f"    {line}\n" for line in details[1:]) + "\n").encode()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with Path(str(path) + ".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        while True:
+            try:
+                previous = path.read_bytes()
+                mode = stat.S_IMODE(path.stat().st_mode)
+            except FileNotFoundError:
+                previous, mode = b"", 0o600
+            header, _, rest = previous.partition(b"\n")
+            if re.match(rb"^\d{4}-\d\d-\d\d  ", header):
+                author = header[10:]
+                rest = rest.removeprefix(b"\n")
+            else:
+                author = b"  takets <nolifeking00@gmail.com>"
+                rest = previous
+            fd, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+            try:
+                with os.fdopen(fd, "wb") as pending:
+                    os.fchmod(pending.fileno(), mode)
+                    pending.write(today + author + b"\n\n" + entry + rest)
+                    pending.flush()
+                    os.fsync(pending.fileno())
+                try:
+                    current = path.read_bytes()
+                except FileNotFoundError:
+                    current = b""
+                if current == previous:
+                    os.replace(name, path)
+                    return
+            finally:
+                Path(name).unlink(missing_ok=True)
+
+
+def main():
+    titles = {"task": "自分の作業", "draft": "下書き"}
+    if len(sys.argv) != 2 or sys.argv[1] not in titles:
+        sys.exit("usage: changelogmemo-add task|draft < dictation.txt")
+    details = sys.stdin.buffer.read().decode("utf-8").strip().splitlines()
+    if not details:
+        sys.exit("changelogmemo-add: empty input")
+    path = Path(os.environ.get("CHANGELOG_FILE") or "~/repos/changelog/changelogmemo").expanduser().resolve()
+    prepend(path, details, titles[sys.argv[1]])
+
+
+if __name__ == "__main__":
+    main()
