@@ -373,6 +373,25 @@ def gate(text, destinations, answers):
     return "memo" if answers.get("keep_note", 0) >= 0.7 else None
 
 
+def outcome(text, destinations, answers):
+    """Where the app sends a row: "drop" (journal only), "memo", "review", or "route:<kind>" (TriageService.classify)."""
+    if destinations == ["filler"]:
+        return "drop"
+    kept = gate(text, destinations, answers)
+    if kept == "session":
+        return "drop"
+    kinds = [d.removeprefix("action:") for d in destinations if d.startswith("action:")]
+    if len(kinds) == 1:
+        if kinds[0] in ("self_task", "write_text"):
+            return "memo"
+        if kinds[0] in ("look_up", "delegate") and (answers or {}).get("needs_local", 0) >= 0.3:
+            return "review"
+        return f"route:{kinds[0]}"
+    if len(kinds) > 1 or (destinations == ["unjudged:kind"] and kept != "memo"):
+        return "review"
+    return "memo" if kept == "memo" else "drop"
+
+
 def result_row(entry, device, destinations, answers):
     return {"id": entry.id, "device": device, "timestamp": entry.timestamp.isoformat(), "text": entry.text,
             "origin": entry.origin, "app": entry.focus_app, "task": entry.task_name,

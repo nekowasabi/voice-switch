@@ -19,5 +19,20 @@ class Gate(unittest.TestCase):
         self.assertIsNone(g("古いキャッシュ", ["thought"], {"wants_action": 0.1}))  # answers cached before the gates
 
 
+class Outcome(unittest.TestCase):
+    def test_where_rows_go(self):
+        o, a = jt.outcome, lambda local=0.0, keep=0.0: {"needs_local": local, "keep_note": keep}
+        self.assertEqual(o("うん", ["filler"], a(keep=0.9)), "drop")
+        self.assertEqual(o("修正して", ["action:look_up"], a(local=0.9)), "drop")
+        self.assertEqual(o("天気を調べて", ["action:look_up"], a(local=0.1)), "route:look_up")
+        self.assertEqual(o("天気を調べて", ["action:look_up"], a(local=0.3)), "review")
+        self.assertEqual(o("牛乳", ["action:self_task"], a()), "memo")
+        self.assertEqual(o("あれを", ["unjudged:kind"], a(keep=0.9)), "memo")
+        self.assertEqual(o("あれを", ["unjudged:kind"], a()), "review")
+        self.assertEqual(o("あれを", ["action:look_up", "action:delegate"], a()), "review")
+        self.assertEqual(o("冬休み", ["thought"], a(keep=0.7)), "memo")
+        self.assertEqual(o("いいね", ["thought"], a(keep=0.6)), "drop")
+
+
 if __name__ == "__main__":
     unittest.main()

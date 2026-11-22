@@ -227,7 +227,7 @@ final class TriageService {
                 log("triage: \(id) session")
             } else if proposal.destinations == ["thought"] { verdict = .thought }
             else if proposal.destinations == ["filler"] { verdict = .filler }
-            else if kinds.isEmpty && keep { verdict = .thought }  // an unsure kind that is kept as a memo needs no review
+            else if proposal.destinations == ["unjudged:kind"] && keep { verdict = .thought }  // kept as a memo: no review
             else if kinds.count != 1 {
                 verdict = .unjudged
                 proposal.reasons = [kinds.isEmpty ? reason(for: proposal.destinations.first) : "種類が複数"]
