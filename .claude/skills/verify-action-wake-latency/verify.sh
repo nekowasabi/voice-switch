@@ -126,7 +126,7 @@ def fail(message):
 
 if item == "awl-mac-early":
     mac = strip_line_comments(read("Sources/voice-switch/MacApp.swift"))
-    marker = "wakeVerdict(tr, sets: wakeSets(config.cfg), tailSilentFrames: seg.tailSilentFrames, closed: false)"
+    marker = "wakeVerdict(tr, sets: wakeSets(config.cfg), tailSilentFrames: seg.probeSilentFrames, closed: false)"
     start = mac.find(marker)
     if start < 0:
         fail("missing listener wakeVerdict probe call")
