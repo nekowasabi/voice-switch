@@ -1,0 +1,16 @@
+Sources/voice-switch/MacApp.swift HUD.render
+Sources/voice-switch/MacApp.swift Listener.Dictation
+Sources/voice-switch/MacApp.swift Listener.automaticWakeAllowed
+Sources/voice-switch/MacApp.swift Listener.automaticWakeBlock
+Sources/voice-switch/MacApp.swift Listener.consume
+Sources/voice-switch/MacApp.swift Listener.speaksWake
+Sources/voice-switch/MacApp.swift Listener.voiceBeingHeard
+Sources/voice-switch/MacApp.swift Listener.voiceRecentlyActive
+Sources/voice-switch/MacApp.swift Listener.watchVoiceActivity
+Sources/voice-switch/MacApp.swift agreedWordCount
+Sources/voice-switch/Segmenter.swift Segmenter.isSpeech
+Sources/voice-switch/WakeSafety.swift NoWakePolicy.onSpeech
+dotnet/VoiceSwitch.Windows/DictationRuntime.cs CheckWords
+dotnet/VoiceSwitch.Windows/DictationRuntime.cs Confirmed
+dotnet/VoiceSwitch.Windows/DictationRuntime.cs PublishPhase
+dotnet/VoiceSwitch.Windows/DictationRuntime.cs RunAsync

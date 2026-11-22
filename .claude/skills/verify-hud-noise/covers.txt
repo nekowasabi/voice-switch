@@ -1,0 +1,14 @@
+Sources/voice-switch/MacApp.swift Listener.Dictation
+Sources/voice-switch/MacApp.swift Listener.automaticWakeAllowed
+Sources/voice-switch/MacApp.swift Listener.consume
+Sources/voice-switch/MacApp.swift Listener.voiceBeingHeard
+Sources/voice-switch/MacApp.swift agreedWordCount
+Sources/voice-switch/MacApp.swift rebaseFloorAfterNoWake
+Sources/voice-switch/Segmenter.swift Segmenter.adaptFloor
+Sources/voice-switch/Segmenter.swift Segmenter.floor
+Sources/voice-switch/Segmenter.swift Segmenter.isSpeech
+Sources/voice-switch/Segmenter.swift Segmenter.push
+Sources/voice-switch/Segmenter.swift Segmenter.rebaseFloor
+Sources/voice-switch/Segmenter.swift Segmenter.threshold
+Sources/voice-switch/WakeSafety.swift NoWakePolicy.minAgreedCharacters
+Sources/voice-switch/WakeSafety.swift NoWakePolicy.onSpeech

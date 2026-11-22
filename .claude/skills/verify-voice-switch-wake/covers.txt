@@ -1,0 +1,10 @@
+dotnet/VoiceSwitch.WakeReplay/Program.cs
+dotnet/VoiceSwitch.Windows.Core/DictationCore.cs DictationBoundaries
+dotnet/VoiceSwitch.Windows.Core/DictationCore.cs DictationSession
+dotnet/VoiceSwitch.Windows.Core/NoWakePolicy.cs
+dotnet/VoiceSwitch.Windows.Core/TextMatching.cs
+dotnet/VoiceSwitch.Windows.Core/VoiceSwitchConfig.cs WakeWord.From
+dotnet/VoiceSwitch.Windows.Core/WakeReadingFallback.cs
+scripts/wake_acceptance.py
+scripts/wake_log_replay.sh
+tests/fixtures/wake_log_replay_sample.log
