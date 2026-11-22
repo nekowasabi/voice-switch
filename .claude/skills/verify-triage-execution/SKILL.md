@@ -1,6 +1,6 @@
 ---
 name: verify-triage-execution
-description: Model-check (TLA+) the journal triage send path of plan A (docs/journal-triage-execution.md) - a sure request waits a grace period in まもなく送る and then goes out on its own, an exception waits in 確認が要るもの for the user - so that nothing goes out without the user or a full grace period, a heavy route goes out on its own only after the extra Jev check, a cancelled request never goes out, nothing goes out twice across a crash, and an unsure or unrouted request never ends where a menu user cannot see it. Use when a change touches docs/journal-triage-execution.md or docs/journal-triage-design.md, or the code that implements them (the 依頼 window, dictation.triage.routes and graceSeconds, the exception rules, proposals.jsonl, the triage classifier in the app), and before claiming that triage sending is safe.
+description: Model-check (TLA+) the journal triage send path of plan A (docs/journal-triage-execution.md) - a sure request waits a grace period in まもなく送る and then goes out on its own, an exception waits in 確認が要るもの for the user - so that nothing goes out without the user or a full grace period, a heavy route goes out on its own only after the extra Jev check, a cancelled request never goes out, nothing goes out twice across a crash, and an unsure or unrouted request never ends where a menu user cannot see it. Use when a change touches docs/journal-triage-execution.md or docs/journal-triage-design.md, or the code that implements them (the 依頼 window, dictation.triage.routes and graceSeconds, the exception rules, proposals.jsonl, the triage classifier in the app, the Jev request in TriageRequest.swift, scripts/changelogmemo-add), and before claiming that triage sending is safe.
 ---
 
 # Verify triage sending (TLA+)
@@ -61,6 +61,15 @@ A request misread as `thought` or `filler` is classifier accuracy, measured by t
    - reject: from each reachable state, every event the model cannot take (1 317 561) returns nil. `crash` at `MaxCrashes` is exempt; the bound only keeps the model finite.
    - coverage: all 11 stages and 13 events occur, so a shrunken fixture fails.
    - After any change to `TriageExec.tla` or `design.cfg`, run `conform.sh gen` (about 1 min); `check` refuses a fixture whose model or config hash differs.
+6. **App-side triage against Python and the config**: `sh tests/triage/run.sh` must print five PASS lines and no FAIL.
+   - `decide` and `thresholds`: `TriageClassifier` gives every case of `tests/parity/fixtures/triage_decide.json` its `want` and reads `thresholds.json` as Python's `read_thresholds` does (15 files).
+   - `request`: `TriageRequest` (`Sources/voice-switch/TriageRequest.swift`, the request body `TriageService` sends) builds, from each case of `tests/parity/fixtures/triage_state.json`, the same state Python builds from the same journal rows (`tests/test_journal_triage.py` C3 / C7 read the same file). The cases hold 60 s and 61 s, 59.6 s (sent as 59), a row at the same instant, a pasted row, another device's row, a third listed row, an empty app name and a -05:00 time. The classification request carries the six questions of `Resources/triage_questions.json` and `model` only; the heavy-route check carries `verify_route` only and the state plus `route` {kind, destination}; no bundleId, pid, exe or task id is in either body.
+   - `question hash`: the hash `TriageFiles.questionHash` gives the six questions `TriageRequest` sends equals Python's `question_hash`, for the file's wording and for a changed one with non-ASCII, a slash and a quote.
+   - `routes`: `dictation.triage.routes` loads with the four kinds (look_up, self_task, write_text, computer_change); `lookup`, `Self_task`, `memo` and an empty key fail the load; a reload with one of them keeps the previous config (wake words and routes) and logs one line with `keeping previous` that names `routes`; the next valid reload applies.
+7. **changelogmemo-add beside a writer without the lock**: `python3 -m unittest tests.test_changelogmemo_add` must print `OK`. A stand-in for the changelog skill's Edit tool reads changelogmemo, adds `* skill <n>` and replaces the whole file, without the lock:
+   - edit-like (reads, replaces 2 ms later, rests 10 ms) during 60 adds: every add exits 0 and every entry of both writers is there exactly once.
+   - without rest (scratchpad race.py's condition) during 20 adds: every add ends within 30 s with exit 0 or 1, no `* skill` entry is lost and no added entry is doubled. Each replacement of this writer is based on a read from before the script's last write, so no writer without the lock can keep its own entry against it; the test does not ask for that.
+8. **Mutants of items 6 and 7**: `sh .claude/skills/verify-triage-execution/code-mutants.sh` must print `CAUGHT` for every line (11): the script as it was at 1b4c0f5, the script without its check after publishing, the previous rules (61 s, 3 rows, other device, pasted rows), bundleId instead of the app name, `verify_route` in the classification batch, the check without its route, a hash that escapes slashes, and routes that take any key.
 
 ## Run
 
@@ -69,6 +78,8 @@ sh tests/triage/run.sh                                          # Swift truth ta
 sh .claude/skills/verify-triage-execution/check.sh design     # design | risk
 sh .claude/skills/verify-triage-execution/mutants.sh
 sh .claude/skills/verify-triage-execution/conform/conform.sh check   # gen | check | mutants
+python3 -m unittest tests.test_changelogmemo_add                 # item 7
+sh .claude/skills/verify-triage-execution/code-mutants.sh       # item 8
 VS_BIN=<voice-switch binary> python3 .claude/skills/verify-voice-switch-mac/triage.py
 ```
 
@@ -97,4 +108,4 @@ When any of these change, rerun items 2 to 5, update the model if the change was
 
 ## Not covered
 
-The classifier's accuracy (Jev may return any verdict here, and the extra check may also be wrong); two app instances or two machines acting on the same request; the route's own failure modes, modeled only as "it ran"; real time (the grace period is one step that can happen at any point); the window and the icon (item 1 only); the changelogmemo writer race with the changelog skill: `scripts/changelogmemo-add` rereads before it replaces, but a writer that replaces the file between that reread and `os.replace` loses its entry (a loop of about 2 300 rewrites against 20 adds lost 0 to 3); Windows.
+The classifier's accuracy (Jev may return any verdict here, and the extra check may also be wrong); two app instances or two machines acting on the same request; the route's own failure modes, modeled only as "it ran"; real time (the grace period is one step that can happen at any point); the window and the icon (item 1 only); for the changelogmemo writer race (item 7), a writer that rewrites the file in place instead of replacing it, and the real Edit tool's timing; Windows.
