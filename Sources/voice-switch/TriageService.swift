@@ -77,6 +77,7 @@ final class TriageService {
 
     func routeName(_ kind: TriageKind?) -> String? {
         guard let kind, let route = routes[kind] else { return nil }
+        if let name = route.name { return name }
         switch route.action.delivery {
         case .command(let command):
             let executable = command.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? ""

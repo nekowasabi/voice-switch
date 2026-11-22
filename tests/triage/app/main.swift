@@ -165,6 +165,14 @@ _ = logged { config.reloadIfChanged() }
 if config.cfg.wakeWords != ["別の言葉"] || routes(config) != ["look_up", "self_task"] {
     fail("routes: a valid reload after the bad one did not apply")
 }
+do {
+    let text = "{\"wakeWords\": [\"音声入力\"], \"command\": \"true\", \"dictation\": {\"triage\": {\"routes\": {\"look_up\": {\"command\": \"true\", \"name\": \"  Grok Bot（調べものを代行する AI）  \"}, \"self_task\": {\"command\": \"true\", \"name\": \" \"}}}}}"
+    try text.write(toFile: configPath, atomically: true, encoding: .utf8)
+    let named = try ConfigFile(path: configPath).cfg.dictation?.triage?.routes
+    if named?["look_up"]?.name != "Grok Bot（調べものを代行する AI）" || named?["self_task"]?.name != nil {
+        fail("routes: name is not read trimmed, or a blank name is kept (\(String(describing: named?["look_up"]?.name)), \(String(describing: named?["self_task"]?.name)))")
+    }
+} catch { fail("routes: a route with a name does not load: \(error)") }
 print(failures == hashFailures ? "PASS routes load only the four kinds; a bad reload keeps the previous config and logs one line"
                                : "FAIL routes")
 exit(failures == 0 ? 0 : 1)

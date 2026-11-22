@@ -121,8 +121,11 @@ struct TriageSettings: Decodable {
         let action: WakeAction
         let heavy: Bool
         let graceSeconds: Double?
+        /// What the destination is, in words. Shown in the window and sent to Jev for the heavy-route check, which
+        /// cannot judge a destination it only knows as "コマンド".
+        let name: String?
 
-        private enum CodingKeys: String, CodingKey { case heavy, graceSeconds }
+        private enum CodingKeys: String, CodingKey { case heavy, graceSeconds, name }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -130,6 +133,8 @@ struct TriageSettings: Decodable {
             action = try WakeAction(from: decoder, routeName: kind)
             heavy = try c.decodeIfPresent(Bool.self, forKey: .heavy) ?? true
             graceSeconds = try TriageSettings.grace(c)
+            name = try c.decodeIfPresent(String.self, forKey: .name)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 }
         }
     }
 
