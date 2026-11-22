@@ -8,7 +8,7 @@ import itertools
 import json
 from pathlib import Path
 
-KINDS = ("self_task", "look_up", "write_text", "computer_change")
+KINDS = ("self_task", "look_up", "write_text", "computer_change", "delegate")
 QUESTIONS = ("wants_action", "is_filler", *(f"kind_{kind}" for kind in KINDS))
 DEFAULT = {"no": 0.3, "yes": 0.7}
 # Each band takes its edge values in turn, so 0.7 and 0.3 sit on both sides of every case: 0.69 and 0.31 are unsure.
