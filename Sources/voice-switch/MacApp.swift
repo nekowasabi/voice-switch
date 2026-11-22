@@ -1592,54 +1592,33 @@ final class Listener {
         var silero = SileroStream()
         var dictation: Dictation?
         var shown = Phase.idle
-        var clock = 0
-        var followupUntil = 0
-        var recent: [Float] = []
-        var speechFrames = 0
-        var gapFrames = 0
-        // Which source counted each voiced frame of the open phrase, and why it has not opened a session; "" once logged.
-        var phraseEnergy = 0, phraseHAL = 0
-        // Loudest frame of the phrase against the energy threshold, so a mic too quiet for the segmenter shows as such.
-        var phrasePeak: Float = 0
-        var phraseOutcome = ""
+        var session = MacDictationSession()
         func endPhrase(_ outcome: String) {
-            let ms = { (n: Int) in n * frameLen * 1000 / Int(rate) }
-            let level = String(format: "peakRms=%.4f threshold=%.4f", locale: Locale(identifier: "en_US_POSIX"), phrasePeak, seg.threshold)
-            log("voice: phrase voicedMs=\(ms(speechFrames)) energyMs=\(ms(phraseEnergy)) halMs=\(ms(phraseHAL)) \(level) -> \(outcome)")
-            phraseOutcome = ""
+            log(session.phraseLog(outcome: outcome, threshold: seg.threshold))
+            session.phraseOutcome = ""
         }
-        // A phrase that would have opened an automatic session but for voice activity detection, which needs
-        // minVoiceSeconds of voice: a first sentence often ends before that, and the next sentence then opens the session.
-        var phraseHeldByVoice = false
-        var heldPhrase: (samples: [Float], until: Int)?
-        // A phrase spoken while another dictation app held the mic was meant for that app: when it lets go mid-phrase
-        // (Superwhisper moving to processing, 2026-10-29 12:23 JST), the phrase must not open a session of its own.
-        var phraseForOtherApp = false
         // Stop-word judgement runs beside the frame loop; `stopJob` says which dictation and generation it belongs to.
         let stopCheck = LatestRecognition<StopVerdict>()
         let wordCheck = LatestRecognition<(session: UUID, agreed: Bool)>()
         var stopJob: (session: UUID, generation: Int)?
-        var stopFrames = 0
         func submitAndArm(_ d: Dictation, cfg: DictationConfig, reason: String) {
-            if !d.origin.isAutomatic && d.action == nil, let options = cfg.noWakeWord, options.followup == true, options.valid {
-                followupUntil = clock + Int(rate) * (options.followupMs ?? 8000) / 1000
-            }
-            recent.removeAll(); speechFrames = 0
+            session.armFollowup(isAutomatic: d.origin.isAutomatic, hasAction: d.action != nil, options: cfg.noWakeWord)
+            session.clearRecentSpeech()
             submit(d, cfg: cfg, reason: reason)
         }
         var activeGeneration = localHistoryState.withLock { $0.generation }
         for await frame in stream {
             let currentGeneration = localHistoryState.withLock { $0.generation }
             if activeGeneration != currentGeneration {
-                seg = Segmenter(cfg: config.cfg); silero = SileroStream(); dictation = nil; followupUntil = 0
-                recent = []; speechFrames = 0; Hotkeys.end()
+                seg = Segmenter(cfg: config.cfg); silero = SileroStream(); dictation = nil; session.clearFollowup()
+                session.clearRecentSpeech(); Hotkeys.end()
                 activeGeneration = currentGeneration
                 phaseCont.yield((.idle, nil))
             }
             guard frame.generation == currentGeneration else { continue }
             let f = frame.samples
             let generation = frame.generation
-            clock += f.count
+            session.advance(sampleCount: f.count)
             // Set where the user ended it on purpose (stop word or superwhisper's shortcut), so the HUD confirms it.
             var endedByUser = false
             // Derived from `dictation` after every frame (defer covers each `continue`) instead of at each place that sets it.
@@ -1648,7 +1627,7 @@ final class Listener {
                 // so a noise that blips the detector never lights the pill.
                 let phase: Phase = endedByUser ? .ended
                     : dictation.map { $0.heardSpeech && !$0.confirmed ? .idle : $0.stopHeard ? .stopping : !$0.heardSpeech ? .waiting : .recording }
-                    ?? (clock < followupUntil && config.cfg.dictation?.noWakeWord?.followup == true ? .followup : .idle)
+                    ?? (session.inFollowupWindow && config.cfg.dictation?.noWakeWord?.followup == true ? .followup : .idle)
                 // .ended hides itself after a moment; the idle that follows it is not a change.
                 if phase != shown, !(shown == .ended && phase == .idle) {
                     // The stop sound goes with the stop glyph, which .stopping shows as soon as the word is heard. Playing it on the
@@ -1658,7 +1637,7 @@ final class Listener {
                     phaseCont.yield((phase, dictation?.action?.icon ?? dictation?.sticky?.appPath))
                 }
             }
-            if f.isEmpty { seg = Segmenter(cfg: config.cfg); silero = SileroStream(); dictation = nil; followupUntil = 0; recent = []; speechFrames = 0; Hotkeys.end(); continue }
+            if f.isEmpty { seg = Segmenter(cfg: config.cfg); silero = SileroStream(); dictation = nil; session.clearFollowup(); session.clearRecentSpeech(); Hotkeys.end(); continue }
             seg.adaptFloor = dictation == nil
             let hal = voiceBeingHeard()
             let event = seg.push(f, voice: hal)
@@ -1675,19 +1654,19 @@ final class Listener {
                let heard = try? await transcribe(u, locale: Locale(identifier: config.cfg.locale ?? "ja_JP")) {
                 guard localHistoryState.withLock({ $0.generation == generation }) else { continue }
                 if speaksWake(heard) {
-                    dictation = nil; speechFrames = 0; Hotkeys.end()
+                    dictation = nil; session.clearSpeech(); Hotkeys.end()
                     log("dictation session: automatic replaced by wake word")
                 } else {
                     heardDuringAutomatic = heard
                 }
             }
             if var d = dictation {
-                if speechFrames > 0, !phraseOutcome.isEmpty { endPhrase("dictation opened \(d.origin.fields) \(sidField(d.sessionID))") }
+                if session.hasSpeech, !session.phraseOutcome.isEmpty { endPhrase("dictation opened \(d.origin.fields) \(sidField(d.sessionID))") }
                 let dc = config.cfg.dictation ?? DictationConfig()
                 let key = Hotkeys.take()
                 if key == .cancel {
-                    dictation = nil; recent.removeAll(); speechFrames = 0; Hotkeys.end()
-                    followupUntil = 0
+                    dictation = nil; session.clearRecentSpeech(); Hotkeys.end()
+                    session.clearFollowup()
                     log("dictation cancelled \(sidField(d.sessionID))"); continue
                 }
                 d.samples += f
@@ -1704,7 +1683,7 @@ final class Listener {
                     // A recognizer that fails confirms, as the handoff hands such a recording off.
                     wordCheck.submit { (session, (try? await agreedWordCount(samples, locale: locale)).map { $0 >= NoWakePolicy.minAgreedCharacters } ?? true) }
                 }
-                stopFrames += f.count
+                session.advanceStopCheck(sampleCount: f.count)
                 // The stop word is judged beside the frame loop, on the newest utterance only. Frames keep flowing meanwhile,
                 // so the result is taken on a later frame, and the cut also drops the frames that arrived since.
                 if let verdict = stopCheck.take(), let job = stopJob {
@@ -1712,8 +1691,8 @@ final class Listener {
                     let current = job.session == d.sessionID && job.generation == generation
                     if current { d.stopHeard = verdict == .heard }
                     if case let .cut(cut) = verdict, cut > 0, current {
-                        d.samples.removeLast(min(cut + stopFrames, d.samples.count))
-                        dictation = nil; recent.removeAll(); speechFrames = 0; Hotkeys.end(); endedByUser = true
+                        d.samples.removeLast(session.stopCutCount(cut, sampleCount: d.samples.count))
+                        dictation = nil; session.clearRecentSpeech(); Hotkeys.end(); endedByUser = true
                         log("dictation finished by stop word \(sidField(d.sessionID))")
                         if d.heardSpeech, !d.samples.isEmpty { submitAndArm(d, cfg: dc, reason: finishReasonToken("stop word")) }
                         continue
@@ -1737,11 +1716,11 @@ final class Listener {
                 if let stopAudio, let words = config.cfg.stopWords, !words.isEmpty {
                     let locale = Locale(identifier: config.cfg.locale ?? "ja_JP")
                     let quiet = config.cfg.dictation?.noWakeWord?.enabled == true
-                    let session = d.sessionID
-                    stopCheck.submit { await stopWordCut(stopAudio.u, heard: stopAudio.heard, stopWords: words, locale: locale, quiet: quiet, kind: stopAudio.kind, sessionID: session) }
+                    let sessionID = d.sessionID
+                    stopCheck.submit { await stopWordCut(stopAudio.u, heard: stopAudio.heard, stopWords: words, locale: locale, quiet: quiet, kind: stopAudio.kind, sessionID: sessionID) }
                     d.stopCheckedSamples = d.samples.count
                     stopJob = (d.sessionID, generation)
-                    stopFrames = 0
+                    session.resetStopCheck()
                 }
                 guard localHistoryState.withLock({ $0.generation == generation }) else { continue }
                 if d.deafFrames > 0 { d.deafFrames -= 1 } else if !d.heardSpeech && speaking {
@@ -1752,7 +1731,7 @@ final class Listener {
                 dictation = d
                 if !d.heardSpeech {
                     if d.silentFrames * frameLen * 1000 / Int(rate) >= dc.startTimeoutMs ?? 3000 {
-                        dictation = nil; recent.removeAll(); speechFrames = 0; Hotkeys.end()
+                        dictation = nil; session.clearRecentSpeech(); Hotkeys.end()
                         log("dictation cancelled: nothing said after the wake word \(sidField(d.sessionID))")
                     }
                     continue
@@ -1767,35 +1746,21 @@ final class Listener {
                 // as an idle over-cap head with no wake does; otherwise the next frame reads the same noise as speech and
                 // reopens a session at once, and the mic HUD never leaves (model: .claude/skills/verify-hud-noise).
                 if reason == "maxSeconds", d.origin.isAutomatic, !d.confirmed { rebaseFloorAfterNoWake(&seg) }
-                dictation = nil; recent.removeAll(); speechFrames = 0; Hotkeys.end(); endedByUser = key == .finish
+                dictation = nil; session.clearRecentSpeech(); Hotkeys.end(); endedByUser = key == .finish
                 log("dictation ended by \(reason) after \(d.samples.count * 1000 / Int(rate)) ms of audio \(sidField(d.sessionID))")
                 submitAndArm(d, cfg: dc, reason: finishReasonToken(reason))
                 continue
             }
-            // speechFrames counts the voiced frames of the phrase being spoken, joined across gaps up to the hangover,
-            // which the VAD alone splits into short runs.
             if speaking {
-                if speechFrames == 0 { phraseEnergy = 0; phraseHAL = 0; phrasePeak = 0; phraseForOtherApp = false }
-                speechFrames += 1; gapFrames = 0
-                if energy { phraseEnergy += 1 }
-                if hal { phraseHAL += 1 }
-                phrasePeak = max(phrasePeak, seg.lastRms)
-            }
-            else if speechFrames > 0 {
-                gapFrames += 1
-                phrasePeak = max(phrasePeak, seg.lastRms)
-                if gapFrames > frames(ms: config.cfg.hangoverMs ?? 300) {
-                    if !phraseOutcome.isEmpty { endPhrase(phraseOutcome) }
-                    // ponytail: one held phrase for 5 s; a third sentence before the gate opens drops the first.
-                    if phraseHeldByVoice { heldPhrase = (recent, clock + Int(rate) * 5) }
-                    speechFrames = 0; phraseHeldByVoice = false
+                session.noteSpeech(energy: energy, hal: hal, rms: seg.lastRms)
+            } else if session.hasSpeech {
+                session.noteGap(rms: seg.lastRms)
+                if session.phraseGapExpired(hangoverMs: config.cfg.hangoverMs) {
+                    if !session.phraseOutcome.isEmpty { endPhrase(session.phraseOutcome) }
+                    session.finishIdlePhrase()
                 }
             }
-            recent += f
-            // A live phrase is kept so an automatic session that starts late still records it from the beginning.
-            // ponytail: capped at 10 s of audio; a longer phrase keeps only its tail.
-            let keep = speechFrames > 0 ? Int(rate) * 10 : frames(ms: config.cfg.prerollMs ?? 300) * frameLen + frameLen
-            if recent.count > keep { recent.removeFirst(recent.count - keep) }
+            session.appendRecent(f, prerollMs: config.cfg.prerollMs)
             if Hotkeys.take() == .start {
                 if let name = Hotkeys.takeAction() {
                     if let action = config.cfg.action(named: name) {
@@ -1829,27 +1794,26 @@ final class Listener {
             let options = config.cfg.dictation?.noWakeWord
             // Starts even while the user types or moves the mouse; input idle no longer gates it.
             // Same short-circuit order as the single condition it replaces, so each clause can name itself in the phrase line.
-            let longEnough = speechFrames >= frames(ms: config.cfg.minSpeechMs ?? 300)
+            let longEnough = session.hasReachedMinimumSpeech(config.cfg.minSpeechMs)
             let modeSet = !(config.cfg.dictation?.superwhisperMode ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             let idle = speaking && longEnough && modeSet ? MacInputActivity.idleSeconds() : nil
-            let origin = idle.flatMap { NoWakePolicy.onSpeech(options, idleSeconds: $0, inFollowupWindow: clock < followupUntil) }
+            let origin = idle.flatMap { NoWakePolicy.onSpeech(options, idleSeconds: $0, inFollowupWindow: session.inFollowupWindow) }
             if speaking {
-                phraseOutcome = !longEnough ? "shorter than minSpeechMs" : !modeSet ? "superwhisperMode unset"
+                session.phraseOutcome = !longEnough ? "shorter than minSpeechMs" : !modeSet ? "superwhisperMode unset"
                     : idle == nil ? "input idle unavailable" : origin == nil ? "NoWakePolicy.onSpeech nil" : "allowed but no audio"
             }
             if let origin {
-                if phraseForOtherApp {
-                    phraseOutcome = "automatic wake blocked: phrase began while another app held the microphone"
+                if session.phraseForOtherApp {
+                    session.phraseOutcome = "automatic wake blocked: phrase began while another app held the microphone"
                 } else if !automaticWakeAllowed() {
-                    if lastAutomaticBlock == Listener.noVoiceActivity { phraseHeldByVoice = true }
-                    if let block = lastAutomaticBlock, (config.cfg.skipWhileMicInUseBy ?? []).contains(where: { block == Listener.micHeldBy($0) }) { phraseForOtherApp = true }
-                    phraseOutcome = "automatic wake blocked: \(lastAutomaticBlock ?? "-")"
+                    if lastAutomaticBlock == Listener.noVoiceActivity { session.holdPhraseForVoice() }
+                    if let block = lastAutomaticBlock, (config.cfg.skipWhileMicInUseBy ?? []).contains(where: { block == Listener.micHeldBy($0) }) { session.phraseForOtherApp = true }
+                    session.phraseOutcome = "automatic wake blocked: \(lastAutomaticBlock ?? "-")"
                 } else {
                     // The whole phrase with its preroll, even when it overlaps typing, after a phrase the gate held back.
-                    let held = heldPhrase.flatMap { clock < $0.until ? $0.samples : nil } ?? []
-                    heldPhrase = nil; phraseHeldByVoice = false
+                    let held = session.takeHeldPhrase()
                     if !held.isEmpty { log("dictation session: automatic keeps \(held.count * 1000 / Int(rate)) ms held for voice activity") }
-                    let samples = held + recent
+                    let samples = held + session.recent
                     if !samples.isEmpty {
                         // Finish only: the user is mid-task elsewhere and their Escape belongs to that app. The finish key is the manual
                         // stop for when the stop word is misheard.

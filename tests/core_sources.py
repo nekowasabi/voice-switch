@@ -15,6 +15,7 @@ SEGMENTER = (*JOURNAL, "Segmenter", "SuperwhisperModes", "PaneRoute")
 TRIAGE = ("TriageClassifier", "TriageExecution")
 HARNESSES = {
     "journal": JOURNAL,
+    "mac-dictation-session": (*SEGMENTER, "MacDictationSession"),
     "segmenter": SEGMENTER,
     "sticky": ("StickyMode",),
     "triage": TRIAGE,

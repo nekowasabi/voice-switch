@@ -1,6 +1,6 @@
 ---
 name: verify-hud-noise
-description: Model-check (TLA+) that the macOS mic HUD goes away once nobody talks and the room settles into silence or steady noise (a fan or room tone on a raw mic, echoCancellation false). Use when a change touches the frame loop in Listener.consume (automatic session opening, the dictation branch's end conditions, the phase `defer`), Segmenter.push / isSpeech / rebaseFloor, rebaseFloorAfterNoWake, or HUD.render's phase table in Sources/voice-switch/MacApp.swift and Segmenter.swift, and before claiming the "HUD never disappears" bug fixed.
+description: Model-check (TLA+) that the macOS mic HUD goes away once nobody talks and the room settles into silence or steady noise (a fan or room tone on a raw mic, echoCancellation false). Use when a change touches the frame loop in Listener.consume (automatic session opening, the dictation branch's end conditions, the phase `defer`), MacDictationSession.noteSpeech / noteGap, Segmenter.push / isSpeech / rebaseFloor, rebaseFloorAfterNoWake, or HUD.render's phase table in Sources/voice-switch/MacApp.swift and Segmenter.swift, and before claiming the "HUD never disappears" bug fixed.
 ---
 
 # Verify the HUD hides in a quiet or steadily noisy room (TLA+)
@@ -51,10 +51,10 @@ Sync commit: `cf89a2f` の作業ツリー（未コミット）。`de4c434` の�
 | `speech` | `Segmenter.isSpeech`: `rms > threshold` or the HAL voice flag (`voiceBeingHeard()`), modeled as voice only |
 | `floorHigh`, `fh1` | `Segmenter.floor` / `threshold`; the floor follows non-speech frames only while `seg.adaptFloor = dictation == nil` |
 | `uttLen`, `skipping`, `silent`, `close`, `head` | `Segmenter.push`: utterance buffering, `.head` past `maxFrames + hangover`, `.utterance` / `.tail` after `hangover` silent frames |
-| dictation branch | `if var d = dictation { ... }`: `silentFrames`, end on `noWakeWord.endSilenceMs` or `maxSeconds`, `dictation = nil; speechFrames = 0` |
+| dictation branch | `if var d = dictation { ... }`: `silentFrames`, end on `noWakeWord.endSilenceMs` or `maxSeconds`, `dictation = nil; session.clearRecentSpeech()` |
 | `confirmed`, `c` | `Dictation.confirmed`, set by `wordCheck` (`agreedWordCount` >= `NoWakePolicy.minAgreedCharacters`); modeled as confirming on the first voice frame of the session |
 | maxSeconds end → `floorHigh` | `if reason == "maxSeconds", d.origin.isAutomatic, !d.confirmed { rebaseFloorAfterNoWake(&seg) }` just before `dictation = nil` |
-| idle path opening | `speechFrames += 1` while speaking, `longEnough`, `NoWakePolicy.onSpeech`, `automaticWakeAllowed()`, `dictation = Dictation(...)` then `continue` |
+| idle path opening | `MacDictationSession.noteSpeech()` while speaking, `hasReachedMinimumSpeech`, `NoWakePolicy.onSpeech`, `automaticWakeAllowed()`, `dictation = Dictation(...)` then `continue` |
 | idle path `head` → `floorHigh` | `rebaseFloorAfterNoWake(&seg)` on an over-cap head (the three call sites after the opening block) |
 | `HudVisible` | `dict = "auto" /\ confirmed`。phase の `defer` で本文後の未確認自動セッションと待機中のフレーズは `.idle`、確認後は `.recording` / `.stopping`。ウェイクの本文待ちはこのモデルの対象外 |
 
@@ -64,7 +64,7 @@ Assumptions: `dictation.echoCancellation` is false (the user's config) and `noWa
 
 ## Does my change touch this?
 
-Run `git diff cf89a2f -- Sources/voice-switch/MacApp.swift Sources/voice-switch/Segmenter.swift` from the repo root and look for: the frame loop in `Listener.consume` (opening condition, the dictation branch's end conditions, where `.head` is handled, `seg.adaptFloor`, `speechFrames` resets), `Segmenter.push` / `isSpeech` / `rebaseFloor`, `rebaseFloorAfterNoWake`, the phase `defer`, or `HUD.render`'s `switch (phase, delivery)`. Any of these needs the matching model part updated before trusting the result.
+Run `git diff cf89a2f -- Sources/voice-switch/MacApp.swift Sources/voice-switch/MacDictationSession.swift Sources/voice-switch/Segmenter.swift` from the repo root and look for: the frame loop in `Listener.consume` (opening condition, the dictation branch's end conditions, where `.head` is handled, `seg.adaptFloor`, `speechFrames` resets), `Segmenter.push` / `isSpeech` / `rebaseFloor`, `rebaseFloorAfterNoWake`, the phase `defer`, or `HUD.render`'s `switch (phase, delivery)`. Any of these needs the matching model part updated before trusting the result.
 
 ## When it fails
 

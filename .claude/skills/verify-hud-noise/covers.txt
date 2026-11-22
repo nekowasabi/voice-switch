@@ -1,4 +1,5 @@
 Sources/voice-switch/MacApp.swift Listener.Dictation
+Sources/voice-switch/MacDictationSession.swift
 Sources/voice-switch/MacApp.swift Listener.automaticWakeAllowed
 Sources/voice-switch/MacApp.swift Listener.consume
 Sources/voice-switch/MacApp.swift Listener.voiceBeingHeard
