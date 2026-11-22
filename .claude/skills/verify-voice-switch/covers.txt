@@ -1,0 +1,25 @@
+config.example.windows.json
+dotnet/VoiceSwitch.SharedChecks/Program.cs
+dotnet/VoiceSwitch.Windows.Core/DictationCore.cs
+dotnet/VoiceSwitch.Windows.Core/NoWakePolicy.cs
+dotnet/VoiceSwitch.Windows.Core/SecretLog.cs
+dotnet/VoiceSwitch.Windows.Core/Segmenter.cs
+dotnet/VoiceSwitch.Windows.Core/SpeakerGate.cs
+dotnet/VoiceSwitch.Windows.Core/SpeechGate.cs
+dotnet/VoiceSwitch.Windows.Core/TextMatching.cs
+dotnet/VoiceSwitch.Windows.Core/VoiceSwitchConfig.cs
+dotnet/VoiceSwitch.Windows/DictationRuntime.cs
+dotnet/VoiceSwitch.Windows/EchoCancelledCapture.cs
+dotnet/VoiceSwitch.Windows/NoiseReduction.cs
+dotnet/VoiceSwitch.Windows/Program.cs Program.Run
+dotnet/VoiceSwitch.Windows/Program.cs SelfTest
+dotnet/VoiceSwitch.Windows/SpeechPowerShell.cs
+dotnet/VoiceSwitch.Windows/SuperwhisperHandoff.cs
+dotnet/VoiceSwitch.Windows/SyntheticIngress.cs
+dotnet/VoiceSwitch.Windows/Tray/DictationHud.cs
+dotnet/VoiceSwitch.Windows/Tray/KeyboardHook.cs
+dotnet/VoiceSwitch.Windows/Tray/TrayHost.cs
+dotnet/VoiceSwitch.Windows/Tray/TrayIpc.cs
+dotnet/VoiceSwitch.Windows/WinMmCapture.cs
+dotnet/VoiceSwitch.Windows/WordAgreement.cs
+scripts/windows-say.ps1

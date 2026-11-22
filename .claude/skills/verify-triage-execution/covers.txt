@@ -1,0 +1,15 @@
+Resources/triage_questions.json
+Sources/voice-switch/Config.swift ConfigFile.reloadIfChanged
+Sources/voice-switch/Config.swift TriageSettings
+Sources/voice-switch/MacApp.swift executeWakeAction
+Sources/voice-switch/MacApp.swift postAction
+Sources/voice-switch/Platform.swift Platform.runCommand
+Sources/voice-switch/Platform.swift Platform.runURLProcess
+Sources/voice-switch/TriageClassifier.swift
+Sources/voice-switch/TriageExecution.swift
+Sources/voice-switch/TriageFiles.swift
+Sources/voice-switch/TriagePanel.swift
+Sources/voice-switch/TriageRequest.swift
+Sources/voice-switch/TriageService.swift
+scripts/mail-send
+scripts/memo-inbox-add

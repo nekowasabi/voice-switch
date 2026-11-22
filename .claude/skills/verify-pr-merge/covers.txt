@@ -1,0 +1,9 @@
+Sources/voice-switch/Config.swift log
+Sources/voice-switch/DictationJournal.swift
+Sources/voice-switch/MacApp.swift AppDelegate.applicationDidFinishLaunching
+Sources/voice-switch/MacApp.swift Listener.consume
+Sources/voice-switch/MacApp.swift Listener.transcribeToHistory
+Sources/voice-switch/MacWakeUI.swift MacWakeShortcuts.registerActions
+Sources/voice-switch/Platform.swift Platform.runCommand
+Sources/voice-switch/SecretLog.swift
+Sources/voice-switch/WakeSafety.swift DictationHistory.add

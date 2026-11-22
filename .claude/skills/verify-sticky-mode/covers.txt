@@ -1,0 +1,17 @@
+Sources/voice-switch/Config.swift MacOSActions.stickyEnterApps
+Sources/voice-switch/Config.swift MacOSActions.stickyWakeWords
+Sources/voice-switch/MacApp.swift StickySession.enter
+Sources/voice-switch/MacApp.swift captureStickyTarget
+Sources/voice-switch/MacApp.swift deliverSticky
+Sources/voice-switch/MacApp.swift descends
+Sources/voice-switch/MacApp.swift stickyFocusIs
+Sources/voice-switch/MacApp.swift stickyFrontIs
+Sources/voice-switch/MacApp.swift stickyPasteToPane
+Sources/voice-switch/MacApp.swift stickyTmux
+Sources/voice-switch/MacApp.swift stickyTmuxPane
+Sources/voice-switch/PaneRoute.swift tmuxExecutable
+Sources/voice-switch/StickyMode.swift stickyAdvanceAge
+Sources/voice-switch/StickyMode.swift stickyEnabled
+Sources/voice-switch/StickyMode.swift stickyMayEnter
+Sources/voice-switch/StickyMode.swift stickyMayPaste
+Sources/voice-switch/StickyMode.swift stickyStep
