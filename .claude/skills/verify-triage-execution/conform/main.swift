@@ -37,14 +37,18 @@ func stage(_ s: String) -> TE.Stage {
     return st
 }
 
-let rules = TE.Rules(routes: Set((consts["Routes"] as! [String]).map(kind)),
-                     heavy: Set((consts["Heavy"] as! [String]).map(kind)), maxCrashes: maxCrashes)
+// Each routed kind has one candidate, a kind in AlternateRoutes two (candidate 0 is the default).
+let alternate = Set(consts["AlternateRoutes"] as! [String])
+let rules = TE.Rules(routes: Dictionary(uniqueKeysWithValues: (consts["Routes"] as! [String]).map { (kind($0), alternate.contains($0) ? 2 : 1) }),
+                     // HeavyAt(v, i): only the default candidate of a kind in Heavy is heavy.
+                     heavy: Dictionary(uniqueKeysWithValues: (consts["Heavy"] as! [String]).map { (kind($0), Set([0])) }), maxCrashes: maxCrashes)
+func index(_ v: Any) -> Int? { let i = v as! Int; return i < 0 ? nil : i }
 
 let rows: [TE.Row] = (doc["rows"] as! [[Any]]).map { f in
     TE.Row(stage: stage(f[0] as! String), persisted: stage(f[1] as! String), verdict: verdict(f[2] as! String),
            verified: f[3] as! Bool, runs: f[4] as! Int,
            runKind: (f[5] as! String) == "none" ? nil : kind(f[5] as! String),
-           graced: f[6] as! Bool, userOK: f[7] as! Bool, retries: f[8] as! Int, dismissed: f[9] as! Bool, dRuns: f[10] as! Int)
+           routeIndex: index(f[11]), runRouteIndex: index(f[12]), graced: f[6] as! Bool, userOK: f[7] as! Bool, retries: f[8] as! Int, dismissed: f[9] as! Bool, dRuns: f[10] as! Int)
 }
 let states: [TE.State] = (doc["states"] as! [[Any]]).map { s in
     var rs: [String: TE.Row] = [:]
@@ -54,7 +58,11 @@ let states: [TE.State] = (doc["states"] as! [[Any]]).map { s in
 
 // An event is written as in the fixture: ["classify", "u1", "look_up", true, false]. key() is its lookup string.
 func key(_ e: [Any]) -> String {
-    e.map { v in if let s = v as? String { return s }; return (v as! Bool) ? "true" : "false" }.joined(separator: "|")
+    e.map { v in
+        if let s = v as? String { return s }
+        let n = v as! NSNumber  // JSON numbers and Swift Bool / Int alike; a boolean is a CFBoolean
+        return CFGetTypeID(n) == CFBooleanGetTypeID() ? (n.boolValue ? "true" : "false") : "\(n.intValue)"
+    }.joined(separator: "|")
 }
 func event(_ e: [Any]) -> TE.Event {
     let name = e[0] as! String
@@ -62,8 +70,9 @@ func event(_ e: [Any]) -> TE.Event {
     switch name {
     case "classify": return .classify(id, verdict(e[2] as! String)!, verified: e[3] as! Bool, flagged: e[4] as! Bool)
     case "graceExpire": return .graceExpire(id)
-    case "sendNow": return .sendNow(id, kind(e[2] as! String))
-    case "fix": return .fix(id, kind(e[2] as! String))
+    case "sendNow": return .sendNow(id, kind(e[2] as! String), routeIndex: e[3] as! Int)
+    case "fix": return .fix(id, kind(e[2] as! String), routeIndex: e[3] as! Int)
+    case "switchDestination": return .switchDestination(id, e[2] as! Int, verified: e[3] as! Bool, flagged: e[4] as! Bool)
     case "dismiss": return .dismiss(id)
     case "start": return .start(id)
     case "run": return .run(id)
@@ -80,7 +89,7 @@ func event(_ e: [Any]) -> TE.Event {
 func describe(_ st: TE.State) -> String {
     "alive=\(st.alive) crashes=\(st.crashes) " + ids.map { id in
         let r = st.rows[id]!
-        return "\(id)=\(r.stage.rawValue)/\(r.persisted.rawValue)/\(r.verdict.map { "\($0)" } ?? "none")"
+        return "\(id)=\(r.stage.rawValue)/\(r.persisted.rawValue)/\(r.verdict.map { "\($0)" } ?? "none")@\(r.routeIndex.map(String.init) ?? "-")"
     }.joined(separator: " ")
 }
 
@@ -114,8 +123,9 @@ for t in transitions {
     if (ev[0] as! String) == "start" {
         let id = ev[1] as! String
         let sending = got.effects.firstIndex(of: .persist(id, .executing))
-        if starts.count != 1 || starts[0].element != .execute(id, from.rows[id]!.kind!) || sending == nil || sending! > starts[0].offset {
-            fail("start \(id) in \(describe(from)): want persist(executing) then execute(\(id)), got \(got.effects)")
+        let want = TE.Effect.execute(id, from.rows[id]!.kind!, from.rows[id]!.routeIndex!)
+        if starts.count != 1 || starts[0].element != want || sending == nil || sending! > starts[0].offset {
+            fail("start \(id) in \(describe(from)): want persist(executing) then \(want), got \(got.effects)")
         }
     } else if !starts.isEmpty {
         fail("\(key(ev)) in \(describe(from)) starts a route: \(got.effects)")
@@ -130,7 +140,11 @@ var alphabet: [[Any]] = [["crash"], ["restart"], ["done"]]
 for id in ids {
     for v in verdicts { for ok in [false, true] { for fl in [false, true] { alphabet.append(["classify", id, v, ok, fl]) } } }
     for name in ["graceExpire", "dismiss", "start", "run", "fail", "record", "confirmDone"] { alphabet.append([name, id]) }
-    for k in kinds { for name in ["sendNow", "fix", "retry"] { alphabet.append([name, id, k]) } }
+    for i in [0, 1] { for ok in [false, true] { for fl in [false, true] { alphabet.append(["switchDestination", id, i, ok, fl]) } } }
+    for k in kinds {
+        alphabet.append(["retry", id, k])
+        for i in [0, 1] { for name in ["sendNow", "fix"] { alphabet.append([name, id, k, i]) } }
+    }
 }
 var refused = 0
 let reachable = Set(transitions.map { $0[0] })  // every reachable state has a step (Done or Restart at the end)
@@ -148,7 +162,8 @@ print(failures == acceptFailures ? "PASS reject \(refused) events the model cann
 
 // --- coverage: the fixture really holds the whole model ---
 let allStages = Set(TE.Stage.allCases.map(\.rawValue))
-let allEvents: Set = ["classify", "graceExpire", "sendNow", "fix", "dismiss", "start", "run", "fail", "record", "retry", "confirmDone", "crash", "restart", "done"]
+let allEvents: Set = ["classify", "switchDestination", "graceExpire", "sendNow", "fix", "dismiss", "start", "run", "fail", "record", "retry",
+                      "confirmDone", "crash", "restart", "done"]
 if stagesSeen != allStages || eventsSeen != allEvents {
     print("FAIL coverage: stages missing \(allStages.subtracting(stagesSeen).sorted()), events missing \(allEvents.subtracting(eventsSeen).sorted())")
     failures += 1
