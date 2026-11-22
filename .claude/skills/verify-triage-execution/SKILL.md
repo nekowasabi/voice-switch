@@ -93,7 +93,7 @@ Replay the trace against the design text or the code, one action per step. If a 
 
 ## Coverage and sync
 
-Sync commit: 792fd1c. Move it only after items 2 to 5 pass at the new commit and the table below names the code.
+Sync commit: 792fd1c. Move it only after items 2 to 8 pass at the new commit and the table below names the code. At ba62698 items 2 to 6 and 8 pass and item 7 does not: against the writer without rest, `scripts/changelogmemo-add` never returns (its first add timed out after 30 s), so the sync commit stays at 792fd1c until item 7 passes.
 
 | Model action | Design text | Code |
 |---|---|---|

@@ -81,7 +81,7 @@ A failure prints one line: `FAIL J1 mode=dir seq=RRBR step=2(R): record 1A2B3C4D
 
 ## Coverage and sync
 
-Sync commit: 792fd1c (items 2 and 3 pass there). Move it only after items 2 and 3 pass at the new commit.
+Sync commit: ba62698 (items 2 and 3 pass there). Move it only after items 2 and 3 pass at the new commit.
 
 | File | Functions |
 |---|---|
