@@ -1,9 +1,11 @@
 """scripts/changelogmemo-add: one entry on top of changelogmemo in the changelog skill's format, never losing one."""
 import datetime
+import fcntl
 import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -14,8 +16,10 @@ TODAY = datetime.date.today().isoformat()
 AUTHOR = "  takets <nolifeking00@gmail.com>"
 
 
-def add(kind, text, *, memo=None, home=None, timeout=60):
-    env = {k: v for k, v in os.environ.items() if k != "CHANGELOG_FILE"}
+def add(kind, text, *, memo=None, home=None, limit=None, timeout=60):
+    env = {k: v for k, v in os.environ.items() if k not in ("CHANGELOG_FILE", "CHANGELOGMEMO_TIMEOUT_SECONDS")}
+    if limit is not None:
+        env["CHANGELOGMEMO_TIMEOUT_SECONDS"] = str(limit)
     if memo is not None:
         env["CHANGELOG_FILE"] = str(memo)
     if home is not None:
@@ -44,6 +48,7 @@ while not stop.exists():
 print(n)
 """
 RACE_ADDS = 60  # the edit-like opponent; the old script lost entries in 5 of 5 runs at this count
+GAVE_UP = os.EX_TEMPFAIL  # 75: the add ran out of CHANGELOGMEMO_TIMEOUT_SECONDS and left the file without its entry
 
 
 class ChangelogmemoAdd(unittest.TestCase):
@@ -91,14 +96,14 @@ class ChangelogmemoAdd(unittest.TestCase):
             self.assertEqual(text.count(f"  - 内容: 並行 {i:02d}\n"), 1, i)
         self.assertEqual(text.count(f"{TODAY}{AUTHOR}"), 1)
 
-    def race(self, gap, rest_seconds, adds=RACE_ADDS):
+    def race(self, gap, rest_seconds, adds=RACE_ADDS, limit=None):
         """adds adds while the opponent replaces the file; returns (exit codes, opponent's count, final text)."""
         self.memo.write_text(f"{TODAY}{AUTHOR}\n\n")
         stop = Path(self.dir.name) / "stop"
         opponent = subprocess.Popen([sys.executable, "-c", OPPONENT, str(self.memo), str(stop), str(gap), str(rest_seconds)],
                                     stdout=subprocess.PIPE, text=True)
         try:
-            codes = [add("task", f"競合 {i:02d}\n", memo=self.memo, timeout=30).returncode for i in range(adds)]
+            codes = [add("task", f"競合 {i:02d}\n", memo=self.memo, limit=limit, timeout=30).returncode for i in range(adds)]
         finally:
             stop.touch()
             try:
@@ -109,17 +114,43 @@ class ChangelogmemoAdd(unittest.TestCase):
         self.assertGreater(written, 0, "the opponent never replaced the file")
         return codes, written, self.memo.read_text()
 
-    def test_a_writer_that_replaces_without_rest_loses_none_of_its_entries(self):
-        # scratchpad race.py's condition: the opponent replaces again the moment it has replaced. Each of its
-        # replacements is based on a read from before the script's last write, so it drops what the script wrote and
-        # no writer without its lock can keep its own entry; the script must still finish and drop nothing of the opponent's.
-        # It may give up with exit 1 (the request then shows as failed); it must not hang.
-        codes, written, text = self.race(0, 0, adds=20)
-        self.assertTrue(all(code in (0, 1) for code in codes), codes)
+    def assert_each_add_kept_once_or_gave_up(self, codes, written, text):
+        """Every opponent entry stays once; each add left its entry exactly once and exited 0, or none and exited 75."""
         lost = [n for n in range(written) if text.count(f"* skill {n}\n") != 1]
-        doubled = [i for i in range(20) if text.count(f"  - 内容: 競合 {i:02d}\n") > 1]
-        self.assertEqual((lost, doubled), ([], []), f"opponent entries lost, script entries doubled, of {written} replacements")
+        silent = [(i, code, text.count(f"  - 内容: 競合 {i:02d}\n")) for i, code in enumerate(codes)
+                  if (code, text.count(f"  - 内容: 競合 {i:02d}\n")) not in ((0, 1), (GAVE_UP, 0))]
+        self.assertEqual((lost, silent), ([], []),
+                         f"opponent entries lost, adds as (index, exit, entries left), of {written} replacements")
         self.assertEqual(text.count(f"{TODAY}{AUTHOR}"), 1)
+
+    def test_a_writer_that_replaces_without_rest_never_hangs_or_drops_silently(self):
+        # scratchpad race.py's condition: the opponent replaces again the moment it has replaced. Its replacements are
+        # based on reads from before the script's last write, so no writer without its lock can always keep its entry.
+        # Each add must end within its limit, keep the opponent's entries, and either keep its own entry once (exit 0)
+        # or leave none and exit 75, so the app shows the request as failed instead of losing it.
+        started = time.monotonic()
+        codes, written, text = self.race(0, 0, adds=20, limit=1)
+        self.assertLess(time.monotonic() - started, 30, "20 adds with a 1 s limit took 30 s or more")
+        self.assert_each_add_kept_once_or_gave_up(codes, written, text)
+
+    def test_a_limit_that_runs_out_mid_race_leaves_no_entry_behind(self):
+        # The limit can run out after the script's exchange has published its entry. Then the entry must go again.
+        codes, written, text = self.race(0.002, 0.01, adds=40, limit=0.03)
+        self.assert_each_add_kept_once_or_gave_up(codes, written, text)
+
+    def test_a_held_lock_past_the_limit_gives_up_with_75_and_writes_nothing(self):
+        self.memo.write_text(f"{TODAY}{AUTHOR}\n\n* 前の項目\n\n")
+        before = self.memo.read_bytes()
+        with open(str(self.memo) + ".lock", "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            started = time.monotonic()
+            r = add("task", "待たされる\n", memo=self.memo, limit=0.3, timeout=10)
+            took = time.monotonic() - started
+        self.assertEqual((r.returncode, self.memo.read_bytes()), (GAVE_UP, before), r.stderr)
+        self.assertLess(took, 3)
+        # The lock is the script's only shared state; once released, the next add goes through.
+        self.assertEqual(add("task", "次の追記\n", memo=self.memo, limit=1).returncode, 0)
+        self.assertEqual(self.memo.read_text().count("  - 内容: 次の追記\n"), 1)
 
     def test_a_writer_that_edits_now_and_then_loses_nothing(self):
         # Closer to the Edit tool: read, 2 ms later replace, then rest 10 ms. Every add succeeds and both writers'
