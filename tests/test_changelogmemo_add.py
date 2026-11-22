@@ -103,7 +103,8 @@ class ChangelogmemoAdd(unittest.TestCase):
         opponent = subprocess.Popen([sys.executable, "-c", OPPONENT, str(self.memo), str(stop), str(gap), str(rest_seconds)],
                                     stdout=subprocess.PIPE, text=True)
         try:
-            codes = [add("task", f"競合 {i:02d}\n", memo=self.memo, limit=limit, timeout=30).returncode for i in range(adds)]
+            limits = limit if isinstance(limit, list) else [limit] * adds
+            codes = [add("task", f"競合 {i:02d}\n", memo=self.memo, limit=limits[i], timeout=30).returncode for i in range(adds)]
         finally:
             stop.touch()
             try:
@@ -135,7 +136,11 @@ class ChangelogmemoAdd(unittest.TestCase):
 
     def test_a_limit_that_runs_out_mid_race_leaves_no_entry_behind(self):
         # The limit can run out after the script's exchange has published its entry. Then the entry must go again.
-        codes, written, text = self.race(0.002, 0.01, adds=40, limit=0.03)
+        # On this Mac every add gave up at 0.03 s and none did at 0.05 s, so the limits spread over that edge; a run
+        # where all adds end alike never reached the exchange-then-limit path this test is for.
+        limits = [0.02 + 0.06 * i / 47 for i in range(48)]
+        codes, written, text = self.race(0.002, 0.01, adds=48, limit=limits)
+        self.assertEqual({0, GAVE_UP} <= set(codes), True, f"exit codes {codes}: the limits missed the edge")
         self.assert_each_add_kept_once_or_gave_up(codes, written, text)
 
     def test_a_held_lock_past_the_limit_gives_up_with_75_and_writes_nothing(self):

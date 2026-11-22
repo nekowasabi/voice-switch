@@ -71,7 +71,7 @@ A request misread as `thought` or `filler` is classifier accuracy, measured by t
 7. **changelogmemo-add beside a writer without the lock**: `python3 -m unittest tests.test_changelogmemo_add` must print `OK`. A stand-in for the changelog skill's Edit tool reads changelogmemo, adds `* skill <n>` and replaces the whole file, without the lock:
    - edit-like (reads, replaces 2 ms later, rests 10 ms) during 60 adds: every add exits 0 and every entry of both writers is there exactly once.
    - without rest (scratchpad race.py's condition) during 20 adds with `CHANGELOGMEMO_TIMEOUT_SECONDS=1`: the 20 adds end within 30 s, no `* skill` entry is lost, and each add either left its entry exactly once and exited 0 or left none and exited 75. Each replacement of this writer is based on a read from before the script's last write, so no writer without the lock can always keep its own entry against it; giving up with 75 is how the app learns it failed.
-   - the edit-like writer with a 0.03 s limit during 40 adds: the same rule, for a limit that runs out after an exchange has already published the entry.
+   - the edit-like writer during 48 adds whose limits spread from 0.02 s to 0.08 s: the same rule, for a limit that runs out after an exchange has already published the entry. On this Mac every add gave up at 0.03 s and none at 0.05 s, so the test also asks for both exit 0 and exit 75 to occur.
    - a held lock with a 0.3 s limit: exit 75 within 3 s and the file's bytes unchanged; once the lock is free the next add exits 0.
 8. **Mutants of items 6 and 7**: `sh .claude/skills/verify-triage-execution/code-mutants.sh` must print `CAUGHT` for every line (12): the script as it was at 1b4c0f5, the script without its check after publishing, the script without its time limit, the previous rules (61 s, 3 rows, other device, pasted rows), bundleId instead of the app name, `verify_route` in the classification batch, the check without its route, a hash that escapes slashes, and routes that take any key.
 
@@ -97,7 +97,7 @@ Replay the trace against the design text or the code, one action per step. If a 
 
 ## Coverage and sync
 
-Sync commit: 3b87e20 (items 2 to 8 pass there). Move it only after items 2 to 8 pass at the new commit and the table below names the code. Item 7 failed from ba62698 until the time limit of 3017279: against the writer without rest, `scripts/changelogmemo-add` never returned.
+Sync commit: 792fd1c. Move it only after items 2 to 8 pass at the new commit and the table below names the code. At 3b87e20 items 2 to 6 and 8 pass and item 7 does not, in 4 of 10 runs: `test_a_limit_that_runs_out_mid_race_leaves_no_entry_behind` finds an add that exits 75 with its entry left in changelogmemo and one `* skill` entry gone. The add's exchange had displaced a newer file of the other writer; the next pass refuses to start the write-back exchange (`check_deadline` before the exchange in `prepend`, under 25 ms left) and the script exits 75. (From ba62698 until 3017279 item 7 failed because the add never returned.)
 
 | Model action | Design text | Code |
 |---|---|---|
