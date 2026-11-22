@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -ne 1 ] || [ -z "$1" ]; then
+    echo 'usage: mail-send <recipient>' >&2
+    exit 2
+fi
+
+# Keep trailing newlines when reading the body through command substitution.
+body=$(cat && printf '.')
+body=${body%.}
+subject=${body%%'
+'*}
+
+exec osascript - "$1" "$subject" "$body" <<'APPLESCRIPT'
+on run argv
+    set {recipientAddress, subjectLine, messageBody} to argv
+    tell application "Mail"
+        set outgoingMessage to make new outgoing message with properties {subject:subjectLine, content:messageBody, visible:false}
+        tell outgoingMessage
+            make new to recipient at end of to recipients with properties {address:recipientAddress}
+            if not (send) then error "Mail did not accept the message"
+        end tell
+    end tell
+end run
+APPLESCRIPT
