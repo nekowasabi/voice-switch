@@ -1597,10 +1597,6 @@ final class Listener {
             log(session.phraseLog(outcome: outcome, threshold: seg.threshold))
             session.phraseOutcome = ""
         }
-        // A phrase that would have opened an automatic session but for voice activity detection, which needs
-        // minVoiceSeconds of voice: a first sentence often ends before that, and the next sentence then opens the session.
-        var phraseHeldByVoice = false
-        var heldPhrase: (samples: [Float], until: Int)?
         // Stop-word judgement runs beside the frame loop; `stopJob` says which dictation and generation it belongs to.
         let stopCheck = LatestRecognition<StopVerdict>()
         let wordCheck = LatestRecognition<(session: UUID, agreed: Bool)>()
@@ -1761,9 +1757,7 @@ final class Listener {
                 session.noteGap(rms: seg.lastRms)
                 if session.phraseGapExpired(hangoverMs: config.cfg.hangoverMs) {
                     if !session.phraseOutcome.isEmpty { endPhrase(session.phraseOutcome) }
-                    // ponytail: one held phrase for 5 s; a third sentence before the gate opens drops the first.
-                    if phraseHeldByVoice { heldPhrase = (session.recent, session.clock + Int(rate) * 5) }
-                    session.clearSpeech(); phraseHeldByVoice = false
+                    session.finishIdlePhrase()
                 }
             }
             session.appendRecent(f, prerollMs: config.cfg.prerollMs)
@@ -1812,13 +1806,12 @@ final class Listener {
                 if session.phraseForOtherApp {
                     session.phraseOutcome = "automatic wake blocked: phrase began while another app held the microphone"
                 } else if !automaticWakeAllowed() {
-                    if lastAutomaticBlock == Listener.noVoiceActivity { phraseHeldByVoice = true }
+                    if lastAutomaticBlock == Listener.noVoiceActivity { session.holdPhraseForVoice() }
                     if let block = lastAutomaticBlock, (config.cfg.skipWhileMicInUseBy ?? []).contains(where: { block == Listener.micHeldBy($0) }) { session.phraseForOtherApp = true }
                     session.phraseOutcome = "automatic wake blocked: \(lastAutomaticBlock ?? "-")"
                 } else {
                     // The whole phrase with its preroll, even when it overlaps typing, after a phrase the gate held back.
-                    let held = heldPhrase.flatMap { session.clock < $0.until ? $0.samples : nil } ?? []
-                    heldPhrase = nil; phraseHeldByVoice = false
+                    let held = session.takeHeldPhrase()
                     if !held.isEmpty { log("dictation session: automatic keeps \(held.count * 1000 / Int(rate)) ms held for voice activity") }
                     let samples = held + session.recent
                     if !samples.isEmpty {

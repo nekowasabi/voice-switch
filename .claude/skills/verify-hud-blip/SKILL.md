@@ -106,6 +106,6 @@ Variants（2026-10-31。A 案は採用済み、旧規則への退行は今回実
 
 - Superwhisper's own recording (`delivery = .recording`), delivery glyphs (`processing`, `done`, `saved`, `failed`) and their timers, `.ended`, `.followup`, `notify`.
 - The Windows opening gate (`SpeechGate.VoicedWindows`, speaker gate): modeled as always allowing, which only adds behaviors.
-- Held phrases (`phraseHeldByVoice`, `heldPhrase`), early wake, stop words, the window stop check, hotkeys.
+- Held phrases (`MacDictationSession.finishIdlePhrase()` / `takeHeldPhrase()`), early wake, stop words, the window stop check, hotkeys.
 - The floor and `rebaseFloor` (see `../verify-hud-noise`); noise here is always over the threshold.
 - Timing: frames are only an order; 300 ms, 1.5 s and the recognizer delay before `confirmed` are not modeled sizes.

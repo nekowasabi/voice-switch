@@ -25,6 +25,7 @@ step "tla+ mic fallback" sh .claude/skills/verify-mic-fallback/check.sh
 step "tla+ sticky delivery" sh .claude/skills/verify-sticky-mode/check.sh
 step "wake allowances" sh .claude/skills/verify-wake-allowances/check.sh
 step "journal append" bash .claude/skills/verify-journal-append/run.sh check
+step "swift macOS dictation session" sh tests/macos/MacDictationSession/run.sh
 step "url actions" make url-test
 step "build" make build
 total=$(( $(date +%s) - start ))

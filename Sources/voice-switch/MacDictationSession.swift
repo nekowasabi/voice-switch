@@ -1,7 +1,7 @@
 import Foundation
 
 package struct MacDictationSession {
-    package private(set) var clock = 0
+    private var clock = 0
     private var followupUntil = 0
     private var samplesSinceStopCheck = 0
     package private(set) var recent: [Float] = []
@@ -15,6 +15,9 @@ package struct MacDictationSession {
     package var phraseOutcome = ""
     // A phrase started while another app held the mic still belongs to that app if it releases the mic mid-phrase.
     package var phraseForOtherApp = false
+    // The voice activity gate can need more than one sentence to reach minVoiceSeconds.
+    private var phraseHeldByVoice = false
+    private var heldPhrase: (samples: [Float], until: Int)?
 
     package init() {}
 
@@ -96,5 +99,23 @@ package struct MacDictationSession {
         let ms = { (n: Int) in n * frameLen * 1000 / Int(rate) }
         let level = String(format: "peakRms=%.4f threshold=%.4f", locale: Locale(identifier: "en_US_POSIX"), phrasePeak, threshold)
         return "voice: phrase voicedMs=\(ms(speechFrames)) energyMs=\(ms(phraseEnergy)) halMs=\(ms(phraseHAL)) \(level) -> \(outcome)"
+    }
+
+    package mutating func holdPhraseForVoice() {
+        phraseHeldByVoice = true
+    }
+
+    package mutating func finishIdlePhrase() {
+        // ponytail: one held phrase for 5 s; a third sentence before the gate opens drops the first.
+        if phraseHeldByVoice { heldPhrase = (recent, clock + Int(rate) * 5) }
+        clearSpeech()
+        phraseHeldByVoice = false
+    }
+
+    package mutating func takeHeldPhrase() -> [Float] {
+        let samples = heldPhrase.flatMap { clock < $0.until ? $0.samples : nil } ?? []
+        heldPhrase = nil
+        phraseHeldByVoice = false
+        return samples
     }
 }
