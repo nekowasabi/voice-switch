@@ -1,5 +1,7 @@
 # Build notes
 
+Run `make hooks` to enable the pre-push hook that runs `sh tests/check.sh`.
+
 ## `$PC` switch
 
 | Environment | Default `make` | What you get |
