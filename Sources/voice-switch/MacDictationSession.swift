@@ -3,8 +3,12 @@ package struct MacDictationSession {
     private var followupUntil = 0
     private var samplesSinceStopCheck = 0
     package private(set) var recent: [Float] = []
+    // Voiced frames are joined across gaps up to the hangover, which the VAD alone splits into short runs.
     package private(set) var speechFrames = 0
     private var gapFrames = 0
+    package private(set) var phraseEnergy = 0
+    package private(set) var phraseHAL = 0
+    package private(set) var phrasePeak: Float = 0
 
     package init() {}
 
@@ -38,13 +42,22 @@ package struct MacDictationSession {
 
     package var hasSpeech: Bool { speechFrames > 0 }
 
-    package mutating func advanceSpeech() {
+    package mutating func noteSpeech(energy: Bool, hal: Bool, rms: Float) {
+        if !hasSpeech {
+            phraseEnergy = 0
+            phraseHAL = 0
+            phrasePeak = 0
+        }
         speechFrames += 1
         gapFrames = 0
+        if energy { phraseEnergy += 1 }
+        if hal { phraseHAL += 1 }
+        phrasePeak = max(phrasePeak, rms)
     }
 
-    package mutating func advanceGap() {
+    package mutating func noteGap(rms: Float) {
         gapFrames += 1
+        phrasePeak = max(phrasePeak, rms)
     }
 
     package func phraseGapExpired(hangoverMs: Int?) -> Bool {

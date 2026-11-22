@@ -1593,15 +1593,11 @@ final class Listener {
         var dictation: Dictation?
         var shown = Phase.idle
         var session = MacDictationSession()
-        // Which source counted each voiced frame of the open phrase, and why it has not opened a session; "" once logged.
-        var phraseEnergy = 0, phraseHAL = 0
-        // Loudest frame of the phrase against the energy threshold, so a mic too quiet for the segmenter shows as such.
-        var phrasePeak: Float = 0
         var phraseOutcome = ""
         func endPhrase(_ outcome: String) {
             let ms = { (n: Int) in n * frameLen * 1000 / Int(rate) }
-            let level = String(format: "peakRms=%.4f threshold=%.4f", locale: Locale(identifier: "en_US_POSIX"), phrasePeak, seg.threshold)
-            log("voice: phrase voicedMs=\(ms(session.speechFrames)) energyMs=\(ms(phraseEnergy)) halMs=\(ms(phraseHAL)) \(level) -> \(outcome)")
+            let level = String(format: "peakRms=%.4f threshold=%.4f", locale: Locale(identifier: "en_US_POSIX"), session.phrasePeak, seg.threshold)
+            log("voice: phrase voicedMs=\(ms(session.speechFrames)) energyMs=\(ms(session.phraseEnergy)) halMs=\(ms(session.phraseHAL)) \(level) -> \(outcome)")
             phraseOutcome = ""
         }
         // A phrase that would have opened an automatic session but for voice activity detection, which needs
@@ -1765,18 +1761,11 @@ final class Listener {
                 submitAndArm(d, cfg: dc, reason: finishReasonToken(reason))
                 continue
             }
-            // speechFrames counts the voiced frames of the phrase being spoken, joined across gaps up to the hangover,
-            // which the VAD alone splits into short runs.
             if speaking {
-                if !session.hasSpeech { phraseEnergy = 0; phraseHAL = 0; phrasePeak = 0; phraseForOtherApp = false }
-                session.advanceSpeech()
-                if energy { phraseEnergy += 1 }
-                if hal { phraseHAL += 1 }
-                phrasePeak = max(phrasePeak, seg.lastRms)
-            }
-            else if session.hasSpeech {
-                session.advanceGap()
-                phrasePeak = max(phrasePeak, seg.lastRms)
+                if !session.hasSpeech { phraseForOtherApp = false }
+                session.noteSpeech(energy: energy, hal: hal, rms: seg.lastRms)
+            } else if session.hasSpeech {
+                session.noteGap(rms: seg.lastRms)
                 if session.phraseGapExpired(hangoverMs: config.cfg.hangoverMs) {
                     if !phraseOutcome.isEmpty { endPhrase(phraseOutcome) }
                     // ponytail: one held phrase for 5 s; a third sentence before the gate opens drops the first.

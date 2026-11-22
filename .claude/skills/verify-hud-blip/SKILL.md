@@ -1,6 +1,6 @@
 ---
 name: verify-hud-blip
-description: Model-check (TLA+) that a short sound that is not a voice (a cough, a keyboard, a door, speaker playback that blips the HAL voice detector) never shows the mic HUD on its own, on macOS and Windows, while someone who keeps talking still sees it. Use when a change touches the phase `defer` in Listener.consume, HUD.render's phase table, voiceRecentlyActive / automaticWakeAllowed / minVoiceSeconds, the idle path's speechFrames / phraseHAL, Dictation.confirmed / wordCheck in Sources/voice-switch/MacApp.swift, or PublishPhase / Confirmed / CheckWords in dotnet/VoiceSwitch.Windows/DictationRuntime.cs, and before claiming the "mic HUD flickers on small sounds" bug fixed.
+description: Model-check (TLA+) that a short sound that is not a voice (a cough, a keyboard, a door, speaker playback that blips the HAL voice detector) never shows the mic HUD on its own, on macOS and Windows, while someone who keeps talking still sees it. Use when a change touches the phase `defer` in Listener.consume, HUD.render's phase table, voiceRecentlyActive / automaticWakeAllowed / minVoiceSeconds, the idle path's MacDictationSession.noteSpeech, Dictation.confirmed / wordCheck in Sources/voice-switch/MacApp.swift, or PublishPhase / Confirmed / CheckWords in dotnet/VoiceSwitch.Windows/DictationRuntime.cs, and before claiming the "mic HUD flickers on small sounds" bug fixed.
 ---
 
 # Verify a non-voice sound never shows the mic HUD (TLA+)
@@ -64,7 +64,7 @@ Sync commit: `cf89a2f` の作業ツリー（未コミット）。A 案の表示�
 | `h`, `HalOK` | `voiceBeingHeard()` and the HAL listener in `watchVoiceActivity` (`kAudioDevicePropertyVoiceActivityDetectionState`) |
 | `halRun`, `sinceVoice`, `gate` | `voiceActivity.onSince` / `lastVoiceEnd` (set only after a run of `minVoiceSeconds`), `voiceRecentlyActive()`, `automaticWakeBlock()` -> `Listener.noVoiceActivity` |
 | `speech` | `Segmenter.isSpeech`: energy over threshold or the HAL flag; noise is assumed over the threshold |
-| `speechFrames`, `phraseHAL` | `MacDictationSession.speechFrames` and the idle path's `phraseHAL`, reset after `hangoverMs` of gap (modeled as one frame) |
+| `speechFrames`, `phraseHAL` | `MacDictationSession.noteSpeech()` counts `speechFrames` and `phraseHAL`, reset after `hangoverMs` of gap (modeled as one frame) |
 | idle path `dict' = "auto"` | `longEnough`, `NoWakePolicy.onSpeech`, `automaticWakeAllowed()`, `dictation = Dictation(... origin: origin)` |
 | `w`, `dict' = "wake"` | a wake word or `macOS.actions` wake word recognized by `speaksWake` / `dictationStart` |
 | dictation branch | `if var d = dictation { ... }`: `silentFrames`, end on `endSilenceMs` or `maxSeconds`, `dictation = nil; session.clearRecentSpeech()` |
