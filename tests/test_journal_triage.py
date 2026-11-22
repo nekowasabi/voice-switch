@@ -588,6 +588,24 @@ class Scoring(unittest.TestCase):
                                  f"C9 eval {name}")
             self.assertEqual(len(list((world.root / ".triage/reports").glob("*.md"))), 2, "C9 eval report")
 
+    def test_labels_kept_before_kind_delegate_are_still_scored(self):
+        """Labels written before 2026-11-22 hold six answers (no kind_delegate); eval reads that one as no, so the
+        shared labels keep counting. A label with a broken answer is still left out."""
+        six = {q: 0.05 for q in QUESTIONS if q != "kind_delegate"} | {"wants_action": 0.9, "kind_look_up": 0.9}
+        labels = [("OLD-1", ["action:look_up"], six), ("OLD-2", ["action:self_task"], six),
+                  ("OLD-3", ["thought"], six | {"wants_action": 0.05}), ("BAD-1", ["thought"], six | {"is_filler": "0.05"})]
+        with tempfile.TemporaryDirectory() as tmp:
+            world = World(tmp)
+            folder = world.root / ".triage/labels"
+            folder.mkdir(parents=True)
+            (folder / "private-app.jsonl").write_text("".join(json.dumps(
+                {"id": i, "target": target, "observed": target, "answers": given, "question_hash": "old", "device": "private",
+                 "timestamp": "2026-11-21T10:00:00+09:00"}) + "\n" for i, target, given in labels), encoding="utf-8")
+            result = cli(world, "eval")
+        scored = [(target, given | {"kind_delegate": 0}) for i, target, given in labels if i != "BAD-1"]
+        self.assertEqual(result["unscored"], 1, "C9 a six-answer label is not scored")
+        self.assertEqual((result["weight"], result["filler_misses"]), weight(scored, DEFAULT), "C9 six-answer labels")
+
     def partition(self, tmp, ids, order):
         """Which ids tune puts in the holdout, read from its counts as labels are added one at a time."""
         world = label_world(tmp, {i: answers() for i in ids})
