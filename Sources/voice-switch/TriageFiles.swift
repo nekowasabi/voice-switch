@@ -11,6 +11,8 @@ struct TriageProposal: Codable, Equatable {
     var stage: TriageExecution.Stage = .said
     var kind: TriageKind?
     var routeID: String?
+    var routeIndex: Int?
+    var routeName: String?
     var deadline: Date?
     var reasons: [String] = []
     var destinations: [String] = []
@@ -22,6 +24,19 @@ struct TriageProposal: Codable, Equatable {
     var focusBundleID: String?
 
     enum Outcome: String, Codable { case sent, failed }
+
+    func routeExceptions(in history: some Sequence<Self>) -> [String] {
+        guard let routeID else { return [] }
+        let matching = history.filter { $0.id != id && $0.routeID == routeID }
+        var reasons: [String] = []
+        if matching.lazy.filter({ $0.outcome == .sent }).prefix(5).count < 5 {
+            reasons.append("送り先の最初の5件")
+        }
+        if matching.contains(where: { $0.createdAt < createdAt && createdAt.timeIntervalSince($0.createdAt) <= 60 }) {
+            reasons.append("60秒以内に同じ送り先")
+        }
+        return reasons
+    }
 }
 
 struct TriageFiles {

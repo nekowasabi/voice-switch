@@ -5,6 +5,7 @@ enum TriageKind: String, CaseIterable, Codable {
     case lookUp = "look_up"
     case writeText = "write_text"
     case computerChange = "computer_change"
+    case delegate
 }
 
 enum TriageExecution {
@@ -24,6 +25,8 @@ enum TriageExecution {
         var verified = false
         var runs = 0
         var runKind: TriageKind?
+        var routeIndex: Int?
+        var runRouteIndex: Int?
         var graced = false
         var userOK = false
         var retries = 0
@@ -43,16 +46,25 @@ enum TriageExecution {
     }
 
     struct Rules {
-        let routes: Set<TriageKind>
-        let heavy: Set<TriageKind>
+        let routes: [TriageKind: Int]
+        let heavy: [TriageKind: Set<Int>]
         var maxCrashes = 1
+
+        func contains(_ kind: TriageKind, at index: Int) -> Bool {
+            index >= 0 && index < (routes[kind] ?? 0)
+        }
+
+        func isHeavy(_ kind: TriageKind, at index: Int) -> Bool {
+            heavy[kind]?.contains(index) == true
+        }
     }
 
     enum Event {
         case classify(String, Verdict, verified: Bool, flagged: Bool)
         case graceExpire(String)
-        case sendNow(String, TriageKind?)
-        case fix(String, TriageKind?)
+        case sendNow(String, TriageKind?, routeIndex: Int = 0)
+        case fix(String, TriageKind?, routeIndex: Int = 0)
+        case switchDestination(String, Int, verified: Bool, flagged: Bool)
         case dismiss(String)
         case start(String)
         case run(String)
@@ -67,7 +79,7 @@ enum TriageExecution {
         case persist(String, Stage)
         case schedule(String)
         case start(String)
-        case execute(String, TriageKind)
+        case execute(String, TriageKind, Int)
         case record(String)
         case restoredUnknown(String)
     }
@@ -129,7 +141,7 @@ enum TriageExecution {
         case .thought: return .listed
         case .unjudged: return .review
         case .kind(let kind):
-            return (!rules.routes.contains(kind) || (rules.heavy.contains(kind) && !verified) || flagged)
+            return (!rules.contains(kind, at: 0) || (rules.isHeavy(kind, at: 0) && !verified) || flagged)
                 ? .review : .pending
         }
     }
@@ -137,8 +149,9 @@ enum TriageExecution {
     private static func rowTransition(_ state: State, _ event: Event, rules: Rules) -> (String, Transition)? {
         let id: String
         switch event {
-        case .classify(let value, _, _, _), .graceExpire(let value), .sendNow(let value, _),
-             .fix(let value, _), .dismiss(let value), .start(let value), .run(let value), .fail(let value),
+        case .classify(let value, _, _, _), .graceExpire(let value), .sendNow(let value, _, _),
+             .fix(let value, _, _), .switchDestination(let value, _, _, _),
+             .dismiss(let value), .start(let value), .run(let value), .fail(let value),
              .record(let value), .retry(let value, _), .confirmDone(let value):
             id = value
         case .crash, .restart, .done:
@@ -149,38 +162,60 @@ enum TriageExecution {
         switch (row.stage, event) {
         case (.said, .classify(_, let verdict, let verified, let flagged)):
             next.row.verdict = verdict
-            next.row.verified = next.row.kind.map { rules.heavy.contains($0) && verified } ?? false
+            next.row.verified = next.row.kind.map { rules.isHeavy($0, at: 0) && verified } ?? false
+            if let kind = next.row.kind, rules.contains(kind, at: 0) { next.row.routeIndex = 0 }
             let stage = shown(verdict, verified: verified, flagged: flagged, rules: rules)
             next.persist(id, stage)
             if stage == .pending { next.effects.append(.schedule(id)) }
         case (.pending, .graceExpire):
             next.row.graced = true
             next.approve(id)
-        case (.pending, .sendNow(_, let kind)), (.review, .sendNow(_, let kind)):
-            guard let kind, row.kind == kind, rules.routes.contains(kind) else { return nil }
+        case (.pending, .switchDestination(_, let index, let verified, let flagged)):
+            guard let kind = row.kind, index != row.routeIndex, rules.contains(kind, at: index) else { return nil }
+            next.row.routeIndex = index
+            let heavy = rules.isHeavy(kind, at: index)
+            next.row.verified = heavy && verified
+            next.row.graced = false
+            next.row.userOK = false
+            let stage = flagged || (heavy && !verified) ? Stage.review : .pending
+            next.persist(id, stage)
+            if stage == .pending { next.effects.append(.schedule(id)) }
+        case (.pending, .sendNow(_, let kind, let index)), (.review, .sendNow(_, let kind, let index)):
+            guard let kind, row.kind == kind, rules.contains(kind, at: index),
+                  row.stage == .review || row.routeIndex == index else { return nil }
+            if row.routeIndex != index {
+                next.row.routeIndex = index
+                next.row.verified = false
+                next.persist(id, .review)
+            }
             next.row.userOK = true
             next.approve(id)
-        case (.review, .fix(_, let kind)):
-            guard let kind, row.kind != kind, rules.routes.contains(kind) else { return nil }
+        case (.review, .fix(_, let kind, let index)):
+            guard let kind, row.kind != kind, rules.contains(kind, at: index) else { return nil }
             next.row.verdict = .kind(kind)
+            next.row.routeIndex = index
+            next.row.verified = false
             next.row.userOK = true
+            next.persist(id, .review)
             next.approve(id)
         case (.pending, .dismiss), (.review, .dismiss), (.unknown, .dismiss), (.failed, .dismiss):
             next.row.dismissed = true
             next.row.dRuns = row.runs
             next.persist(id, .dismissed)
         case (.approved, .start):
-            guard let kind = row.kind else { return nil }
+            guard let kind = row.kind, let index = row.routeIndex else { return nil }
             next.persist(id, .executing)
-            next.effects.append(.execute(id, kind))
+            next.effects.append(.execute(id, kind, index))
         case (.executing, .run):
             next.row.stage = .ran
             next.row.runs += 1
             next.row.runKind = row.kind
+            next.row.runRouteIndex = row.routeIndex
             next.effects.append(.record(id))
         case (.executing, .fail):
             next.row.runs += 1
             next.row.runKind = row.kind
+            next.row.runRouteIndex = row.routeIndex
             next.persist(id, .failed)
         case (.ran, .record), (.unknown, .confirmDone):
             next.persist(id, .done)

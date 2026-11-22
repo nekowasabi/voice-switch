@@ -47,6 +47,14 @@
       "false": "Nothing on a computer needs to change."
     }
   },
+  "kind_delegate": {
+    "type": "noul",
+    "instructions": "In `utterance.text`, read as a continuation of `previous` when present, does the speaker ask an AI assistant or bot to carry out an operation that changes something, such as updating a record, booking an appointment, or running a procedure?",
+    "criteria": {
+      "true": "The speaker delegates an operation, such as 「案内ボットに来週の会議室を予約してもらって」「受付ボットに注文の配送日時を変更してもらって」.",
+      "false": "The speaker wants information, such as 「会議室の空き時間を調べて」, a change to computer settings, code, or files, such as 「通知の設定を変えて」, a draft, or a task they will do themselves."
+    }
+  },
   "verify_route": {
     "type": "noul",
     "instructions": "Would sending utterance.text as-is to the destination described by route fulfill what the speaker wants?",

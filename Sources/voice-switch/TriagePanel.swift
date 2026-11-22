@@ -8,6 +8,7 @@ private extension TriageKind {
         case .lookUp: return "調べもの"
         case .writeText: return "下書き"
         case .computerChange: return "PC への変更"
+        case .delegate: return "作業依頼"
         }
     }
 }
@@ -20,6 +21,7 @@ final class TriagePanel {
     private var countdownTimer: Timer?
     private var lastDay = Calendar.current.startOfDay(for: Date())
     private var showsSent = false
+    private var reviewKinds: [String: TriageKind] = [:]
 
     init(service: TriageService) { self.service = service }
 
@@ -70,6 +72,8 @@ final class TriagePanel {
         if service.storeError { stack.addArrangedSubview(label("依頼ファイルを読み書きできません。", secondary: true)) }
 
         let review = service.review
+        let reviewIDs = Set(review.map(\.id))
+        reviewKinds = reviewKinds.filter { reviewIDs.contains($0.key) }
         section("確認が要るもの", count: review.count, in: stack)
         for proposal in review {
             stack.addArrangedSubview(label(proposal.text))
@@ -87,19 +91,30 @@ final class TriagePanel {
                 stack.addArrangedSubview(NSStackView(views: buttons))
                 continue
             }
-            let reasons = stage == .pending ? ["送り先の設定が変わりました"] : proposal.reasons
-            stack.addArrangedSubview(label((reasons + [service.routeName(proposal.kind)].compactMap { $0 }).joined(separator: " · "),
+            let reasons = proposal.stage == .pending ? ["送り先の設定が変わりました"] : proposal.reasons
+            stack.addArrangedSubview(label((reasons + [service.routeName(proposal)].compactMap { $0 }).joined(separator: " · "),
                                            secondary: true))
-            let kinds = stage == .review ? TriageKind.allCases : []
-            let buttons = kinds.map { kind in
-                button(kind.title, enabled: service.routeName(kind) != nil) { [weak service] in
-                    service?.send(proposal.id, as: kind)
-                }
-            } + [
-                button("送る", enabled: service.routeName(proposal.kind) != nil) { [weak service] in service?.send(proposal.id) },
+            let chosen = reviewKinds[proposal.id]
+            let kind = chosen ?? proposal.kind
+            let kinds = TriageKind.allCases.filter { !service.routeNames($0).isEmpty }
+            let picker = menu(kind?.title ?? "種類を選ぶ", options: kinds.map(\.title)) { [weak self] index in
+                self?.reviewKinds[proposal.id] = kinds[index]
+                self?.refresh()
+            }
+            stack.addArrangedSubview(NSStackView(views: [
+                picker,
                 button("送らない") { [weak service] in service?.dismiss(proposal.id) },
-            ]
-            stack.addArrangedSubview(NSStackView(views: buttons))
+            ]))
+            if let kind {
+                for (index, name) in service.routeNames(kind).enumerated() {
+                    let first = name.split(whereSeparator: { $0.isWhitespace || $0 == "（" || $0 == "(" }).first
+                    let send = button("\(first.map(String.init) ?? name) に送る") { [weak service] in
+                        service?.send(proposal.id, as: chosen, routeIndex: index)
+                    }
+                    send.toolTip = name
+                    stack.addArrangedSubview(send)
+                }
+            }
         }
 
         let pending = service.pending
@@ -108,11 +123,21 @@ final class TriagePanel {
             stack.addArrangedSubview(label(proposal.text))
             let countdown = label("", secondary: true)
             if let deadline = proposal.deadline { countdowns.append((countdown, deadline)) }
-            stack.addArrangedSubview(NSStackView(views: [
-                countdown, label(service.routeName(proposal.kind) ?? "", secondary: true),
+            if let name = service.routeName(proposal) { stack.addArrangedSubview(label(name, secondary: true)) }
+            var controls: [NSView] = [
+                countdown,
                 button("取消") { [weak service] in service?.dismiss(proposal.id) },
                 button("すぐ送る") { [weak service] in service?.send(proposal.id) },
-            ]))
+            ]
+            if let kind = proposal.kind {
+                let alternatives = service.routeNames(kind).enumerated().filter { $0.offset != (proposal.routeIndex ?? 0) }
+                if !alternatives.isEmpty {
+                    controls.append(menu("送り先を変更", options: alternatives.map(\.element)) { [weak service] index in
+                        service?.switchDestination(proposal.id, to: alternatives[index].offset)
+                    })
+                }
+            }
+            stack.addArrangedSubview(NSStackView(views: controls))
         }
 
         let today = service.today
@@ -181,6 +206,20 @@ final class TriagePanel {
         button.target = button.handler
         button.isEnabled = enabled && !service.storeError
         return button
+    }
+
+    private func menu(_ title: String, options: [String], action: @escaping (Int) -> Void) -> NSPopUpButton {
+        let menu = NSPopUpButton(frame: .zero, pullsDown: true)
+        menu.isEnabled = !options.isEmpty && !service.storeError
+        menu.addItem(withTitle: title)
+        for (index, option) in options.enumerated() {
+            let item = NSMenuItem(title: option, action: #selector(TriageButtonAction.press), keyEquivalent: "")
+            let handler = TriageButtonAction { action(index) }
+            item.target = handler
+            item.representedObject = handler
+            menu.menu?.addItem(item)
+        }
+        return menu
     }
 
     private func tick() {

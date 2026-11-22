@@ -33,8 +33,9 @@ LOCAL_MARKERS = {
     "write_text": r"\bdraft\s*[:：]|(?:下書き|ドラフト)(?:\s*[:：]|を(?:書いて|作って))",
     "computer_change": r"\bagent\s*[:：]|エージェント\s*[:：]|(?:エージェント|Claude|Codex|Grok|クロード)(?:に頼|に依頼)",
 }
-KINDS = tuple(LOCAL_MARKERS)
-QUESTION_IDS = ("wants_action", "is_filler", *(f"kind_{kind}" for kind in KINDS))
+KINDS = (*LOCAL_MARKERS, "delegate")
+LEGACY_QUESTION_IDS = ("wants_action", "is_filler", *(f"kind_{kind}" for kind in LOCAL_MARKERS))
+QUESTION_IDS = (*LEGACY_QUESTION_IDS, "kind_delegate")
 DEFAULT_BAND = {"no": 0.3, "yes": 0.7}
 STARTED = {"自動", "ウェイク", "手動"}
 DESTINATIONS = {*(f"action:{kind}" for kind in KINDS), "thought", "filler",
@@ -145,8 +146,11 @@ def probability(value):
     return type(value) in (int, float) and 0 <= value <= 1
 
 
-def valid_answers(answers):
-    return isinstance(answers, dict) and all(probability(answers.get(qid)) for qid in QUESTION_IDS)
+def valid_answers(answers, *, legacy_label=False):
+    if not isinstance(answers, dict):
+        return False
+    questions = LEGACY_QUESTION_IDS if legacy_label and "kind_delegate" not in answers else QUESTION_IDS
+    return all(probability(answers.get(qid)) for qid in questions)
 
 
 def read_thresholds(path):
@@ -168,15 +172,16 @@ def read_thresholds(path):
     return thresholds
 
 
-def decide(answers, thresholds):
-    """Return the destinations for the six Noul probabilities, or an error verdict."""
-    if not valid_answers(answers):
+def decide(answers, thresholds, *, legacy_label=False):
+    """Return the destinations for the Noul probabilities, or an error verdict."""
+    if not valid_answers(answers, legacy_label=legacy_label):
         return ["unjudged:error"]
     intent = answers["wants_action"]
     intent_band = thresholds.get("wants_action", DEFAULT_BAND)
     if intent >= intent_band["yes"]:
         actions = [f"action:{kind}" for kind in KINDS
-                   if answers[f"kind_{kind}"] >= thresholds.get(f"kind_{kind}", DEFAULT_BAND)["yes"]]
+                   if f"kind_{kind}" in answers
+                   and answers[f"kind_{kind}"] >= thresholds.get(f"kind_{kind}", DEFAULT_BAND)["yes"]]
         return actions or ["unjudged:kind"]
     if intent > intent_band["no"]:
         return ["unjudged:intent"]
@@ -472,7 +477,7 @@ def score(labels, thresholds):
     filler_misses = 0
     for label in labels:
         expected = label["target"]
-        actual = decide(label["answers"], thresholds)
+        actual = decide(label["answers"], thresholds, legacy_label=True)
         if set(expected) == set(actual):
             continue
         if actual == ["filler"]:
@@ -508,7 +513,8 @@ def find_thresholds(training, thresholds):
         before = best_key
         for qid in QUESTION_IDS:
             current = best[qid]
-            points = sorted({0, 1, *current.values(), *(label["answers"][qid] for label in training)})
+            points = sorted({0, 1, *current.values(),
+                             *(label["answers"][qid] for label in training if qid in label["answers"])})
             boundaries = sorted(set(points) | {(a + b) / 2 for a, b in zip(points, points[1:])})
             lower = [current["no"]] if qid.startswith("kind_") else boundaries
             for no in lower:
@@ -599,7 +605,7 @@ def main(argv=None):
             text_output = f'{result["id"]} · {", ".join(result["target"])}'
         else:
             labels = read_labels(directory / "labels")
-            scored = [row for row in labels if valid_answers(row.get("answers"))]
+            scored = [row for row in labels if valid_answers(row.get("answers"), legacy_label=True)]
             if args.command == "eval":
                 result = score(scored, thresholds)
                 result["unscored"] = len(labels) - len(scored)

@@ -129,7 +129,7 @@ struct TriageSettings: Decodable {
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
-            let kind = decoder.codingPath.last?.stringValue ?? ""
+            let kind = decoder.codingPath.last(where: { $0.intValue == nil })?.stringValue ?? ""
             action = try WakeAction(from: decoder, routeName: kind)
             heavy = try c.decodeIfPresent(Bool.self, forKey: .heavy) ?? true
             graceSeconds = try TriageSettings.grace(c)
@@ -140,7 +140,21 @@ struct TriageSettings: Decodable {
 
     let enabled: Bool?
     let graceSeconds: Double
-    let routes: [String: Route]
+    let routes: [String: [Route]]
+
+    private struct Candidates: Decodable {
+        let routes: [Route]
+
+        init(from decoder: Decoder) throws {
+            if var array = try? decoder.unkeyedContainer() {
+                var routes: [Route] = []
+                while !array.isAtEnd { routes.append(try array.decode(Route.self)) }
+                self.routes = routes
+            } else {
+                routes = [try Route(from: decoder)]
+            }
+        }
+    }
 
     private enum CodingKeys: String, CodingKey { case enabled, graceSeconds, routes }
 
@@ -148,8 +162,8 @@ struct TriageSettings: Decodable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled)
         graceSeconds = try Self.grace(c) ?? 300
-        routes = try c.decodeIfPresent([String: Route].self, forKey: .routes) ?? [:]
-        let kinds = ["look_up", "self_task", "write_text", "computer_change"]
+        routes = try c.decodeIfPresent([String: Candidates].self, forKey: .routes)?.mapValues(\.routes) ?? [:]
+        let kinds = ["look_up", "self_task", "write_text", "computer_change", "delegate"]
         guard routes.keys.allSatisfy(kinds.contains) else {
             throw DecodingError.dataCorruptedError(forKey: .routes, in: c,
                 debugDescription: "dictation.triage.routes contains an unknown kind.")

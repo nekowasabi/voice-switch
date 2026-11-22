@@ -55,7 +55,7 @@ voice-switch  依頼                               [一時停止]
 
 ### 例外になる条件（コードで判定し、どれか 1 つで例外）
 
-1. 6 問のどれかの答えが「迷い」の帯にある（行き先が `unjudged`）、または種類が 2 つ以上「はい」。
+1. 7 問のどれかの答えが「迷い」の帯にある、または種類が 2 つ以上「はい」。
 2. 依頼の種類に送り先が設定されていない。
 3. 送り先が重い。重い送り先へ送る前に、Jev にもう 1 問聞く（「この本文をこの送り先へ送ると、話し手の望みどおりになるか」）。答えが 0.7 未満なら例外。
 4. その送り先へ送るのが最初の 5 件のうち（慣らし期間）。
@@ -129,6 +129,8 @@ voice-switch  依頼                               [一時停止]
 3. 「まもなく送る」の行は、送り先を表示し、猶予の間なら別の候補に替えられる。猶予が過ぎたら、表示中の送り先に送る。
 4. `proposals.jsonl` に、選んだ送り先を記録する。再起動後も同じ送り先のまま。
 5. 自動送信の例外の条件（重い送り先、最初の 5 件、60 秒以内）は、送り先ごとに数える。
+   猶予中に替えた候補で例外に当てはまる場合は、確認に回る。重い候補への切り替えも確認に回る。
+   例外がなければ、切り替えた候補の設定で猶予を数え直す。
 
 設定（例）
 
@@ -136,9 +138,12 @@ voice-switch  依頼                               [一時停止]
 "routes": {
   "delegate": [
     {"name": "Muse（メールで頼むとタスクを処理する AI アシスタント）", "command": "scripts/mail-send takets@muse.ai", "heavy": false},
-    {"name": "Grok Bot（…）", "command": "…"}
+    {"name": "Grok Bot（AI アシスタント）", "url": "grokbot://prompt?text={text}"}
   ],
-  "look_up": [{"name": "Grok Bot（…）", "command": "…", "heavy": false}, {"name": "Muse（…）", "command": "scripts/mail-send takets@muse.ai", "heavy": false}]
+  "look_up": [
+    {"name": "Grok Bot（AI アシスタント）", "url": "grokbot://prompt?text={text}", "heavy": false},
+    {"name": "Muse（メールで頼む AI アシスタント）", "command": "scripts/mail-send takets@muse.ai", "heavy": false}
+  ]
 }
 ```
 
@@ -153,6 +158,7 @@ voice-switch  依頼                               [一時停止]
 - E4 取消・[送らない] にした依頼は、どの順で操作しても送られない（`DismissedNeverRuns`）。
 - E5 同じ依頼は、利用者が「やり直す」を選ばない限り 1 回しか送られない。再起動、猶予切れと [すぐ送る] の重なりを含む（`AtMostOnce`）。
 - E6 `unjudged`、送り先の無い種類、失敗した依頼は「確認が要るもの」に出る（`NoSilentDrop`）。
+- 意図した送り先と異なる送り先へ送られるのは、その送り先が「まもなく送る」に表示されたまま猶予が過ぎた場合だけ（`NoWrongDestination`）。
 - E7 `enabled` が false なら、Jev への送信は 0 件。
 - E8 送るのは既存の実行部分だけを通る。
 

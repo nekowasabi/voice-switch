@@ -15,7 +15,7 @@ final class TriageService {
     private let settings: TriageSettings
     private let files: TriageFiles
     private let simulation: Simulation?
-    private let routes: [TriageKind: TriageSettings.Route]
+    private let routes: [TriageKind: [TriageSettings.Route]]
     private let rules: TriageExecution.Rules
     private var state = TriageExecution.State(alive: false)
     private var proposals: [String: TriageProposal] = [:]
@@ -33,16 +33,26 @@ final class TriageService {
         routes = Dictionary(uniqueKeysWithValues: settings.routes.compactMap { name, route in
             TriageKind(rawValue: name).map { ($0, route) }
         })
-        rules = TriageExecution.Rules(routes: Set(routes.keys), heavy: Set(routes.filter { $0.value.heavy }.keys))
+        rules = TriageExecution.Rules(routes: routes.mapValues(\.count), heavy: routes.mapValues { candidates in
+            Set(candidates.indices.filter { candidates[$0].heavy })
+        })
     }
 
     func start() {
         do {
             proposals = try files.loadProposals()
+            proposals = proposals.mapValues { saved in
+                guard saved.routeIndex == nil, let kind = saved.kind, let destination = savedRoute(saved) else { return saved }
+                var proposal = saved
+                select(destination, kind: kind, index: 0, for: &proposal)
+                return proposal
+            }
             state.rows = proposals.mapValues { proposal in
                 var row = TriageExecution.Row()
-                row.persisted = proposal.stage
+                row.persisted = proposal.stage == .pending && !canAutoSend(proposal) ? .review : proposal.stage
                 row.verdict = proposal.kind.map(TriageExecution.Verdict.kind) ?? .unjudged
+                row.routeIndex = proposal.routeIndex ?? (proposal.routeID == nil ? nil : 0)
+                row.verified = proposal.verified == true
                 return row
             }
         } catch {
@@ -75,8 +85,22 @@ final class TriageService {
 
     func stage(of id: String) -> TriageExecution.Stage? { state.rows[id]?.stage }
 
-    func routeName(_ kind: TriageKind?) -> String? {
-        guard let kind, let route = routes[kind] else { return nil }
+    func routeNames(_ kind: TriageKind) -> [String] {
+        (routes[kind] ?? []).map { routeName($0) ?? kind.rawValue }
+    }
+
+    func routeName(_ proposal: TriageProposal) -> String? {
+        proposal.routeName ?? proposal.kind.flatMap { kind in
+            route(kind, at: proposal.routeIndex ?? 0).flatMap(routeName)
+        }
+    }
+
+    private func route(_ kind: TriageKind, at index: Int) -> TriageSettings.Route? {
+        guard let candidates = routes[kind], candidates.indices.contains(index) else { return nil }
+        return candidates[index]
+    }
+
+    private func routeName(_ route: TriageSettings.Route) -> String? {
         if let name = route.name { return name }
         switch route.action.delivery {
         case .command(let command):
@@ -104,19 +128,32 @@ final class TriageService {
         _ = apply(.confirmDone(id), updated: proposal)
     }
 
-    func canRetry(_ proposal: TriageProposal) -> Bool { sameRoute(proposal) }
+    func canRetry(_ proposal: TriageProposal) -> Bool { savedRoute(proposal) != nil }
 
     func retry(_ id: String) {
-        guard let proposal = proposals[id], let kind = proposal.kind, sameRoute(proposal) else { return }
+        guard let proposal = proposals[id], let kind = proposal.kind, canRetry(proposal) else { return }
         _ = apply(.retry(id, kind))
     }
 
-    func send(_ id: String, as chosen: TriageKind? = nil) {
-        guard var proposal = proposals[id], let kind = chosen ?? proposal.kind, let route = routes[kind] else { return }
-        let event: TriageExecution.Event = proposal.kind == kind ? .sendNow(id, kind) : .fix(id, kind)
-        proposal.kind = kind
-        proposal.routeID = identity(route)
+    func send(_ id: String, as chosen: TriageKind? = nil, routeIndex: Int? = nil) {
+        guard var proposal = proposals[id], let kind = chosen ?? proposal.kind else { return }
+        let index = routeIndex ?? (kind == proposal.kind ? proposal.routeIndex : nil) ?? 0
+        guard let destination = route(kind, at: index) else { return }
+        let event: TriageExecution.Event = proposal.kind == kind
+            ? .sendNow(id, kind, routeIndex: index) : .fix(id, kind, routeIndex: index)
+        select(destination, kind: kind, index: index, for: &proposal)
         if apply(event, updated: proposal), chosen != nil { saveLabel(proposal, kind: kind) }
+    }
+
+    func switchDestination(_ id: String, to index: Int) {
+        guard var proposal = proposals[id], let kind = proposal.kind, let destination = route(kind, at: index),
+              canAutoSend(proposal), let deadline = proposal.deadline, deadline > Date() else { return }
+        select(destination, kind: kind, index: index, for: &proposal)
+        proposal.reasons = proposal.routeExceptions(in: proposals.values)
+        if destination.heavy { proposal.reasons.append("重い送り先は確認が必要") }
+        proposal.deadline = proposal.reasons.isEmpty
+            ? Date().addingTimeInterval(destination.graceSeconds ?? settings.graceSeconds) : nil
+        _ = apply(.switchDestination(id, index, verified: false, flagged: !proposal.reasons.isEmpty), updated: proposal)
     }
 
     func correct(_ id: String, to kind: TriageKind) {
@@ -188,17 +225,16 @@ final class TriageService {
                 if let answers = result.answers, TriageClassifier.hasUnsureAnswer(answers, thresholds: bands) {
                     proposal.reasons.append("判定に迷い")
                 }
-                if let route = routes[kind] {
-                    let routeID = identity(route)
-                    proposal.routeID = routeID
+                if let route = route(kind, at: 0) {
+                    select(route, kind: kind, index: 0, for: &proposal)
                     if route.heavy {
-                        let probability = await verify(kind, context: context)
+                        let probability = await verify(kind, destination: proposal.routeName ?? kind.rawValue, context: context)
                         log("triage: \(id) verify \(kind.rawValue) \(probability.map { String($0) } ?? "unavailable")")
                         verified = (probability ?? 0) >= 0.7
                         proposal.verified = verified
                         if !verified { proposal.reasons.append("重い送り先の確認不足") }
                     }
-                    proposal.reasons += routeExceptions(routeID, at: entry.createdAt)
+                    proposal.reasons += proposal.routeExceptions(in: proposals.values)
                     if proposal.reasons.isEmpty {
                         proposal.deadline = Date().addingTimeInterval(route.graceSeconds ?? settings.graceSeconds)
                     }
@@ -245,8 +281,8 @@ final class TriageService {
         }
     }
 
-    private func verify(_ kind: TriageKind, context: TriageRequest.State) async -> Double? {
-        let route = TriageRequest.Route(kind: kind, destination: routeName(kind) ?? kind.rawValue)
+    private func verify(_ kind: TriageKind, destination: String, context: TriageRequest.State) async -> Double? {
+        let route = TriageRequest.Route(kind: kind, destination: destination)
         guard let questions, let request = TriageRequest.verification(questions, state: context, route: route),
               case .data(let bytes) = await ask(request),
               let response = try? JSONDecoder().decode(TriageClassifier.Response.self, from: bytes),
@@ -277,26 +313,27 @@ final class TriageService {
         return TriageFiles.hash((try? JSONEncoder().encode(values)) ?? Data())
     }
 
-    private func sameRoute(_ proposal: TriageProposal) -> Bool {
-        guard let kind = proposal.kind, let route = routes[kind] else { return false }
-        return proposal.routeID == identity(route)
+    private func select(_ route: TriageSettings.Route, kind: TriageKind, index: Int, for proposal: inout TriageProposal) {
+        let id = identity(route)
+        if proposal.kind != kind || proposal.routeID != id || (proposal.routeIndex ?? 0) != index {
+            proposal.verified = nil
+        }
+        proposal.kind = kind
+        proposal.routeIndex = index
+        proposal.routeID = id
+        proposal.routeName = routeName(route) ?? kind.rawValue
+    }
+
+    private func savedRoute(_ proposal: TriageProposal) -> TriageSettings.Route? {
+        guard let kind = proposal.kind, let route = route(kind, at: proposal.routeIndex ?? 0),
+              proposal.routeID == identity(route),
+              proposal.routeName == nil || proposal.routeName == (routeName(route) ?? kind.rawValue) else { return nil }
+        return route
     }
 
     private func canAutoSend(_ proposal: TriageProposal) -> Bool {
-        guard sameRoute(proposal), let kind = proposal.kind, let route = routes[kind], proposal.deadline != nil else { return false }
+        guard let route = savedRoute(proposal), proposal.deadline != nil else { return false }
         return !route.heavy || proposal.verified == true
-    }
-
-    private func routeExceptions(_ id: String, at date: Date) -> [String] {
-        let matching = proposals.values.filter { $0.routeID == id }
-        var reasons: [String] = []
-        if matching.lazy.filter({ $0.outcome == .sent }).prefix(5).count < 5 {
-            reasons.append("送り先の最初の5件")
-        }
-        if matching.contains(where: { $0.createdAt < date && date.timeIntervalSince($0.createdAt) <= 60 }) {
-            reasons.append("60秒以内に同じ送り先")
-        }
-        return reasons
     }
 
     @discardableResult
@@ -340,7 +377,7 @@ final class TriageService {
             switch effect {
             case .persist, .schedule: break
             case .start(let id): _ = apply(.start(id))
-            case .execute(let id, let kind): execute(id, kind: kind)
+            case .execute(let id, let kind, let index): execute(id, kind: kind, routeIndex: index)
             case .record(let id): _ = apply(.record(id))
             case .restoredUnknown(let id): log("triage: \(id) restored unknown")
             }
@@ -350,8 +387,9 @@ final class TriageService {
         return true
     }
 
-    private func execute(_ id: String, kind: TriageKind) {
-        guard let proposal = proposals[id], let route = routes[kind] else { return }
+    private func execute(_ id: String, kind: TriageKind, routeIndex: Int) {
+        guard let proposal = proposals[id], (proposal.routeIndex ?? 0) == routeIndex,
+              let route = savedRoute(proposal) else { return }
         log("triage: \(id) sending \(kind.rawValue)")
         Task {
             var finished = proposal
@@ -369,7 +407,7 @@ final class TriageService {
         timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self, !self.paused else { return }
-                if deadline <= Date(), self.pending.contains(where: { $0.id == proposal.id }) {
+                if deadline <= Date(), self.pending.contains(where: { $0.id == proposal.id && $0.deadline == deadline }) {
                     _ = self.apply(.graceExpire(proposal.id))
                 } else { self.armTimer() }
             }
