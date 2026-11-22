@@ -79,8 +79,8 @@ voice-switch  依頼                               [一時停止]
     "enabled": true,
     "graceSeconds": 300,
     "routes": {
-      "self_task":       {"command": "scripts/changelogmemo-add task", "heavy": false, "graceSeconds": 60},
-      "write_text":      {"command": "scripts/changelogmemo-add draft", "heavy": false},
+      "self_task":       {"command": "scripts/memo-inbox-add task", "heavy": false, "graceSeconds": 60},
+      "write_text":      {"command": "scripts/memo-inbox-add draft", "heavy": false},
       "look_up":         {"url": "grokbot://prompt?text={text}"},
       "computer_change": {"command": "<エージェントへ依頼するコマンド>"}
     }
@@ -138,12 +138,16 @@ E1〜E6 は `.claude/skills/verify-triage-execution`（TLA+）で検査する。
 ## 決めたこと
 
 1. 形は案 A（猶予つきの自動送信と、例外だけの確認）。猶予の既定は 5 分（2026-11-22）。CLI は AI エージェントが呼ぶ入口にする（2026-11-21）。
-2. 自分の作業（self_task）と下書き（write_text）の実行先は changelogmemo（`CHANGELOG_FILE`、無ければ `~/repos/changelog/changelogmemo`）。changelog スキルと同じ書式で、先頭に 1 項目を足す。調べもの（look_up）と PC への変更（computer_change）の実行先は未定。
+2. 自分の作業（self_task）と下書き（write_text）の行き先は changelogmemo。ただし voice-switch は changelogmemo を直接書かず、取り込み待ちファイルに追記する（2026-11-22、下の「changelogmemo への取り込み」）。調べもの（look_up）と PC への変更（computer_change）の実行先は未定。
 3. Mac を先に作る。Windows はあとで移す。
 
-## changelogmemo の書き込み競合
+## changelogmemo への取り込み
 
-`changelogmemo-add` は書き込み前にファイルが落ち着くのを待つ。1 回の呼び出しの上限は既定で 1.25 秒。`CHANGELOGMEMO_TIMEOUT_SECONDS` で秒数を変えられる。競合が続くか、交換後の確認時間を確保できなければ終了コード 75 を返す。ロックを共有しない書き手が最後の確認と交換の間に書く場合や、確認を終えた後に古い内容で置き換える場合までの保証には、書き手間の調整が必要になる。
+どのファイルも、書き手を 1 つにする。
+
+1. voice-switch の送り先 `scripts/memo-inbox-add` は、`~/repos/changelog/voice-switch-inbox.jsonl`（`VOICE_SWITCH_MEMO_INBOX` で変えられる）に JSON を 1 行追記するだけ。中身は id、at、kind、title、text。追記だけなので、前の行は変わらない。書けなければ 0 以外で終わり、依頼は「送信に失敗」になる。
+2. changelogmemo を書くのは changelog スキルだけ。スキルは動くたびに取り込み待ちファイルを読み、changelogmemo にまだ無い id の行を項目として足す。取り込み待ちファイルは書き換えない。
+3. 2026-11-21 から 22 にかけては、voice-switch が changelogmemo を直接書き換えていた（`changelogmemo-add`）。changelog スキルの編集と同じファイルを書くため、ロックを取らない相手と重なると項目が消えた。入れ替え・読み直し・時間の上限で 3 回直しても別の競合が出たので、書き手を分ける形に変えた。
 
 ## 範囲外
 

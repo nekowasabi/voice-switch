@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+"""Append one memo line to voice-switch's own inbox (JSONL, append only).
+
+The changelog skill is the only writer of changelogmemo and pulls these lines in; this script is the only writer of
+the inbox. No file has two writers, so there is no race to handle (docs/journal-triage-execution.md).
+Usage: memo-inbox-add task|draft < dictation.txt   (inbox: VOICE_SWITCH_MEMO_INBOX, else ~/repos/changelog/voice-switch-inbox.jsonl)
+"""
+import datetime
+import json
+import os
+import sys
+import uuid
+from pathlib import Path
+
+TITLES = {"task": "自分の作業", "draft": "下書き"}
+
+
+def main():
+    if len(sys.argv) != 2 or sys.argv[1] not in TITLES:
+        sys.exit("usage: memo-inbox-add task|draft < dictation.txt")
+    text = sys.stdin.buffer.read().decode("utf-8").strip()
+    if not text:
+        sys.exit("memo-inbox-add: empty input")
+    path = Path(os.environ.get("VOICE_SWITCH_MEMO_INBOX") or "~/repos/changelog/voice-switch-inbox.jsonl").expanduser()
+    line = json.dumps({"id": str(uuid.uuid4()), "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+                       "kind": sys.argv[1], "title": TITLES[sys.argv[1]], "text": text}, ensure_ascii=False).encode() + b"\n"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
+        try:
+            end = os.lseek(fd, 0, os.SEEK_END)
+            if end and os.pread(fd, 1, end - 1) != b"\n":
+                line = b"\n" + line  # a crash cut the last line: leave it alone and start ours on a fresh line
+            os.write(fd, line)  # one O_APPEND write, so parallel adds never interleave inside a line
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError as error:
+        sys.exit(f"memo-inbox-add: {error.strerror}: {path}")
+
+
+if __name__ == "__main__":
+    main()

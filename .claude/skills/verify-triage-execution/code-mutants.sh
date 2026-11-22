@@ -1,6 +1,6 @@
 #!/bin/sh
 # Mutants for check items 6 and 7 of SKILL.md: each breaks one guard in a copy of the app sources or of
-# scripts/changelogmemo-add (or takes the script from before the fix); the named check must FAIL on the copy.
+# scripts/memo-inbox-add; the named check must FAIL on the copy.
 # Usage: sh .claude/skills/verify-triage-execution/code-mutants.sh   (about 3 min)
 set -eu
 dir=$(cd "$(dirname "$0")" && pwd)
@@ -14,7 +14,6 @@ while IFS='|' read -r name want file old new; do
   copy="$work/$i"
   mkdir -p "$copy"
   case $file in
-  *@*) git -C "$repo" show "${file#*@}:${file%@*}" > "$copy/target" ;;
   scripts/*) cp "$repo/$file" "$copy/target" ;;
   *) cp -R "$repo/Sources/voice-switch/." "$copy/"; mv "$copy/$(basename "$file")" "$copy/target" ;;
   esac
@@ -22,16 +21,16 @@ while IFS='|' read -r name want file old new; do
     echo "MUTANT $name: anchor missing (update code-mutants.sh)"; continue
   fi
   case $file in
-  scripts/*) out=$(cd "$repo" && CHANGELOGMEMO_ADD="$copy/target" python3 -m unittest tests.test_changelogmemo_add 2>&1 || true) ;;
+  scripts/*) out=$(cd "$repo" && MEMO_INBOX_ADD="$copy/target" python3 -m unittest tests.test_memo_inbox_add 2>&1 || true) ;;
   *) mv "$copy/target" "$copy/$(basename "$file")"
      out=$(TRIAGE_SOURCES="$copy" sh "$repo/tests/triage/run.sh" 2>&1 || true) ;;
   esac
   if printf '%s\n' "$out" | grep -Eq "^(FAIL|ERROR):? $want"; then echo "CAUGHT $name by $want"
   else echo "MISSED $name (want FAIL $want)"; printf '%s\n' "$out" | tail -n 20; fi
 done <<'EOF' | tee "$work/out"
-changelogmemo-before-fix|test_a_writer_that_edits_now_and_then_loses_nothing|scripts/changelogmemo-add@1b4c0f5||
-changelogmemo-no-recheck|test_a_writer_that_edits_now_and_then_loses_nothing|scripts/changelogmemo-add|current = after_publish(path, published, raced, deadline)|current = snapshot(path)
-changelogmemo-no-limit|test_a_held_lock_past_the_limit_gives_up_with_75_and_writes_nothing|scripts/changelogmemo-add|    if time.monotonic() >= deadline:|    if False:
+inbox-glues-cut-line|test_a_cut_last_line_is_kept_and_the_new_line_starts_fresh|scripts/memo-inbox-add|                line = b"\n" + line|                pass
+inbox-fails-silently|test_an_unwritable_inbox_fails_and_writes_nothing|scripts/memo-inbox-add|        sys.exit(f"memo-inbox-add: {error.strerror}: {path}")|        return
+inbox-truncates|test_earlier_bytes_never_change|scripts/memo-inbox-add|os.O_APPEND|os.O_TRUNC
 previous-window-61|request|Sources/voice-switch/TriageRequest.swift|age <= 60|age <= 61
 previous-three|request|Sources/voice-switch/TriageRequest.swift|.suffix(2)|.suffix(3)
 previous-other-device|request|Sources/voice-switch/TriageRequest.swift|row.device == device && |

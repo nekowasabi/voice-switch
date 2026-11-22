@@ -216,14 +216,14 @@ LaunchServices、実マイク、Superwhisper の録音・文字起こし・貼�
   "enabled": true,
   "graceSeconds": 300,
   "routes": {
-    "self_task": {"command": "/絶対パス/voice-switch/scripts/changelogmemo-add task", "heavy": false, "graceSeconds": 60},
-    "write_text": {"command": "/絶対パス/voice-switch/scripts/changelogmemo-add draft", "heavy": false},
+    "self_task": {"command": "/絶対パス/voice-switch/scripts/memo-inbox-add task", "heavy": false, "graceSeconds": 60},
+    "write_text": {"command": "/絶対パス/voice-switch/scripts/memo-inbox-add draft", "heavy": false},
     "look_up": {"url": "grokbot://prompt?text={text}"}
   }
 }
 ```
 
-種類は `self_task`（自分の作業）、`write_text`（下書き）、`look_up`（調べもの）、`computer_change`（PC への変更）です。送り先は `macOS.actions` と同じ書式で、URL、HTTPS POST、標準入力で本文を受け取るコマンドを指定できます。メモ用スクリプトには Python 3 が必要です。`CHANGELOG_FILE` または `~/repos/changelog/changelogmemo` の先頭に項目を足します。
+種類は `self_task`（自分の作業）、`write_text`（下書き）、`look_up`（調べもの）、`computer_change`（PC への変更）です。送り先は `macOS.actions` と同じ書式で、URL、HTTPS POST、標準入力で本文を受け取るコマンドを指定できます。メモ用スクリプトには Python 3 が必要です。`VOICE_SWITCH_MEMO_INBOX` または `~/repos/changelog/voice-switch-inbox.jsonl` に JSON を 1 行追記します。changelogmemo は直接書き換えません。changelogmemo を書くのは changelog スキルだけで、次に動いたときに取り込み待ちの行を取り込みます。2 つが同じファイルを書くことはありません。
 
 猶予の既定は 300 秒で、送り先ごとに上書きできます。`heavy` の既定は `true` です。答えが迷いの帯にある、種類が複数ある、送り先がない、重い送り先の追加確認が 0.7 未満、送り先の最初の 5 件、60 秒以内に同じ送り先への依頼がある場合は、利用者の確認が必要です。Jev のキーがない場合も確認が必要です。振り分けは既定では無効です。
 

@@ -81,7 +81,7 @@ final class TriageService {
         case .command(let command):
             let executable = command.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? ""
             let name = (executable as NSString).lastPathComponent
-            if name == "changelogmemo-add" { return "changelogmemo" }
+            if name == "memo-inbox-add" { return "changelogmemo（取り込み待ち）" }
             return name.range(of: #"^[A-Za-z0-9_.-]{1,64}$"#, options: .regularExpression) == nil ? "コマンド" : name
         case .open(let url), .post(let url):
             let parts = URLComponents(string: url.rawValue)

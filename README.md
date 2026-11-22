@@ -65,14 +65,14 @@ Set `dictation.triage.enabled` to `true` and restart VoiceSwitch to classify new
   "enabled": true,
   "graceSeconds": 300,
   "routes": {
-    "self_task": {"command": "/absolute/path/voice-switch/scripts/changelogmemo-add task", "heavy": false, "graceSeconds": 60},
-    "write_text": {"command": "/absolute/path/voice-switch/scripts/changelogmemo-add draft", "heavy": false},
+    "self_task": {"command": "/absolute/path/voice-switch/scripts/memo-inbox-add task", "heavy": false, "graceSeconds": 60},
+    "write_text": {"command": "/absolute/path/voice-switch/scripts/memo-inbox-add draft", "heavy": false},
     "look_up": {"url": "grokbot://prompt?text={text}"}
   }
 }
 ```
 
-Place this object at `dictation.triage`. Route keys are `self_task`, `look_up`, `write_text`, and `computer_change`. Each route uses the same URL, HTTPS POST, or command settings as `macOS.actions`. A command receives the text on stdin. The memo helper uses Python 3 and writes to `CHANGELOG_FILE` or `~/repos/changelog/changelogmemo`. The default grace period is 300 seconds and `heavy` defaults to `true` per route. Uncertain or multiple classifications, missing routes, and heavy routes whose extra check scores below 0.7 require review. So do the first five sends to a destination and requests to the same destination within 60 seconds.
+Place this object at `dictation.triage`. Route keys are `self_task`, `look_up`, `write_text`, and `computer_change`. Each route uses the same URL, HTTPS POST, or command settings as `macOS.actions`. A command receives the text on stdin. The memo helper uses Python 3 and appends one JSON line to `VOICE_SWITCH_MEMO_INBOX` or `~/repos/changelog/voice-switch-inbox.jsonl`. It never edits changelogmemo: the changelog skill, the only writer of changelogmemo, pulls new inbox lines in the next time it runs, so the two never write the same file. The default grace period is 300 seconds and `heavy` defaults to `true` per route. Uncertain or multiple classifications, missing routes, and heavy routes whose extra check scores below 0.7 require review. So do the first five sends to a destination and requests to the same destination within 60 seconds.
 
 Jev receives the current utterance text and start mode, app and task names, local time, and the text and age of up to two prior eligible entries from this device in the last 60 seconds. The extra heavy-route check also includes the kind and destination name. Triage is off by default. Without a Jev key, items require manual review. The app reads `.triage/thresholds.json` under the journal root and saves corrections to `.triage/labels/<device>-app.jsonl`. Request history and pending deadlines are stored in `~/Library/Application Support/voice-switch/proposals.jsonl`.
 

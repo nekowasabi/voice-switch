@@ -10,7 +10,7 @@ straight into DictationHistory (no audio, no Superwhisper). Routes are shell com
 folder: starts.txt gets "start <text>" when a route begins, sent.txt gets the text when it ends. Nothing outside the
 evidence folder is written; the script compares the user's real files before and after.
 """
-import fcntl, json, os, re, signal, subprocess, sys, time
+import json, os, re, signal, subprocess, sys, time
 from pathlib import Path
 
 ROOT = Path(os.environ.get("VS_VERIFY_ROOT", Path.home() / "Library/Caches/voice-switch-verify"))
@@ -19,7 +19,7 @@ EVID = ROOT / "evidence" / os.environ.get("VS_RUN_ID", "triage-" + time.strftime
 QUESTIONS = ["wants_action", "is_filler", "kind_self_task", "kind_look_up", "kind_write_text", "kind_computer_change"]
 REAL = [Path.home() / p for p in (
     "Library/Application Support/voice-switch/proposals.jsonl", "Library/Caches/voice-switch/triage",
-    "repos/changelog/changelogmemo")]
+    "repos/changelog/changelogmemo", "repos/changelog/voice-switch-inbox.jsonl")]
 # The user's app may write its own journal lines meanwhile, so the journals are checked for this script's texts instead.
 JOURNALS = [Path.home() / "Library/Application Support/voice-switch/journal", Path.home() / "repos/context-storage/voice-switch"]
 MARKS = re.compile(r"(?:unsure|heavy|warm|sure|cancel|slow|fail|off)-\d")
@@ -31,9 +31,9 @@ def leaked():
     for root in JOURNALS:
         for f in root.rglob(time.strftime("%Y-%m-%d") + ".jsonl") if root.exists() else []:
             found += [str(f) for l in f.read_text(errors="replace").splitlines() if MARKS.search(l)]
-    memo = Path.home() / "repos/changelog/changelogmemo"
-    if memo.exists() and MARKS.search(memo.read_text(errors="replace")):
-        found.append(str(memo))
+    for memo in (Path.home() / "repos/changelog/changelogmemo", Path.home() / "repos/changelog/voice-switch-inbox.jsonl"):
+        if memo.exists() and MARKS.search(memo.read_text(errors="replace")):
+            found.append(str(memo))
     return sorted(set(found))
 
 
@@ -196,36 +196,40 @@ def restart():
 
 
 def failed():
-    """The route is the real scripts/changelogmemo-add on a memo in the evidence folder. While this script holds the memo's
-    lock, the add gives up after CHANGELOGMEMO_TIMEOUT_SECONDS 0.5 with exit 75; the request must land in 確認が要るもの as
-    failed with its reason, and neither the rest of the run nor a relaunch (with the lock free again) sends it again."""
+    """The route is the real scripts/memo-inbox-add, pointed at an inbox whose folder is a file, so it exits 1; the
+    request must land in 確認が要るもの as failed with its reason, and neither the rest of the run nor a relaunch sends it
+    again. The warm-up goes through the same script into a writable inbox first."""
     h = Home("failed")
-    memo = h.dir / "changelogmemo"
-    add = (f'CHANGELOG_FILE={memo} CHANGELOGMEMO_TIMEOUT_SECONDS=0.5 {sys.executable} {REPO}/scripts/changelogmemo-add task')
+    inbox = h.dir / "inbox.jsonl"
+    blocked = h.dir / "blocked"
+    target = h.dir / "target"
+    add = f'VOICE_SWITCH_MEMO_INBOX="$(cat {target})" {sys.executable} {REPO}/scripts/memo-inbox-add task'
     h.config["dictation"]["triage"]["routes"]["self_task"] = {
         "command": f't=$(cat); echo "start $t" >> {h.dir}/starts.txt; printf "%s\\n" "$t" | {add} && printf "%s\\n" "$t" >> {h.dir}/sent.txt',
         "heavy": False, "graceSeconds": 2}
     (h.dir / "config.json").write_text(json.dumps(h.config, ensure_ascii=False, indent=2))
+    target.write_text(str(inbox))
     warm(h)  # five 送る through the real script, so the next request goes out on its own after the grace period
-    warmed = memo.read_text().count("  - 内容: warm-") if memo.exists() else 0
+    texts = lambda: [json.loads(l)["text"] for l in inbox.read_text().splitlines()] if inbox.exists() else []
+    warmed = sum(t.startswith("warm-") for t in texts())
+    blocked.write_text("a file where the inbox folder should be")
+    target.write_text(str(blocked / "inbox.jsonl"))
     said = "fail-1 牛乳を買う"
-    with open(str(memo) + ".lock", "a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        r = h.run({"answers": sure("self_task"), "dictations": [said], "seconds": 8})
+    r = h.run({"answers": sure("self_task"), "dictations": [said], "seconds": 8})
+    target.write_text(str(inbox))
     r2 = h.run({"answers": sure("self_task"), "dictations": [], "seconds": 6})
     starts = [l for l in h.lines("starts.txt") if l == f"start {said}"]
     row = [x for x in h.proposals().values() if x["text"] == said]
-    failed_lines = [l for l in r["triage"] if re.search(r"triage: \S+ failed self_task command exit 75$", l)]
+    failed_lines = [l for l in r["triage"] if re.search(r"triage: \S+ failed self_task command exit 1$", l)]
     sending = [l for l in r["triage"] + r2["triage"] if " sending self_task" in l]
-    in_memo = memo.read_text().count(f"  - 内容: {said}") if memo.exists() else 0
-    check("(e) a route that exits 75 (changelogmemo-add out of time) leaves the request failed with its reason; "
-          "nothing sends it again, not even a relaunch with the lock free",
-          warmed == 5 and len(failed_lines) == 1 and len(sending) == 1 and len(starts) == 1 and in_memo == 0
+    check("(e) a route that exits 1 (memo-inbox-add cannot write its inbox) leaves the request failed with its reason; "
+          "nothing sends it again, not even a relaunch with the inbox writable",
+          warmed == 5 and len(failed_lines) == 1 and len(sending) == 1 and len(starts) == 1 and said not in texts()
           and not [l for l in h.lines("sent.txt") if l == said]
-          and row and row[0]["stage"] == "failed" and row[0].get("failureReason") == "command exit 75",
-          [f"warm-up: changelogmemo has {warmed} warm- entries"] + ["run 1 (lock held):"] + r["triage"]
-          + ["run 2 (relaunch, lock free, no new dictation):"] + r2["triage"]
-          + [f"starts.txt 'fail-1' lines: {len(starts)}, changelogmemo 'fail-1' entries: {in_memo}, "
+          and row and row[0]["stage"] == "failed" and row[0].get("failureReason") == "command exit 1",
+          [f"warm-up: inbox has {warmed} warm- lines"] + ["run 1 (inbox unwritable):"] + r["triage"]
+          + ["run 2 (relaunch, inbox writable, no new dictation):"] + r2["triage"]
+          + [f"starts.txt 'fail-1' lines: {len(starts)}, inbox 'fail-1' lines: {texts().count(said)}, "
              f"last stage: {row[0]['stage'] if row else None}, failureReason: {row[0].get('failureReason') if row else None}"])
 
 
@@ -251,7 +255,7 @@ if __name__ == "__main__":
     check("no log line carries the dictated text (the triage lines give ids, kinds and fixed reasons only)",
           bool(SAID) and not shown, shown or [f"{len(SAID)} dictated texts, none in the runs' stdout"])
     changed = [str(p) for p in REAL if stat(p) != before[p]] + leaked()
-    check("the user's real proposals.jsonl, triage cache, changelogmemo and journals are untouched",
+    check("the user's real proposals.jsonl, triage cache, changelogmemo, memo inbox and journals are untouched",
           not changed, [f"changed: {changed}" if changed else f"unchanged: {len(REAL)} files; no test text in today's journals or changelogmemo"])
     print(f"evidence={EVID}")
     sys.exit(0 if all(results) else 1)

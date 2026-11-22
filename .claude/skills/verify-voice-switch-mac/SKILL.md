@@ -68,10 +68,10 @@ It runs the binary as `--simulate - --triage-fixture <fixture.json>`. The binary
 | `heavy` | a heavy route whose extra check answers 0.4 logs `verify look_up 0.4` and becomes an exception; no route starts |
 | `sure` | after 5 requests sent with 送る (warm-up rule) and a 61 s wait (repeat rule), a sure request logs `pending`, then `sending` 2 s later, and its route starts exactly once; then a request cancelled while pending stays at `pending, dismissed` and never starts |
 | `restart` | SIGKILL right after `sending` for a 20 s route; the relaunch logs `restored unknown`, sends nothing, and after the route ends `starts.txt` still has one line |
-| `failed` | the route is the real `scripts/changelogmemo-add` with its lock held and a 0.5 s limit, after the same warm-up as `sure`; the grace send logs `failed self_task command exit 75`, the last `proposals.jsonl` stage is `failed` with that `failureReason`, and a relaunch with the lock free starts nothing |
+| `failed` | the route is the real `scripts/memo-inbox-add`, warmed up like `sure` into a writable inbox and then pointed at an inbox whose folder is a file; the grace send logs `failed self_task command exit 1`, the last `proposals.jsonl` stage is `failed` with that `failureReason`, and a relaunch with the inbox writable starts nothing |
 | `disabled` | `triage.enabled: false` logs no `triage` line and writes no `proposals.jsonl` |
 
-The last line compares the user's real `proposals.jsonl`, triage cache and changelogmemo before and after, and looks for the test texts in today's real journals. Evidence is under `$VS_VERIFY_ROOT/evidence/triage-<time>/<scenario>/` (`runN-stdout.txt`, `home/`, `starts.txt`, `sent.txt`). It takes about 5 min. The window itself is out of reach here; `verify-triage-execution` check item 1 lists the steps on the real app.
+The last line compares the user's real `proposals.jsonl`, triage cache, changelogmemo and memo inbox before and after, and looks for the test texts in today's real journals. Evidence is under `$VS_VERIFY_ROOT/evidence/triage-<time>/<scenario>/` (`runN-stdout.txt`, `home/`, `starts.txt`, `sent.txt`). It takes about 5 min. The window itself is out of reach here; `verify-triage-execution` check item 1 lists the steps on the real app.
 
 ## Evidence
 
