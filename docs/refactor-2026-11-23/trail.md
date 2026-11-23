@@ -32,7 +32,7 @@
 | sh tests/equivalence.sh e12e124 | 0 | Equivalence passed (265 s) |
 | python3 tests/parity/run_parity.py --require-swift | 0 | SUMMARY pass=137 allow=29 fail=0 |
 | python3 tests/url-actions/run.py --require-swift | 0 | URL actions: 88 checks passed |
-| verify-action-wake-latency drive | 0 | すべての項目が PASS |
+| verify-action-wake-latency drive | 0 | items pass=20 skip=1 fail=0（skip は awl-swift-exec。Linux 向けの項目） |
 | verify-triage-execution check.sh risk | 1（想定どおり） | FAIL StrictNoWrongExecution だけ |
 | verify-triage-execution mutants.sh / code-mutants.sh | 0 / 0 | CAUGHT ... |
 | verify-journal-append mutants | 0 | CAUGHT read-dot-folders by T6 |
@@ -43,3 +43,17 @@
 | verify-voice-switch-mac build / hud | 0 | ok both HUDs draw vector glyphs |
 
 この Mac では流せないもの: verify-voice-switch-dotnet の cli（Linux 専用。macOS の date に %N が無く、verify.sh の 180 行目で止まる）、verify-voice-switch（WSL から Windows の exe を動かす）、make win-test の Windows 側、verify-pr-merge（開いている PR 用）。実機のマイクと Superwhisper への受け渡しは、合成音声による確認だけ。
+
+## 完了の前に足した確認（ff250ed）
+| 確認 | 結果 |
+|---|---|
+| 段階 5 の差分を読み合わせた（MacApp.swift と MacDictationSession.swift） | リセットの順番、frames(ms:) と Int(rate) * ms / 1000 の計算、ログの文字列は元と同じ |
+| make app を e12e124 と HEAD のきれいな作業ツリーで実行 | どちらも成功。.app の中身は同じ 20 ファイル。--vad-selftest と --check の出力は同じ |
+| Windows の Release win-x64 ビルド（--no-incremental） | 0 Warning(s) 0 Error(s)。Windows.Tests も 0 Warning(s) |
+| 壊し版の記録の中身（CAUGHT 以外の行） | 無し |
+| sh tests/check.sh | PASS all quick checks (76 s) |
+| sh tests/equivalence.sh e12e124 | Equivalence passed (264 s)。SAME が 15 項目 |
+
+環境について分かったこと:
+- 新しく取り出した作業ツリーでは、onnxruntime-swift-package-manager の取得が「Repository not found」で失敗する（基準のコミットも同じ）。手元の .build のキャッシュを写すとビルドできる。
+- parity は、PATH の先頭に $HOME/.dotnet を置かないと、mise の shim が dotnet のバージョン無しで落ちる。
