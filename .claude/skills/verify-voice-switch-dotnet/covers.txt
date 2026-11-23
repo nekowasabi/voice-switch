@@ -1,0 +1,5 @@
+dotnet/VoiceSwitch.Windows.Core/CliOptions.cs
+dotnet/VoiceSwitch.Windows.Core/DictationCore.cs DictationBoundaries
+dotnet/VoiceSwitch.Windows.Core/Segmenter.cs
+dotnet/VoiceSwitch.Windows/Program.cs Program.Run
+dotnet/VoiceSwitch.Windows/Program.cs SelfTest

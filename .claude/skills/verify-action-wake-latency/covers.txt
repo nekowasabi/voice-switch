@@ -1,0 +1,13 @@
+README.md
+README_ja.md
+Sources/voice-switch/MacApp.swift Listener.consume
+Sources/voice-switch/MacApp.swift check
+Sources/voice-switch/Segmenter.swift wakeSets
+Sources/voice-switch/Segmenter.swift wakeVerdict
+Sources/voice-switch/Transcript.swift
+dotnet/VoiceSwitch.Windows.Core/DictationCore.cs DictationBoundaries.LeadingWake
+dotnet/VoiceSwitch.Windows.Core/DictationCore.cs DictationSession
+dotnet/VoiceSwitch.Windows/DictationRuntime.cs RunAsync
+dotnet/VoiceSwitch.Windows/Program.cs CheckMode
+tests/parity/run_parity.py
+tests/url-actions/run.py

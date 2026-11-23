@@ -1,6 +1,6 @@
 ---
 name: verify-hud-blip
-description: Model-check (TLA+) that a short sound that is not a voice (a cough, a keyboard, a door, speaker playback that blips the HAL voice detector) never shows the mic HUD on its own, on macOS and Windows, while someone who keeps talking still sees it. Use when a change touches the phase `defer` in Listener.consume, HUD.render's phase table, voiceRecentlyActive / automaticWakeAllowed / minVoiceSeconds, the idle path's speechFrames / phraseHAL, Dictation.confirmed / wordCheck in Sources/voice-switch/MacApp.swift, or PublishPhase / Confirmed / CheckWords in dotnet/VoiceSwitch.Windows/DictationRuntime.cs, and before claiming the "mic HUD flickers on small sounds" bug fixed.
+description: Model-check (TLA+) that a short sound that is not a voice (a cough, a keyboard, a door, speaker playback that blips the HAL voice detector) never shows the mic HUD on its own, on macOS and Windows, while someone who keeps talking still sees it. Use when a change touches the phase `defer` in Listener.consume, HUD.render's phase table, voiceRecentlyActive / automaticWakeAllowed / minVoiceSeconds, the idle path's MacDictationSession.noteSpeech, Dictation.confirmed / wordCheck in Sources/voice-switch/MacApp.swift, or PublishPhase / Confirmed / CheckWords in dotnet/VoiceSwitch.Windows/DictationRuntime.cs, and before claiming the "mic HUD flickers on small sounds" bug fixed.
 ---
 
 # Verify a non-voice sound never shows the mic HUD (TLA+)
@@ -20,7 +20,7 @@ Users saw the mic HUD flash again and again with nobody talking to the app (2026
 
 **A 案を採用済み。macOS は 198 状態、Windows は 194 状態を探索し、両性質を満たした**（2026-10-31 に再実行、終了コードはともに 0）。修正した点滅経路は次の 2 つ。
 
-1. **待機中のフレーズ。** 雑音で `speechFrames > 0` と `phraseHAL > 0` になっても、`dictation == nil` なら `.idle`（既存の追従待機条件を満たす場合は `.followup`）。旧規則の `.hearing` は削除した。
+1. **待機中のフレーズ。** 雑音で `speechFrames > 0` と `phraseHAL > 0` になっても、`dictation == nil` なら `.idle`（`MacDictationSession.inFollowupWindow` と設定が追従待機を許す場合は `.followup`）。旧規則の `.hearing` は削除した。
 2. **発声直後の自動セッション。** `voiceRecentlyActive()` により物音でセッションが開く経路は残るが、本文を聞いた自動セッションは `confirmed == false` の間 `.idle`。確認後は従来の `.recording` / `.stopping` になる。ウェイクワードとアクションの本文待ちは `.waiting` を保つ。
 
 Windows holds both properties because `PublishPhase` shows an active automatic session only once `Confirmed(session)` (agreed words, `CheckWords`), and an idle phrase is `DictationPhase.Idle`.
@@ -64,10 +64,10 @@ Sync commit: `cf89a2f` の作業ツリー（未コミット）。A 案の表示�
 | `h`, `HalOK` | `voiceBeingHeard()` and the HAL listener in `watchVoiceActivity` (`kAudioDevicePropertyVoiceActivityDetectionState`) |
 | `halRun`, `sinceVoice`, `gate` | `voiceActivity.onSince` / `lastVoiceEnd` (set only after a run of `minVoiceSeconds`), `voiceRecentlyActive()`, `automaticWakeBlock()` -> `Listener.noVoiceActivity` |
 | `speech` | `Segmenter.isSpeech`: energy over threshold or the HAL flag; noise is assumed over the threshold |
-| `speechFrames`, `phraseHAL` | consume's `speechFrames` / `phraseHAL` on the idle path, reset after `hangoverMs` of gap (modeled as one frame) |
+| `speechFrames`, `phraseHAL` | `MacDictationSession.noteSpeech()` counts `speechFrames` and `phraseHAL`, reset after `hangoverMs` of gap (modeled as one frame) |
 | idle path `dict' = "auto"` | `longEnough`, `NoWakePolicy.onSpeech`, `automaticWakeAllowed()`, `dictation = Dictation(... origin: origin)` |
 | `w`, `dict' = "wake"` | a wake word or `macOS.actions` wake word recognized by `speaksWake` / `dictationStart` |
-| dictation branch | `if var d = dictation { ... }`: `silentFrames`, end on `endSilenceMs` or `maxSeconds`, `dictation = nil; speechFrames = 0` |
+| dictation branch | `if var d = dictation { ... }`: `silentFrames`, end on `endSilenceMs` or `maxSeconds`, `dictation = nil; session.clearRecentSpeech()` |
 | `confirmed` | `Dictation.confirmed` via `wordCheck` / `agreedWordCount` (Mac); `confirmedSession` via `CheckWords` (Windows) |
 | `HudMac` | `dict = "wake" \/ (dict = "auto" /\ confirmed)`。phase の `defer` は本文後の未確認自動セッションと待機中のフレーズを `.idle` にし、確認後の `.recording` / `.stopping` とウェイクの `.waiting` を保つ |
 | `HudWindows` | `PublishPhase(DictationSession, long)` and `Confirmed(session)` |
@@ -82,7 +82,7 @@ Windows で一致認識器がない場合は `Confirmed(session)` が自動セ�
 
 ## Does my change touch this?
 
-Run `git diff cf89a2f -- Sources/voice-switch/MacApp.swift dotnet/VoiceSwitch.Windows/DictationRuntime.cs` from the repo root and look for: the phase `defer` and `HUD.render`'s phase table, `voiceRecentlyActive` / `automaticWakeBlock` / `minVoiceSeconds` / `watchVoiceActivity`, the idle path's `speechFrames` / `phraseHAL` / automatic opening, `Dictation.confirmed` / `wordCheck`, or Windows `PublishPhase` / `Confirmed` / `CheckWords`. Any of these needs the matching model part updated before trusting the result.
+Run `git diff cf89a2f -- Sources/voice-switch/MacApp.swift Sources/voice-switch/MacDictationSession.swift dotnet/VoiceSwitch.Windows/DictationRuntime.cs` from the repo root and look for: the phase `defer` and `HUD.render`'s phase table, `voiceRecentlyActive` / `automaticWakeBlock` / `minVoiceSeconds` / `watchVoiceActivity`, the idle path's `speechFrames` / `phraseHAL` / automatic opening, `Dictation.confirmed` / `wordCheck`, or Windows `PublishPhase` / `Confirmed` / `CheckWords`. Any of these needs the matching model part updated before trusting the result.
 
 ## When it fails
 
@@ -106,6 +106,6 @@ Variants（2026-10-31。A 案は採用済み、旧規則への退行は今回実
 
 - Superwhisper's own recording (`delivery = .recording`), delivery glyphs (`processing`, `done`, `saved`, `failed`) and their timers, `.ended`, `.followup`, `notify`.
 - The Windows opening gate (`SpeechGate.VoicedWindows`, speaker gate): modeled as always allowing, which only adds behaviors.
-- Held phrases (`phraseHeldByVoice`, `heldPhrase`), early wake, stop words, the window stop check, hotkeys.
+- Held phrases (`MacDictationSession.finishIdlePhrase()` / `takeHeldPhrase()`), early wake, stop words, the window stop check, hotkeys.
 - The floor and `rebaseFloor` (see `../verify-hud-noise`); noise here is always over the threshold.
 - Timing: frames are only an order; 300 ms, 1.5 s and the recognizer delay before `confirmed` are not modeled sizes.

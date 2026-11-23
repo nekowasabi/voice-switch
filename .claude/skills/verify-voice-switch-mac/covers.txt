@@ -1,0 +1,38 @@
+Sources/voice-switch/Config.swift
+Sources/voice-switch/LatestRecognition.swift
+Sources/voice-switch/MacApp.swift AppDelegate.followMeet
+Sources/voice-switch/MacApp.swift AppDelegate.selectDevice
+Sources/voice-switch/MacApp.swift AppDelegate.toggleFallback
+Sources/voice-switch/MacApp.swift AppDelegate.togglePause
+Sources/voice-switch/MacApp.swift HUD
+Sources/voice-switch/MacApp.swift HUDGlyphView
+Sources/voice-switch/MacApp.swift HUDLabel
+Sources/voice-switch/MacApp.swift InputRoute
+Sources/voice-switch/MacApp.swift Listener
+Sources/voice-switch/MacApp.swift agreedWordCount
+Sources/voice-switch/MacApp.swift executeWakeAction
+Sources/voice-switch/MacApp.swift handoff
+Sources/voice-switch/MacApp.swift macPasteSafety
+Sources/voice-switch/MacApp.swift pasteDictation
+Sources/voice-switch/MacApp.swift stopWordCut
+Sources/voice-switch/MacApp.swift Listener.storeLocal
+Sources/voice-switch/MacApp.swift transcribe
+Sources/voice-switch/MacApp.swift Listener.transcribeToHistory
+Sources/voice-switch/MacApp.swift transcribeUnbounded
+Sources/voice-switch/MacDictationSession.swift
+Sources/voice-switch/MacWakeUI.swift macReading
+Sources/voice-switch/MacWakeUI.swift macRelaxedWake
+Sources/voice-switch/Segmenter.swift
+Sources/voice-switch/SpeakerGate.swift
+Sources/voice-switch/SpeechGate.swift
+Sources/voice-switch/Transcript.swift
+Sources/voice-switch/TriageClassifier.swift
+Sources/voice-switch/TriageExecution.swift
+Sources/voice-switch/TriageFiles.swift
+Sources/voice-switch/TriageRequest.swift
+Sources/voice-switch/TriageService.swift
+Sources/voice-switch/WakeSafety.swift
+Sources/voice-switch/WhisperGate.swift
+Sources/voice-switch/main.swift
+dotnet/VoiceSwitch.Windows/Tray/DictationHud.cs
+scripts/memo-inbox-add

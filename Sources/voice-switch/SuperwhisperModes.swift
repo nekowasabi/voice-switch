@@ -6,7 +6,7 @@ import CoreFoundation
 /// How the pane router disposed of a dictation. Same semantics as Windows `RouteDisposition`.
 /// SkippedNoBody: pane chosen but no extractable body — must not paste the full text.
 /// SendFailed: pane+body known but send-keys failed — paste `RouteResult.body` only when mode is set.
-enum RouteDisposition: Equatable {
+public enum RouteDisposition: Equatable {
     case sent
     case skippedNoBody
     case sendFailed
@@ -15,8 +15,8 @@ enum RouteDisposition: Equatable {
 
 /// What the router did, plus for SendFailed the exact body send-keys tried (Windows `RouteResult`).
 /// The handoff pastes that body instead of re-extracting: an unquoted (body Jev) body would otherwise be lost.
-struct RouteResult: Equatable {
-    let disposition: RouteDisposition
+public struct RouteResult: Equatable {
+    public let disposition: RouteDisposition
     let body: String?
 
     static let sent = RouteResult(disposition: .sent, body: nil)
@@ -25,14 +25,14 @@ struct RouteResult: Equatable {
     static func sendFailed(_ body: String?) -> RouteResult { RouteResult(disposition: .sendFailed, body: body) }
 }
 
-enum DictationDelivery: Equatable {
+public enum DictationDelivery: Equatable {
     case pane
     case paste
     case superwhisper
 }
 
 /// A key match anywhere wins over a name match (Windows SuperwhisperModes.ResolveKey).
-func resolveSuperwhisperModeKey(_ wanted: String, modeJsons: [String]) -> String? {
+public func resolveSuperwhisperModeKey(_ wanted: String, modeJsons: [String]) -> String? {
     let modes: [(key: String, name: String?)] = modeJsons.compactMap { json in
         guard let key = jsonStringField(json, "key"), !key.isEmpty else { return nil }
         return (key, jsonStringField(json, "name"))
@@ -43,7 +43,7 @@ func resolveSuperwhisperModeKey(_ wanted: String, modeJsons: [String]) -> String
     return modes.first(where: { ($0.name ?? "").caseInsensitiveCompare(wanted) == .orderedSame })?.key
 }
 
-func activeSuperwhisperMode(_ preferencesJson: String?) -> String? {
+public func activeSuperwhisperMode(_ preferencesJson: String?) -> String? {
     guard let preferencesJson else { return nil }
     guard let value = jsonStringField(preferencesJson, "activeMode"), !value.isEmpty else { return nil }
     return value
@@ -52,7 +52,7 @@ func activeSuperwhisperMode(_ preferencesJson: String?) -> String? {
 /// With a no-auto-paste mode in use, a dictation no pane took would otherwise land nowhere.
 /// SkippedNoBody must not Paste (that would be a full-text fallback after extract failure).
 /// SendFailed pastes via `.paste`; handoff uses `RouteResult.body` (the body send-keys tried), not the full text.
-func decideDictationDelivery(modeRequested: Bool, route: RouteDisposition) -> DictationDelivery {
+public func decideDictationDelivery(modeRequested: Bool, route: RouteDisposition) -> DictationDelivery {
     switch route {
     case .sent, .skippedNoBody:
         return .pane
@@ -68,14 +68,14 @@ func jsonStringField(_ json: String, _ name: String) -> String? {
     return value
 }
 
-func superwhisperModeUsesLLM(_ wanted: String?, modeJsons: [String]) -> Bool {
+public func superwhisperModeUsesLLM(_ wanted: String?, modeJsons: [String]) -> Bool {
     guard let wanted, let key = resolveSuperwhisperModeKey(wanted, modeJsons: modeJsons) else { return false }
     return modeJsons.contains { json in
         jsonStringField(json, "key") == key && !(jsonStringField(json, "languageModelID") ?? "").isEmpty
     }
 }
 
-func superwhisperAutoPasteDisabled(_ wanted: String?, modeJsons: [String]) -> Bool {
+public func superwhisperAutoPasteDisabled(_ wanted: String?, modeJsons: [String]) -> Bool {
     guard let wanted, let key = resolveSuperwhisperModeKey(wanted, modeJsons: modeJsons) else { return false }
     let matching = modeJsons.compactMap { json -> [String: Any]? in
         guard let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
@@ -92,7 +92,7 @@ func superwhisperAutoPasteDisabled(_ wanted: String?, modeJsons: [String]) -> Bo
 /// waitForLLM: superwhisper writes `result` first and `llmResult` after its language model; it pastes per the mode active
 /// at that second write, so a temporary mode must stay until then (restoring at the first write pasted automatic recordings).
 /// onRun hears "started id=<run>" once per new run folder and "result id=<run> kind=<case>" when one is read, never the text.
-func awaitResult(in dir: String, since: Int, excluding previousRuns: Set<String> = [], waitForLLM: Bool = false,
+public func awaitResult(in dir: String, since: Int, excluding previousRuns: Set<String> = [], waitForLLM: Bool = false,
                  onRun: (String) -> Void = { _ in }) async -> String? {
     var early: (id: String, text: String)?
     var seen: Set<String> = []
@@ -120,7 +120,7 @@ func awaitResult(in dir: String, since: Int, excluding previousRuns: Set<String>
 
 /// One superwhisper run as its meta.json shows it. Superwhisper first writes a placeholder with duration and
 /// processingTime 0 and an empty result; only a filled duration says it has judged the audio.
-enum SuperwhisperRun: Equatable {
+public enum SuperwhisperRun: Equatable {
     case unjudged
     case heardNothing
     case transcribed(String)
@@ -137,7 +137,7 @@ enum SuperwhisperRun: Equatable {
     }
 
     /// Still able to paste: unjudged, or transcribed by a mode that has a language model still to run.
-    func inFlight(meta: [String: Any]) -> Bool {
+    public func inFlight(meta: [String: Any]) -> Bool {
         switch self {
         case .unjudged: true
         case .transcribed: meta["languageModelKey"] != nil
@@ -147,7 +147,7 @@ enum SuperwhisperRun: Equatable {
 }
 
 /// Newest first.
-func superwhisperRuns(in dir: String, since: Int, excluding previousRuns: Set<String> = []) -> [(name: String, meta: [String: Any], run: SuperwhisperRun)] {
+public func superwhisperRuns(in dir: String, since: Int, excluding previousRuns: Set<String> = []) -> [(name: String, meta: [String: Any], run: SuperwhisperRun)] {
     let names = (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []
     return names.sorted().reversed().compactMap { name in
         guard !previousRuns.contains(name), let t = Int(name), t >= since,
@@ -159,7 +159,7 @@ func superwhisperRuns(in dir: String, since: Int, excluding previousRuns: Set<St
 
 /// A handoff that timed out kept its temporary mode; restoring it while that run still works lets the run paste.
 /// Waits up to 30 s for runs of the last `window` seconds to finish; true when none is left in flight.
-func awaitRunsSettled(in dir: String, now: Int = Int(Date().timeIntervalSince1970), window: Int = 180) async -> Bool {
+public func awaitRunsSettled(in dir: String, now: Int = Int(Date().timeIntervalSince1970), window: Int = 180) async -> Bool {
     for _ in 0 ..< 300 {
         if !superwhisperRuns(in: dir, since: now - window).contains(where: { $0.run.inFlight(meta: $0.meta) }) { return true }
         try? await Task.sleep(for: .milliseconds(100))

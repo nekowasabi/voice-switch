@@ -3,24 +3,24 @@ import CryptoKit
 import Darwin
 import Foundation
 
-struct TriageProposal: Codable, Equatable {
-    let id: String
-    let text: String
+public struct TriageProposal: Codable, Equatable {
+    public let id: String
+    public let text: String
     let createdAt: Date
     var updatedAt: Date
-    var stage: TriageExecution.Stage = .said
-    var kind: TriageKind?
+    public var stage: TriageExecution.Stage = .said
+    public var kind: TriageKind?
     var routeID: String?
-    var routeIndex: Int?
+    public var routeIndex: Int?
     var routeName: String?
-    var deadline: Date?
-    var reasons: [String] = []
+    public var deadline: Date?
+    public var reasons: [String] = []
     var destinations: [String] = []
     var answers: [String: Double]?
     var questionHash: String?
     var verified: Bool?
     var outcome: Outcome?
-    var failureReason: String?
+    public var failureReason: String?
     var focusBundleID: String?
 
     enum Outcome: String, Codable { case sent, failed }

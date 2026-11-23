@@ -3,14 +3,14 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(git -C "$HERE" rev-parse --show-toplevel)"
-WORK="${TMPDIR:-/tmp}/verify-journal-append"
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/verify-journal-append.XXXXXX")
+trap 'rm -rf "$WORK"' EXIT
 TRIAGE_TEST="$ROOT/tests/test_journal_triage.py"
-mkdir -p "$WORK"
 
 build() { # build <sources-dir> <binary>
-  local src="$1" out="$2" f files=()
-  for f in SecretLog Config Platform DictationJournal WakeSafety Transcript; do files+=("$src/$f.swift"); done
-  swiftc -module-name voice_switch -module-cache-path "$WORK/mc" "${files[@]}" "$HERE/main.swift" -o "$out"
+  local src="$1" out="$2"
+  python3 "$ROOT/tests/core_sources.py" journal "$src" swiftc -module-name voice_switch \
+    -module-cache-path "$WORK/mc" "$HERE/main.swift" -o "$out"
 }
 
 # T1, T6, C1-C10: scripts/journal_triage.py over every combination, HTTP replaced. <script> defaults to the real one.
@@ -32,7 +32,7 @@ triage() { # triage [script]
 check() {
   local rc=0
   build "$ROOT/Sources/voice-switch" "$WORK/harness"
-  "$WORK/harness" "$WORK/run-$$" "${1:-4}" || rc=1
+  "$WORK/harness" "$WORK/run" "${1:-4}" || rc=1
   triage || rc=1
   return $rc
 }
@@ -43,7 +43,7 @@ mutants() {
   while IFS='|' read -r name want file old new; do
     i=$((i + 1))
     copy="$WORK/mut-$i"
-    rm -rf "$copy"; mkdir -p "$copy"
+    mkdir -p "$copy"
     # The script reads Resources/triage_questions.json next to its own folder, so the copy keeps that layout.
     if [[ $file == *.py ]]; then mkdir -p "$copy/scripts" "$copy/Resources"; cp "$ROOT/$file" "$copy/scripts/"
       cp "$ROOT/Resources/triage_questions.json" "$copy/Resources/"; target="$copy/scripts/$(basename "$file")"
@@ -63,7 +63,7 @@ mutants() {
 write-only-handle|J1|Sources/voice-switch/DictationJournal.swift|FileHandle(forUpdating: URL(fileURLWithPath: file))|FileHandle(forWritingTo: URL(fileURLWithPath: file))
 no-newline-repair|J3|Sources/voice-switch/DictationJournal.swift|if last?.first != 10 { try handle.write(contentsOf: Data([10])) }|_ = last
 no-fallback-write|J1|Sources/voice-switch/DictationJournal.swift|if write(next, line: stamped.text, day: stamped.day) {|if false {
-silent-fallback|J4|Sources/voice-switch/DictationJournal.swift|log("dictation journal: \(error); using default \(fallback)")|_ = error
+silent-fallback|J4|Sources/voice-switch/DictationJournal.swift|logger("dictation journal: \(error); using default \(fallback)")|_ = error
 delivery-dropped|J3|Sources/voice-switch/DictationJournal.swift|"\"delivery\":\(delivery.map { jsonString($0.rawValue) } ?? "null")",|"\"delivery\":null",
 decide-hole|C1|scripts/journal_triage.py|return actions or ["unjudged:kind"]|return actions
 tune-tie-takes-smallest|C8|scripts/journal_triage.py|return weight, sum(abs(candidate[q][b] - thresholds[q][b]) for q in QUESTION_IDS for b in ("no", "yes"))|return weight, 0

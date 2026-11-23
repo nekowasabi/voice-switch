@@ -1,0 +1,12 @@
+Sources/voice-switch/MacApp.swift AppDelegate.applicationDidFinishLaunching
+Sources/voice-switch/MacApp.swift AppDelegate.followMeet
+Sources/voice-switch/MacApp.swift AppDelegate.meetBrowsers
+Sources/voice-switch/MacApp.swift AppDelegate.selectDevice
+Sources/voice-switch/MacApp.swift AppDelegate.togglePause
+Sources/voice-switch/MacApp.swift Listener.attemptStart
+Sources/voice-switch/MacApp.swift Listener.checkStall
+Sources/voice-switch/MacApp.swift Listener.init
+Sources/voice-switch/MacApp.swift Listener.restart
+Sources/voice-switch/MacApp.swift Listener.start
+Sources/voice-switch/MacApp.swift micInUse
+Sources/voice-switch/MacWakeUI.swift MacWakeShortcuts.registerPause

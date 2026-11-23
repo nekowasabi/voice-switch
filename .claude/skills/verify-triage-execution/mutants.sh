@@ -3,8 +3,8 @@
 # <NL> in a field is a newline (\n would clash with TLA+'s \notin).
 set -eu
 dir=$(cd "$(dirname "$0")" && pwd)
-work="${TMPDIR:-/tmp}/verify-triage-execution/mutants"
-rm -rf "$work"; mkdir -p "$work"
+work=$(mktemp -d "${TMPDIR:-/tmp}/verify-triage-execution-mutants.XXXXXX")
+trap 'rm -rf "$work"' EXIT
 bad=0
 while IFS='|' read -r name want old new; do
   copy="$work/$name.tla"

@@ -1,0 +1,12 @@
+dotnet/VoiceSwitch.Windows.Core/DictationCore.cs DictationBoundaries.LeadingWake
+dotnet/VoiceSwitch.Windows.Core/DictationCore.cs DictationBoundaries.MatchAlternate
+dotnet/VoiceSwitch.Windows.Core/DictationCore.cs DictationBoundaries.MinReadingDistance2
+dotnet/VoiceSwitch.Windows.Core/DictationCore.cs DictationBoundaries.ReadingRuleAllows
+dotnet/VoiceSwitch.Windows.Core/DictationCore.cs DictationBoundaries.ReadingWake
+dotnet/VoiceSwitch.Windows.Core/DictationCore.cs DictationBoundaries.RejectedReadingMatches
+dotnet/VoiceSwitch.Windows.Core/DictationCore.cs DictationBoundaries.RejectedWake
+dotnet/VoiceSwitch.Windows.Core/DictationCore.cs DictationBoundaries.RejectedWakeMinConfidence
+dotnet/VoiceSwitch.Windows.Core/DictationCore.cs DictationBoundaries.ShortWakeReading
+dotnet/VoiceSwitch.Windows.Core/DictationCore.cs DictationBoundaries.WakeAllowances
+dotnet/VoiceSwitch.Windows.Core/VoiceSwitchConfig.cs WakeWord.From
+dotnet/VoiceSwitch.Windows.Core/WakeReadingFallback.cs

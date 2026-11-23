@@ -1,0 +1,13 @@
+README.md
+README_ja.md
+Sources/voice-switch/Config.swift GrokBotPrompt
+Sources/voice-switch/Config.swift WakeAction
+Sources/voice-switch/MacApp.swift executeWakeAction
+Sources/voice-switch/MacApp.swift handoff
+config.example.grokbot.json
+docs/grokbot-message.md
+docs/wake-acceptance.md
+dotnet/VoiceSwitch.Windows.Core/DictationCore.cs DictationSession
+dotnet/VoiceSwitch.Windows.Core/GrokBotPrompt.cs
+dotnet/VoiceSwitch.Windows.Core/VoiceSwitchConfig.cs ConfigLoader
+dotnet/VoiceSwitch.Windows.Core/VoiceSwitchConfig.cs WakeAction

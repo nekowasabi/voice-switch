@@ -1,11 +1,37 @@
 // swift-tools-version:6.0
 import PackageDescription
 
+let coreSources = [
+    "Config.swift",
+    "DictationJournal.swift",
+    "LatestRecognition.swift",
+    "ListeningPolicy.swift",
+    "MacDictationSession.swift",
+    "Macrowhisper.swift",
+    "PaneRoute.swift",
+    "Platform.swift",
+    "SecretLog.swift",
+    "Segmenter.swift",
+    "SpeakerGate.swift",
+    "SpeechGate.swift",
+    "StickyMode.swift",
+    "SuperwhisperModes.swift",
+    "Transcript.swift",
+    "TriageClassifier.swift",
+    "TriageExecution.swift",
+    "TriageFiles.swift",
+    "TriageRequest.swift",
+    "TriageService.swift",
+    "WakeSafety.swift",
+    "WhisperGate.swift",
+]
+
 let package = Package(
     name: "voice-switch",
     // macOS 26+ for SpeechTranscriber. Windows builds use Swift for Windows defaults
     // (see BUILD.md); Apple frameworks are behind #if os(macOS).
     platforms: [.macOS("26.0")],
+    products: [.library(name: "VoiceSwitchCore", targets: ["VoiceSwitchCore"])],
     dependencies: [
         // Same ONNX Runtime version as Microsoft.ML.OnnxRuntime in the Windows build, so both run Silero alike.
         .package(url: "https://github.com/microsoft/onnxruntime-swift-package-manager", exact: "1.24.2"),
@@ -17,12 +43,21 @@ let package = Package(
             url: "https://github.com/ggml-org/whisper.cpp/releases/download/b5454/whisper-b5454-xcframework.zip",
             checksum: "e57f8c48933000acabc13bb913fbe82805d483a2deff692cc6738836bd92393b"
         ),
-        .executableTarget(
-            name: "voice-switch",
+        .target(
+            name: "VoiceSwitchCore",
             dependencies: [
                 .product(name: "onnxruntime", package: "onnxruntime-swift-package-manager", condition: .when(platforms: [.macOS])),
                 .target(name: "whisper", condition: .when(platforms: [.macOS])),
             ],
+            path: "Sources/voice-switch",
+            exclude: ["MacApp.swift", "MacWakeUI.swift", "TriagePanel.swift", "main.swift", "Resources"],
+            sources: coreSources
+        ),
+        .executableTarget(
+            name: "voice-switch",
+            dependencies: ["VoiceSwitchCore"],
+            path: "Sources/voice-switch",
+            exclude: coreSources,
             resources: [.copy("Resources/silero_vad.onnx"), .copy("Resources/SILERO_LICENSE"),
                         .copy("Resources/triage_questions.json")],
             linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks",

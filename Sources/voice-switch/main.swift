@@ -10,6 +10,7 @@ import Foundation
 
 #if os(macOS)
 import AppKit
+import VoiceSwitchCore
 
 setvbuf(stdout, nil, _IOLBF, 0)
 // A command action that exits before reading its stdin must fail the write with EPIPE, not kill the app.
@@ -28,8 +29,7 @@ if mode == "--enroll-speaker" {
 } else if mode == "--speaker-cut" {
     // Verification only: prints how many samples SpeakerGate.withoutOtherSpeakers keeps, for comparison with the measured rule.
     guard args.count == 2 else { print("usage: --speaker-cut <enrollment.json> <16k-mono-pcm16.wav>"); exit(1) }
-    var cfg = Config(wakeWords: [], command: "")
-    cfg.speakerEnrollment = args[0]
+    let cfg = Config(speakerEnrollment: args[0])
     do { print("kept=\(SpeakerGate.withoutOtherSpeakers(try SpeakerGate.readWave(args[1]), cfg: cfg).count)"); exit(0) }
     catch { log("speaker cut failed: \(error)"); exit(1) }
 } else if mode == "--hud-labels" {

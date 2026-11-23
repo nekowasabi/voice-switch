@@ -4,8 +4,8 @@ import whisper
 
 /// Whisper large-v3-turbo, the second recognizer an automatic recording must agree with before it reaches Superwhisper.
 /// The model is not bundled (550 MB); `make model` puts it where `modelPath` points.
-enum WhisperGate {
-    static let modelPath = NSHomeDirectory() + "/Library/Application Support/voice-switch/models/ggml-large-v3-turbo-q5_0.bin"
+public enum WhisperGate {
+    public static let modelPath = NSHomeDirectory() + "/Library/Application Support/voice-switch/models/ggml-large-v3-turbo-q5_0.bin"
 
     private static let context: Result<OpaquePointer, Error> = Result {
         guard FileManager.default.fileExists(atPath: modelPath) else {
@@ -26,7 +26,7 @@ enum WhisperGate {
     private static let lock = NSLock()
 
     /// Japanese transcript of 16 kHz mono samples. One whisper context is shared, so calls run one at a time.
-    static func transcribe(_ samples: [Float]) throws -> String {
+    public static func transcribe(_ samples: [Float]) throws -> String {
         lock.lock()
         defer { lock.unlock() }
         let ctx = try context.get()

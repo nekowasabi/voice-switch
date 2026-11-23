@@ -1,0 +1,47 @@
+Sources/voice-switch/ListeningPolicy.swift tested by tests/macos/ListeningPolicy/main.swift
+Sources/voice-switch/Macrowhisper.swift no verification yet
+Sources/voice-switch/SuperwhisperModes.swift source parity checked by tests/parity/run_parity.py
+dotnet/VoiceSwitch.Windows.Core/DictationHistory.cs tested by dotnet/VoiceSwitch.Windows.Tests
+dotnet/VoiceSwitch.Windows.Core/DictationHotkeys.cs tested by dotnet/VoiceSwitch.Windows.Tests
+dotnet/VoiceSwitch.Windows.Core/DictationJournal.cs tested by tests/journal/Program.cs
+dotnet/VoiceSwitch.Windows.Core/HistoryHotkey.cs tested by dotnet/VoiceSwitch.Windows.Tests
+dotnet/VoiceSwitch.Windows.Core/MailAction.cs no verification yet
+dotnet/VoiceSwitch.Windows.Core/ModeRestore.cs tested by dotnet/VoiceSwitch.Windows.Tests
+dotnet/VoiceSwitch.Windows.Core/PaneRoute.cs tested by dotnet/VoiceSwitch.Windows.Tests
+dotnet/VoiceSwitch.Windows.Core/PasteSafety.cs tested by dotnet/VoiceSwitch.Windows.Tests
+dotnet/VoiceSwitch.Windows.Core/PostAction.cs tested by dotnet/VoiceSwitch.Windows.Tests
+dotnet/VoiceSwitch.Windows.Core/SuperwhisperModes.cs tested by dotnet/VoiceSwitch.Windows.Tests
+dotnet/VoiceSwitch.Windows.Core/TranscribeDeadline.cs tested by dotnet/VoiceSwitch.Windows.Tests
+dotnet/VoiceSwitch.Windows.Core/WakeTelemetry.cs tested by dotnet/VoiceSwitch.Windows.Tests
+dotnet/VoiceSwitch.Windows.Core/WindowsPaths.cs tested by dotnet/VoiceSwitch.Windows.Tests
+dotnet/VoiceSwitch.Windows.Tests/NoWakeTests.cs part of the Windows test runner
+dotnet/VoiceSwitch.Windows.Tests/Program.cs part of the Windows test runner
+dotnet/VoiceSwitch.Windows.Tests/StopWindowTests.cs part of the Windows test runner
+dotnet/VoiceSwitch.Windows.Tests/TestSupport.cs part of the Windows test runner
+dotnet/VoiceSwitch.Windows.Tests/TrayMeetTests.cs part of the Windows test runner
+dotnet/VoiceSwitch.Windows.Tests/WindowFocusStub.cs part of the Windows test runner
+dotnet/VoiceSwitch.Windows/ChildProcessJob.cs tested by dotnet/VoiceSwitch.Windows.Tests
+dotnet/VoiceSwitch.Windows/ImeReadings.cs tested by dotnet/VoiceSwitch.Windows.Tests
+dotnet/VoiceSwitch.Windows/InputActivity.cs tested by dotnet/VoiceSwitch.Windows.Tests
+dotnet/VoiceSwitch.Windows/LocalHistoryHandoff.cs tested by dotnet/VoiceSwitch.Windows.Tests
+dotnet/VoiceSwitch.Windows/TmuxPaneRouter.cs no verification yet
+dotnet/VoiceSwitch.Windows/Tray/HistoryWindow.cs no verification yet
+dotnet/VoiceSwitch.Windows/Tray/LoginItem.cs no verification yet
+dotnet/VoiceSwitch.Windows/Tray/ProductionRuntimeFactory.cs no verification yet
+dotnet/VoiceSwitch.Windows/Tray/TrayContracts.cs no verification yet
+dotnet/VoiceSwitch.Windows/Tray/TrayIcons.cs no verification yet
+dotnet/VoiceSwitch.Windows/Tray/TrayOptions.cs tested by dotnet/VoiceSwitch.Windows.Tests
+dotnet/VoiceSwitch.Windows/Tray/TraySettings.cs no verification yet
+dotnet/VoiceSwitch.Windows/Tray/TraySingleInstance.cs no verification yet
+dotnet/VoiceSwitch.Windows/Tray/WakeLabelHotkey.cs no verification yet
+dotnet/VoiceSwitch.Windows/Tray/WindowFocus.cs exercised by tests/windows/HUDScreenProbe/Program.cs
+scripts/cough_acceptance.py tested by tests/test_cough_acceptance.py
+scripts/memo-import tested by tests/test_memo_import.py
+scripts/overnight_metrics.py tested by tests/test_wake_metrics.py
+scripts/pane_jev_probe.py no verification yet
+scripts/pane_route_proof.py no verification yet
+scripts/superwhisper_mode_proof.py no verification yet
+scripts/triage_gate_eval.py no verification yet
+scripts/triage_probe.py no verification yet
+scripts/verify_no_wake_word.sh no verification yet
+scripts/wake_latency_eval.py no verification yet
