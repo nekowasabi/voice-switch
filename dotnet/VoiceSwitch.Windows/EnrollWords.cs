@@ -65,7 +65,8 @@ public static class EnrollWords
         string[] added;
         try
         {
-            added = WordEnrollment.AppendAliasesToConfig(configPath, stop ? "stopWords" : "wakeWords", aliases, dryRun);
+            var effective = stop ? (config.StopWords ?? []) : config.WakeWords;
+            added = WordEnrollment.AppendAliasesToConfig(configPath, stop ? "stopWords" : "wakeWords", aliases, dryRun, effectiveExisting: effective);
         }
         catch (Exception ex)
         {

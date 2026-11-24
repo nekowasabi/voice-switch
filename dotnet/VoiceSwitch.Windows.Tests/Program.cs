@@ -1155,12 +1155,15 @@ static bool EnrollWordsConfigAppend()
     }
 
     using var document = JsonDocument.Parse(File.ReadAllText(path));
+    var raw = File.ReadAllText(path);
     var root = document.RootElement;
     if (root.GetProperty("command").GetString() != "cmd"
         || root.GetProperty("locale").GetString() != "ja-JP"
         || !root.GetProperty("wakeWords").EnumerateArray().Select(word => word.GetString()).SequenceEqual(["音声入力", "音声にゅうりょく"])
         || !root.GetProperty("stopWords").EnumerateArray().Select(word => word.GetString()).SequenceEqual(["入力ストップ"])
-        || File.ReadAllText(path + ".bak") != original)
+        || File.ReadAllText(path + ".bak") != original
+        || !raw.Contains("音声にゅうりょく", StringComparison.Ordinal)
+        || raw.Contains("\\u", StringComparison.Ordinal))
     {
         return false;
     }
@@ -1168,6 +1171,42 @@ static bool EnrollWordsConfigAppend()
     if (WordEnrollment.AppendAliasesToConfig(path, "wakeWords", ["音声にゅうりょく"], dryRun: false).Length != 0)
     {
         return false;
+    }
+
+    // A missing stopWords key seeds the effective list (the ja-JP default) instead of dropping it.
+    var barePath = Path.Combine(temp.Dir, "enroll-bare-config.json");
+    File.WriteAllText(barePath, """{"command":"cmd","locale":"ja-JP","wakeWords":["音声入力"]}""");
+    if (!WordEnrollment.AppendAliasesToConfig(barePath, "stopWords", ["おわりとめる"], dryRun: false, effectiveExisting: ["入力ストップ"])
+        .SequenceEqual(["おわりとめる"]))
+    {
+        return false;
+    }
+
+    using (var bare = JsonDocument.Parse(File.ReadAllText(barePath)))
+    {
+        if (!bare.RootElement.GetProperty("stopWords").EnumerateArray().Select(word => word.GetString())
+            .SequenceEqual(["入力ストップ", "おわりとめる"]))
+        {
+            return false;
+        }
+    }
+
+    // An explicit [] stays [] + aliases.
+    var emptyPath = Path.Combine(temp.Dir, "enroll-empty-config.json");
+    File.WriteAllText(emptyPath, """{"wakeWords":["音声入力"],"stopWords":[]}""");
+    if (!WordEnrollment.AppendAliasesToConfig(emptyPath, "stopWords", ["おわりとめる"], dryRun: false, effectiveExisting: ["入力ストップ"])
+        .SequenceEqual(["おわりとめる"]))
+    {
+        return false;
+    }
+
+    using (var empty = JsonDocument.Parse(File.ReadAllText(emptyPath)))
+    {
+        if (!empty.RootElement.GetProperty("stopWords").EnumerateArray().Select(word => word.GetString())
+            .SequenceEqual(["おわりとめる"]))
+        {
+            return false;
+        }
     }
 
     try
@@ -1185,6 +1224,7 @@ static bool EnrollWordsCliParsing()
 {
     var parsed = CliOptions.Parse(["--enroll-words", "--stop", "--dry-run", "音声入力", "a.wav", "b.wav"]);
     var plain = CliOptions.Parse(["--enroll-words", "おわり", "c.wav"]);
+    var wake = CliOptions.Parse(["--enroll-words", "--wake", "音声入力", "a.wav"]);
     bool Rejects(string[] args)
     {
         try
@@ -1200,15 +1240,21 @@ static bool EnrollWordsCliParsing()
 
     return parsed.EnrollWordsWord == "音声入力"
         && parsed.EnrollWordsStop
+        && !parsed.EnrollWordsWake
         && parsed.DryRun
         && parsed.EnrollWordsInputs.SequenceEqual(["a.wav", "b.wav"])
         && plain.EnrollWordsWord == "おわり"
         && !plain.EnrollWordsStop
         && !plain.DryRun
         && plain.EnrollWordsInputs.SequenceEqual(["c.wav"])
+        && wake.EnrollWordsWord == "音声入力"
+        && wake.EnrollWordsWake
+        && !wake.EnrollWordsStop
+        && wake.EnrollWordsInputs.SequenceEqual(["a.wav"])
         && Rejects(["--enroll-words"])
         && Rejects(["--enroll-words", "音声入力"])
-        && Rejects(["--enroll-words", "音声入力", "a.wav", "--check", "b.wav"]);
+        && Rejects(["--enroll-words", "音声入力", "a.wav", "--check", "b.wav"])
+        && Rejects(["--enroll-words", "--wake", "--stop", "音声入力", "a.wav"]);
 }
 
 static bool ConfigFillsLocaleDefaultStopWords()

@@ -17,6 +17,7 @@ public sealed record CliOptions(
     public string? EnrollSpeakerOutput { get; init; }
     public IReadOnlyList<string> EnrollSpeakerInputs { get; init; } = [];
     public string? EnrollWordsWord { get; init; }
+    public bool EnrollWordsWake { get; init; }
     public bool EnrollWordsStop { get; init; }
     public IReadOnlyList<string> EnrollWordsInputs { get; init; } = [];
     // Why: one exe serves both the tray app and terminal diagnostics; a bare launch (double-click,
@@ -43,6 +44,7 @@ public sealed record CliOptions(
         string? enrollOutput = null;
         var enrollInputs = new List<string>();
         string? enrollWordsWord = null;
+        var enrollWordsWake = false;
         var enrollWordsStop = false;
         var enrollWordsInputs = new List<string>();
 
@@ -57,9 +59,10 @@ public sealed record CliOptions(
                     if (enrollInputs.Count == 0) throw new ArgumentException("--enroll-speaker requires <out.json> <in.wav>...");
                     break;
                 case "--enroll-words":
-                    while (i + 1 < args.Length && (args[i + 1] == "--stop" || args[i + 1] == "--dry-run"))
+                    while (i + 1 < args.Length && (args[i + 1] == "--wake" || args[i + 1] == "--stop" || args[i + 1] == "--dry-run"))
                     {
                         if (args[++i] == "--stop") enrollWordsStop = true;
+                        else if (args[i] == "--wake") enrollWordsWake = true;
                         else dryRun = true;
                     }
 
@@ -179,12 +182,17 @@ public sealed record CliOptions(
             throw new ArgumentException("--check cannot be combined with --input-wav or --fire.");
         }
 
+        if (enrollWordsWake && enrollWordsStop)
+        {
+            throw new ArgumentException("--wake cannot be combined with --stop.");
+        }
+
         if (enrollWordsWord is not null && (checkPaths.Count > 0 || inputWavPath is not null || fire))
         {
             throw new ArgumentException("--enroll-words cannot be combined with --check, --input-wav, or --fire.");
         }
 
         return new CliOptions(help, selfTest, fire, dryRun, recognizers, checkDevice, listenSeconds, inputWavPath, inputWavFast, outputDir, configPath, checkPaths)
-        { EnrollSpeakerOutput = enrollOutput, EnrollSpeakerInputs = enrollInputs, EnrollWordsWord = enrollWordsWord, EnrollWordsStop = enrollWordsStop, EnrollWordsInputs = enrollWordsInputs };
+        { EnrollSpeakerOutput = enrollOutput, EnrollSpeakerInputs = enrollInputs, EnrollWordsWord = enrollWordsWord, EnrollWordsWake = enrollWordsWake, EnrollWordsStop = enrollWordsStop, EnrollWordsInputs = enrollWordsInputs };
     }
 }

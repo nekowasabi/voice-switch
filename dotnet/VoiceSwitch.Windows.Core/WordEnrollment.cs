@@ -3,6 +3,7 @@
 // A user records the word a few times, each clip goes through the production
 // recognizer, and the normalized results become alias candidates. Mirrors the
 // Swift WordEnrollment line for line (see tests/parity/fixtures/enroll_words.json).
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -167,23 +168,33 @@ public static class WordEnrollment
     /// Append aliases to the <paramref name="key"/> array in the user config file, preserving
     /// every other key and value. Makes a <c>config.json.bak</c> backup first. A dry run
     /// returns what would be added without writing. Returns the entries added.
+    /// When the key is absent, <paramref name="effectiveExisting"/> (the list the app
+    /// effectively uses, e.g. the per-locale default stop words after defaults are applied)
+    /// seeds the written list, so a missing key never drops the default word.
+    /// An explicit [] stays [] + aliases. Comments and trailing commas are accepted on
+    /// read (like the config loader) but dropped on write.
     /// </summary>
-    public static string[] AppendAliasesToConfig(string configPath, string key, IEnumerable<string> aliases, bool dryRun)
+    public static string[] AppendAliasesToConfig(string configPath, string key, IEnumerable<string> aliases, bool dryRun, string[]? effectiveExisting = null)
     {
-        var root = JsonNode.Parse(File.ReadAllText(configPath)) as JsonObject
+        var documentOptions = new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
+        var root = JsonNode.Parse(File.ReadAllText(configPath), nodeOptions: null, documentOptions: documentOptions) as JsonObject
             ?? throw new InvalidDataException($"config is not a JSON object: {configPath}");
-        if (root[key] is not null && root[key] is not JsonArray)
+        var hasKey = root[key] is not null;
+        if (hasKey && root[key] is not JsonArray)
         {
             throw new InvalidDataException($"config key {key} is not a word list");
         }
 
-        var existing = (root[key] as JsonArray)?.Select(node => node?.GetValue<string>() ?? "").ToArray() ?? [];
+        var existing = hasKey
+            ? root[key]!.AsArray().Select(node => node?.GetValue<string>() ?? "").ToArray()
+            : effectiveExisting ?? [];
         var (merged, added) = MergeWordList(existing, aliases);
         if (added.Length == 0) return [];
         if (dryRun) return added;
         File.Copy(configPath, configPath + ".bak", overwrite: true);
         root[key] = new JsonArray(merged.Select(word => JsonValue.Create(word)).ToArray());
-        File.WriteAllText(configPath, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+        var writeOptions = new JsonSerializerOptions { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+        File.WriteAllText(configPath, root.ToJsonString(writeOptions) + Environment.NewLine);
         return added;
     }
 }
