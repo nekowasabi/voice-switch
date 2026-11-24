@@ -60,6 +60,10 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("stop word judgement behaves the same for the default and another word", () => Check(StopWordJudgementIsWordIndependent())),
     ("a stop word ending an utterance finishes the open body like Mac stopWordStart", () => Check(TrailingStopWordFinishesOpenBody())),
     ("config fills locale default stop words only when absent", () => Check(ConfigFillsLocaleDefaultStopWords())),
+    ("word enrollment classifies empty, duplicate, short, journal-hit and stop-ending candidates", () => Check(EnrollWordsFilter())),
+    ("word enrollment merges without reordering or duplicating", () => Check(EnrollWordsMerge())),
+    ("word enrollment appends aliases preserving other keys with backup and dry-run", () => Check(EnrollWordsConfigAppend())),
+    ("word enrollment parses --enroll-words with --stop and --dry-run", () => Check(EnrollWordsCliParsing())),
     ("dictation lone wake waits for body", () => Check(DictationLoneWakeWaitsForBody())),
     ("dictation rejected wake hypothesis opens a wait but never a body", () => Check(DictationRejectedWakeOpensWaitOnly())),
     ("dictation lone wake body then stop submits body", () => Check(DictationLoneWakeBodyThenStopSubmitsBody())),
@@ -1097,6 +1101,114 @@ static bool StopWordJudgementIsWordIndependent()
     }
 
     return Behaves("入力ストップ", "入力", "ストップ") && Behaves("おしまい終了", "おしまい", "終了");
+}
+
+static bool EnrollWordsFilter()
+{
+    string[] Existing() => ["音声入力", "おんせい"];
+    string[] Journal() => ["今日は会議の資料をまとめます", "おんせいにゅうりょくで送って", "おんせいにゅうりょく開始"];
+    bool Verdict(string candidate, string[] existing, string[] journal, bool isStop, WordEnrollmentVerdict verdict, string? reason) =>
+        WordEnrollment.Classify(candidate, existing, journal, isStop) == new WordEnrollmentResult(candidate, TextMatching.Normalize(candidate), verdict, reason);
+    var batch = WordEnrollment.Candidates(["音声入力", "音声にゅうりょく", "おん"], Existing(), [], false).ToList();
+    return Verdict("音声 入力。", Existing(), [], false, WordEnrollmentVerdict.AlreadyMatches, null)
+        && Verdict("、。 ", Existing(), [], false, WordEnrollmentVerdict.Rejected, "empty transcript")
+        && Verdict("おん", Existing(), [], false, WordEnrollmentVerdict.Rejected, "too short (2 chars, minimum 3)")
+        && Verdict("おんせいにゅうりょく", Existing(), Journal(), false, WordEnrollmentVerdict.Alias, null)
+        && Verdict("まとめます", Existing(), ["まとめます1", "xまとめますy", "まとめます!", "まとめますか"], false,
+            WordEnrollmentVerdict.Rejected, "heard in 4 past dictations (limit 3)")
+        && Verdict("でした", ["入力ストップ"], [], true, WordEnrollmentVerdict.Rejected, "common sentence ending; it would stop ordinary speech")
+        && Verdict("でした", Existing(), [], false, WordEnrollmentVerdict.Alias, null)
+        && Verdict("音声にゅうりょく", Existing(), [], false, WordEnrollmentVerdict.Alias, null)
+        && batch.Select(result => result.Normalized).SequenceEqual(["音声入力", "音声にゅうりょく", "おん"])
+        && batch.Select(result => result.Verdict).SequenceEqual(
+        [
+            WordEnrollmentVerdict.AlreadyMatches,
+            WordEnrollmentVerdict.Alias,
+            WordEnrollmentVerdict.Rejected,
+        ])
+        && batch[2].Reason == "too short (2 chars, minimum 3)";
+}
+
+static bool EnrollWordsMerge()
+{
+    var (merged, added) = WordEnrollment.MergeWordList(["音声入力", "おんせい"], ["音声にゅうりょく", "音声入力", "おんせいにゅうりょく"]);
+    return merged.SequenceEqual(["音声入力", "おんせい", "音声にゅうりょく", "おんせいにゅうりょく"])
+        && added.SequenceEqual(["音声にゅうりょく", "おんせいにゅうりょく"]);
+}
+
+static bool EnrollWordsConfigAppend()
+{
+    using var temp = RuntimeTemp();
+    var path = Path.Combine(temp.Dir, "enroll-config.json");
+    var original = """{"command":"cmd","locale":"ja-JP","wakeWords":["音声入力"],"stopWords":["入力ストップ"]}""";
+    File.WriteAllText(path, original);
+    if (!WordEnrollment.AppendAliasesToConfig(path, "wakeWords", ["音声にゅうりょく", "音声入力"], dryRun: true)
+        .SequenceEqual(["音声にゅうりょく"]) || File.ReadAllText(path) != original)
+    {
+        return false;
+    }
+
+    if (!WordEnrollment.AppendAliasesToConfig(path, "wakeWords", ["音声にゅうりょく", "音声入力"], dryRun: false)
+        .SequenceEqual(["音声にゅうりょく"]))
+    {
+        return false;
+    }
+
+    using var document = JsonDocument.Parse(File.ReadAllText(path));
+    var root = document.RootElement;
+    if (root.GetProperty("command").GetString() != "cmd"
+        || root.GetProperty("locale").GetString() != "ja-JP"
+        || !root.GetProperty("wakeWords").EnumerateArray().Select(word => word.GetString()).SequenceEqual(["音声入力", "音声にゅうりょく"])
+        || !root.GetProperty("stopWords").EnumerateArray().Select(word => word.GetString()).SequenceEqual(["入力ストップ"])
+        || File.ReadAllText(path + ".bak") != original)
+    {
+        return false;
+    }
+
+    if (WordEnrollment.AppendAliasesToConfig(path, "wakeWords", ["音声にゅうりょく"], dryRun: false).Length != 0)
+    {
+        return false;
+    }
+
+    try
+    {
+        WordEnrollment.AppendAliasesToConfig(path, "command", ["x"], dryRun: false);
+        return false;
+    }
+    catch (InvalidDataException)
+    {
+        return true;
+    }
+}
+
+static bool EnrollWordsCliParsing()
+{
+    var parsed = CliOptions.Parse(["--enroll-words", "--stop", "--dry-run", "音声入力", "a.wav", "b.wav"]);
+    var plain = CliOptions.Parse(["--enroll-words", "おわり", "c.wav"]);
+    bool Rejects(string[] args)
+    {
+        try
+        {
+            CliOptions.Parse(args);
+            return false;
+        }
+        catch (ArgumentException)
+        {
+            return true;
+        }
+    }
+
+    return parsed.EnrollWordsWord == "音声入力"
+        && parsed.EnrollWordsStop
+        && parsed.DryRun
+        && parsed.EnrollWordsInputs.SequenceEqual(["a.wav", "b.wav"])
+        && plain.EnrollWordsWord == "おわり"
+        && !plain.EnrollWordsStop
+        && !plain.DryRun
+        && plain.EnrollWordsInputs.SequenceEqual(["c.wav"])
+        && Rejects(["--enroll-words"])
+        && Rejects(["--enroll-words", "音声入力"])
+        && Rejects(["--enroll-words", "音声入力", "a.wav", "--check", "b.wav"]);
 }
 
 static bool ConfigFillsLocaleDefaultStopWords()

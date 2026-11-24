@@ -20,6 +20,15 @@ public static class Program
                 return 0;
             }
 
+            if (options.EnrollWordsWord is { } enrollWord)
+            {
+                var enrollPath = options.ConfigPath
+                    ?? Environment.GetEnvironmentVariable("VOICE_SWITCH_CONFIG")
+                    ?? WindowsPaths.DefaultConfigPath();
+                return EnrollWords.RunAsync(enrollPath, ConfigLoader.Load(enrollPath), enrollWord,
+                    options.EnrollWordsStop, options.EnrollWordsInputs, options.DryRun).GetAwaiter().GetResult();
+            }
+
             if (options.Help)
             {
                 PrintHelp();
@@ -173,6 +182,7 @@ public static class Program
           voice-switch.exe --check-device        open the default speech input once and report errors
           voice-switch.exe --check A.wav [B.wav]  print a VAD + recognizer verdict per utterance (PCM16 mono 16 kHz)
           voice-switch.exe --enroll-speaker OUT.json A.wav...  enroll PCM16 mono 16 kHz WAVs for the speaker gate
+          voice-switch.exe --enroll-words [--stop] [--dry-run] WORD A.wav...  record WORD 3-5 takes and append mis-transcriptions as wake (or stop) word aliases
           voice-switch.exe --input-wav PATH      run dictation from PCM16 mono 16 kHz WAV, no microphone fallback
           voice-switch.exe --input-wav-fast      read --input-wav structurally without 30 ms pacing
           voice-switch.exe --output-dir PATH     record synthetic dictation WAV handoffs locally, no external launch

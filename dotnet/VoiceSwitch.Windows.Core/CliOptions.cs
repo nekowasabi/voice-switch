@@ -16,6 +16,9 @@ public sealed record CliOptions(
 {
     public string? EnrollSpeakerOutput { get; init; }
     public IReadOnlyList<string> EnrollSpeakerInputs { get; init; } = [];
+    public string? EnrollWordsWord { get; init; }
+    public bool EnrollWordsStop { get; init; }
+    public IReadOnlyList<string> EnrollWordsInputs { get; init; } = [];
     // Why: one exe serves both the tray app and terminal diagnostics; a bare launch (double-click,
     // shortcut, or only --config) or any tray-only flag means the tray, everything else stays CLI.
     public static bool IsTrayLaunch(string[] args) =>
@@ -39,6 +42,9 @@ public sealed record CliOptions(
         var checkPaths = new List<string>();
         string? enrollOutput = null;
         var enrollInputs = new List<string>();
+        string? enrollWordsWord = null;
+        var enrollWordsStop = false;
+        var enrollWordsInputs = new List<string>();
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -49,6 +55,30 @@ public sealed record CliOptions(
                     enrollOutput = args[++i];
                     while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) enrollInputs.Add(args[++i]);
                     if (enrollInputs.Count == 0) throw new ArgumentException("--enroll-speaker requires <out.json> <in.wav>...");
+                    break;
+                case "--enroll-words":
+                    while (i + 1 < args.Length && (args[i + 1] == "--stop" || args[i + 1] == "--dry-run"))
+                    {
+                        if (args[++i] == "--stop") enrollWordsStop = true;
+                        else dryRun = true;
+                    }
+
+                    if (i + 1 >= args.Length || args[i + 1].StartsWith("--", StringComparison.Ordinal))
+                    {
+                        throw new ArgumentException("--enroll-words requires <word> <in.wav>... (record 3-5 takes).");
+                    }
+
+                    enrollWordsWord = args[++i];
+                    while (i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal))
+                    {
+                        enrollWordsInputs.Add(args[++i]);
+                    }
+
+                    if (enrollWordsInputs.Count == 0)
+                    {
+                        throw new ArgumentException("--enroll-words requires <word> <in.wav>... (record 3-5 takes).");
+                    }
+
                     break;
                 case "--help":
                 case "-h":
@@ -149,7 +179,12 @@ public sealed record CliOptions(
             throw new ArgumentException("--check cannot be combined with --input-wav or --fire.");
         }
 
+        if (enrollWordsWord is not null && (checkPaths.Count > 0 || inputWavPath is not null || fire))
+        {
+            throw new ArgumentException("--enroll-words cannot be combined with --check, --input-wav, or --fire.");
+        }
+
         return new CliOptions(help, selfTest, fire, dryRun, recognizers, checkDevice, listenSeconds, inputWavPath, inputWavFast, outputDir, configPath, checkPaths)
-        { EnrollSpeakerOutput = enrollOutput, EnrollSpeakerInputs = enrollInputs };
+        { EnrollSpeakerOutput = enrollOutput, EnrollSpeakerInputs = enrollInputs, EnrollWordsWord = enrollWordsWord, EnrollWordsStop = enrollWordsStop, EnrollWordsInputs = enrollWordsInputs };
     }
 }
