@@ -1684,6 +1684,8 @@ final class Listener {
         var silero = SileroStream()
         var dictation: Dictation?
         var shown = Phase.idle
+        // One stop chime per dictation: a later stop check can drop .stopping back to .recording before the cut ends it.
+        var stopRung = false
         var session = MacDictationSession()
         func endPhrase(_ outcome: String) {
             log(session.phraseLog(outcome: outcome, threshold: seg.threshold))
@@ -1721,10 +1723,14 @@ final class Listener {
                     : dictation.map { $0.heardSpeech && !$0.confirmed ? .idle : $0.stopHeard ? .stopping : !$0.heardSpeech ? .waiting : .recording }
                     ?? (session.inFollowupWindow && config.cfg.dictation?.noWakeWord?.followup == true ? .followup : .idle)
                 // .ended hides itself after a moment; the idle that follows it is not a change.
+                if dictation == nil, !endedByUser { stopRung = false }
                 if phase != shown, !(shown == .ended && phase == .idle) {
                     // The stop sound goes with the stop glyph, which .stopping shows as soon as the word is heard. Playing it on the
                     // later cut lagged the HUD by the 0.5 s wait, and a stop that ended another way after .stopping played none.
-                    if phase == .stopping || (phase == .ended && shown != .stopping) { playStopSound() }
+                    if phase == .stopping || phase == .ended {
+                        if !stopRung { playStopSound() }
+                        stopRung = true
+                    }
                     shown = phase
                     phaseCont.yield((phase, dictation?.action?.icon ?? dictation?.sticky?.appPath))
                 }
