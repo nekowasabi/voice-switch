@@ -1280,18 +1280,30 @@ enum InputRoute: Equatable {
         }
     }
 
-    /// The first plugged-in candidate (a device UID or exact name) is used, then the built-in mic; an unplugged one
-    /// stays in the list. No candidates means the system default. fallback names the rung taken, nil for the first.
-    static func resolve(candidates: [String]) -> (route: InputRoute, fallback: String?) {
-        guard !candidates.isEmpty else { return (.systemDefault, nil) }
+    /// Like choose, skipping mics that send only exact zeros; when every mic is silent, today's choice.
+    static func resolve(candidates: [String], silent: Set<AudioDeviceID> = []) -> (route: InputRoute, fallback: String?) {
         let plugged = inputDeviceIDs()
+        let builtIn = builtInInputDeviceID()
+        let skipDefault = defaultInputDeviceID().map(silent.contains) ?? false
+        let live = choose(candidates, plugged: plugged.filter { !silent.contains($0) },
+                          builtIn: builtIn.flatMap { silent.contains($0) ? nil : $0 }, skipDefault: skipDefault)
+        if live.route != .systemDefault || !skipDefault { return live }
+        return choose(candidates, plugged: plugged, builtIn: builtIn, skipDefault: false)
+    }
+
+    /// The first plugged-in candidate (a device UID or exact name) is used, then the built-in mic; an unplugged one
+    /// stays in the list. No candidates means the system default unless skipDefault, which then takes any plugged mic.
+    /// fallback names the rung taken, nil for the first.
+    private static func choose(_ candidates: [String], plugged: [AudioDeviceID], builtIn: AudioDeviceID?, skipDefault: Bool) -> (route: InputRoute, fallback: String?) {
+        if candidates.isEmpty && !skipDefault { return (.systemDefault, nil) }
         for (rank, candidate) in candidates.enumerated() {
             if let id = plugged.first(where: { audioDeviceUID($0) == candidate || audioDeviceName($0) == candidate }) {
                 return (.pinned(id), rank == 0 ? nil : "fallback \(rank)")
             }
         }
-        guard let builtIn = builtInInputDeviceID() else { return (.systemDefault, "system default") }
-        return (.pinned(builtIn), "built-in")
+        if let builtIn { return (.pinned(builtIn), "built-in") }
+        if skipDefault, let first = plugged.first { return (.pinned(first), "live mic") }
+        return (.systemDefault, "system default")
     }
 }
 
@@ -1323,6 +1335,16 @@ final class Listener {
     /// AVAudioEngineConfigurationChange (2026-10-13 log), and every end condition counts frames, so a dictation open then never ends.
     private let lastBuffer = OSAllocatedUnfairLock(initialState: Date())
     private var stallRestarts = 0
+    /// When the tap last got a non-zero sample. A DJI Rx with its transmitter off keeps delivering buffers of exact 0.0.
+    private let lastSound = OSAllocatedUnfairLock(initialState: Date())
+    /// Devices demoted for sending only exact zeros (main thread). IDs, not UIDs: a replugged device gets a new ID.
+    private(set) var silent: Set<AudioDeviceID> = []
+    /// Open IOProcs on demoted devices, waiting for their first non-zero sample.
+    private var watchers: [AudioDeviceID: AudioDeviceIOProcID] = [:]
+    private var watchFailed: Set<AudioDeviceID> = []
+    private let watchQueue = DispatchQueue(label: "voice-switch.zero-watch")
+    // Measured 2026-11-24: a sending DJI transmitter never gave even 0.5 s of exact zeros; switched off, only zeros within ~1 s.
+    static let zeroSeconds: TimeInterval = 2
     /// Monotonic recognition counter for complete lines (Windows id=N parity), starting at 1.
     private let nextRecognitionId = OSAllocatedUnfairLock(initialState: 1)
     private func takeRecognitionId() -> Int {
@@ -1371,6 +1393,7 @@ final class Listener {
             }
         }
         Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in self?.checkStall() }
+        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.checkSilence() }
         // Loading Whisper and compiling its Metal kernels takes seconds; pay it now, not in front of the first automatic recording.
         if config.cfg.dictation?.noWakeWord?.enabled == true {
             Task.detached(priority: .utility) {
@@ -1382,9 +1405,63 @@ final class Listener {
 
     /// Restarts only when the saved mic and fallback list now pick another device than the one in use.
     func reroute(_ reason: String) {
-        guard wanted, InputRoute.resolve(candidates: candidates).route != activeRoute else { return }
+        silent.formIntersection(inputDeviceIDs())
+        guard wanted, InputRoute.resolve(candidates: candidates, silent: silent).route != activeRoute else { watchSilent(); return }
         log("\(reason), restarting input")
         restart()
+    }
+
+    private func checkSilence() {
+        // Buffers must still be arriving: no buffers at all (display sleep) is checkStall's case, not a silent mic.
+        guard running, let id = activeRoute?.deviceID, !silent.contains(id),
+              Date().timeIntervalSince(lastBuffer.withLock { $0 }) < 1,
+              Date().timeIntervalSince(lastSound.withLock { $0 }) >= Listener.zeroSeconds else { return }
+        log("input \(audioDeviceName(id)) sends only exact zeros for \(Int(Listener.zeroSeconds)) s, skipping it")
+        applySilent(silent.union([id]))
+    }
+
+    private func applySilent(_ s: Set<AudioDeviceID>) {
+        silent = s
+        if wanted, InputRoute.resolve(candidates: candidates, silent: silent).route != activeRoute { restart() } else { watchSilent() }
+    }
+
+    private func revive(_ id: AudioDeviceID) {
+        guard silent.contains(id) else { return }
+        log("input \(audioDeviceName(id)) sends sound again")
+        applySilent(silent.subtracting([id]))
+    }
+
+    /// Keeps one IOProc open on each plugged-in demoted device while listening, and none otherwise.
+    private func watchSilent() {
+        let target = wanted && running ? silent.intersection(inputDeviceIDs()) : []
+        for (id, proc) in watchers where !target.contains(id) {
+            AudioDeviceStop(id, proc)
+            AudioDeviceDestroyIOProcID(id, proc)
+            watchers[id] = nil
+        }
+        for id in target where watchers[id] == nil {
+            let heard = OSAllocatedUnfairLock(initialState: false)
+            var proc: AudioDeviceIOProcID?
+            var status = AudioDeviceCreateIOProcIDWithBlock(&proc, id, watchQueue) { [weak self] _, input, _, _, _ in
+                guard Listener.hasSound(input), heard.withLock({ seen in defer { seen = true }; return !seen }) else { return }
+                DispatchQueue.main.async { self?.revive(id) }
+            }
+            if status == noErr, let proc {
+                status = AudioDeviceStart(id, proc)
+                if status == noErr { watchers[id] = proc; continue }
+                AudioDeviceDestroyIOProcID(id, proc)
+            }
+            if watchFailed.insert(id).inserted { log("zero watcher on \(audioDeviceName(id)) failed (\(status)), not watching it") }
+        }
+    }
+
+    /// Any non-zero Float32 sample in the list; missing data counts as none, so a demoted mic does not flap back.
+    private static func hasSound(_ list: UnsafePointer<AudioBufferList>) -> Bool {
+        UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: list)).contains { buffer in
+            guard let data = buffer.mData else { return false }
+            let samples = UnsafeBufferPointer(start: data.assumingMemoryBound(to: Float32.self), count: Int(buffer.mDataByteSize) / MemoryLayout<Float32>.size)
+            return samples.contains { $0 != 0 }
+        }
     }
 
     private func checkStall() {
@@ -1399,7 +1476,7 @@ final class Listener {
     }
 
     func start() throws {
-        let (route, fallback) = InputRoute.resolve(candidates: candidates)
+        let (route, fallback) = InputRoute.resolve(candidates: candidates, silent: silent)
         // A pinned unit never follows the system default again, so a different route needs a fresh engine.
         if route != activeRoute { engine = AVAudioEngine(); activeRoute = route }
         if case .pinned(var id) = route {
@@ -1414,7 +1491,11 @@ final class Listener {
             }
         }
         let deviceName = route.deviceID.map(audioDeviceName) ?? "system default"
-        if let fallback, let uid = candidates.first { log("input device \(uid) not found, falling back to \(deviceName) (\(fallback))") }
+        if let fallback, let uid = candidates.first {
+            // A plugged-in mic demoted for sending only zeros is not "not found"; say which, so the log alone tells them apart.
+            let zeros = silent.contains { audioDeviceUID($0) == uid || audioDeviceName($0) == uid }
+            log("input device \(uid) \(zeros ? "skipped (only zeros)" : "not found"), falling back to \(deviceName) (\(fallback))")
+        }
         let node = engine.inputNode
         // outputFormat stays at the previous device's rate after CurrentDevice is switched
         // (48 kHz vs the webcam's 16 kHz), and a tap with that format gets no buffers at all.
@@ -1426,8 +1507,18 @@ final class Listener {
         node.removeTap(onBus: 0)
         let captureGeneration = localHistoryState.withLock { $0.generation }
         lastBuffer.withLock { $0 = Date() }
+        lastSound.withLock { $0 = Date() }
         node.installTap(onBus: 0, bufferSize: 4096, format: fmt) { [self] buf, _ in
             lastBuffer.withLock { $0 = Date() }
+            if let data = buf.floatChannelData {
+                let count = Int(buf.frameLength) * buf.stride
+                let channels = buf.format.isInterleaved ? 1 : Int(buf.format.channelCount)
+                if (0 ..< channels).contains(where: { UnsafeBufferPointer(start: data[$0], count: count).contains { $0 != 0 } }) {
+                    lastSound.withLock { $0 = Date() }
+                }
+            } else {
+                lastSound.withLock { $0 = Date() }
+            }
             guard let out = convert(buf, with: conv, flush: false) else { return }
             pending += UnsafeBufferPointer(start: out.floatChannelData![0], count: Int(out.frameLength))
             while pending.count >= frameLen {
@@ -1444,6 +1535,7 @@ final class Listener {
         let detectorOn = voiceActivity.withLock { $0.device != 0 }
         let gateOn = detectorOn && config.cfg.dictation?.echoCancellation != false
         log("voice activity: HAL detector=\(detectorOn ? "on" : "off") gate=\(gateOn ? "on" : "off") minVoiceSeconds=\(Listener.minVoiceSeconds) on \(deviceName)")
+        watchSilent()
     }
 
     /// Windows twin: MicCapture.Open. HAL voice activity detection runs on an echo-cancelled copy of the input,
@@ -1520,7 +1612,7 @@ final class Listener {
         }
     }
 
-    func stop() { wanted = false; halt(); watchVoiceActivity(on: nil) }
+    func stop() { wanted = false; halt(); watchVoiceActivity(on: nil); watchSilent() }
 
     /// Automatic resume keeps `wanted` on failure and retries every 10 s.
     func startRetrying() { wanted = true; attemptStart() }

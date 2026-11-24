@@ -22,6 +22,7 @@ step "tla+ hud noise" sh .claude/skills/verify-hud-noise/check.sh
 step "tla+ meet pause (mac)" sh .claude/skills/verify-meet-pause/check.sh
 step "tla+ meet pause (windows)" sh .claude/skills/verify-meet-pause-windows/check.sh
 step "tla+ mic fallback" sh .claude/skills/verify-mic-fallback/check.sh
+step "tla+ mic live (zeros)" sh .claude/skills/verify-mic-live/check.sh .claude/skills/verify-mic-live/MicLive.tla Design
 step "tla+ sticky delivery" sh .claude/skills/verify-sticky-mode/check.sh
 step "wake allowances" sh .claude/skills/verify-wake-allowances/check.sh
 step "journal append" bash .claude/skills/verify-journal-append/run.sh check
