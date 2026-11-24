@@ -132,17 +132,24 @@ public enum WordEnrollment {
     /// Append aliases to the `key` array in the user config file, preserving every
     /// other key and value. Makes a `config.json.bak` backup first. --dry-run
     /// returns what would be added without writing. Returns the entries added.
+    ///
+    /// When the key is absent, `effectiveExisting` (the list the app effectively
+    /// uses, e.g. the per-locale default stop words after defaults are applied)
+    /// seeds the written list, so a missing key never drops the default word.
+    /// An explicit [] stays [] + aliases. Top-level wakeWords/stopWords only;
+    /// per-action wake words and sticky wake words are never touched here.
     @discardableResult
-    public static func appendWordAliases(configPath: String, key: String, aliases: [String], dryRun: Bool) throws -> [String] {
+    public static func appendWordAliases(configPath: String, key: String, aliases: [String], effectiveExisting: [String]? = nil, dryRun: Bool) throws -> [String] {
         let url = URL(fileURLWithPath: configPath)
         let data = try Data(contentsOf: url)
         guard var dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw WordEnrollmentError("config is not a JSON object: \(configPath)")
         }
-        if dict[key] != nil, !(dict[key] is [String]) {
+        let hasKey = dict[key] != nil
+        if hasKey, !(dict[key] is [String]) {
             throw WordEnrollmentError("config key \(key) is not a word list")
         }
-        let existing = (dict[key] as? [String]) ?? []
+        let existing = (dict[key] as? [String]) ?? effectiveExisting ?? []
         let (merged, added) = mergedWordList(existing: existing, aliases: aliases)
         guard !added.isEmpty else { return [] }
         if dryRun { return added }
@@ -150,7 +157,7 @@ public enum WordEnrollment {
         try? FileManager.default.removeItem(atPath: backup)
         try FileManager.default.copyItem(atPath: configPath, toPath: backup)
         dict[key] = merged
-        let out = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])
+        let out = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         try out.write(to: url, options: .atomic)
         return added
     }

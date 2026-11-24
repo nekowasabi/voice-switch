@@ -226,12 +226,14 @@ func check(_ paths: [String], cfg: Config) async throws {
 
 /// Record the word a few times, run each clip through the production transcriber,
 /// and append the mis-transcriptions as wake/stop word aliases.
-/// Subflags are parsed in main.swift: --enroll-words [--stop] [--dry-run] <word> <16k-mono-pcm16.wav>...
+/// Subflags are parsed in main.swift: --enroll-words [--wake|--stop] [--dry-run] <word> <16k-mono-pcm16.wav>...
 /// Record 3-5 takes (e.g. `sox -d -r 16000 -c 1 -b 16 take1.wav trim 0 3`); keep the
 /// practice recordings wherever they are, never copy them into the repo.
+/// Only the top-level wakeWords/stopWords are edited; per-action
+/// macOS.actions[].wakeWords and sticky wake words are left alone.
 func enrollWords(word: String?, wavs: [String], stop: Bool, dryRun: Bool, configPath: String) async throws {
     guard let word, !word.hasPrefix("--"), !wavs.isEmpty else {
-        print("usage: --enroll-words [--stop] [--dry-run] <word> <16k-mono-pcm16.wav>... (record 3-5 takes)")
+        print("usage: --enroll-words [--wake|--stop] [--dry-run] <word> <16k-mono-pcm16.wav>... (record 3-5 takes)")
         throw WordEnrollmentError("need a word and at least one WAV")
     }
     let cfg = try ConfigFile(path: configPath).cfg
@@ -255,7 +257,9 @@ func enrollWords(word: String?, wavs: [String], stop: Bool, dryRun: Bool, config
         print("enroll-words: no new aliases for \"\(word)\" (journal entries checked: \(journalTexts.count))")
         return
     }
-    let added = try WordEnrollment.appendWordAliases(configPath: configPath, key: key, aliases: aliases, dryRun: dryRun)
+    let added = try WordEnrollment.appendWordAliases(
+        configPath: configPath, key: key, aliases: aliases,
+        effectiveExisting: stop ? (cfg.stopWords ?? []) : cfg.wakeWords, dryRun: dryRun)
     if added.isEmpty {
         print("enroll-words: no new aliases for \"\(word)\" (candidates already configured)")
     } else if dryRun {

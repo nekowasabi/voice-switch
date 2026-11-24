@@ -179,11 +179,16 @@ if mode == "--enroll-speaker" {
     }
     dispatchMain()
 } else if mode == "--enroll-words" {
-    // --enroll-words [--stop] [--dry-run] <word> <wav>...; record 3-5 takes.
-    var enrollStop = false, enrollDryRun = false
-    while let first = args.first, first == "--stop" || first == "--dry-run" {
-        if first == "--stop" { enrollStop = true } else { enrollDryRun = true }
+    // --enroll-words [--wake|--stop] [--dry-run] <word> <wav>...; record 3-5 takes.
+    var enrollStop = false, enrollWake = false, enrollDryRun = false
+    while let first = args.first, first == "--wake" || first == "--stop" || first == "--dry-run" {
+        if first == "--stop" { enrollStop = true } else if first == "--wake" { enrollWake = true } else { enrollDryRun = true }
         args.removeFirst()
+    }
+    if enrollWake, enrollStop {
+        print("usage: --enroll-words [--wake|--stop] [--dry-run] <word> <16k-mono-pcm16.wav>... (record 3-5 takes)")
+        print("--enroll-words: --wake and --stop cannot be combined")
+        exit(1)
     }
     let enrollWord = args.first, enrollWavs = Array(args.dropFirst())
     Task {

@@ -98,6 +98,26 @@ let kept = reread.contains("\"command\"") && reread.contains("\"locale\"") && re
 check("config-append", written == ["音声にゅうりょく"] && kept && bak == config, "\(written)")
 let again = try WordEnrollment.appendWordAliases(configPath: configPath, key: "wakeWords", aliases: ["音声にゅうりょく"], dryRun: false)
 check("config-dedupe", again.isEmpty, "\(again)")
+// missing key seeds the effective list (per-locale default) instead of dropping it.
+let barePath = scratch + "/bare-config.json"
+try "{\"command\":\"cmd\",\"locale\":\"ja-JP\",\"wakeWords\":[\"音声入力\"]}".write(toFile: barePath, atomically: true, encoding: .utf8)
+let seeded = try WordEnrollment.appendWordAliases(
+    configPath: barePath, key: "stopWords", aliases: ["おわりとめる"], effectiveExisting: ["入力ストップ"], dryRun: false)
+let bareReread = try String(contentsOfFile: barePath)
+check(
+    "config-missing-key-seeds-default",
+    seeded == ["おわりとめる"] && bareReread.contains("入力ストップ") && bareReread.contains("おわりとめる"),
+    "\(seeded) \(bareReread)")
+// an explicit [] stays [] + aliases.
+let emptyPath = scratch + "/empty-config.json"
+try "{\"wakeWords\":[\"音声入力\"],\"stopWords\":[]}".write(toFile: emptyPath, atomically: true, encoding: .utf8)
+let keptEmpty = try WordEnrollment.appendWordAliases(
+    configPath: emptyPath, key: "stopWords", aliases: ["おわりとめる"], effectiveExisting: ["入力ストップ"], dryRun: false)
+let emptyReread = try String(contentsOfFile: emptyPath)
+check(
+    "config-explicit-empty-stays",
+    keptEmpty == ["おわりとめる"] && !emptyReread.contains("入力ストップ") && emptyReread.contains("おわりとめる"),
+    "\(keptEmpty) \(emptyReread)")
 var badKey = false
 do { _ = try WordEnrollment.appendWordAliases(configPath: configPath, key: "command", aliases: ["x"], dryRun: false) } catch { badKey = true }
 check("config-bad-key", badKey, "non-list key must fail")
