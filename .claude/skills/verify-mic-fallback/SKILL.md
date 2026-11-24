@@ -22,8 +22,8 @@ Run them in this order. Item 1 comes first because the symptom is something the 
 
 1. **Real Mac, symptom (manual).** With the Rx chosen in the マイク menu and the webcam plugged in: unplug the Rx receiver, say the wake word, plug it back, say it again. Expected today: `~/Library/Logs/voice-switch.log` shows `input device <Rx UID> not found, falling back to MacBook Proのマイク` and the wake word works on the built-in mic. Expected with option 2 and the webcam as 予備 1: the fallback line names `Mic-j5 WebCam JVCU435`, and after re-plugging the next `input devices changed, restarting input` returns to the Rx. Record whether the wake word was recognized each time.
 2. **Fallback is visible in the log.** Every start on a device other than the saved mic must write one line naming the device it chose (today: the `falling back to` line in `Listener.start`). Option 2 must keep one such line per start that names the device and its rank, so a real run tells "Rx" from "fallback 1" from "built-in" without the menu.
-3. **Model, current code:** `sh .claude/skills/verify-mic-fallback/check.sh` → `== Current ==` ends with `Model checking completed. No error has been found.` (3784 distinct states at the sync commit).
-4. **Model, option 2:** the same run → `== Design ==` passes (39868 distinct states at the sync commit).
+3. **Model, current code:** `sh .claude/skills/verify-mic-fallback/check.sh` → `== Current ==` ends with `Model checking completed. No error has been found.`.
+4. **Model, option 2:** the same run → `== Design ==` passes.
 5. **Implementation matches the model:** once option 2 is coded, re-map each Design-only part (the list in `Resolve`, `SetFallbacks`) to the new code and rerun. In particular, saving the fallback list must re-resolve through the same path as the device listener (`SetFallbacks` sets `devPending`); a list edit that waits for the next plug event fails MF-2.
 
 ## Run
@@ -84,7 +84,7 @@ Broken variants already seen failing:
 
 ## Not covered
 
-- The Rx still listed while its transmitter is off ("plugged in but silent"): the model treats listed as usable. Check item 1 is the only place this shows up.
+- The Rx still listed while its transmitter is off ("plugged in but silent"): the model treats listed as usable. That case is verify-mic-live (`MicLive.tla`).
 - Whether the built-in mic is listed with the lid closed; whether the OS default can be an aggregate or other unlisted device.
 - The menu labels (使用中 / 未接続 / 停止中) and the HUD line on a change of device; only which device the tap reads is checked.
 - Windows (`WinMmCapture.EffectiveDevice`, `TraySettings.MicDevice`, `VoiceSwitchTrayContext.FollowDevice`).

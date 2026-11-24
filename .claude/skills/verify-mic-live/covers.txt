@@ -1,0 +1,14 @@
+Sources/voice-switch/MacApp.swift InputRoute.resolve
+Sources/voice-switch/MacApp.swift InputRoute.choose
+Sources/voice-switch/MacApp.swift Listener.silent
+Sources/voice-switch/MacApp.swift Listener.checkSilence
+Sources/voice-switch/MacApp.swift Listener.watchSilent
+Sources/voice-switch/MacApp.swift Listener.applySilent
+Sources/voice-switch/MacApp.swift Listener.reroute
+Sources/voice-switch/MacApp.swift Listener.start
+Sources/voice-switch/MacApp.swift Listener.stop
+Sources/voice-switch/MacApp.swift Listener.startRetrying
+Sources/voice-switch/MacApp.swift Listener.attemptStart
+Sources/voice-switch/MacApp.swift Listener.init
+Sources/voice-switch/MacApp.swift AppDelegate.selectDevice
+Sources/voice-switch/MacApp.swift AppDelegate.toggleFallback
