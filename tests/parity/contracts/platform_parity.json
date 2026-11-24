@@ -1,5 +1,5 @@
 {
-  "shared_cli_flags": ["--fire", "--vad-selftest", "--check"],
+  "shared_cli_flags": ["--fire", "--vad-selftest", "--check", "--enroll-words"],
   "allowed_config_field_gaps": [
     {
       "key": "microphones",
@@ -89,11 +89,6 @@
       "flag": "--listen-seconds",
       "platform": "macos",
       "reason": "The bounded resident run is a Windows diagnostic mode; macOS has --simulate for bounded audio-file checks instead."
-    },
-    {
-      "flag": "--dry-run",
-      "platform": "macos",
-      "reason": "The Windows runtime needs a safe production-path recognizer probe that reports matches without dispatching configured commands."
     },
     {
       "flag": "--config",

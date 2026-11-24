@@ -16,6 +16,7 @@ Sources/voice-switch/SpeechGate.swift
 Sources/voice-switch/StickyMode.swift
 Sources/voice-switch/SuperwhisperModes.swift
 Sources/voice-switch/Transcript.swift
+Sources/voice-switch/WordEnrollment.swift
 Sources/voice-switch/TriageClassifier.swift
 Sources/voice-switch/TriageExecution.swift
 Sources/voice-switch/TriageFiles.swift
@@ -49,3 +50,4 @@ dotnet/VoiceSwitch.Windows.Core/VoiceSwitchConfig.cs
 dotnet/VoiceSwitch.Windows.Core/WakeReadingFallback.cs
 dotnet/VoiceSwitch.Windows.Core/WakeTelemetry.cs
 dotnet/VoiceSwitch.Windows.Core/WindowsPaths.cs
+dotnet/VoiceSwitch.Windows.Core/WordEnrollment.cs

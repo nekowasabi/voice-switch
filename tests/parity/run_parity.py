@@ -23,6 +23,7 @@ SEGMENTER_FIXTURE = HERE / "fixtures" / "segmenter.json"
 CLI_FIXTURE = HERE / "fixtures" / "cli.json"
 PANE_ROUTE_FIXTURE = HERE / "fixtures" / "pane_route.json"
 SPEECH_GATE_FIXTURE = HERE / "fixtures" / "speech_gate.json"
+ENROLL_WORDS_FIXTURE = HERE / "fixtures" / "enroll_words.json"
 WAKE_VERDICT_FIXTURE = HERE / "fixtures" / "wake_verdict.json"
 SWIFT_HARNESS = HERE / "swift" / "main.swift"
 
@@ -49,6 +50,7 @@ def main() -> int:
     else:
         check_windows_core_behavior(result, text_fixture, segmenter_fixture, pane_route_fixture)
         check_swift_core_behavior(result, args.require_swift)
+        check_enroll_words_parity(result, load_json(ENROLL_WORDS_FIXTURE), args.require_swift)
         check_cough_policy_behavior(result)
         check_speech_gate_behavior(result, args.require_swift)
     check_mutation_gate(result, repo, contract)
@@ -915,6 +917,104 @@ def check_swift_core_behavior(result: Result, require_swift: bool) -> None:
                 result.ok("Swift pure harness completed")
         else:
             result.fail("Swift pure harness failed:\n" + completed.stdout + completed.stderr)
+
+
+def check_enroll_words_parity(result: Result, enroll_fixture: dict, require_swift: bool) -> None:
+    dotnet = shutil.which("dotnet") or str(Path.home() / ".local/share/mise/shims/dotnet")
+    with tempfile.TemporaryDirectory(prefix="voice-switch-enroll-words-") as tmp:
+        tmp_path = Path(tmp)
+        (tmp_path / "Enroll.csproj").write_text(harness_project(ROOT / "dotnet/VoiceSwitch.Windows.Core/VoiceSwitch.Windows.Core.csproj"), encoding="utf-8")
+        (tmp_path / "Program.cs").write_text(textwrap.dedent(
+            """\
+            using System.Text.Json;
+            using VoiceSwitch.Windows.Core;
+
+            var fixture = JsonDocument.Parse(File.ReadAllText(args[0])).RootElement;
+            var failed = 0;
+            foreach (var item in fixture.GetProperty("cases").EnumerateArray())
+            {
+                var existing = item.GetProperty("existing").EnumerateArray().Select(x => x.GetString()!).ToList();
+                var journal = item.GetProperty("journal").EnumerateArray().Select(x => x.GetString()!).ToList();
+                var got = WordEnrollment.Classify(
+                    item.GetProperty("candidate").GetString()!,
+                    existing,
+                    journal,
+                    item.GetProperty("isStop").GetBoolean());
+                var expected = item.GetProperty("expected");
+                var want = expected.GetProperty("verdict").GetString() switch
+                {
+                    "alias" => new WordEnrollmentResult(got.Transcript, expected.GetProperty("normalized").GetString()!, WordEnrollmentVerdict.Alias, null),
+                    "alreadyMatches" => new WordEnrollmentResult(got.Transcript, expected.GetProperty("normalized").GetString()!, WordEnrollmentVerdict.AlreadyMatches, null),
+                    _ => new WordEnrollmentResult(got.Transcript, expected.GetProperty("normalized").GetString()!, WordEnrollmentVerdict.Rejected, expected.GetProperty("reason").GetString()),
+                };
+                if (got == want)
+                {
+                    Console.WriteLine($"PASS enroll {item.GetProperty("name").GetString()}");
+                }
+                else
+                {
+                    failed++;
+                    Console.WriteLine($"FAIL enroll {item.GetProperty("name").GetString()}: got {got.Normalized} {got.Label}, wanted {want.Normalized} {want.Label}");
+                }
+            }
+
+            return failed;
+            """), encoding="utf-8")
+        completed = subprocess.run([dotnet, "run", "--project", str(tmp_path / "Enroll.csproj"), "--", str(ENROLL_WORDS_FIXTURE)],
+                                   cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=180)
+        if completed.returncode == 0:
+            for line in completed.stdout.splitlines():
+                if line.startswith("PASS "):
+                    result.ok(f"C# {line[5:]}")
+        else:
+            result.fail("C# enroll-words parity failed:\n" + completed.stdout + completed.stderr)
+
+    swiftc = shutil.which("swiftc")
+    if swiftc is None:
+        message = "Swift enroll-words parity skipped because swiftc is unavailable; rerun with --require-swift to make this a failure"
+        if require_swift:
+            result.fail(message)
+        else:
+            result.note(message)
+        return
+
+    with tempfile.TemporaryDirectory(prefix="voice-switch-swift-enroll-") as tmp:
+        binary = Path(tmp) / "swift-enroll"
+        completed = subprocess.run(
+            [
+                sys.executable, str(ROOT / "tests/core_sources.py"), "enroll-words", str(ROOT / "Sources/voice-switch"),
+                swiftc,
+                "-module-name",
+                "voice_switch",
+                "-module-cache-path",
+                str(Path(tmp) / "module-cache"),
+                str(HERE / "enroll-words" / "main.swift"),
+                "-o",
+                str(binary),
+            ],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=120,
+        )
+        if completed.returncode != 0:
+            result.fail("Swift enroll-words parity failed to compile:\n" + completed.stdout + completed.stderr)
+            return
+        completed = subprocess.run(
+            [str(binary), str(ENROLL_WORDS_FIXTURE)],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=120,
+        )
+        if completed.returncode == 0:
+            for line in completed.stdout.splitlines():
+                if line.startswith("PASS "):
+                    result.ok(f"Swift {line[5:]}")
+        else:
+            result.fail("Swift enroll-words parity failed:\n" + completed.stdout + completed.stderr)
 
 
 def check_speech_gate_behavior(result: Result, require_swift: bool) -> None:

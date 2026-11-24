@@ -1,0 +1,68 @@
+{
+  "cases": [
+    {
+      "name": "already detected needs no alias",
+      "candidate": "音声 入力。",
+      "existing": ["音声入力", "おんせい"],
+      "journal": [],
+      "isStop": false,
+      "expected": { "verdict": "alreadyMatches", "reason": null, "normalized": "音声入力" }
+    },
+    {
+      "name": "empty transcript",
+      "candidate": "、。 ",
+      "existing": ["音声入力", "おんせい"],
+      "journal": [],
+      "isStop": false,
+      "expected": { "verdict": "rejected", "reason": "empty transcript", "normalized": "" }
+    },
+    {
+      "name": "too short",
+      "candidate": "おん",
+      "existing": ["音声入力", "おんせい"],
+      "journal": [],
+      "isStop": false,
+      "expected": { "verdict": "rejected", "reason": "too short (2 chars, minimum 3)", "normalized": "おん" }
+    },
+    {
+      "name": "below the journal limit",
+      "candidate": "おんせいにゅうりょく",
+      "existing": ["音声入力", "おんせい"],
+      "journal": ["今日は会議の資料をまとめます", "おんせいにゅうりょくで送って", "おんせいにゅうりょく開始"],
+      "isStop": false,
+      "expected": { "verdict": "alias", "reason": null, "normalized": "おんせいにゅうりょく" }
+    },
+    {
+      "name": "heard in past dictations",
+      "candidate": "まとめます",
+      "existing": ["音声入力", "おんせい"],
+      "journal": ["まとめます1", "xまとめますy", "まとめます!", "まとめますか"],
+      "isStop": false,
+      "expected": { "verdict": "rejected", "reason": "heard in 4 past dictations (limit 3)", "normalized": "まとめます" }
+    },
+    {
+      "name": "stop suffix risky",
+      "candidate": "でした",
+      "existing": ["入力ストップ"],
+      "journal": [],
+      "isStop": true,
+      "expected": { "verdict": "rejected", "reason": "common sentence ending; it would stop ordinary speech", "normalized": "でした" }
+    },
+    {
+      "name": "same candidate is fine for wake",
+      "candidate": "でした",
+      "existing": ["音声入力", "おんせい"],
+      "journal": [],
+      "isStop": false,
+      "expected": { "verdict": "alias", "reason": null, "normalized": "でした" }
+    },
+    {
+      "name": "genuine mis-transcription",
+      "candidate": "音声にゅうりょく",
+      "existing": ["音声入力", "おんせい"],
+      "journal": [],
+      "isStop": false,
+      "expected": { "verdict": "alias", "reason": null, "normalized": "音声にゅうりょく" }
+    }
+  ]
+}

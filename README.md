@@ -227,6 +227,24 @@ One-breath dictation: optional prepare → open WAV in Superwhisper (macrowhispe
 - `voice-switch --check a.wav` feeds files through the VAD and transcriber and prints a verdict per utterance. Windows has the same mode with SAPI; it reads PCM16 mono 16 kHz WAV only.
 - `voice-switch --simulate a.wav` feeds one file through the live path instead of the microphone.
 
+### Training wake/stop words (--enroll-words)
+
+When the wake word (or stop word) is said but voice-switch does not react, record the word a few times and register what the recognizer actually hears as aliases. Each clip goes through the same production transcriber used at runtime, so the aliases capture the recognizer's habits for your voice and microphone.
+
+1. Record 3-5 takes of 16 kHz mono PCM16 WAV, e.g. `sox -d -r 16000 -c 1 -b 16 take1.wav trim 0 3`, or record in QuickTime and convert with `afconvert -f WAVE -d LEI16@16 -c 1 in.m4a take1.wav`. Keep the practice recordings outside the repo (e.g. `~/voice-takes/`).
+2. Run `voice-switch --enroll-words "音声入力" ~/voice-takes/take*.wav` (add `--stop` for the stop word, `--dry-run` to preview without writing).
+3. The CLI prints a table of clip -> transcript -> verdict (`already matches`, `new alias candidate`, or `rejected` with a reason). Candidates that are too short, empty, already configured, heard often in past dictation journal entries, or (for `--stop`) a common sentence ending are rejected with a reason.
+4. Accepted aliases are appended to the existing `wakeWords` (or `stopWords`) array in the config file; other keys are left intact and a `config.json.bak` backup is made first. The matcher picks them up at the next config reload, so no restart is needed.
+
+```
+$ voice-switch --enroll-words "音声入力" ~/voice-takes/take1.wav ~/voice-takes/take2.wav
+~/voice-takes/take1.wav  transcript="音声入力"      normalized="音声入力"      already matches
+~/voice-takes/take2.wav  transcript="音声にゅうりょく"  normalized="音声にゅうりょく"  new alias candidate
+enroll-words: appended to wakeWords: ["音声にゅうりょく"] (backup: ~/.config/voice-switch/config.json.bak)
+```
+
+Windows has the same mode (`voice-switch.exe --enroll-words [--stop] [--dry-run] WORD A.wav...`) using its SAPI recognizer; WAV transcription there needs the Windows speech recognizer. Added `stopWords` also reach the dedicated stop-word recognizer (`docs/stop-word-recognizer.md`) at the next reload.
+
 ## Not on main
 
 [PR #3](https://github.com/nekowasabi/voice-switch/pull/3) is open and not merged. This section is not current `main` behavior.
