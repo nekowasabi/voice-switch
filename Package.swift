@@ -17,6 +17,7 @@ let coreSources = [
     "StickyMode.swift",
     "SuperwhisperModes.swift",
     "Transcript.swift",
+    "WordEnrollment.swift",
     "TriageClassifier.swift",
     "TriageExecution.swift",
     "TriageFiles.swift",

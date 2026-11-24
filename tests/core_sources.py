@@ -14,6 +14,7 @@ JOURNAL = ("SecretLog", "Config", "Platform", "DictationJournal", "WakeSafety", 
 SEGMENTER = (*JOURNAL, "Segmenter", "SuperwhisperModes", "PaneRoute")
 TRIAGE = ("TriageClassifier", "TriageExecution")
 HARNESSES = {
+    "enroll-words": (*JOURNAL, "WordEnrollment"),
     "journal": JOURNAL,
     "mac-dictation-session": (*SEGMENTER, "MacDictationSession"),
     "segmenter": SEGMENTER,
