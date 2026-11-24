@@ -51,3 +51,4 @@ dotnet/VoiceSwitch.Windows.Core/WakeReadingFallback.cs
 dotnet/VoiceSwitch.Windows.Core/WakeTelemetry.cs
 dotnet/VoiceSwitch.Windows.Core/WindowsPaths.cs
 dotnet/VoiceSwitch.Windows.Core/WordEnrollment.cs
+dotnet/VoiceSwitch.Windows/EnrollWords.cs

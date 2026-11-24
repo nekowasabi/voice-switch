@@ -155,10 +155,10 @@ macOS でマイクの接続に合わせて待ち受けを止めるには、`conf
 
 ウェイクワード（やストップワード）を言っても voice-switch が反応しないとき、その言葉を数回吹き込んで、認識器が実際に聞き取った表記を別名として登録する。各クリップは実行時と同じ本番の音声認識に通すので、あなたの声・マイクに対する認識器の癖をそのまま別名にできる。
 
-1. 16 kHz モノラル PCM16 WAV で 3〜5テイク録る。例: `sox -d -r 16000 -c 1 -b 16 take1.wav trim 0 3`、または QuickTime で録って `afconvert -f WAVE -d LEI16@16 -c 1 in.m4a take1.wav` で変換する。練習録音はリポジトリの外（例: `~/voice-takes/`）に置く。
-2. `voice-switch --enroll-words "音声入力" ~/voice-takes/take*.wav` を実行する（ストップワードなら `--stop`、書き込まず確認だけなら `--dry-run` を付ける）。
+1. 16 kHz モノラル PCM16 WAV で 3〜5テイク録る。例: `sox -d -r 16000 -c 1 -b 16 take1.wav trim 0 3`、または QuickTime で録って `afconvert -f WAVE -d LEI16@16000 -c 1 in.m4a take1.wav` で変換する。練習録音はリポジトリの外（例: `~/voice-takes/`）に置く。
+2. `voice-switch --enroll-words "音声入力" ~/voice-takes/take*.wav` を実行する（ストップワードなら `--stop`、`--wake` は既定で付けなくても同じ、書き込まず確認だけなら `--dry-run` を付ける）。
 3. クリップ → 認識結果 → 判定（`already matches`、`new alias candidate`、または理由付きの `rejected`）の表が出る。短すぎるもの、空のもの、設定済みのもの、過去の口述ジャーナルによく出るもの、`--stop` で文末によく来る語尾（「でした」など）は理由付きで除外される。
-4. 通った別名は設定ファイルの既存の `wakeWords`（`--stop` なら `stopWords`）配列に追記される。他のキーは変えず、先に `config.json.bak` を作る。設定の再読み込みで取り込まれるので再起動は要らない。
+4. 通った別名は設定ファイルの既存のトップレベルの `wakeWords`（`--stop` なら `stopWords`）配列に追記される。アクションごとの `macOS.actions[].wakeWords` やスティッキーのウェイク語は変更しない。他のキーは変えず（キー順は変わることがあり、JSON コメントは書き込み時に落ちる）、先に `config.json.bak` を作る。キーが無い場合は現在の有効な語（ロケール既定のストップ語を含む）を残して追記する。設定の再読み込みで取り込まれるので再起動は要らない。
 
 ```
 $ voice-switch --enroll-words "音声入力" ~/voice-takes/take1.wav ~/voice-takes/take2.wav
@@ -167,7 +167,14 @@ $ voice-switch --enroll-words "音声入力" ~/voice-takes/take1.wav ~/voice-tak
 enroll-words: appended to wakeWords: ["音声にゅうりょく"] (backup: ~/.config/voice-switch/config.json.bak)
 ```
 
-Windows も同じモード（`voice-switch.exe --enroll-words [--stop] [--dry-run] WORD A.wav...`）を持ち、SAPI 認識器を使う。WAV の書き起こしには Windows の音声認識器が必要。追加した `stopWords` は次の再読み込みで専用ストップ認識器（`docs/stop-word-recognizer.md`）にも届く。
+```
+$ voice-switch --enroll-words --stop "入力ストップ" ~/voice-takes/stop1.wav ~/voice-takes/stop2.wav
+~/voice-takes/stop1.wav  transcript="入力ストップ"      normalized="入力ストップ"      already matches
+~/voice-takes/stop2.wav  transcript="入力すとっぷ"  normalized="入力すとっぷ"  new alias candidate
+enroll-words: appended to stopWords: ["入力すとっぷ"] (backup: ~/.config/voice-switch/config.json.bak)
+```
+
+Windows も同じモード（`voice-switch.exe --enroll-words [--wake|--stop] [--dry-run] WORD A.wav...`）を持ち、SAPI 認識器を使う。WAV の書き起こしには Windows の音声認識器が必要。追加した `stopWords` は次の再読み込みで専用ストップ認識器（`docs/stop-word-recognizer.md`）にも届く。
 
 ## main には無い
 
