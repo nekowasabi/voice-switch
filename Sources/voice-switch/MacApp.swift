@@ -224,6 +224,47 @@ func check(_ paths: [String], cfg: Config) async throws {
     }
 }
 
+/// Record the word a few times, run each clip through the production transcriber,
+/// and append the mis-transcriptions as wake/stop word aliases.
+/// Subflags are parsed in main.swift: --enroll-words [--stop] [--dry-run] <word> <16k-mono-pcm16.wav>...
+/// Record 3-5 takes (e.g. `sox -d -r 16000 -c 1 -b 16 take1.wav trim 0 3`); keep the
+/// practice recordings wherever they are, never copy them into the repo.
+func enrollWords(word: String?, wavs: [String], stop: Bool, dryRun: Bool, configPath: String) async throws {
+    guard let word, !word.hasPrefix("--"), !wavs.isEmpty else {
+        print("usage: --enroll-words [--stop] [--dry-run] <word> <16k-mono-pcm16.wav>... (record 3-5 takes)")
+        throw WordEnrollmentError("need a word and at least one WAV")
+    }
+    let cfg = try ConfigFile(path: configPath).cfg
+    let key = stop ? "stopWords" : "wakeWords"
+    let existing = ((stop ? cfg.stopWords : cfg.wakeWords) ?? []) + [word]
+    let locale = Locale(identifier: cfg.locale ?? "ja_JP")
+    try await ensureModel(locale)
+    var transcripts: [String] = []
+    for wav in wavs {
+        let samples = try loadSamples(wav)
+        let tr = try await transcribe(samples, locale: locale)
+        transcripts.append(tr.runs.map(\.text).joined())
+    }
+    let journalTexts = WordEnrollment.loadJournalTexts(journalDir: cfg.dictation?.journalDir)
+    let results = WordEnrollment.candidates(transcripts: transcripts, existingWords: existing, journalTexts: journalTexts, isStop: stop)
+    for (wav, result) in zip(wavs, results) {
+        print("\(wav)\ttranscript=\"\(result.transcript)\"\tnormalized=\"\(result.normalized)\"\t\(result.verdict.label)")
+    }
+    let aliases = results.filter { $0.verdict == .alias }.map(\.normalized)
+    if aliases.isEmpty {
+        print("enroll-words: no new aliases for \"\(word)\" (journal entries checked: \(journalTexts.count))")
+        return
+    }
+    let added = try WordEnrollment.appendWordAliases(configPath: configPath, key: key, aliases: aliases, dryRun: dryRun)
+    if added.isEmpty {
+        print("enroll-words: no new aliases for \"\(word)\" (candidates already configured)")
+    } else if dryRun {
+        print("enroll-words: dry-run, would append to \(key): \(added) (journal entries checked: \(journalTexts.count))")
+    } else {
+        print("enroll-words: appended to \(key): \(added) (backup: \(configPath).bak)")
+    }
+}
+
 /// Any audio file as 16 kHz mono float samples.
 func loadSamples(_ path: String) throws -> [Float] {
     let file = try AVAudioFile(forReading: URL(fileURLWithPath: path))

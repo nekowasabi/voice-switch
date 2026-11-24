@@ -18,7 +18,7 @@ signal(SIGPIPE, SIG_IGN)
 
 let logURL = Platform.logURL
 var args = Array(CommandLine.arguments.dropFirst())
-let mode = args.first.flatMap { ["--check", "--simulate", "--hotkey-test", "--vad-selftest", "--fire", "--enroll-speaker", "--speaker-cut", "--hud-labels"].contains($0) ? $0 : nil }
+let mode = args.first.flatMap { ["--check", "--simulate", "--hotkey-test", "--vad-selftest", "--fire", "--enroll-speaker", "--enroll-words", "--speaker-cut", "--hud-labels"].contains($0) ? $0 : nil }
 if mode != nil { args.removeFirst() }
 let configPath = Platform.defaultConfigPath
 
@@ -176,6 +176,18 @@ if mode == "--enroll-speaker" {
 } else if mode == "--check" {
     Task {
         do { try await check(args, cfg: ConfigFile(path: configPath).cfg); exit(0) } catch { log("fatal: \(error)"); exit(1) }
+    }
+    dispatchMain()
+} else if mode == "--enroll-words" {
+    // --enroll-words [--stop] [--dry-run] <word> <wav>...; record 3-5 takes.
+    var enrollStop = false, enrollDryRun = false
+    while let first = args.first, first == "--stop" || first == "--dry-run" {
+        if first == "--stop" { enrollStop = true } else { enrollDryRun = true }
+        args.removeFirst()
+    }
+    let enrollWord = args.first, enrollWavs = Array(args.dropFirst())
+    Task {
+        do { try await enrollWords(word: enrollWord, wavs: enrollWavs, stop: enrollStop, dryRun: enrollDryRun, configPath: configPath); exit(0) } catch { log("enroll-words failed: \(error)"); exit(1) }
     }
     dispatchMain()
 } else if mode == "--hotkey-test" {
