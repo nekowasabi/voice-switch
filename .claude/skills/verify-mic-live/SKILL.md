@@ -45,7 +45,7 @@ Shortest trace: Rx and webcam plugged in, no saved mic (system default = webcam)
 
 ## Coverage record
 
-Sync commit: `d77f7fd` for `Current` (the code before the zero check). `Design` describes the zero check on branch `feat/mic-zero-fallback`; move the sync commit to the commit that lands it only after re-mapping every row below against that commit.
+Sync commit: `76ff65c` (`Design` re-mapped row by row against the zero check at this commit; `Current` is the code before it, `d77f7fd`). Move it only after re-mapping every row below against the new commit.
 
 | Model part | Code (Sources/voice-switch/MacApp.swift) |
 |---|---|
@@ -65,7 +65,7 @@ Assumptions: only a mic that does not send gives `Listener.zeroSeconds` of exact
 
 ## Does my change touch this?
 
-`git diff d77f7fd -- Sources/voice-switch/MacApp.swift`, then look for any function in the coverage table, anything that writes `silent`, `lastSound` or the watcher table, or a new caller of `start()`. `python3 tests/verification_coverage.py affected <ref>` lists this skill when `covers.txt` matches.
+`git diff 76ff65c -- Sources/voice-switch/MacApp.swift`, then look for any function in the coverage table, anything that writes `silent`, `lastSound` or the watcher table, or a new caller of `start()`. `python3 tests/verification_coverage.py affected <ref>` lists this skill when `covers.txt` matches.
 
 ## When it fails
 
