@@ -34,6 +34,8 @@
 
 `dictation.journalDir` は、履歴に入った発話のテキストを端末に残す。既定のディレクトリは macOS が `~/Library/Application Support/voice-switch/journal`、Windows が `%LOCALAPPDATA%\voice-switch\journal`。ディレクトリなら日ごとの `yyyy-MM-dd.jsonl`、パスが `.jsonl` で終われば単一ファイル。`~` と `%LOCALAPPDATA%` は `recordingsDir` と同じ展開。不正または書けないパスはログに `dictation journal:` と `using default` を残して既定のディレクトリへフォールバックする。ディレクトリは `0700`、ファイルは `0600`。削除は day（日）単位と entry（件）単位。閲覧 UI はない（no viewer）。音声は残さない。`dictation.journalTaskFile` は、外部の更新ツールが書き換える小さなタスクファイルへの任意のパスで、追記時に読んだタスクを `taskchute` に記録する。未設定や読めないとき、その行の `taskchute` は null になる。
 
+`dictation.missCaptureDir`（macOS のみ、既定は未設定で何も残さない）を設定すると、ウェイクしなかった 3 秒以下の発話の音声を、そのフォルダに WAV で残す。書き起こしは `misses.jsonl` に 1 行ずつ（`at`、`wav`、`text`、`ms`）書く。WAV は新しい 300 本だけ残す。取りこぼしたウェイク語を、あとで認識器にかけ直して調べるための設定。
+
 JSONL の各行には `id`、`timestamp`、`text`、`origin`、`endReason`、`recordingSeconds`、`schemaVersion`（1）、`focusApp`、`taskchute`、`delivery` が入る。`delivery` は追記時の予定先で、アプリへの貼り付けは `paste`、スティッキーで固定した入力欄は `sticky`、固定した tmux ペインは `pane`、ウェイクアクションは `action`、履歴に留める場合は `history`。追記後にペイン振り分けを行うなど、追記時に予定先が決まっていなければ `null` になる。旧行では `delivery` がないことがある。
 
 `python3 scripts/journal_triage.py list YYYY-MM-DD` で、配送先が `history` または未定の発話を依頼・考え・未判定に分けて表示する。フィラーは件数だけ出す。既定は JSON で、`--format text` で読みやすい表示に切り替えられる。`--root` にはジャーナルのフォルダか単一の JSONL ファイルを指定できる。指定がなければ、設定済みの `dictation.journalDir` の親フォルダか既定のジャーナルを読む。フォルダの場合は、直下と 1 段下の端末フォルダから日付に対応するファイルを読む。ドットで始まるフォルダは読み飛ばす。ジャーナルは読み取り専用。

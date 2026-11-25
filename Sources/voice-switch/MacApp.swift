@@ -1081,6 +1081,32 @@ func writeWAV(_ samples: [Float], to url: URL) throws {
     try file.write(from: pcmBuffer(samples))
 }
 
+/// Keeps a closed utterance of at most 3 s that did not wake: a WAV plus one misses.jsonl line {at, wav, text, ms}.
+/// Wake attempts are short, and how a miss is misheard is not known in advance, so every short non-waking utterance is kept.
+func keepMiss(_ samples: [Float], text: String, dir: String?) {
+    guard let dir, samples.count <= Int(3 * rate) else { return }
+    let folder = URL(fileURLWithPath: (dir as NSString).expandingTildeInPath)
+    let fm = FileManager.default
+    let at = Date().formatted(Date.ISO8601FormatStyle(includingFractionalSeconds: true))
+    let wav = folder.appendingPathComponent("\(at.replacingOccurrences(of: ":", with: "-")).wav")
+    do {
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        try writeWAV(samples, to: wav)
+        let line = try JSONSerialization.data(withJSONObject: ["at": at, "wav": wav.path, "text": text, "ms": samples.count * 1000 / Int(rate)], options: [.sortedKeys, .withoutEscapingSlashes])
+        let index = folder.appendingPathComponent("misses.jsonl")
+        if !fm.fileExists(atPath: index.path) { fm.createFile(atPath: index.path, contents: nil) }
+        let h = try FileHandle(forWritingTo: index)
+        defer { try? h.close() }
+        try h.seekToEnd()
+        try h.write(contentsOf: line + Data("\n".utf8))
+        // ISO names sort by time; drop the oldest beyond 300 so the folder cannot fill the disk.
+        let wavs = try fm.contentsOfDirectory(atPath: folder.path).filter { $0.hasSuffix(".wav") }.sorted()
+        for old in wavs.dropLast(300) { try? fm.removeItem(at: folder.appendingPathComponent(old)) }
+    } catch {
+        log("miss capture failed: \(error)")
+    }
+}
+
 /// The samples from `cutAt` seconds on.
 /// After an over-cap head with no wake, adopt the mean level while skipping as the new floor (Windows Segmenter.RebaseFloor).
 func rebaseFloorAfterNoWake(_ seg: inout Segmenter) {
@@ -2032,6 +2058,7 @@ final class Listener {
             // Logged too, so misses that transcribe to nothing are visible when tuning.
             guard !t.isEmpty else {
                 if config.cfg.dictation?.noWakeWord?.enabled != true { log("heard: (empty, \(u.count * 1000 / Int(rate)) ms)") }
+                if !isHead { keepMiss(u, text: "", dir: config.cfg.dictation?.missCaptureDir) }
                 // Over-cap head with no text: same trap as steady noise; lift the floor (Windows RebaseFloor).
                 if isHead { rebaseFloorAfterNoWake(&seg) }
                 continue
@@ -2048,6 +2075,7 @@ final class Listener {
             }
             let verdict = wakeVerdict(transcript, sets: wakeSets(config.cfg), tailSilentFrames: 0, closed: !isHead)
             let hit = verdict != nil && verdict?.action == nil && verdict?.start == nil
+            if verdict == nil, !isHead { keepMiss(u, text: t, dir: config.cfg.dictation?.missCaptureDir) }
             // Utterance length shows whether the VAD holds on past the word; stt is recognizer time.
             if config.cfg.dictation?.noWakeWord?.enabled != true { log("heard: \(t)\(hit ? "  -> wake" : "")  [utt \(u.count * 1000 / Int(rate)) ms, stt \(Int(Date().timeIntervalSince(began) * 1000)) ms]") }
             let start = verdict?.action != nil || config.cfg.dictation == nil ? nil : verdict?.start
