@@ -1392,6 +1392,7 @@ final class Listener {
                 }
             }
         }
+        Listener.watchStart()
         Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in self?.checkStall() }
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.checkSilence() }
         // Loading Whisper and compiling its Metal kernels takes seconds; pay it now, not in front of the first automatic recording.
@@ -1475,7 +1476,43 @@ final class Listener {
         halt(); activeRoute = nil; attemptStart()
     }
 
+    /// Uptime in ns when start() began, nil outside it; read off the main thread by watchStart.
+    private static let startBegan = OSAllocatedUnfairLock<UInt64?>(initialState: nil)
+    private static var startWatchdog: DispatchSourceTimer?
+    static let startHangSeconds: UInt64 = 20
+
+    /// AVFAudio can spin forever inside inputNode.inputFormat while a mic comes back (sample 2026-11-25: the AVAudioIOUnit
+    /// queue looped in _GetHWFormat → GetSubDevices for the whole run, CPU 35%), and start() waits for it on the main thread,
+    /// so the menu and HUD froze until a manual relaunch. That AVFAudio thread never returns, so only a new process recovers.
+    static func watchStart() {
+        let app = Bundle.main.bundlePath
+        guard app.hasSuffix(".app"), startWatchdog == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        timer.schedule(deadline: .now() + 5, repeating: 5)
+        timer.setEventHandler {
+            guard let began = startBegan.withLock({ $0 }) else { return }
+            let seconds = (DispatchTime.now().uptimeNanoseconds - began) / 1_000_000_000
+            guard seconds >= startHangSeconds else { return }
+            log("input start hung for \(seconds) s inside CoreAudio, relaunching")
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            p.arguments = ["-n", app]
+            // open passes this environment on, so a test hang would otherwise relaunch forever.
+            p.environment = ProcessInfo.processInfo.environment.filter { $0.key != "VOICE_SWITCH_TEST_START_HANG" }
+            try? p.run()
+            p.waitUntilExit()
+            fflush(stdout)
+            _exit(0) // exit() would run atexit work that may wait on the hung main thread
+        }
+        timer.resume()
+        startWatchdog = timer
+    }
+
     func start() throws {
+        Listener.startBegan.withLock { $0 = DispatchTime.now().uptimeNanoseconds }
+        defer { Listener.startBegan.withLock { $0 = nil } }
+        // Test seam for the start watchdog: VOICE_SWITCH_TEST_START_HANG=<seconds> blocks start() like the CoreAudio spin.
+        if let s = ProcessInfo.processInfo.environment["VOICE_SWITCH_TEST_START_HANG"].flatMap(Double.init) { Thread.sleep(forTimeInterval: s) }
         let (route, fallback) = InputRoute.resolve(candidates: candidates, silent: silent)
         // A pinned unit never follows the system default again, so a different route needs a fresh engine.
         if route != activeRoute { engine = AVAudioEngine(); activeRoute = route }
