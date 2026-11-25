@@ -120,6 +120,9 @@ public struct DictationConfig: Decodable {
     /// Optional task file an external updater refreshes; the task read at append time, or null.
     public var journalTaskFile: String? = nil
     public var triage: TriageSettings? = nil
+    /// macOS only. Folder that keeps the audio of short utterances that did not wake (newest 300) with `misses.jsonl`,
+    /// so missed wake words can be replayed through the recognizer later. Absent keeps nothing.
+    public var missCaptureDir: String? = nil
 
     public init() {}
 }
