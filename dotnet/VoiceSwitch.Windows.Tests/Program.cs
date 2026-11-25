@@ -246,6 +246,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("tray supervisor starts paused and start is idempotent", () => Check(TraySupervisorStartsPausedAndStartIsIdempotent())),
     ("tray supervisor invalid reload keeps running generation", () => Check(TraySupervisorInvalidReloadKeepsRunningGeneration())),
     ("tray supervisor reload switches dictation to command mode", () => Check(TraySupervisorReloadSwitchesToCommandMode())),
+    ("tray supervisor reload from Error keeps the device retry", () => Check(TraySupervisorReloadFromErrorKeepsRetry())),
     ("tray supervisor valid reload stops old before new", () => Check(TraySupervisorValidReloadStopsOldBeforeNew())),
     ("tray supervisor retains run after stop failure", () => Check(TraySupervisorRetainsRunAfterStopFailure())),
     ("tray retries start while in error with a microphone present", () => Check(TrayRetriesStartWhileErrorWithMic())),
@@ -6297,6 +6298,24 @@ static bool TraySupervisorInvalidReloadKeepsRunningGeneration()
         && supervisor.Snapshot.LastError is not null
         && factory.Started.Count == 1
         && factory.Started.Single().StopCount == 0;
+}
+
+// verify-mic-port-windows B1: a failed launch, then a menu mic pick (Reload), must not leave the tray off.
+static bool TraySupervisorReloadFromErrorKeepsRetry()
+{
+    using var temp = RuntimeTemp();
+    WriteTrayDictationConfig(temp.ConfigPath, "音声入力");
+    var factory = new FakeTrayRuntimeFactory { ThrowOnStart = true };
+    var supervisor = new TrayRuntimeSupervisor(temp.ConfigPath, new TrayInputSource(null, null), factory);
+    supervisor.StartAsync(CancellationToken.None, StartOrigin.Launch).GetAwaiter().GetResult();
+    var failed = supervisor.Snapshot.State == TrayState.Error;
+    factory.ThrowOnStart = false;
+    supervisor.ReloadAsync(CancellationToken.None).GetAwaiter().GetResult();
+    var retries = TrayRuntimeSupervisor.ShouldRetryStart(supervisor.Snapshot.State, true, "mic", 1);
+    supervisor.StartAsync(CancellationToken.None, StartOrigin.DeviceRetry).GetAwaiter().GetResult();
+    return failed && retries
+        && supervisor.Snapshot.State == TrayState.Listening
+        && factory.Started.Count == 1;
 }
 
 static bool TraySupervisorReloadSwitchesToCommandMode()
