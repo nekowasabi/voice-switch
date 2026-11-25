@@ -118,8 +118,8 @@ Exec(ok) ==
               /\ state' = "Paused" /\ userOn' = FALSE /\ held' = FALSE /\ override' = FALSE
               /\ UNCHANGED <<devDiff, honored>>
          [] c.k = "Reload" ->
-              \* ReloadAsync: restarts only when it was running, otherwise ends Paused.
-              /\ IF Mic THEN Open(ok) ELSE state' = "Paused" /\ UNCHANGED devDiff
+              \* ReloadAsync: restarts only when it was running; otherwise Error stays Error, else Paused.
+              /\ IF Mic THEN Open(ok) ELSE IF state = "Error" THEN UNCHANGED <<state, devDiff>> ELSE state' = "Paused" /\ UNCHANGED devDiff
               /\ UNCHANGED <<held, override, userOn, honored>>
          [] c.k = "Hold" ->
               \* port:PauseAsync for the call, unless the user resumed during it or had paused. Reads
@@ -167,7 +167,7 @@ ManualPauseKept == ~userOn => ~Mic
 \* MP-F1, liveness: listening in a call without a user resume eventually stops.
 HoldTakesEffect == (inCall /\ Mic /\ ~override) ~> (~Mic \/ ~inCall \/ override)
 \* MP-F3: a hold whose call has ended eventually listens again, unless another call
-\* started, the user ran a command (a pause, or a start that failed and a mic pick that
-\* ReloadAsync turns from Error into Paused), or the runtime finished on its own.
+\* started, the user ran a command (a pause, or a start that failed), or the runtime finished
+\* on its own.
 HeldResumes == (held /\ ~inCall) ~> (Mic \/ inCall \/ touched \/ state = "Finished")
 ====

@@ -273,6 +273,8 @@ public sealed class TrayRuntimeSupervisor : IAsyncDisposable
             }
 
             var wasRunning = snapshot.State is TrayState.Listening or TrayState.Starting;
+            var failed = snapshot.State == TrayState.Error;
+            var failure = snapshot.LastError;
             SetSnapshot(TrayState.Reloading, null, null);
             if (wasRunning)
             {
@@ -282,6 +284,14 @@ public sealed class TrayRuntimeSupervisor : IAsyncDisposable
             config = nextConfig;
             if (!wasRunning)
             {
+                // Error stays Error so ShouldRetryStart still restarts it: a menu mic pick after a failed
+                // launch is no pause. Only PauseAsync ends Paused.
+                if (failed)
+                {
+                    SetSnapshot(TrayState.Error, failure, null);
+                    return;
+                }
+
                 SetSnapshot(TrayState.Paused, null, 0);
                 return;
             }

@@ -50,7 +50,7 @@ Sync commit: `cf9d18b` for every row (`win-port-fix-tray`: the launch-in-call ho
 | Model action | Code | Status |
 |---|---|---|
 | `Init` | `TrayHost`: `if (!options.Paused) _ = supervisor.StartAsync(..., StartOrigin.Launch)`, ctor `userPaused: options.Paused` (→ `TrayHold.User`) | exists |
-| `Exec` Start / Pause / Reload | `TrayRuntimeSupervisor.StartAsync(origin)` / `PauseAsync` / `ReloadAsync`, each under `gate` (Reload from a non-running state ends `Paused`); `by = "user"` is `StartOrigin.User` (`RunCommandAsync`, `TrayIpcServer`), `"device"` is `StartOrigin.DeviceRetry` (`FollowDevice`), `"launch"` is `StartOrigin.Launch`; the non-user hold during a call is `HoldRunAsync` | exists |
+| `Exec` Start / Pause / Reload | `TrayRuntimeSupervisor.StartAsync(origin)` / `PauseAsync` / `ReloadAsync`, each under `gate` (Reload from a non-running state ends `Paused`, except that `Error` stays `Error`); `by = "user"` is `StartOrigin.User` (`RunCommandAsync`, `TrayIpcServer`), `"device"` is `StartOrigin.DeviceRetry` (`FollowDevice`), `"launch"` is `StartOrigin.Launch`; the non-user hold during a call is `HoldRunAsync` | exists |
 | `Complete` | `TrayRuntimeSupervisor.ObserveCompletionAsync` (exit 0 → `Finished`, else `Error`) | exists |
 | `Tick` | `diagnosticsTimer` (500 ms) `ApplySnapshot(supervisor.Snapshot)` and `OnSnapshotChanged` | exists |
 | `FollowDevice` | `VoiceSwitchTrayContext.FollowDevice` + `ShouldRetryStart` (reads the snapshot just applied) | exists |
