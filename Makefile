@@ -40,7 +40,7 @@ DOTNET_RESTORE_FLAGS ?= --ignore-failed-sources --disable-parallel
 # Why: Run from local disk, not \\wsl.localhost, as focusbm does; AV heuristics flag UNC-launched exes.
 RELEASE_DIR ?= /mnt/c/takeda/tools/voice-switch
 
-.PHONY: build app model install relaunch uninstall logs win win-stop win-restore win-build win-test parity-test win-publish win-verify help url-test hooks
+.PHONY: build app model install relaunch stop uninstall logs win win-stop win-restore win-build win-test parity-test win-publish win-verify help url-test hooks
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -73,9 +73,8 @@ app: build ## macOS: wrap .build/release/voice-switch as VoiceSwitch.app
 install: app model ## macOS: install into DEST and open
 	-launchctl bootout gui/$$(id -u)/$(ID) 2>/dev/null
 	rm -f $(OLD_PLIST) $(HOME)/.local/bin/voice-switch
-	-osascript -e 'quit app id "$(ID)"' 2>/dev/null
-	# open fails with -600 if it races the old instance still shutting down, so wait for it to exit.
-	@for i in $$(seq 50); do pgrep -x voice-switch >/dev/null || break; sleep 0.1; done
+	# open fails with -600 if it races the old instance still shutting down, so stop waits for it to exit.
+	$(MAKE) stop
 	install -d $(DEST) $(dir $(CONFIG))
 	rm -rf $(DEST)/$(APP)
 	cp -R $(BUILT) $(DEST)/$(APP)
@@ -91,8 +90,16 @@ model: ## macOS: download the Whisper model automatic recordings are checked wit
 speaker-model: ## Download the optional speaker embedding model
 	@test -f "$(SPEAKER_MODEL)" || { mkdir -p "$$(dirname "$(SPEAKER_MODEL)")" && curl -fL -o "$(SPEAKER_MODEL).part" $(SPEAKER_MODEL_URL) && mv "$(SPEAKER_MODEL).part" "$(SPEAKER_MODEL)"; }
 
-uninstall: ## macOS: remove installed app
-	-osascript -e 'quit app id "$(ID)"' 2>/dev/null
+stop: ## macOS: quit VoiceSwitch.app; if it hangs, pkill -TERM then -KILL until it is gone
+	@# A hung app never answers the quit Apple Event, and osascript then blocks for ~2 minutes; cap it.
+	-@osascript -e 'with timeout of 3 seconds' -e 'quit app id "$(ID)"' -e 'end timeout' >/dev/null 2>&1
+	@for sig in none TERM KILL; do \
+		[ $$sig = none ] || pkill -$$sig -x voice-switch; \
+		for i in $$(seq 30); do pgrep -x voice-switch >/dev/null || exit 0; sleep 0.1; done; \
+	done; \
+	echo "error: voice-switch did not exit (pid $$(pgrep -x voice-switch))" >&2; exit 1
+
+uninstall: stop ## macOS: remove installed app
 	rm -rf $(DEST)/$(APP)
 
 logs: ## macOS: tail the log file
