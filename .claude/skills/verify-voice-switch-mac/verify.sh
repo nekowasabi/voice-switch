@@ -15,7 +15,7 @@ die() { echo "error: $*" >&2; exit 1; }
 cmd_build() {
   mkdir -p "$ROOT"
   # A separate build path: `make` would also install and relaunch the user's VoiceSwitch.app.
-  swift build -c release --package-path "$REPO" --build-path "$BUILD" 2>&1 | tail -n 3
+  swift build -c release --package-path "$REPO" --build-path "$BUILD" > "$ROOT/build.log" 2>&1 || { tail -n 20 "$ROOT/build.log"; exit 1; }
   git -C "$REPO" rev-parse --short HEAD > "$BUILD/built-from.txt"
   git -C "$REPO" status --porcelain | wc -l | tr -d ' ' > "$BUILD/built-dirty.txt"
   echo "built $BIN"

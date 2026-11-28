@@ -36,7 +36,7 @@ cmd_drive() {
   out=$(mktemp)
   python3 "$repo/tests/core_sources.py" sticky "$repo/Sources/voice-switch" \
     swiftc "$repo/tests/macos/StickyMode/main.swift" -o "$out"
-  "$out" | tail -n 1
+  "$out"
   rm -f "$out"
   echo "SKIP live Mac delivery (item 1 is done by a person; see SKILL.md)"
 }
