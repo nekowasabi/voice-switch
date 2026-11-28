@@ -199,4 +199,38 @@ internal static class TrayMeetTests
             && supervisor.MeetResumeOwed
             && factory.Started.Count == 1;
     }
+
+    // Finding 6 (unverified): Reload's stop times out, then the old run exits 0.
+    // The tray must stay Error so the device retry still fires.
+    public static bool ReloadStopTimeoutStaleExitZeroKeepsRetry()
+    {
+        using var temp = Temp();
+        var factory = new FakeTrayRuntimeFactory { ThrowOnStop = true };
+        var supervisor = new TrayRuntimeSupervisor(temp.ConfigPath, new TrayInputSource(null, null), factory);
+        Start(supervisor, StartOrigin.User);
+        if (supervisor.Snapshot.State != TrayState.Listening)
+        {
+            return false;
+        }
+
+        var oldRun = factory.Started.Single();
+        supervisor.ReloadAsync(None).GetAwaiter().GetResult();
+        if (supervisor.Snapshot.State != TrayState.Error)
+        {
+            return false;
+        }
+
+        oldRun.ThrowOnStop = false;
+        oldRun.StopAsync(None).GetAwaiter().GetResult();
+        var settled = SpinWait.SpinUntil(
+            () => supervisor.Snapshot.OwnedChildProcessId is null,
+            TimeSpan.FromSeconds(2));
+        if (!settled)
+        {
+            return false;
+        }
+
+        return supervisor.Snapshot.State == TrayState.Error
+            && TrayRuntimeSupervisor.ShouldRetryStart(supervisor.Snapshot.State, true, "mic", 1);
+    }
 }

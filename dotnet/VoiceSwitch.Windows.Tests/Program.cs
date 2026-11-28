@@ -263,6 +263,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("tray meet a launch or device retry start during a call holds without opening the mic", () => Check(TrayMeetTests.NonUserStartInCallHolds())),
     ("tray meet a Hold queued during a call that runs after it ended leaves the run alone", () => Check(TrayMeetTests.StaleHoldAfterCallKeepsRun())),
     ("tray meet a user start while already listening in a call keeps the hold on", () => Check(TrayMeetTests.UserStartWhileListeningKeepsHold())),
+    ("tray meet reload stop timeout then stale exit zero keeps Error and retry", () => Check(TrayMeetTests.ReloadStopTimeoutStaleExitZeroKeepsRetry())),
     ("tray command identity does not acquire lease", () => Check(TrayCommandIdentityDoesNotAcquireLease())),
     ("tray login item round-trips the per-user Run entry", TrayLoginItemRoundTripsRunEntry),
     ("tray IPC no-server error is actionable", TrayIpcNoServerErrorIsActionable),

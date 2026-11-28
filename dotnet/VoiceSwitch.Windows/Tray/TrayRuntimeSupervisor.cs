@@ -373,7 +373,17 @@ public sealed class TrayRuntimeSupervisor : IAsyncDisposable
                 return;
             }
 
+            var priorError = snapshot.State == TrayState.Error;
             await StopCurrentRunAsync(CancellationToken.None).ConfigureAwait(false);
+            if (code == 0 && priorError)
+            {
+                // A stop that timed out already reported Error and retained the run; the late
+                // exit 0 must not clear it to Finished or the device retry stops firing.
+                // StopCurrentRunAsync left Stopping behind, so restore the Error it preserved.
+                SetSnapshot(TrayState.Error, snapshot.LastError, snapshot.LastExitCode ?? code);
+                return;
+            }
+
             SetSnapshot(code == 0 ? TrayState.Finished : TrayState.Error, code == 0 ? null : error ?? $"runtime exited {code}", code);
         }
         finally
