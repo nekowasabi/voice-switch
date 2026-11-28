@@ -492,7 +492,7 @@ def check_mac_superwhisper_mode_handoff(result: Result, repo: SourceTree) -> Non
             "func requireSendBody(pane: String?, reason: String, body: String?)",
             "func routeDisposition(pane: String?, suppressFallback: Bool, sent: Bool, body: String? = nil) -> RouteResult",
             "func sendKeysToPane(_ id: String, _ body: String) -> Bool",
-            "p.waitUntilExit()",
+            "waitForTmux(p, label: \"send-keys\")",
             "func routeDictation(_ text: String) async -> RouteResult",
             "func beginBodyResolve(",
             "await jevBodyPick(",
