@@ -232,6 +232,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("production script parses configured words distinctly on Windows PowerShell", ProductionScriptParsesWordsOnWindowsPowerShell),
     ("resident fails on clean child exit before ready", () => Check(ResidentFailsOnCleanEarlyExit())),
     ("resident propagates child stderr as error", () => Check(ResidentPropagatesChildStderr())),
+    ("speech diagnostic reads the last line printed right before child exit", () => Check(SpeechDiagnosticReadsLastLineBeforeExit())),
     ("resident bounded stop disposes child", () => Check(ResidentBoundedStopDisposesChild())),
     ("resident repeated start stop", () => Check(ResidentRepeatedStartStop())),
     ("resident reload restarts only valid recognition changes", ResidentReloadRestartRules),
@@ -6005,6 +6006,39 @@ static bool ResidentPropagatesChildStderr()
     return runtime.Run() == 1;
 }
 
+static bool SpeechDiagnosticReadsLastLineBeforeExit()
+{
+    // Finding 16: the last line a child prints right before exiting can be lost
+    // in DrainToConsole when the exit is observed before the pump thread moves
+    // the line from the pipe into the queue. Letting the immediate-exit child
+    // finish before the pumps start is the adversarial (descheduled-pump)
+    // interleaving of that same race, through the same SpeechProcess reading path.
+    for (var i = 0; i < 20; i++)
+    {
+        using var process = Process.Start(ChildStartInfo("ready-immediate-exit")) ?? throw new InvalidOperationException("child failed to start");
+        process.WaitForExit();
+        using var speech = new SpeechProcess(process);
+        List<string> lines;
+        var originalOut = Console.Out;
+        try
+        {
+            Console.SetOut(TextWriter.Null);
+            lines = speech.DrainToConsole();
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+        }
+
+        if (!lines.Any(line => line.Contains("recognizer ready:", StringComparison.Ordinal)))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 static bool ResidentBoundedStopDisposesChild()
 {
     using var temp = RuntimeTemp();
@@ -6854,6 +6888,7 @@ static int Child(string mode)
         "exit-clean" => 0,
         "stderr-error" => ChildStderrError(),
         "ready-wait" => ChildReadyWait(),
+        "ready-immediate-exit" => ChildReadyImmediateExit(),
         "ready-recognize-wake-stop" => ChildReadyRecognizeWakeStop(),
         "ready-recognize-stop" => ChildReadyRecognize("入力ストップ", 0.88),
         "ready-recognize-wake" => ChildReadyRecognize("音声入力", 0.99),
@@ -6888,6 +6923,13 @@ static int ChildReadyWait()
     {
         Thread.Sleep(100);
     }
+}
+
+static int ChildReadyImmediateExit()
+{
+    Console.WriteLine("{\"type\":\"diagnostic\",\"message\":\"recognizer ready: ja-JP fixture\"}");
+    Console.Out.Flush();
+    return 0;
 }
 
 static int ChildReadyRecognizeWakeStop()
