@@ -218,6 +218,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
             ("superwhisper result lookup waits for the language model when asked", () => Check(SuperwhisperFindResultWaitsForLanguageModel())),
     ("dictation handoff sweeps WAVs older than 10 minutes", () => Check(DictationHandoffSweepsOldFiles())),
     ("dictation handoff sweep keeps mode-restore.json older than 10 minutes", () => Check(DictationHandoffSweepKeepsModeRestore())),
+    ("dictation journal write after a failure stays in the configured folder", () => Check(DictationJournalWriteAfterFailureStaysConfigured())),
     ("runtime launches Superwhisper for consecutive dictations", () => Check(RuntimeLaunchesSuperwhisperForConsecutiveDictations())),
     ("dictation handoff rejects unsupported intake path without writing", () => Check(DictationHandoffRejectsUnsupportedIntakePath())),
     ("dictation handoff root falls back to an intake-safe path", () => Check(DictationHandoffRootFallsBackToIntakeSafePath())),
@@ -4577,6 +4578,34 @@ static bool DictationHandoffSweepKeepsModeRestore()
     var handoff = new RegisteredSuperwhisperHandoff(root, Path.Combine(temp.Dir, "recordings"), preferencesPath: prefs, delay: _ => Task.CompletedTask);
     if (File.Exists(old) || !File.Exists(journal)) return false;
     return handoff.RecoverAsync(CancellationToken.None).GetAwaiter().GetResult() && !File.Exists(journal);
+}
+
+static bool DictationJournalWriteAfterFailureStaysConfigured()
+{
+    using var temp = RuntimeTemp();
+    var configured = Path.Combine(temp.Dir, "configured");
+    var fallback = Path.Combine(temp.Dir, "fallback");
+    Directory.CreateDirectory(configured);
+    Directory.CreateDirectory(fallback);
+    var stamp = new DateTimeOffset(2026, 11, 28, 12, 0, 0, TimeSpan.Zero);
+    var dayFile = stamp.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture) + ".jsonl";
+    var configuredFile = Path.Combine(configured, dayFile);
+    var fallbackFile = Path.Combine(fallback, dayFile);
+    // Force one failing write to the configured folder: a symlink at today's
+    // path makes TryAppend refuse it, so the line goes to the fallback folder.
+    // Linux FileShare locks do not reproduce Windows sharing violations, so a
+    // symlink stands in for the locked file.
+    var linkTarget = Path.Combine(temp.Dir, "link-target.jsonl");
+    File.WriteAllText(linkTarget, "");
+    File.CreateSymbolicLink(configuredFile, linkTarget);
+    var journal = DictationJournal.Open(configured, _ => { }, JournalPlatform.Windows, defaultDirectory: fallback);
+    journal.Append(new JournalEntry(Guid.NewGuid(), stamp, "first line", "ウェイク", null, null));
+    File.Delete(configuredFile);
+    journal.Append(new JournalEntry(Guid.NewGuid(), stamp.AddMinutes(1), "second line", "ウェイク", null, null));
+    return File.Exists(configuredFile)
+        && File.ReadAllText(configuredFile).Contains("second line", StringComparison.Ordinal)
+        && File.Exists(fallbackFile)
+        && File.ReadAllText(fallbackFile).Contains("first line", StringComparison.Ordinal);
 }
 
 static bool RuntimeLaunchesSuperwhisperForConsecutiveDictations()
