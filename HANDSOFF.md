@@ -39,7 +39,7 @@ Jev が使えないとき（キーなし、5 秒のタイムアウト、HTTP エ
 
 ### 1. 指示の部分まで送られる — **対応済み（Slice A）**
 
-`extractSendBody` / `ExtractSendBody` が、最初の空でない `「…」`、なければ `『…』` の中身だけを返す。照合と Jev は全文のまま。send-keys は切り出した本文だけ。切り出し失敗時は全文を送らず、`tmux: … -> skip (no send body for %N; not sending)` で終える。fixture `pane_route.json` の `extract` と Windows / parity / `pane_route_proof.py` で確認済み。 鉤括弧なしは F1 `sendBodyCandidates`（`231c171`）と F2 `resolveSendBody` / body Choice parse・request（`7350cb2`）まで純関数＋fixture 済み。 route は Mac `routeDictation` と Win `TmuxPaneRouter` で body Jev まで配線済み。候補の右端 particle や mid-token label 食い込みは既知のヒューリスティック限界（quote 優先で緩和）。
+`extractSendBody` / `ExtractSendBody` が、最初の空でない `「…」`、なければ `『…』` の中身だけを返す。照合と Jev は全文のまま。send-keys は切り出した本文だけ。切り出し失敗時は全文を送らず、`tmux: … -> skip (no send body for %N; not sending)` で終える。fixture `pane_route.json` の `extract` と Windows / parity / `pane_route_proof.py` で確認済み（`pane_route_proof.py` の決して失敗しない live no-send 2 件は指摘 15 で削除。残る fixture・分類・exact 送信の確認は維持）。 鉤括弧なしは F1 `sendBodyCandidates`（`231c171`）と F2 `resolveSendBody` / body Choice parse・request（`7350cb2`）まで純関数＋fixture 済み。 route は Mac `routeDictation` と Win `TmuxPaneRouter` で body Jev まで配線済み。候補の右端 particle や mid-token label 食い込みは既知のヒューリスティック限界（quote 優先で緩和）。
 
 ### 2. 二重表示 — Mac / Windows ともソース配線済み（実機の mode 切替・paste は未検証）
 

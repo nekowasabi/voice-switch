@@ -496,53 +496,6 @@ def send_marker(panes, agents, utterance, pane_id, prefix):
     return fail(f"marker panes {found}")
 
 
-def send_nothing_without_body(panes, agents, utterance, pane_id):
-    status, got = choose(utterance, panes, agents)
-    if status != "exact" or got != pane_id:
-        return fail(f"no-body winner {status} {got}")
-    if extract_send_body(utterance) is not None:
-        return fail(f"no-body utterance had a body {utterance!r}")
-    before = tmux(["capture-pane", "-p", "-t", pane_id]).stdout
-    # The route found a pane but has no send body, so nothing is typed (never the full dictation).
-    time.sleep(0.2)
-    after = tmux(["capture-pane", "-p", "-t", pane_id]).stdout
-    if before != after or utterance in after:
-        return fail(f"pane {pane_id} changed without a send body")
-    print(f"NO_BODY {pane_id} SENT_NOTHING")
-    return 0
-
-
-def send_nothing(panes, agents, utterance):
-    status, got = choose(utterance, panes, agents)
-    if status != "ambiguous" or got is not None:
-        return fail(f"ambiguous want, got {status} {got}")
-    marker = f"VS_AMBIG_{uuid.uuid4().hex}"
-    # The route sends only on an exact unique hit. This utterance is not sent.
-    sent = False
-    if status == "exact" and got and PANE_ID.fullmatch(got):
-        sent = True
-        subprocess.run(
-            ["tmux", "-S", SOCK, "send-keys", "-t", got, "-l", "--", marker],
-            capture_output=True,
-            text=True,
-        )
-    if sent:
-        return fail("ambiguous utterance was sent")
-    ids = []
-    for pane in panes:
-        cap = tmux(["capture-pane", "-p", "-t", pane["id"]])
-        if cap.returncode != 0:
-            return fail(f"capture {pane['id']} {cap.stderr.strip()}")
-        if marker in cap.stdout:
-            ids.append(pane["id"])
-    if ids:
-        return fail(f"ambiguous marker in {ids}")
-    matched = [pane["id"] for pane in hits(utterance, panes, agents)]
-    print(f"AMBIGUOUS {utterance} {' '.join(matched)}")
-    print("SENT_NOTHING")
-    return 0
-
-
 def stop_server():
     killed = tmux(["kill-server"])
     print(f"KILL_SERVER {killed.returncode}")
@@ -699,9 +652,6 @@ def main():
         code = send_marker(panes, agents, CLAUDE_UTTERANCE, node_id, "VS_CLAUDE_ONLY")
         if code:
             return code
-        code = send_nothing_without_body(panes, agents, "nvimに移動", "%0")
-        if code:
-            return code
         extra = tmux(["new-window", "-d", "-n", "claude", "bash", "--noprofile", "--norc"])
         if extra.returncode != 0:
             return fail(f"ambiguous window {extra.stderr.strip()}")
@@ -723,7 +673,7 @@ def main():
         code = score(panes, agents, BASE_CASES)
         if code:
             return code
-        return send_nothing(panes, agents, CLAUDE_UTTERANCE)
+        return 0
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
