@@ -627,9 +627,19 @@ public sealed class RegisteredSuperwhisperHandoff : IDictationHandoff
             }
 
             var cutoff = DateTime.UtcNow - SweepAge;
-            foreach (var path in Directory.EnumerateFiles(root).Where(path => File.GetLastWriteTimeUtc(path) < cutoff))
+            foreach (var path in Directory.EnumerateFiles(root, "*.wav"))
             {
-                File.Delete(path);
+                try
+                {
+                    if (File.GetLastWriteTimeUtc(path) < cutoff)
+                    {
+                        File.Delete(path);
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    Log.Info($"dictation handoff: sweep skipped {path}: {ex.Message}");
+                }
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)

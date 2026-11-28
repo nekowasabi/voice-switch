@@ -217,6 +217,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("superwhisper result lookup picks newest non-empty run", () => Check(SuperwhisperFindResultPicksNewestNonEmpty())),
             ("superwhisper result lookup waits for the language model when asked", () => Check(SuperwhisperFindResultWaitsForLanguageModel())),
     ("dictation handoff sweeps WAVs older than 10 minutes", () => Check(DictationHandoffSweepsOldFiles())),
+    ("dictation handoff sweep keeps mode-restore.json older than 10 minutes", () => Check(DictationHandoffSweepKeepsModeRestore())),
     ("runtime launches Superwhisper for consecutive dictations", () => Check(RuntimeLaunchesSuperwhisperForConsecutiveDictations())),
     ("dictation handoff rejects unsupported intake path without writing", () => Check(DictationHandoffRejectsUnsupportedIntakePath())),
     ("dictation handoff root falls back to an intake-safe path", () => Check(DictationHandoffRootFallsBackToIntakeSafePath())),
@@ -4556,6 +4557,25 @@ static bool DictationHandoffSweepsOldFiles()
     File.SetLastWriteTimeUtc(old, DateTime.UtcNow.AddMinutes(-11));
     _ = new RegisteredSuperwhisperHandoff(root, Path.Combine(temp.Dir, "recordings"));
     return !File.Exists(old) && File.Exists(fresh);
+}
+
+static bool DictationHandoffSweepKeepsModeRestore()
+{
+    using var temp = RuntimeTemp();
+    var root = Path.Combine(temp.Dir, "handoff");
+    Directory.CreateDirectory(root);
+    var old = Path.Combine(root, "old.wav");
+    var journal = Path.Combine(root, "mode-restore.json");
+    File.WriteAllBytes(old, [1]);
+    File.WriteAllText(journal, """{"Previous":"a","Temporary":"b"}""");
+    var stamp = DateTime.UtcNow.AddMinutes(-11);
+    File.SetLastWriteTimeUtc(old, stamp);
+    File.SetLastWriteTimeUtc(journal, stamp);
+    var prefs = Path.Combine(temp.Dir, "prefs.json");
+    File.WriteAllText(prefs, """{"activeMode":"other"}""");
+    var handoff = new RegisteredSuperwhisperHandoff(root, Path.Combine(temp.Dir, "recordings"), preferencesPath: prefs, delay: _ => Task.CompletedTask);
+    if (File.Exists(old) || !File.Exists(journal)) return false;
+    return handoff.RecoverAsync(CancellationToken.None).GetAwaiter().GetResult() && !File.Exists(journal);
 }
 
 static bool RuntimeLaunchesSuperwhisperForConsecutiveDictations()
