@@ -22,13 +22,15 @@ final class TriagePanel {
     private var countdownTimer: Timer?
     private var lastDay = Calendar.current.startOfDay(for: Date())
     private var showsSent = false
-    private var reviewKinds: [String: TriageKind] = [:]
+    // 一番上の「確認が要るもの」の番号付きボタンを数字キーで押す
+    private var digitAction: ((Int) -> Void)?
 
     init(service: TriageService) { self.service = service }
 
     func show() {
-        let window = panel ?? NSPanel(contentRect: NSRect(x: 0, y: 0, width: 640, height: 460),
-                                      styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let window = panel ?? TriageWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 460),
+                                           styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        (window as? TriageWindow)?.onDigit = { [weak self] digit in self?.digitAction?(digit) }
         panel = window
         window.title = "voice-switch 依頼"
         window.isReleasedWhenClosed = false
@@ -73,8 +75,8 @@ final class TriagePanel {
         if service.storeError { stack.addArrangedSubview(label("依頼ファイルを読み書きできません。", secondary: true)) }
 
         let review = service.review
-        let reviewIDs = Set(review.map(\.id))
-        reviewKinds = reviewKinds.filter { reviewIDs.contains($0.key) }
+        let choices = sendChoices()
+        digitAction = nil
         section("確認が要るもの", count: review.count, in: stack)
         for proposal in review {
             stack.addArrangedSubview(label(proposal.text))
@@ -95,27 +97,32 @@ final class TriagePanel {
             let reasons = proposal.stage == .pending ? ["送り先の設定が変わりました"] : proposal.reasons
             stack.addArrangedSubview(label((reasons + [service.routeName(proposal)].compactMap { $0 }).joined(separator: " · "),
                                            secondary: true))
-            let chosen = reviewKinds[proposal.id]
-            let kind = chosen ?? proposal.kind
-            let kinds = TriageKind.allCases.filter { !service.routeNames($0).isEmpty }
-            let picker = menu(kind?.title ?? "種類を選ぶ", options: kinds.map(\.title)) { [weak self] index in
-                self?.reviewKinds[proposal.id] = kinds[index]
-                self?.refresh()
-            }
-            stack.addArrangedSubview(NSStackView(views: [
-                picker,
-                button("送らない") { [weak service] in service?.dismiss(proposal.id) },
-            ]))
-            if let kind {
-                for (index, name) in service.routeNames(kind).enumerated() {
-                    let first = name.split(whereSeparator: { $0.isWhitespace || $0 == "（" || $0 == "(" }).first
-                    let send = button("\(first.map(String.init) ?? name) に送る") { [weak service] in
-                        service?.send(proposal.id, as: chosen, routeIndex: index)
-                    }
-                    send.toolTip = name
-                    stack.addArrangedSubview(send)
+            let numbered = digitAction == nil && !service.storeError
+            var keys: [Int: () -> Void] = [:]
+            var groups: [[NSView]] = []
+            for (offset, choice) in choices.enumerated() {
+                let digit = offset + 1
+                let send: () -> Void = { [weak service] in service?.send(proposal.id, as: choice.kind, routeIndex: choice.route) }
+                let view = button(numbered && digit <= 9 ? "\(digit) \(choice.kind.title)" : choice.kind.title, action: send)
+                if let icon = choice.icon {
+                    view.image = icon
+                    view.imagePosition = .imageRight
                 }
+                view.toolTip = choice.name
+                if offset > 0, choices[offset - 1].kind == choice.kind { groups[groups.count - 1].append(view) } else { groups.append([view]) }
+                if digit <= 9 { keys[digit] = send }
             }
+            let dismiss: () -> Void = { [weak service] in service?.dismiss(proposal.id) }
+            groups.append([button(numbered ? "0 送らない" : "送らない", action: dismiss)])
+            keys[0] = dismiss
+            if numbered { digitAction = { keys[$0]?() } }
+            // 同じ種類のボタンは行をまたがせない（1 行 3 つまで、種類ごとまとめて折り返す）
+            var rows: [[NSView]] = [[]]
+            for group in groups {
+                if !rows[rows.count - 1].isEmpty, rows[rows.count - 1].count + group.count > 3 { rows.append([]) }
+                rows[rows.count - 1] += group
+            }
+            for row in rows { stack.addArrangedSubview(NSStackView(views: row)) }
         }
 
         let pending = service.pending
@@ -187,6 +194,31 @@ final class TriagePanel {
             NSRect(origin: previousOffset, size: scroll.contentView.bounds.size)).origin)
     }
 
+    private struct SendChoice {
+        let kind: TriageKind
+        let route: Int
+        let name: String
+        let icon: NSImage?
+    }
+
+    // 下書きを 1 に固定する。自分の作業は自動の振り分けにだけ任せ、ボタンは出さない
+    private func sendChoices() -> [SendChoice] {
+        let kinds = [TriageKind.writeText] + TriageKind.allCases.filter { $0 != .writeText && $0 != .selfTask }
+        return kinds.flatMap { kind in
+            service.routeNames(kind).enumerated().map { index, name in
+                let app = name.split(whereSeparator: { $0 == "（" || $0 == "(" }).first
+                    .map { $0.trimmingCharacters(in: .whitespaces) } ?? name
+                let path = "/Applications/\(app).app"
+                var icon: NSImage?
+                if FileManager.default.fileExists(atPath: path) {
+                    icon = NSWorkspace.shared.icon(forFile: path)
+                    icon?.size = NSSize(width: 16, height: 16)
+                }
+                return SendChoice(kind: kind, route: index, name: name, icon: icon)
+            }
+        }
+    }
+
     private func section(_ title: String, count: Int, in stack: NSStackView) {
         let heading = label("\(title) (\(count))")
         heading.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
@@ -227,6 +259,19 @@ final class TriagePanel {
         for (label, deadline) in countdowns {
             let seconds = max(0, min(359999, Int(min(359999, ceil(deadline.timeIntervalSinceNow)))))
             label.stringValue = service.paused ? "一時停止中" : String(format: "残り %d:%02d", seconds / 60, seconds % 60)
+        }
+    }
+}
+
+private final class TriageWindow: NSPanel {
+    var onDigit: ((Int) -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function])
+        if mods.isEmpty, let chars = event.charactersIgnoringModifiers, chars.count == 1, let digit = Int(chars) {
+            onDigit?(digit)
+        } else {
+            super.keyDown(with: event)
         }
     }
 }
