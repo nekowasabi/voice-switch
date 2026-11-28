@@ -72,9 +72,8 @@ func tmuxSocketPath() -> String? {
     p.standardOutput = out
     p.standardError = Pipe()
     do { try p.run() } catch { return nil }
-    p.waitUntilExit()
-    guard p.terminationStatus == 0,
-          let text = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) else { return nil }
+    guard waitForTmux(p, label: "display-message") == 0 else { return nil }
+    guard let text = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) else { return nil }
     let path = text.trimmingCharacters(in: .whitespacesAndNewlines)
     return path.isEmpty ? nil : path
 }
@@ -148,12 +147,12 @@ func fetchPanes() -> [PaneLabel]? {
         log("tmux: list-panes failed to start: \(error)")
         return nil
     }
-    p.waitUntilExit()
+    guard let status = waitForTmux(p, label: "list-panes") else { return nil }
     let errText = (String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "")
         .trimmingCharacters(in: .whitespacesAndNewlines)
-    if p.terminationStatus != 0 {
+    if status != 0 {
         let detail = errText.isEmpty ? "" : ": \(errText)"
-        log("tmux: list-panes exited \(p.terminationStatus)\(detail); nothing sent")
+        log("tmux: list-panes exited \(status)\(detail); nothing sent")
         return nil
     }
     guard let text = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8),
@@ -509,6 +508,31 @@ func routeDisposition(pane: String?, suppressFallback: Bool, sent: Bool, body: S
     return .notRouted
 }
 
+/// Seconds a tmux call may block before it is killed and treated as "tmux failed / nothing sent".
+/// Tests set a short value (finding 8).
+var tmuxTimeoutSeconds: TimeInterval = 5
+
+/// Wait for a tmux child up to `timeout` seconds. Returns its exit status, or nil on
+/// timeout (the child is terminated, a reason line is logged, and the caller sends nothing).
+/// Polls instead of `waitUntilExit` so a wedged tmux server cannot block dictation (finding 8).
+func waitForTmux(_ p: Process, label: String, timeout: TimeInterval = tmuxTimeoutSeconds) -> Int32? {
+    let deadline = Date(timeIntervalSinceNow: timeout)
+    while p.isRunning && Date() < deadline {
+        Thread.sleep(forTimeInterval: 0.02)
+    }
+    if p.isRunning {
+        p.terminate()
+        let reap = Date(timeIntervalSinceNow: 0.5)
+        while p.isRunning && Date() < reap {
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        let shown = timeout.truncatingRemainder(dividingBy: 1) == 0 ? String(Int(timeout)) : String(timeout)
+        log("tmux: \(label) timed out after \(shown) s; nothing sent")
+        return nil
+    }
+    return p.terminationStatus
+}
+
 /// Waits for tmux send-keys. false when start fails or exit status is non-zero.
 /// An app opened from Finder or `open` inherits launchd's PATH (/usr/bin:/bin:/usr/sbin:/sbin), which has no Homebrew
 /// tmux, so `/usr/bin/env tmux` failed and sticky capture fell back to the AX field (2026-11-21, finding F1 in
@@ -527,9 +551,9 @@ func sendKeysToPane(_ id: String, _ body: String) -> Bool {
         log("tmux: send-keys failed to start: \(error)")
         return false
     }
-    p.waitUntilExit()
-    if p.terminationStatus != 0 {
-        log("tmux: send-keys exited \(p.terminationStatus)")
+    guard let status = waitForTmux(p, label: "send-keys") else { return false }
+    if status != 0 {
+        log("tmux: send-keys exited \(status)")
         return false
     }
     return true

@@ -222,6 +222,20 @@ public sealed class SpeechProcess : ISpeechProcess
         }
 
         process.WaitForExit();
+        // The loop above can observe the exit before the pump threads move the
+        // last lines from the pipes into the queue. Wait for the pumps to reach
+        // EOF and drain whatever is left so a line printed right before the
+        // exit is not lost.
+        try { Task.WaitAll([outputPump, errorPump], TimeSpan.FromSeconds(5)); }
+        catch (AggregateException) { }
+
+        string? rest;
+        while ((rest = ReadLine(TimeSpan.Zero)) is not null)
+        {
+            Console.WriteLine(rest);
+            lines.Add(rest);
+        }
+
         return lines;
     }
 

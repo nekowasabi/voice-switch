@@ -48,7 +48,49 @@ func checkStopCut() {
     precondition(session.stopCutCount(100, sampleCount: 400) == 400, "cut cannot exceed the recording")
 }
 
+func checkTmuxHang() {
+    // Finding 8: a hanging `tmux` must not block dictation routing forever.
+    // run.sh puts a fake `sleep 60` tmux first on PATH; tmuxTimeoutSeconds shortens the wait.
+    let fakebin = ProcessInfo.processInfo.environment["TMUX_FAKEBIN"] ?? ""
+    precondition(!fakebin.isEmpty && tmuxExecutable == fakebin + "/tmux",
+                 "tmux hang check needs the fake tmux first on PATH (tmuxExecutable=\(tmuxExecutable))")
+    tmuxTimeoutSeconds = 0.5
+    final class HangBox: @unchecked Sendable {
+        let lock = NSLock()
+        var done = false
+        var routed = true
+    }
+    let box = HangBox()
+    let t0 = Date()
+    Thread.detachNewThread {
+        let r = dictationMayRouteToPane("send hello to pane coded")
+        box.lock.lock()
+        box.routed = r
+        box.done = true
+        box.lock.unlock()
+    }
+    while true {
+        box.lock.lock()
+        let finished = box.done
+        let value = box.routed
+        box.lock.unlock()
+        if finished {
+            let elapsed = Date().timeIntervalSince(t0)
+            precondition(!value, "hanging tmux must route nothing")
+            precondition(elapsed < 3, "hanging tmux must fail fast (took \(elapsed) s)")
+            print("PASS tmux hang fails fast (\(String(format: "%.2f", elapsed)) s)")
+            return
+        }
+        if Date().timeIntervalSince(t0) >= 3 {
+            print("FAIL tmux hang: dictationMayRouteToPane blocked past 3 s (tmuxExecutable=\(tmuxExecutable))")
+            exit(1)
+        }
+        Thread.sleep(forTimeInterval: 0.02)
+    }
+}
+
 try checkFollowup()
 checkHeldPhrase()
 checkStopCut()
+checkTmuxHang()
 print("PASS macOS dictation follow-up, held phrase, and stop-word cut")

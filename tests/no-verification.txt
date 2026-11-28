@@ -1,6 +1,7 @@
+Sources/voice-switch/LatestRecognition.swift tested by tests/macos/RecognitionSlot/main.swift
 Sources/voice-switch/ListeningPolicy.swift tested by tests/macos/ListeningPolicy/main.swift
 Sources/voice-switch/Macrowhisper.swift no verification yet
-Sources/voice-switch/SuperwhisperModes.swift source parity checked by tests/parity/run_parity.py
+Sources/voice-switch/SuperwhisperModes.swift tested by tests/macos/SuperwhisperResult/main.swift; source parity checked by tests/parity/run_parity.py
 dotnet/VoiceSwitch.Windows.Core/DictationHistory.cs tested by dotnet/VoiceSwitch.Windows.Tests
 dotnet/VoiceSwitch.Windows.Core/DictationHotkeys.cs tested by dotnet/VoiceSwitch.Windows.Tests
 dotnet/VoiceSwitch.Windows.Core/DictationJournal.cs tested by tests/journal/Program.cs

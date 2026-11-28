@@ -121,8 +121,6 @@ public sealed class DictationJournal
             var fallback = JournalTarget.Directory(fallbackDirectory);
             if (!TryAppend(fallback, line, entry.Timestamp, out var fallbackError))
                 log($"dictation journal: default unwritable ({fallbackError})");
-            else
-                target = fallback;
         }
     }
 

@@ -217,6 +217,8 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("superwhisper result lookup picks newest non-empty run", () => Check(SuperwhisperFindResultPicksNewestNonEmpty())),
             ("superwhisper result lookup waits for the language model when asked", () => Check(SuperwhisperFindResultWaitsForLanguageModel())),
     ("dictation handoff sweeps WAVs older than 10 minutes", () => Check(DictationHandoffSweepsOldFiles())),
+    ("dictation handoff sweep keeps mode-restore.json older than 10 minutes", () => Check(DictationHandoffSweepKeepsModeRestore())),
+    ("dictation journal write after a failure stays in the configured folder", () => Check(DictationJournalWriteAfterFailureStaysConfigured())),
     ("runtime launches Superwhisper for consecutive dictations", () => Check(RuntimeLaunchesSuperwhisperForConsecutiveDictations())),
     ("dictation handoff rejects unsupported intake path without writing", () => Check(DictationHandoffRejectsUnsupportedIntakePath())),
     ("dictation handoff root falls back to an intake-safe path", () => Check(DictationHandoffRootFallsBackToIntakeSafePath())),
@@ -230,6 +232,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("production script parses configured words distinctly on Windows PowerShell", ProductionScriptParsesWordsOnWindowsPowerShell),
     ("resident fails on clean child exit before ready", () => Check(ResidentFailsOnCleanEarlyExit())),
     ("resident propagates child stderr as error", () => Check(ResidentPropagatesChildStderr())),
+    ("speech diagnostic reads the last line printed right before child exit", () => Check(SpeechDiagnosticReadsLastLineBeforeExit())),
     ("resident bounded stop disposes child", () => Check(ResidentBoundedStopDisposesChild())),
     ("resident repeated start stop", () => Check(ResidentRepeatedStartStop())),
     ("resident reload restarts only valid recognition changes", ResidentReloadRestartRules),
@@ -262,6 +265,7 @@ var tests = new (string Name, Func<TestOutcome> Test)[]
     ("tray meet a launch or device retry start during a call holds without opening the mic", () => Check(TrayMeetTests.NonUserStartInCallHolds())),
     ("tray meet a Hold queued during a call that runs after it ended leaves the run alone", () => Check(TrayMeetTests.StaleHoldAfterCallKeepsRun())),
     ("tray meet a user start while already listening in a call keeps the hold on", () => Check(TrayMeetTests.UserStartWhileListeningKeepsHold())),
+    ("tray meet reload stop timeout then stale exit zero keeps Error and retry", () => Check(TrayMeetTests.ReloadStopTimeoutStaleExitZeroKeepsRetry())),
     ("tray command identity does not acquire lease", () => Check(TrayCommandIdentityDoesNotAcquireLease())),
     ("tray login item round-trips the per-user Run entry", TrayLoginItemRoundTripsRunEntry),
     ("tray IPC no-server error is actionable", TrayIpcNoServerErrorIsActionable),
@@ -4558,6 +4562,53 @@ static bool DictationHandoffSweepsOldFiles()
     return !File.Exists(old) && File.Exists(fresh);
 }
 
+static bool DictationHandoffSweepKeepsModeRestore()
+{
+    using var temp = RuntimeTemp();
+    var root = Path.Combine(temp.Dir, "handoff");
+    Directory.CreateDirectory(root);
+    var old = Path.Combine(root, "old.wav");
+    var journal = Path.Combine(root, "mode-restore.json");
+    File.WriteAllBytes(old, [1]);
+    File.WriteAllText(journal, """{"Previous":"a","Temporary":"b"}""");
+    var stamp = DateTime.UtcNow.AddMinutes(-11);
+    File.SetLastWriteTimeUtc(old, stamp);
+    File.SetLastWriteTimeUtc(journal, stamp);
+    var prefs = Path.Combine(temp.Dir, "prefs.json");
+    File.WriteAllText(prefs, """{"activeMode":"other"}""");
+    var handoff = new RegisteredSuperwhisperHandoff(root, Path.Combine(temp.Dir, "recordings"), preferencesPath: prefs, delay: _ => Task.CompletedTask);
+    if (File.Exists(old) || !File.Exists(journal)) return false;
+    return handoff.RecoverAsync(CancellationToken.None).GetAwaiter().GetResult() && !File.Exists(journal);
+}
+
+static bool DictationJournalWriteAfterFailureStaysConfigured()
+{
+    using var temp = RuntimeTemp();
+    var configured = Path.Combine(temp.Dir, "configured");
+    var fallback = Path.Combine(temp.Dir, "fallback");
+    Directory.CreateDirectory(configured);
+    Directory.CreateDirectory(fallback);
+    var stamp = new DateTimeOffset(2026, 11, 28, 12, 0, 0, TimeSpan.Zero);
+    var dayFile = stamp.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture) + ".jsonl";
+    var configuredFile = Path.Combine(configured, dayFile);
+    var fallbackFile = Path.Combine(fallback, dayFile);
+    // Force one failing write to the configured folder: a symlink at today's
+    // path makes TryAppend refuse it, so the line goes to the fallback folder.
+    // Linux FileShare locks do not reproduce Windows sharing violations, so a
+    // symlink stands in for the locked file.
+    var linkTarget = Path.Combine(temp.Dir, "link-target.jsonl");
+    File.WriteAllText(linkTarget, "");
+    File.CreateSymbolicLink(configuredFile, linkTarget);
+    var journal = DictationJournal.Open(configured, _ => { }, JournalPlatform.Windows, defaultDirectory: fallback);
+    journal.Append(new JournalEntry(Guid.NewGuid(), stamp, "first line", "ウェイク", null, null));
+    File.Delete(configuredFile);
+    journal.Append(new JournalEntry(Guid.NewGuid(), stamp.AddMinutes(1), "second line", "ウェイク", null, null));
+    return File.Exists(configuredFile)
+        && File.ReadAllText(configuredFile).Contains("second line", StringComparison.Ordinal)
+        && File.Exists(fallbackFile)
+        && File.ReadAllText(fallbackFile).Contains("first line", StringComparison.Ordinal);
+}
+
 static bool RuntimeLaunchesSuperwhisperForConsecutiveDictations()
 {
     using var temp = RuntimeTemp();
@@ -5955,6 +6006,39 @@ static bool ResidentPropagatesChildStderr()
     return runtime.Run() == 1;
 }
 
+static bool SpeechDiagnosticReadsLastLineBeforeExit()
+{
+    // Finding 16: the last line a child prints right before exiting can be lost
+    // in DrainToConsole when the exit is observed before the pump thread moves
+    // the line from the pipe into the queue. Letting the immediate-exit child
+    // finish before the pumps start is the adversarial (descheduled-pump)
+    // interleaving of that same race, through the same SpeechProcess reading path.
+    for (var i = 0; i < 20; i++)
+    {
+        using var process = Process.Start(ChildStartInfo("ready-immediate-exit")) ?? throw new InvalidOperationException("child failed to start");
+        process.WaitForExit();
+        using var speech = new SpeechProcess(process);
+        List<string> lines;
+        var originalOut = Console.Out;
+        try
+        {
+            Console.SetOut(TextWriter.Null);
+            lines = speech.DrainToConsole();
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+        }
+
+        if (!lines.Any(line => line.Contains("recognizer ready:", StringComparison.Ordinal)))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 static bool ResidentBoundedStopDisposesChild()
 {
     using var temp = RuntimeTemp();
@@ -6804,6 +6888,7 @@ static int Child(string mode)
         "exit-clean" => 0,
         "stderr-error" => ChildStderrError(),
         "ready-wait" => ChildReadyWait(),
+        "ready-immediate-exit" => ChildReadyImmediateExit(),
         "ready-recognize-wake-stop" => ChildReadyRecognizeWakeStop(),
         "ready-recognize-stop" => ChildReadyRecognize("入力ストップ", 0.88),
         "ready-recognize-wake" => ChildReadyRecognize("音声入力", 0.99),
@@ -6838,6 +6923,13 @@ static int ChildReadyWait()
     {
         Thread.Sleep(100);
     }
+}
+
+static int ChildReadyImmediateExit()
+{
+    Console.WriteLine("{\"type\":\"diagnostic\",\"message\":\"recognizer ready: ja-JP fixture\"}");
+    Console.Out.Flush();
+    return 0;
 }
 
 static int ChildReadyRecognizeWakeStop()

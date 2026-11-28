@@ -30,6 +30,7 @@ else
 endif
 
 SWIFT ?= swift
+UNAME_S ?= $(shell uname -s)
 
 WIN_CONFIG ?= Release
 DOTNET ?= $(shell command -v dotnet 2>/dev/null || printf '%s' "$(HOME)/.local/share/mise/shims/dotnet")
@@ -118,11 +119,15 @@ win-build: win-restore ## Windows: build .NET app (tests run only with make win-
 win-test: win-restore ## Windows: run behavior tests
 	$(DOTNET) run --project $(WIN_TESTS) -c $(WIN_CONFIG) --no-restore
 	$(DOTNET) run --project dotnet/VoiceSwitch.SharedChecks/VoiceSwitch.SharedChecks.csproj -c $(WIN_CONFIG)
+	$(DOTNET) run --project tests/journal/JournalTests.csproj -c $(WIN_CONFIG)
 	$(MAKE) parity-test
 
 url-test: ## Require Swift URL action regression tests (macOS or Linux with Swift)
 	python3 tests/url-actions/run.py --require-swift
 
+ifeq ($(UNAME_S),Darwin)
+parity-test: build
+endif
 parity-test: ## Run macOS/Windows parity contract checks
 	python3 tests/parity/run_parity.py
 
