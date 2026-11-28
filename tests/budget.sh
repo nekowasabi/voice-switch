@@ -8,7 +8,8 @@ fail=0
 limit() {
   case "$1" in
     */TriageExec.tla) echo 210 ;; */MicFallback.tla) echo 176 ;; */MeetPauseWindows.tla) echo 173 ;;
-    */StickyDelivery.tla) echo 161 ;; *) echo 150 ;;
+    */StickyDelivery.tla) echo 161 ;;
+    */HudBlip.tla) echo 104 ;; */HudNoise.tla) echo 92 ;; */MeetPause.tla) echo 120 ;; *) echo 150 ;;
   esac
 }
 for f in $(git ls-files "*.tla"; git ls-files --others --exclude-standard "*.tla"); do

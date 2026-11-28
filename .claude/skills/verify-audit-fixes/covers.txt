@@ -1,0 +1,11 @@
+# The files the audit fixes touch. affected selects this skill when one of them changes.
+.claude/skills/verify-voice-switch-mac/verify.sh
+.claude/skills/verify-sticky-mode/verify.sh
+.claude/skills/verify-pr-merge/verify.sh
+tests/budget.sh
+scripts/journal_triage.py classify_day
+scripts/journal_triage.py ask_jev
+dotnet/VoiceSwitch.Windows/SuperwhisperHandoff.cs Sweep
+dotnet/VoiceSwitch.Windows/Tray/TrayRuntimeSupervisor.cs ObserveCompletionAsync
+dotnet/VoiceSwitch.Windows.Core/DictationJournal.cs
+Sources/voice-switch/DictationJournal.swift

@@ -221,9 +221,15 @@ def ask_jev(key, state, questions):
         answers.update({qid: raw[qid]["noul"] for qid in GATE_IDS if qid in raw})  # the gates are optional here
         if valid_answers(answers):
             return answers
-    except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError, RecursionError):
-        pass
+    except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError, RecursionError) as error:
+        # Why: a bad key or a dead network otherwise shows only as unjudged:error rows with no reason.
+        if not ask_jev.reported:
+            ask_jev.reported = True
+            print(f"jev request failed: {getattr(error, 'code', '') or type(error).__name__}", file=sys.stderr)
     return None
+
+
+ask_jev.reported = False
 
 
 def local_category(text):
@@ -342,7 +348,9 @@ def classify_day(journal, day, thresholds, *, use_jev, include_context):
                 destinations = local_category(entry.text)
             else:
                 saved = kept.get(entry.id, {})
-                if saved.get("question_hash") == digest and valid_answers(saved.get("answers")):
+                # Why: an answer given without context must not stand in for one asked with it (and the reverse).
+                if (saved.get("question_hash") == digest and saved.get("context") == include_context
+                        and valid_answers(saved.get("answers"))):
                     answers = saved["answers"]
                 else:
                     previous = prior_entries(entry, history, instants) if include_context else []
@@ -350,6 +358,7 @@ def classify_day(journal, day, thresholds, *, use_jev, include_context):
                     answers = ask_jev(key, state, questions)
                     if answers is not None and entry.id is not None:
                         kept[entry.id] = {"id": entry.id, "answers": answers, "question_hash": digest,
+                                          "context": include_context,
                                           "journal_hash": journal_hash}
                 destinations = decide(answers, thresholds)
             output.append((entry, device, destinations, answers))
